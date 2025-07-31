@@ -1308,7 +1308,24 @@ def get_stock_strong_em(date):
     return  df
 
 # 跌停股池
-def g
+def get_stock_down_limit_em(date):
+    """
+    date: '20241011'
+    :return:
+    """
+    df = ak.stock_zt_pool_dtgc_em(date=date)
+    return df
+
+# 赚钱效应
+def get_market_activity_lg():
+    """
+
+    :return:
+    """
+    df = ak.stock_market_activity_legu()
+    return df
+
+
 
 
 
@@ -1420,4 +1437,4 @@ def g
     # print(get_stock_margin_summary_sz(date='20250729'))
     # print(get_stock_margin_detail_sz(date='20250729'))
     # print(get_stock_hot_tweet_xq(symbol='最热门'))
-    # print(get_stock_trade_rank_xq(symbol='最热门'))
+    print(get_stock_trade_rank_xq(symbol='最热门'))
