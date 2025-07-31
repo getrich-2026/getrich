@@ -1,5 +1,7 @@
 """
 从 akshare 获取数据
+Author: QiuZiHua
+Date: 2025/07/29
 """
 import akshare as ak
 import pandas as pd
@@ -1307,7 +1309,7 @@ def get_stock_strong_em(date):
     df =  ak.stock_zt_pool_strong_em(date=date)
     return  df
 
-# 跌停股池
+# 115. 跌停股池
 def get_stock_down_limit_em(date):
     """
     date: '20241011'
@@ -1316,8 +1318,8 @@ def get_stock_down_limit_em(date):
     df = ak.stock_zt_pool_dtgc_em(date=date)
     return df
 
-# 赚钱效应
-def get_market_activity_lg():
+# 116. 赚钱效应
+def get_market_activity():
     """
 
     :return:
@@ -1325,7 +1327,91 @@ def get_market_activity_lg():
     df = ak.stock_market_activity_legu()
     return df
 
+# 117. 创造新高的个股
+def get_stock_new_high(symbol):
+    """
+    symbol="创月新高"; choice of {"创月新高", "半年新高", "一年新高", "历史新高"}
+    :return:
+    """
+    df = ak.stock_rank_cxg_ths(symbol=symbol)
+    return df
 
+# 118. 创造新低的个股
+def get_stock_new_low(symbol):
+    """
+    symbol="创月新低"; choice of {"创月新低", "半年新低", "一年新低", "历史新低"}
+    :return:
+    """
+    df = ak.stock_rank_cxd_ths(symbol=symbol)
+    return df
+
+
+# 119. 连续上涨
+def get_stock_continue_up():
+    """
+    :return:
+    """
+    df = ak.stock_rank_lxsz_ths()
+    return df
+
+# 120. 连续下跌
+def get_stock_continue_down():
+    """
+    :return:
+    """
+    df = ak.stock_rank_lxxd_ths()
+    return df
+
+# 121. 持续放量
+def get_stock_continue_up_volume():
+    """
+    :return:
+    """
+    df = ak.stock_rank_cxfl_ths()
+    return df
+
+# 122. 持续缩量
+def get_stock_continue_down_volume():
+    """
+    :return:
+    """
+    df = ak.stock_rank_cxsl_ths()
+    return df
+
+# 123. 向上突破
+def get_stock_break_up(symbol):
+    """
+    symbol="500日均线"; choice of {"5日均线", "10日均线", "20日均线", "30日均线", "60日均线", "90日均线", "250日均线", "500日均线"}
+    :return:
+    """
+    df = ak.stock_rank_xstp_ths(symbol=symbol)
+    return df
+
+# 124. 向下突破
+def get_stock_break_down(symbol):
+    """
+    symbol="500日均线"; choice of {"5日均线", "10日均线", "20日均线", "30日均线", "60日均线", "90日均线", "250日均线", "500日均线"}
+    :return:
+    """
+    df = ak.stock_rank_xxtp_ths(symbol=symbol)
+    return df
+
+# 125. 量价齐升
+def get_stock_up_pv():
+    """
+
+    :return:
+    """
+    df = ak.stock_rank_ljqs_ths()
+    return df
+
+# 126. 量价齐跌
+def get_stock_down_pv():
+    """
+    :return:
+    """
+    df = ak.stock_rank_ljqd_ths()
+    return df
 
 
 
