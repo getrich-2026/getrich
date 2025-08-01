@@ -460,7 +460,8 @@ def get_futures_stock(symbol):
     df = ak.futures_spot_stock(symbol=symbol)
     return df
 
-# 30. 获取COMEX库存数据
+# 30. 获取COMEX黄金和白银的库存数据
+def get_futures_
 
 
 
