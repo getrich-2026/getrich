@@ -75,15 +75,19 @@ def get_futures_position_rank_table(exchangename, date):
     """
     if exchangename=='郑商所':
         df = ak.get_czce_rank_table(date=date)
+        return df
     elif exchangename=='大商所':
         df = ak.futures_dce_position_rank(date=date)
+        return df
     elif exchangename=='上期所':
         df = ak.get_shfe_rank_table(date=date)
+        return df
     elif exchangename=='中金所':
         df = ak.get_cffex_rank_table(date=date)
+        return df
     elif exchangename=='广期所':
         df = ak.futures_gfex_position_rank(date=date)
-    return df
+        return df
 
 # 7. 获取某个交易日所有品种的仓单日报
 def get_futures_warrant_table(exchangename, date):
@@ -93,13 +97,16 @@ def get_futures_warrant_table(exchangename, date):
     """
     if exchangename=='郑商所':
         df = ak.futures_czce_warehouse_receipt(date=date)
+        return df
     elif exchangename=='大商所':
         df = ak.futures_dce_warehouse_receipt(date=date)
+        return df
     elif exchangename=='上期所':
         df = ak.futures_shfe_warehouse_receipt(date=date)
+        return df
     elif exchangename=='广期所':
         df = ak.futures_gfex_warehouse_receipt(date=date)
-    return df
+        return df
 
 # 8. 指定日期，指定交易所在交易的期货合约信息
 def get_futures_contract_info(exchangename, date=None):
@@ -109,17 +116,22 @@ def get_futures_contract_info(exchangename, date=None):
     """
     if exchangename=='郑商所':
         df = ak.futures_contract_info_czce(date=date)
+        return df
     elif exchangename=='大商所':
         df = ak.futures_contract_info_dce()
+        return df
     elif exchangename=='上期所':
         df = ak.futures_contract_info_shfe(date=date)
+        return df
     elif exchangename=='中金所':
         df = ak.futures_contract_info_cffex(date=date)
+        return df
     elif exchangename=='广期所':
         df = ak.futures_contract_info_gfex()
+        return df
     elif exchangename=='上海能源中心':
         df = ak.futures_contract_info_ine(date=date)
-    return df
+        return df
 
 # 9. 获取内盘期货的实时行情
 def get_futures_realtime(subscribe_str, market, adjust):
@@ -461,7 +473,63 @@ def get_futures_stock(symbol):
     return df
 
 # 30. 获取COMEX黄金和白银的库存数据
-def get_futures_
+def get_futures_commission_comex(symbol):
+    """
+    symbol="黄金"; choice of {"黄金", "白银"}
+    :param symbol:
+    :return:
+    """
+    df = ak.futures_comex_inventory(symbol=symbol)
+    return df
+
+
+# 31. 玄田数据-生猪价格
+def get_futures_pig_price(symbol):
+    """
+
+    :param symbol:symbol="外三元"; choice of {"外三元", "内三元", "土杂猪"}
+    :return:
+    """
+    df = ak.futures_hog_core(symbol=symbol)
+    return df
+
+# 32. 获取成本维度-玉米
+def get_futures_pig_cost_dimension(symbol):
+    """
+    symbol="玉米"; choice of {"玉米", "豆粕", "二元母猪价格", "仔猪价格"}
+    :param symbol:
+    :return:
+    """
+    df = ak.futures_hog_cost(symbol=symbol)
+    return df
+
+# 33. 供应维度
+def get_futures_pig_supply_dimension(symbol):
+    """
+    symbol="玉米"; choice of {"猪肉批发价", "储备冻猪肉", "饲料原料数据", "白条肉", "生猪产能", "育肥猪", "肉类价格指数", "猪粮比价"}
+    :param symbol:
+    :return:
+    """
+    df = ak.futures_hog_supply(symbol=symbol)
+    return df
+
+
+
+# 34. 生猪市场价格指数
+def get_futures_pig_price_index():
+    """
+    日期	object	-
+    指数	float64	-
+    4个月均线	float64	-
+    6个月均线	float64	-
+    12个月均线	float64	-
+    预售均价	float64	注意单位: 元/公斤
+    成交均价	float64	注意单位: 元/公斤
+    成交均重	int64	注意单位: kg
+    """
+    df = ak.index_hog_spot_price()
+    return df
+
 
 
 
