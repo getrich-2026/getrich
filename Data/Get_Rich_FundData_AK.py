@@ -30,7 +30,7 @@ def get_etf_realtime_ths(date):
     """
     获取ETF基金实时行情-同花顺
     """
-    df = ak.fund_etf_spot_ths(date=date )
+    df = ak.fund_etf_spot_ths(date=date)
     return df
 
 
@@ -99,8 +99,34 @@ def get_fund_open_rank(symbol):
     df = ak.fund_open_fund_rank_em()
     return df
 
+# 9. 获得基金持仓
+def get_fund_open_hold_portfolio(symbol, date):
+    """
+    获得基金持仓
+    symbol	str	symbol="000001"; 基金代码, 可以通过调用 get_fund_name_em() 接口获取
+    date	str	date="2024"; 指定年份
+    """
+    df = ak.fund_portfolio_hold_em(symbol=symbol, date=date)
+    return df
 
-if __name__ == '__main__':
+
+# 10. 获得基金债券持仓
+def get_fund_open_bond_hold_portfolio(symbol, date):
+    """
+    获得基金债券持仓
+    symbol	str	symbol="000001"; 基金代码, 可以通过调用 get_fund_name_em() 接口获取
+    date	str	date="2024"; 指定年份
+    """
+    df = ak.fund_portfolio_bond_hold_em(symbol=symbol, date=date)
+    return df
+
+
+
+
+
+
+
+# if __name__ == '__main__':
     # print(get_fund_name_em())
     # print(get_etf_realtime_em())
     # print(get_etf_realtime_ths(date='2021-08-01'))
