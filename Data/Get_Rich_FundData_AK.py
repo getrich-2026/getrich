@@ -120,8 +120,26 @@ def get_fund_open_bond_hold_portfolio(symbol, date):
     df = ak.fund_portfolio_bond_hold_em(symbol=symbol, date=date)
     return df
 
+# 11. 获得基金行业配置
+def get_fund_open_industry_config(symbol, date):
+    """
+    获得基金行业配置
+    symbol	str	symbol="000001"; 基金代码, 可以通过调用 get_fund_name_em() 接口获取
+    date	str	date="2023"; 指定年份
+    """
+    df = ak.fund_portfolio_industry_allocation_em(symbol=symbol, date=date)
+    return df
 
-
+# 12. 获得全市场公募基金报告的配置内容
+def get_fund_open_report_config(date=None):
+    """
+    获得公募基金报告的配置内容
+    date	str	date="20210630"; choice of {"XXXX0331", "XXXX0630", "XXXX0930", "XXXX1231"}, 其中 XXXX 为年份
+    """
+    df_stock = ak.fund_report_stock_cninfo(date=date) # 股票配置
+    df_industry = ak.fund_report_industry_allocation_cninfo(date=date) # 行业配置
+    df_asset = ak.fund_report_asset_allocation_cninfo() # 资产配置
+    return df_stock, df_industry, df_asset
 
 
 
