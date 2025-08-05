@@ -141,6 +141,8 @@ def get_fund_open_report_config(date=None):
     df_asset = ak.fund_report_asset_allocation_cninfo() # 资产配置
     return df_stock, df_industry, df_asset
 
+#
+
 
 
 
