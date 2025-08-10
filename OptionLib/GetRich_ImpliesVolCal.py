@@ -1,5 +1,7 @@
 """
 计算期权隐含波动率
+Author: QiuZihua
+Date: 2025-08-10
 """
 
 import numpy as np
