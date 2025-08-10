@@ -139,11 +139,11 @@ class Option(ABC):
         """
         low, high = 0.001, max_volatility  # 波动率搜索范围
 
-        # 检查区间是否有效[6](@ref)
+        # 检查区间是否有效
         f_low = self.price(low) - market_price
         f_high = self.price(high) - market_price
 
-        # 处理深度实值/虚值期权的符号问题[6](@ref)
+        # 处理深度实值/虚值期权的符号问题
         if f_low * f_high > 0:
             # 尝试扩展区间
             for i in range(10):
@@ -195,7 +195,7 @@ class Option(ABC):
             p = self.price(sigma)
             v = self.vega(sigma)
 
-            # 处理深度实值/虚值期权的Vega接近零问题[6,8](@ref)
+            # 处理深度实值/虚值期权的Vega接近零问题
             if abs(v) < min_vega:
                 # 尝试切换方法或调整初始值
                 if sigma < 0.1:
@@ -258,7 +258,7 @@ class Option(ABC):
             flag = 'c' if self.option_type == 'call' else 'p'
             return py_iv(market_price, self.S, self.K, self.T, self.r, flag)
         except Exception as e:
-            # 处理深度实值/虚值期权的计算失败问题[6](@ref)
+            # 处理深度实值/虚值期权的计算失败问题
             warnings.warn(f"py_vollib无法计算隐含波动率: {str(e)}")
             return np.nan
 
