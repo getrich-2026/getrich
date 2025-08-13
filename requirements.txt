@@ -6,3 +6,8 @@ scikit-learn
 statsmodels
 matplotlib
 seaborn
+py_vollib
+clickhouse-connect
+clickhouse-driver
+grpcio 
+grpcio-tools
