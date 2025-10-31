@@ -1,0 +1,24 @@
+# --- 数据库配置 (Database Configuration) ---
+database:
+  host : 192.168.1.232
+  port : 8123
+  user : default
+  password : getrich
+  dbname : default
+  timeout : 30
+
+# --- 日K线数据目录 (Day Bar Data Directory) ---
+day_bar:
+  data_dir : "E://BaiduNetdiskDownload//data//bar//bar//day_bar"
+  file_pattern : "day_bar_{year}.hdat"  # 例如 day_bar_2013.hdat
+  batch_size : 50000
+  timezone : "Asia/Shanghai"
+
+min_bar:
+  data_dir : "E://BaiduNetdiskDownload//data//bar//bar//min_bar"
+  file_pattern : "min_bar_{date}.hdat"  # 例如 min_bar_20130102.hdat
+  batch_size : 50000
+  timezone : "Asia/Shanghai"
+
+checkpoint:
+  duckdb_path : "E://project//data//etl.parquet"

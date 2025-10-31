@@ -426,7 +426,8 @@ disable=raw-checker-failed,
         missing-module-docstring,
         missing-function-docstring,
         import-outside-toplevel,
-        multiple-statements
+        multiple-statements,
+        broad-exception-caught
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
