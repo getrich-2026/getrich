@@ -1,5 +1,9 @@
-from .database import ClickHouseDB
+from .database import ClickHouseClient, DEFAULT_DB_CONFIG
+from .pool import ClickHouseConnectionPool
+
 
 __all__ = [
-    'ClickHouseDB',
+    'ClickHouseClient',
+    'ClickHouseConnectionPool',
+    'DEFAULT_DB_CONFIG',
 ]

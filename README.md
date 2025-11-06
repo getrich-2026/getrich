@@ -1,3 +1,61 @@
+# getrich 量化交易系统
+
+getrich 是一个专业的量化交易系统，采用模块化架构设计，支持多资产类别的数据采集、策略开发、风险管理和交易执行。
+
+## 🚀 快速开始
+
+- **新用户：** [5分钟快速上手](docs/guides/quick-start.md)
+- **安装指南：** [详细安装说明](INSTALL.md)
+- **系统架构：** [架构概览](docs/architecture/system-overview.md)
+
+## 📚 文档导航
+
+### 📖 用户指南
+- [快速开始](docs/guides/quick-start.md) - 5分钟上手指南
+- [ClickHouse 使用](docs/clickhouse/quickstart.md) - 数据库操作入门
+- [连接池指南](docs/clickhouse/pool-usage.md) - 高性能并发访问
+- [数据采集](docs/guides/data-collection.md) - 行情数据获取
+- [策略开发](docs/guides/strategy-development.md) - 交易策略编写
+- [期权分析](docs/guides/option-analysis.md) - 期权定价和风险分析
+
+### 🏗️ 开发者文档
+- [系统架构](docs/architecture/system-overview.md) - 整体设计和模块关系
+- [API 参考](docs/api/clickhouse.md) - 接口文档
+- [开发环境搭建](docs/guides/development-setup.md) - 开发环境配置
+- [测试指南](docs/guides/testing.md) - 单元测试和集成测试
+
+### 📋 完整文档
+- **[文档首页](docs/README.md)** - 完整的文档导航和分类
+
+## 🎯 核心特性
+
+### 📊 多资产数据支持
+- **股票数据：** A股、港股、美股行情和基本面数据
+- **期货数据：** 商品期货、金融期货的实时和历史数据
+- **期权数据：** 期权链、希腊值、隐含波动率
+- **宏观数据：** 经济指标、利率、汇率
+- **基金数据：** 公募基金、ETF 净值和持仓
+
+### 🏗️ 模块化架构
+- **数据模块：** 多源数据采集、清洗、存储
+- **指标模块：** 技术指标、期权希腊值实时计算
+- **策略模块：** 策略开发框架、信号生成
+- **交易模块：** 订单管理、执行监控
+- **风控模块：** 实时风险监控、持仓管理
+- **期权模块：** 期权定价、组合分析、情景测试
+
+### ⚡ 高性能数据存储
+- **ClickHouse：** 列式数据库，支持亿级数据实时查询
+- **连接池：** 多线程安全的数据库连接管理
+- **分区策略：** 按时间和品种优化的数据分区
+- **压缩算法：** 高效的数据压缩，节省存储空间
+
+### 🔧 现代化技术栈
+- **Python 3.8+：** 现代 Python 特性支持
+- **gRPC：** 高性能模块间通信
+- **异步编程：** asyncio 支持并发处理
+- **类型提示：** 完整的类型注解，IDE 友好
+
 ## 模块化系统设计
 
 ### 数据模块（DataManger）

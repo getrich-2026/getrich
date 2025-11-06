@@ -92,7 +92,7 @@ def read_day_bar_from_local(
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]: 包含日线数据和代码信息的两个 DataFrame。
     """
-    db = hdb.DB(db_path)  # type: ignore
+    db = hdb.DB(db_path)
     file_path = f"day_bar_{year}"
     hdb_file = db.open_file(file_path, mode="r")
     symbols = symbols if symbols is not None else ["*"]  # ["*"]，表示所有代码。
@@ -124,9 +124,6 @@ def _read_codeinfo_from_hdb_file(hdb_file) -> pd.DataFrame:
                     else x
                 )
         # 添加 symbol
-        # codeinfo_df["symbol"] = [
-        #     s.decode("utf-8") for s in hdb_file.codetable.symbols
-        # ]
         codeinfo_df["symbol"] = hdb_file.codetable.symbols
     return codeinfo_df
 
@@ -145,7 +142,7 @@ def read_min_bar_from_local(
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]: 包含分钟线数据和代码信息的两个 DataFrame。
     """
-    db = hdb.DB(db_path)  # type: ignore
+    db = hdb.DB(db_path)
     hdb_file = db.open_file(file_path, mode="r")
     symbols = symbols if symbols is not None else ["*"]
 
@@ -167,14 +164,14 @@ if __name__ == "__main__":
     HDB_DATA_PATH = "E:\\BaiduNetdiskDownload\\data\\bar\\bar\\min_bar\\2025"
     #
     # 1. 读取 2025 年所有 A 股的日 K 线数据
-    log.info("正在读取 2025 年日 K 线数据...")
+    log.info("Reading daily K-line data for 2025...")
     min_bar_df, codeinfo_df = read_min_bar_from_local(
         db_path=HDB_DATA_PATH, file_path="min_bar_20250919", symbols=["SH.*", "SZ.*"]
     )
 
     if not min_bar_df.empty:
-        log.info("\n--- 日 K 线数据读取成功！ ---")
-        log.info("数据结构：")
+        log.info("\n--- Daily K-line data read successfully! ---")
+        log.info("Data structure：")
         # print(day_bar_2025_df.head())
         # print(f"\n总计读取 {len(day_bar_2025_df)} 条日 K 线数据。")
         print(min_bar_df.info())
