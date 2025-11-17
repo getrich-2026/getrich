@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "getrich"
+version = "0.1.2"
+description = "量化交易系统 - 模块化设计的期货/期权交易平台"
+readme = "README.md"
+authors = [
+    {name = "GetRich Team", email = "linnan@nebulastar.com.cn"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+keywords = ["quantitative trading", "futures", "options", "financial", "trading system"]
+
+# 项目依赖
+dependencies = [
+    "clickhouse-connect,
+    "pandas",
+    "numpy",
+    "pyyaml",
+    "akshare",
+    "scipy",
+    "matplotlib",
+    "seaborn",
+    "tqdm",
+    "python-dateutil",
+    "rich",
+]
+
+[project.optional-dependencies]
+# 开发依赖
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=0.950",
+    "ipython>=8.0.0",
+    "jupyter>=1.0.0",
+]
+
+
+[tool.setuptools]
+zip-safe = false
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["getrich*"]
+exclude = ["tests*", "reference*", "docs*"]
+
+[tool.setuptools.package-data]
+"getrich.config" = ["*.yml"]
+"getrich.data.clickhouse.table" = ["*.sql"]

@@ -9,5 +9,5 @@ matplotlib
 seaborn
 py_vollib
 clickhouse-connect
-grpcio 
-grpcio-tools
+lntools
+pyyaml

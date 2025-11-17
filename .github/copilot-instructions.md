@@ -6,7 +6,7 @@
 - 数据存储采用 ClickHouse，针对高频金融数据设计多张表（Tick、分钟线、日线、期权希腊值等），分区与主键策略详见 README。
 
 ## 关键目录与文件
-- `Data/`：行情与金融数据采集、预处理，按品种分模块（如 GetRich_StockData_AK.py、GetRich_FuturesData_AK.py）。
+- `data/`：行情与金融数据采集、预处理，按品种分模块（如 GetRich_StockData_AK.py、GetRich_FuturesData_AK.py）。
 - `OptionLib/`：期权相关分析、定价、风控与可视化工具（如 GetRich_ImpliesVolCal.py、GetRich_StraAnalysis_pricer.py）。
 - `README.md`：详细描述架构、数据库设计、gRPC接口示例。
 

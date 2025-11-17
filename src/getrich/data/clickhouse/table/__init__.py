@@ -6,12 +6,16 @@ ClickHouse 表操作模块
 主要类：
 - ClickHouseTable: 表操作基类
 - MinBarTable: 分钟线数据表
+- DayBarTable: 日线数据表
+- CodeInfoTable: 合约信息表
 """
 
-from Data.clickhouse.table.base import ClickHouseTable
-from Data.clickhouse.table.bar import MinBarTable
+from .base import ClickHouseTable
+from .bar import MinBarTable, DayBarTable, CodeInfoTable
 
 __all__ = [
     'ClickHouseTable',
     'MinBarTable',
+    'DayBarTable',
+    'CodeInfoTable',
 ]

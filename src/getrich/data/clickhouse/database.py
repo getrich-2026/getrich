@@ -7,33 +7,34 @@ import pandas as pd
 
 from lntools import Logger, read_pkg_yaml
 
-log = Logger(module_name="ClickhouseDB")
+log = Logger(module_name="ClickhouseClient")
+
+# pyright: reportOptionalMemberAccess=false
 
 
 def load_db_config():
     """
     从 config.yml 文件加载数据库配置。
     """
+    # 方法 1: 使用 pkg_resources（打包后）
     try:
-        config = read_pkg_yaml("config.yml", package="Data")
-
-        db_settings = config.get('default_database', {})
-        log.info("Loaded database configuration from config.yml")
-        return db_settings
-    except (FileNotFoundError) as e:
-        log.warning(f"Could not load database config from config.yml: {e}. Using default values.")
+        config = read_pkg_yaml('config/config.yml', package='getrich')
+        if config:
+            return config
+    except Exception as e:
+        log.warning(f"Failed to load config from package resources: {e}")
         return {}
 
 
 # 在模块加载时读取配置
-DEFAULT_DB_CONFIG = load_db_config()
+DEFAULT_DB_CONFIG = load_db_config().get('default_database', {})
 
 # 从配置中获取默认值,如果配置不存在则使用硬编码的备用值
 DEFAULT_HOST = DEFAULT_DB_CONFIG.get('host', '192.168.1.232')
 DEFAULT_PORT = DEFAULT_DB_CONFIG.get('port', 8123)
 DEFAULT_USER = DEFAULT_DB_CONFIG.get('user', 'default')
 DEFAULT_PASSWORD = DEFAULT_DB_CONFIG.get('password', 'getrich')
-DEFAULT_DBNAME = DEFAULT_DB_CONFIG.get('dbname', 'default')
+DEFAULT_DATABASE = DEFAULT_DB_CONFIG.get('database', 'default')
 
 
 class ClickHouseClient:
@@ -60,7 +61,7 @@ class ClickHouseClient:
                  port: int = DEFAULT_PORT,
                  user: str = DEFAULT_USER,
                  password: str = DEFAULT_PASSWORD,
-                 database: str = DEFAULT_DBNAME):
+                 database: str = DEFAULT_DATABASE):
         """
         初始化 ClickHouse 客户端。
 
@@ -613,7 +614,3 @@ class ClickHouseClient:
             f"connected={self.is_connected()}"
             ")"
         )
-
-
-# 向后兼容的别名
-ClickHouseDB = ClickHouseClient

@@ -7,9 +7,9 @@ import time
 import threading
 from typing import List
 import pandas as pd
-from Data.clickhouse.database import ClickHouseClient
-from Data.clickhouse.pool import ClickHouseConnectionPool
-from Data.clickhouse.table.bar import MinBarTable
+from .database import ClickHouseClient
+from .pool import ClickHouseConnectionPool
+from .table.bar import MinBarTable
 
 
 def example_1_simple():

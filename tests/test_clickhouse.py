@@ -8,7 +8,7 @@ import sys
 import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
-from Data.clickhouse.database import ClickHouseDB
+from Data.clickhouse.database import ClickHouseClient
 
 from lntools import Logger
 

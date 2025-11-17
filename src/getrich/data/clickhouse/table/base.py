@@ -22,6 +22,10 @@ if TYPE_CHECKING:
     from ..pool import ClickHouseConnectionPool
 
 
+# pyright: reportOptionalMemberAccess=false
+# pyright: reportReturnType=false
+
+
 class ClickHouseTable(ABC):
     """
     ClickHouse 表操作基类。
