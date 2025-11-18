@@ -41,8 +41,8 @@ if __name__ == '__main__':
     with pool.get_connection() as conn:
         parquet_importer_job = DataImportJob(hdb_base_path=HDB_PATH, pool=pool, max_workers=5)
         parquet_importer_job.run_parquet_import(
-            start_date=20251114,
-            end_date=20251114
+            start_date=20251117,
+            end_date=20251117
         )
     # from getrich.data.clickhouse import DayBarTable
     # day_bar_table = DayBarTable(pool=pool)

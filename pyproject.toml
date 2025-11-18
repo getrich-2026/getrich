@@ -28,7 +28,7 @@ keywords = ["quantitative trading", "futures", "options", "financial", "trading 
 
 # 项目依赖
 dependencies = [
-    "clickhouse-connect,
+    "clickhouse-connect",
     "pandas",
     "numpy",
     "pyyaml",
