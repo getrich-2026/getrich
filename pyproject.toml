@@ -68,7 +68,7 @@ exclude = ["tests*", "reference*", "docs*"]
 
 [tool.setuptools.package-data]
 "getrich.config" = ["*.yml"]
-"getrich.data.clickhouse.table" = ["*.sql"]
+"getrich.apps.data.table" = ["*.sql"]
 
 [tool.ruff]
 # 目标 Python 版本

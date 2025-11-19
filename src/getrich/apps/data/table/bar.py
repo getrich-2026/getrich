@@ -9,8 +9,8 @@ import pandas as pd
 from .base import ClickHouseTable
 
 if TYPE_CHECKING:  # 避免循环导入问题
-    from ..database import ClickHouseClient
-    from ..pool import ClickHouseConnectionPool
+    from getrich.libs.db.database import ClickHouseClient
+    from getrich.libs.db.pool import ClickHouseConnectionPool
 
 
 class MinBarTable(ClickHouseTable):

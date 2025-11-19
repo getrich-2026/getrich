@@ -1,4 +1,4 @@
-from getrich.data import ClickHouseConnectionPool, DEFAULT_DB_CONFIG, DataImportJob
+from getrich import ClickHouseConnectionPool, DEFAULT_DB_CONFIG, DataImportJob
 
 
 if __name__ == '__main__':
@@ -44,10 +44,10 @@ if __name__ == '__main__':
             start_date=20251117,
             end_date=20251117
         )
-    # from getrich.data.clickhouse import DayBarTable
+    # from getrich.apps.data.table import DayBarTable
     # day_bar_table = DayBarTable(pool=pool)
     # day_bar_table.drop()
 
-    # from getrich.data.clickhouse import MinBarTable
+    # from getrich.apps.data.table import MinBarTable
     # min_bar_table = MinBarTable(pool=pool)
     # min_bar_table.drop()

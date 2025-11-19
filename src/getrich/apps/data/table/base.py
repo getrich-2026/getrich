@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 from lntools import Logger
 
-from ..database import ClickHouseClient
+from getrich.libs.db.database import ClickHouseClient
 
 if TYPE_CHECKING:
-    from ..pool import ClickHouseConnectionPool
+    from getrich.libs.db.pool import ClickHouseConnectionPool
 
 
 # pyright: reportOptionalMemberAccess=false
