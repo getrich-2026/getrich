@@ -1,120 +1,257 @@
-# getrich 量化交易系统
+# GetRich: 零售级量化信号与交易平台 (MVP 架构设计)
 
-getrich 是一个专业的量化交易系统，采用模块化架构设计，支持多资产类别的数据采集、策略开发、风险管理和交易执行。
+版本: v1.1 (Adapted for Remote Data Center)
+维护者: Get Rich Team
+更新日期: 2025-11-19
 
-## 🚀 快速开始
+## 1. 项目愿景
+"Signal-as-a-Service" (信号即服务)。
+面向散户提供极其简化的量化投资建议（涨/跌/观望），底层由专业的基金经理策略驱动。不仅展示历史回测，更强调实时的盘中信号推送与未来的自动化交易执行。
 
-- **新用户：** [5分钟快速上手](docs/guides/quick-start.md)
-- **安装指南：** [详细安装说明](INSTALL.md)
-- **系统架构：** [架构概览](docs/architecture/system-overview.md)
+## 2. 核心架构 (The "Slim" Architecture)
 
-## 📚 文档导航
+本项目采用 混合部署架构：核心数据仓库 (ClickHouse) 部署在共享的 Ubuntu 虚拟机上，业务服务 (Data/Strategy/Web) 既可以在本地开发运行，也可以在服务器通过 Docker 容器化部署。
 
-### 📖 用户指南
-- [快速开始](docs/guides/quick-start.md) - 5分钟上手指南
-- [ClickHouse 使用](docs/clickhouse/quickstart.md) - 数据库操作入门
-- [连接池指南](docs/clickhouse/pool-usage.md) - 高性能并发访问
-- [数据采集](docs/guides/data-collection.md) - 行情数据获取
-- [策略开发](docs/guides/strategy-development.md) - 交易策略编写
-- [期权分析](docs/guides/option-analysis.md) - 期权定价和风险分析
+### 2.1 系统拓扑
+```graph TD
+    % 基础设施 (VM)
+    subgraph "Ubuntu VM (Shared Infra)"
+        CH[(ClickHouse Server\nPort: 8123)]
+    end
 
-### 🏗️ 开发者文档
-- [系统架构](docs/architecture/system-overview.md) - 整体设计和模块关系
-- [API 参考](docs/api/clickhouse.md) - 接口文档
-- [开发环境搭建](docs/guides/development-setup.md) - 开发环境配置
-- [测试指南](docs/guides/testing.md) - 单元测试和集成测试
+    % 业务容器群
+    subgraph "Docker Compose Group"
+        DataSvc(getrich-data) -->|Batch Write| CH
+        StratSvc(getrich-strategy) -->|Read/Write| CH
+        Gateway(getrich-gateway) -->|Query| CH
+        
+        Redis[(Redis Cache\nPub/Sub)]
+        StratSvc -->|Pub| Redis
+        Redis -->|Sub| Gateway
+    end
 
-### 📋 完整文档
-- **[文档首页](docs/README.md)** - 完整的文档导航和分类
-
-## 🎯 核心特性
-
-### 📊 多资产数据支持
-- **股票数据：** A股、港股、美股行情和基本面数据
-- **期货数据：** 商品期货、金融期货的实时和历史数据
-- **期权数据：** 期权链、希腊值、隐含波动率
-- **宏观数据：** 经济指标、利率、汇率
-- **基金数据：** 公募基金、ETF 净值和持仓
-
-### 🏗️ 模块化架构
-- **数据模块：** 多源数据采集、清洗、存储
-- **指标模块：** 技术指标、期权希腊值实时计算
-- **策略模块：** 策略开发框架、信号生成
-- **交易模块：** 订单管理、执行监控
-- **风控模块：** 实时风险监控、持仓管理
-- **期权模块：** 期权定价、组合分析、情景测试
-
-### ⚡ 高性能数据存储
-- **ClickHouse：** 列式数据库，支持亿级数据实时查询
-- **连接池：** 多线程安全的数据库连接管理
-- **分区策略：** 按时间和品种优化的数据分区
-- **压缩算法：** 高效的数据压缩，节省存储空间
-
-### 🔧 现代化技术栈
-- **Python 3.8+：** 现代 Python 特性支持
-- **gRPC：** 高性能模块间通信
-- **异步编程：** asyncio 支持并发处理
-- **类型提示：** 完整的类型注解，IDE 友好
-
-## 模块化系统设计
-
-### 数据模块（DataManger）
-
-一个完整的量化交易系统一般由多个模块协同工作，包括数据、策略、交易执行、风控等核心部分。本方案采用模块化架构，将系统划分为以下模块，并通过 gRPC 实现跨进程的高效通信：
-
-* **数据模块**：负责实时行情数据的采集与预处理，包括期货/期权的Tick行情、K线等。数据模块将行情写入数据库供历史查询，并通过gRPC流式推送给订阅的模块
-* **指标模块**：根据需要订阅行情数据，实时计算技术指标和期权希腊值等高级指标，并提供给策略模块调用。通过将指标计算从策略中分离，可提高系统的复用性和计算效率。
-* **策略模块**：实现各类交易策略逻辑（如波动率套利、价差策略、趋势跟踪等），订阅行情和指标数据，生成交易信号。策略模块对接收的行情按照预设模型进行判断，一旦满足条件就产生买卖信号。策略模块可以同时管理多条策略实例。
-* **交易模块**：接收来自策略的交易指令（下单、撤单等），通过券商交易接口执行实际交易。交易模块将策略信号转换为具体订单并发送到交易所。同时负责订单状态跟踪和成交回报处理，确保指令准确执行。
-* **风控模块**：独立监控账户风险和策略交易行为。对策略发出的每一笔订单进行检查（如仓位占用、资金使用率等），可在指令下达前后实施风控规则。若发现风险超限，风控模块有权阻止或调整交易指令。风控模块还持续监控持仓和资金状况，提供风险报表。
-
-上述架构中，各模块间的依赖与通信关系如下：数据模块向指标模块和策略模块广播行情（如行情服务器推送最新Tick）；指标模块计算结果后，通过RPC接口供策略模块按需拉取；策略模块在生成信号后，先经风控模块检查，再调用交易模块下单；交易模块执行订单后，将成交结果反馈给策略和风控模块，并记录至数据库。
-
-### ClickHouse 多类型数据存储方案
-
-选型原因： 为支撑高频金融数据的存储与查询，我们采用 ClickHouse 作为主数据库。传统方案如MySQL或MongoDB在海量行情数据下读写效率瓶颈明显，不适合盘中实时分析需求。ClickHouse是列式存储的实时分析数据库，擅长处理高频时序数据，具备高压缩比和快速聚合查询能力，已被广泛应用于存储股票/期货的Tick级数据和分钟/日线行情。它支持每秒百万行插入，查询延迟亚秒级，足以满足实盘信号监控对数据实时性的要求。
-
-**库表设计**： 根据数据频度和用途不同，在ClickHouse中设计了多张表分别存储：Tick级行情、分钟线、日线行情，以及期权希腊值等。例如：
-
-* tick_data 表：存储Tick级别行情（逐笔/逐笔成交）。包含字段：合约代码、时间（DateTime64精度）、最新价、成交量等。使用 MergeTree 引擎，按照交易日对数据分区 (PARTITION BY date)，主键排序使用 (instrument, datetime)，确保按合约检索特定时间范围的数据时能够顺序读盘。分区采用按日划分策略，这样每个交易日的数据存放在单独分区，既便于管理又利于查询裁剪。需要注意避免分区过细导致分区数过多，一般控制在约1000个以下，以免查询打开过多小文件影响性能。
-* bar_1m 表：存储1分钟K线数据。包含字段：合约、分钟时间、开盘价、收盘价、最高、最低、成交量等。对分钟线数据，可按月或按日分区（根据总数据量决定），通常按月分区可以平衡分区数量和单分区数据量。排序键可采用 (instrument, date, time) 组合。
-* bar_1d 表：存储日线数据。由于日线数据量相对较小，可以按年份分区或不分区，主键按 (instrument, date) 排序。日线表也可额外存储一些衍生指标如年化波动率等，便于策略快速查询。
-* option_greeks 表：存储期权合约的希腊值（Delta、Gamma、Vega、Theta 等）和隐含波动率数据。根据计算频率，可能按日或按更高频度保存。如果希腊值逐日计算，则按日期分区存储每日期权全盘的希腊值快照；如需盘中更新，也可按小时分区。主键包含合约或标的、到期日、执行价和时间戳等，支持按合约或标的批量检索。针对期权，合约数量多且历史数据量大，可考虑对不同标的物分别建表或库，以减少单表数据量。
-
-**分区与索引策略**： 分表存储不同频率数据，使每张表的结构和索引针对各自访问模式优化。例如Tick表按照交易日期分区有助于查询近期数据时只扫描所需分区，大幅减少I/O；同时以合约代码作为排序键首段，使按合约过滤时能够快速定位数据块，提高查询效率。分钟线和日线表的数据量较小，可以采用稍粗的分区粒度（如月度），减少分区数量。所有表均采用MergeTree系列引擎，以获取列式存储和向量化执行带来的高速聚合查询性能。此外，在表设计时对低基数字段使用LowCardinality类型存储可进一步优化空间和查询速度（例如合约代码字符串字段）。通过以上设计，策略模块在实盘运行中可以利用SQL高效地从ClickHouse拉取所需的数据片段，即使在十亿级别行情数据上也能在亚秒级获得结果。
-
-**实时数据支撑**： 实盘监控时，策略对最新行情通常不需要每次都查询数据库，而是通过数据模块推送获取。然而，策略在生成信号时往往需要参考一段历史数据（如近期的移动均值、波动率）才能决策。这些历史窗口数据可以在每次行情推送时由策略模块调用ClickHouse查询获取。得益于列式存储和按时间分区，ClickHouse对最近几分钟或小时的数据查询非常迅速。例如，通过按合约过滤并限制时间范围，ClickHouse只读取相关分区的列文件即可完成计算。同时，我们可以预先在指标模块中定时批处理，将部分常用技术指标计算结果写入专门的指标表，从而减少策略实时计算负担。一旦数据库中计算出的指标更新，策略模块便可直接查询最新指标值。综上，ClickHouse 的高吞吐写入和实时分析能力保障了策略模块对多源行情和指标数据的实时读取需求。
-
-### 基于 gRPC 的低延迟模块通信
- 
-各模块之间采用 gRPC 远程过程调用进行通信，以实现低延迟和强类型化的接口调用。gRPC 基于 HTTP/2 协议，支持双向流式通信，并使用 Protocol Buffers 进行高效的二进制序列化。相比传统REST接口，gRPC能够显著降低通信延迟，提高吞吐量，非常适合实时行情推送和交易指令这类高频交换的场景。
-
-* 行情服务（MarketDataService）：数据模块实现该服务，用于向订阅者推送实时行情。定义为服务端流（Server Streaming）模式——客户端（策略或指标模块）发送订阅请求后，服务端持续通过流发送行情更新。
-```python
-service MarketDataService {
-    rpc SubscribeMarketData(SubscribeRequest) returns (stream MarketTick);
-}
-message SubscribeRequest { string instrument_id = 1; /*订阅合约*/ }
-message MarketTick { string instrument_id = 1; int64 timestamp = 2; double last_price = 3; ... }
-```
-* 指标服务（IndicatorService）：指标模块提供该服务，供策略模块按需请求技术指标或衍生数据。定义为普通一元RPC（Unary RPC）模式——客户端发送请求，服务端返回一次响应。
-```python
-service IndicatorService {
-    rpc GetIndicator(IndicatorRequest) returns (IndicatorResult);
-}
-message IndicatorRequest { string instrument_id = 1; string indicator_name = 2; int32 window = 3; }
-message IndicatorResult { string indicator_name = 1; double value = 2; int64 timestamp = 3; }
+    % 外部
+    External[外部行情源] --> DataSvc
+    Gateway <-->|WS/HTTP| Web[前端网页]
+    User((散户)) --> Web
 
 ```
-策略模块可请求如“某合约N周期移动均值”这样的指标值，指标模块计算后返回结果。由于指标服务通常一次请求返回一次结果，用一元RPC即可满足需求；对于需连续更新的指标（如实时波动率曲线），也可考虑服务端流模式持续推送更新值。
-* 交易服务（TradingService）：交易模块提供该服务，策略模块调用下单。定义为一元RPC——提交订单请求，返回提交结果或订单回执.
-```python
-service TradingService {
-    rpc SendOrder(OrderRequest) returns (OrderResponse);
-}
-message OrderRequest { string instrument_id = 1; string order_id = 2; double price = 3; int32 volume = 4; string direction = 5; /*买卖方向*/ ... }
-message OrderResponse { string order_id = 1; bool accepted = 2; string message = 3; }
 
+### 2.2 服务职责清单
+| 服务名称 | 目录路径 | 核心职责 | 技术栈 |
+| -------- | -------- | -------- | ------ |
+| Data Service | /apps/data | 负责清洗、落地行情数据。直接连接 VM 上的 ClickHouse。 | Python, Pandas, ClickHouse-Connect |
+| Strategy Service | /apps/strategy | 本地模式：连接远程 CH 回测；生产模式：Docker 运行实时计算。 | Python, NumPy, Talib |
+| Gateway Service | /apps/gateway | 统一后端网关。处理 REST API (历史查询) 和 WebSocket (实时推送)。 | Python FastAPI, Redis-py |
+| Web Frontend | /apps/web | 用户交互界面。K线展示、信号订阅、仪表盘。 | React, Next.js, Tailwind, Lightweight-Charts |
+
+## 2.3. 技术栈选型 (Tech Stack)
+- 编程语言: Python 3.11+ (后端/策略), TypeScript (前端)
+- 数据库 (OLAP): ClickHouse (核心数据仓库)
+- 缓存/消息总线: Redis (最新信号缓存 + Pub/Sub 消息队列)
+- Web 框架: FastAPI (高性能异步框架)
+- 前端库: React + TradingView Lightweight Charts
+- 部署: Docker Compose (单机编排) -> K8s (未来)
+
+## 3. 环境与配置 (Environment Setup) [重要]
+
+由于采用外部数据源模式，正确配置环境变量至关重要。
+
+### 3.1 配置文件 (.env)
+
+请复制 .env.example 为 .env（此文件不应提交 Git），并根据运行环境修改：
+```ini
+# .env 示例
+
+# --- 数据库配置 (核心) ---
+# [场景 A: 本地开发] 填写 Ubuntu 虚拟机的局域网 IP (例如 192.168.50.10)
+# [场景 B: 服务器部署] 填写宿主机 IP (例如 172.17.0.1) 或保持 VM 局域网 IP
+CLICKHOUSE_HOST=192.168.x.x
+CLICKHOUSE_PORT=8123
+CLICKHOUSE_USER=default
+CLICKHOUSE_PASSWORD=your_password
+CLICKHOUSE_DB=default
+
+# --- Redis 配置 ---
+# 生产环境下 Redis 运行在 Docker 容器名为 "redis" 的主机上
+# 本地开发若无 Docker Redis，可填 localhost
+REDIS_HOST=redis
+REDIS_PORT=6379
 ```
-策略模块根据信号构造订单请求，通过RPC传给交易模块。交易模块收到后先经风控检查（内部调用风控服务或模块方法），若通过则调用交易所API下单，然后将结果（是否接受、错误原因等）通过OrderResponse同步回复策略模块。交易模块也可以进一步通过回调流或独立的订阅渠道通知策略模块订单的成交明细。
-* 风控服务（RiskService）（可选）：风控模块也可封装为服务。例如提供 CheckOrder 方法供交易模块在下单前调用，以验证订单是否违反风控规则；或提供 GetRiskStatus 方法供管理端查询当前风险指标等。风控服务通常是同步调用，也可结合订阅获取风控事件。但在本系统中，风控模块主要以拦截器形式工作：交易模块在接到订单请求后内部通过RPC调用风控服务校验，或策略模块在发单前先行请求风控服务确认，再决定是否继续下单。
+
+### 3.2 开发工作流 (Workflow)
+
+1. Local Dev (个人电脑):
+
+    - 修改本地 .env 指向虚拟机 IP。
+    - 使用 Jupyter 或 Python 脚本连接远程 ClickHouse 进行策略研发。
+    - 禁止在本地长时间运行实时写入脚本（避免数据污染），仅做回测和代码调试。
+    - 代码 Commit & Push 到 Git。
+
+2. Server Deploy (Ubuntu VM):
+    - SSH 登入虚拟机。
+    - git pull 拉取最新代码。
+    - 修改服务器端的 .env (通常只需配置一次)。
+    - docker-compose up -d --build 重启服务。
+  
+## 4. 数据库设计 (ClickHouse Schema)
+所有涉及存储的代码必须遵循以下 Schema 定义。
+
+### 4.1 基础行情表 (Market Data)
+设计原则: 使用 MergeTree 引擎，按月/年分区，高压缩比，建表语句参考如下。
+
+```sql
+-- 1. 分钟线表 (Minute Bars)
+CREATE TABLE IF NOT EXISTS market_data.bars_1m (
+    symbol LowCardinality(String) COMMENT '标的代码, e.g. sh.000300',
+    dt Date CODEC(Delta, ZSTD),
+    ts DateTime CODEC(Delta, ZSTD),
+    open Float32,
+    high Float32,
+    low Float32,
+    close Float32,
+    volume Float64,
+    amount Float64,
+    updated_at DateTime DEFAULT now()
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(dt)
+ORDER BY (symbol, ts)
+SETTINGS index_granularity = 8192;
+
+-- 2. Tick 数据表 (带 TTL 自动清理)
+-- 重点: 定期删除旧Tick数据，节省空间
+CREATE TABLE IF NOT EXISTS market_data.ticks (
+    symbol LowCardinality(String),
+    ts DateTime64(3) CODEC(Delta, ZSTD),
+    price Float32,
+    volume Float64,
+    bid1_price Float32,
+    ask1_price Float32,
+    -- ... 其他盘口字段
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMMDD(ts) -- 按天分区
+ORDER BY (symbol, ts)
+TTL ts + INTERVAL 30 DAY DELETE -- 30天后自动过期
+SETTINGS ttl_only_drop_parts = 1; -- 强制整分区删除，零IO开销
+```
+
+### 4.2 信号与预测表 (Signals)
+```sql
+-- 3. 原始信号表 (用于回测分析和风控)
+CREATE TABLE IF NOT EXISTS strategy.signals_raw (
+    strategy_id String,
+    symbol LowCardinality(String),
+    ts DateTime,
+    signal_type Enum8('NONE'=0, 'BUY'=1, 'SELL'=2),
+    strength Float32 COMMENT '信号强度 0-1',
+    price_at_signal Float32,
+    metadata String COMMENT 'JSON格式的调试信息'
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(ts)
+ORDER BY (strategy_id, symbol, ts);
+
+-- 4. 前端展示表 (For UI Display)
+-- 经过聚合的、面向用户的建议
+CREATE TABLE IF NOT EXISTS app.ui_predictions (
+    symbol LowCardinality(String),
+    ts DateTime,
+    direction Enum8('NEUTRAL'=0, 'BULLISH'=1, 'BEARISH'=2),
+    confidence Float32 COMMENT '置信度',
+    primary_message String COMMENT '展示文案, e.g. 均线金叉，看涨',
+    valid_until DateTime COMMENT '有效期'
+) ENGINE = ReplacingMergeTree(ts) -- 保留最新版本
+PARTITION BY toYYYYMM(ts)
+ORDER BY (symbol, ts);
+```
+
+## 5. 策略开发接口 (Strategy Interface)
+AI 在生成策略代码时，必须继承基类，参考如下。
+```python
+# libs/strategy_core/base.py
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Dict, Any, Optional
+
+@dataclass
+class Signal:
+    symbol: str
+    timestamp: datetime
+    direction: str  # 'BUY', 'SELL', 'HOLD'
+    strength: float # 0.0 - 1.0
+    meta: Dict[str, Any] # 额外信息
+
+class BaseStrategy(ABC):
+    def __init__(self, config: Dict):
+        self.config = config
+        self.state = {}
+
+    @abstractmethod
+    async def on_bar(self, bar: Dict) -> Optional[Signal]:
+        """
+        分钟线/日线驱动。
+        bar: {'symbol': '...', 'close': 10.0, 'ts': ...}
+        """
+        pass
+
+    @abstractmethod
+    async def on_tick(self, tick: Dict) -> Optional[Signal]:
+        """
+        Tick 驱动（可选实现）。
+        """
+        pass
+
+    def load_history(self, lookback_days: int):
+        """从 ClickHouse 加载初始化所需的历史数据"""
+        pass
+```
+
+## 6. 项目目录结构 (Repo Structure)
+```
+getrich-monorepo/
+├── apps/
+│   ├── data/            # 数据入库服务 (Ingestion)
+│   ├── strategy/        # 策略引擎 (Strategy Engine)
+│   ├── gateway/         # 后端 API & WS (FastAPI)
+│   └── web/             # 前端 (React)
+├── libs/                # 共享库
+│   ├── db/              # ClickHouse 连接客户端 (含 env 读取)
+│   ├── messaging/       # Redis 封装
+│   └── strategy_core/   # 策略基类定义
+├── deploy/
+│   └── docker-compose.yml
+├── .env.example         # 环境变量模板
+├── pyproject.toml       # Python 依赖管理 (Poetry)
+└── README.md            # 本文档
+```
+
+## 7. 启动指南 (Quick Start)
+
+前置条件
+ - Server: Ubuntu 虚拟机已安装 ClickHouse，并配置 users.xml 允许 ```<ip>::/0``` 访问。
+ - Local: 已安装 Docker, Python 3.11+。
+
+步骤 1: 环境配置
+```
+# 复制配置模板
+cp .env.example .env
+
+# 编辑 .env (本地开发填 VM IP，服务器填宿主机 IP)
+vim .env 
+```
+
+步骤 2: 启动业务服务
+```
+# 启动 Redis 及业务容器 (Data/Strategy/Gateway/Web)
+# 注意：此命令不会启动 ClickHouse，因为假定它已在外部运行
+docker-compose up -d --build
+
+# 查看日志确保连接成功
+docker-compose logs -f strategy-service
+```
+
+步骤 3: 初始化数据库 (仅首次)
+```
+# 在本地或服务器运行一次即可
+python apps/data/scripts/init_db.py
+```
