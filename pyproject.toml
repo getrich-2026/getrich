@@ -11,14 +11,12 @@ authors = [
     {name = "GetRich Team", email = "linnan@nebulastar.com.cn"}
 ]
 license = {text = "MIT"}
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Financial and Insurance Industry",
     "Topic :: Office/Business :: Financial :: Investment",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "License :: OSI Approved :: MIT License",
@@ -28,17 +26,22 @@ keywords = ["quantitative trading", "futures", "options", "financial", "trading 
 
 # 项目依赖
 dependencies = [
-    "clickhouse-connect",
-    "pandas",
-    "numpy",
-    "pyyaml",
     "akshare",
-    "scipy",
+    "clickhouse-connect",
+    "lntools",
     "matplotlib",
-    "seaborn",
-    "tqdm",
+    "numpy",
+    "pandas",
+    "polars",
+    "py_vollib",
+    "pyyaml",
     "python-dateutil",
     "rich",
+    "scikit-learn",
+    "scipy",
+    "seaborn",
+    "statsmodels",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
@@ -66,3 +69,74 @@ exclude = ["tests*", "reference*", "docs*"]
 [tool.setuptools.package-data]
 "getrich.config" = ["*.yml"]
 "getrich.data.clickhouse.table" = ["*.sql"]
+
+[tool.ruff]
+# 目标 Python 版本
+target-version = "py310"
+# 行长限制：量化代码通常包含较长的数学表达式或 Polars 链式调用，100 比 88 更合理
+line-length = 100
+
+[tool.ruff.lint]
+# 启用规则集合：
+# E/F: 标准错误 (Flake8)
+# I: 自动导入排序 (Isort) - 极其重要
+# B: 潜在 Bug (Bugbear)
+# SIM: 代码简化 (Simplify) - 提升执行效率
+# NPY: NumPy 专项规则 - 防止数值计算错误
+# UP: 语法现代化 (Pyupgrade) - 保持代码使用最新特性
+# PL: Pylint 部分规则 (可选，较严格)
+select = ["E", "F", "I", "B", "SIM", "NPY", "UP"]
+
+# 忽略规则：
+# E501: 行长过长 (交给 Formatter 自动处理，Linter 不报错)
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+# 将这些库识别为“第三方库”，确保 import 排序正确
+known-third-party = ["numpy", "pandas", "polars", "numba", "clickhouse_connect"]
+
+[tool.ruff.lint.per-file-ignores]
+# 在 Notebook 中忽略某些规则 (如未使用的导入)
+"*.ipynb" = ["E402", "F401"]
+# 在 __init__.py 中允许未使用的导入 (通常用于暴露 API)
+"__init__.py" = ["F401"]
+
+[tool.pytest.ini_options]
+# 测试配置
+minversion = "7.0"
+# 自动发现测试文件
+testpaths = ["tests"]
+# 默认参数：
+# -v: 详细输出
+# -ra: 显示跳过/失败的原因
+# --durations=10: 列出最慢的 10 个测试 (用于性能优化)
+addopts = "-v -ra --durations=10"
+# 过滤器：将特定警告视为错误 (严格模式)
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+# 允许导入没有类型存根 (.pyi) 的第三方库 (如 tushare, CTP 接口)
+# 如果不加这行，导入这些库时 import 语句会报错
+reportMissingTypeStubs = false
+
+# 忽略因为库定义缺失导致的 "Unknown" 类型
+# 解决 Pandas/Polars/Numpy 链式调用产生大量 Unknown 的问题
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnknownParameterType = false
+reportUnknownMemberType = false
+reportUnknownLambdaType = false
+
+# 允许我写 "多余" 的 isinstance 检查
+# 在实盘中，我不信任上游数据，即使 Type Hint 说它是 int，我也要 check 它是 int
+reportUnnecessaryIsInstance = false
+
+# 排除目录
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.git"
+]

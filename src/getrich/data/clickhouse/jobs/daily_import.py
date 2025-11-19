@@ -1,20 +1,20 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 import pandas as pd
 from lntools import Logger
 
-from getrich.data.clickhouse.etl import (
-    read_min_bar_from_local,
-    read_day_bar_from_local,
-    read_day_bar_from_csv,
-    read_day_bar_from_parquet,
-)
-from getrich.data.clickhouse.table import MinBarTable, DayBarTable, CodeInfoTable
 from getrich.data.clickhouse.database import ClickHouseClient
+from getrich.data.clickhouse.etl import (
+    read_day_bar_from_csv,
+    read_day_bar_from_local,
+    read_day_bar_from_parquet,
+    read_min_bar_from_local,
+)
 from getrich.data.clickhouse.pool import ClickHouseConnectionPool
+from getrich.data.clickhouse.table import CodeInfoTable, DayBarTable, MinBarTable
 
 
 class DataImportJob:
@@ -48,10 +48,10 @@ class DataImportJob:
     def __init__(
         self,
         hdb_base_path: str,
-        client: Optional[ClickHouseClient] = None,
-        pool: Optional[ClickHouseConnectionPool] = None,
-        clickhouse_config: Optional[dict] = None,
-        max_workers: int = 4
+        client: ClickHouseClient | None = None,
+        pool: ClickHouseConnectionPool | None = None,
+        clickhouse_config: dict[str, Any] | None = None,
+        max_workers: int = 4,
     ):
         """
         初始化 DataImportJob。
@@ -109,7 +109,7 @@ class DataImportJob:
         self.logger.info(f"MinBar data path: {self.min_bar_path}")
         self.logger.info(f"DayBar data path: {self.day_bar_path}")
 
-    def _get_min_bar_file_path(self, date_to_process: datetime) -> Optional[str]:
+    def _get_min_bar_file_path(self, date_to_process: datetime) -> str | None:
         """
         根据日期获取对应的 MinBar HDB 文件路径。
 
@@ -120,7 +120,7 @@ class DataImportJob:
             MinBar HDB 文件路径，如果不存在则返回 None
         """
         year = date_to_process.year
-        date_str = date_to_process.strftime('%Y%m%d')
+        date_str = date_to_process.strftime("%Y%m%d")
         file_name = f"min_bar_{date_str}"
 
         # 文件路径格式为 hdb_base_path/min_bar/year/min_bar_yyyymmdd.hdat 和 .hidx
@@ -139,7 +139,7 @@ class DataImportJob:
         return str(year_path / file_name)
 
     def _process_single_file(
-        self, trade_date: datetime, symbols: Optional[list[str]] = None
+        self, trade_date: datetime, symbols: list[str] | None = None
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Process single HDB file data reading.
@@ -161,9 +161,7 @@ class DataImportJob:
             year_path = self.min_bar_path / str(year)
 
             min_bar_df, code_info_df = read_min_bar_from_local(
-                db_path=str(year_path),
-                trade_date=trade_date,
-                symbols=symbols
+                db_path=str(year_path), trade_date=trade_date, symbols=symbols
             )
 
             return min_bar_df, code_info_df
@@ -172,7 +170,7 @@ class DataImportJob:
             self.logger.error(f"Failed to read data for {trade_date.strftime('%Y-%m-%d')}: {e}")
             return pd.DataFrame(), pd.DataFrame()
 
-    def _process_day_bar_year(self, year: int, symbols: Optional[list[str]] = None) -> bool:
+    def _process_day_bar_year(self, year: int, symbols: list[str] | None = None) -> bool:
         """
         Process day bar data import for specified year.
 
@@ -188,9 +186,7 @@ class DataImportJob:
         try:
             # Read day bar data from HDB
             day_bar_df = read_day_bar_from_local(
-                db_path=str(self.day_bar_path),
-                year=year,
-                symbols=symbols
+                db_path=str(self.day_bar_path), year=year, symbols=symbols
             )
 
             if day_bar_df.empty:
@@ -200,7 +196,9 @@ class DataImportJob:
             # Import day bar data to ClickHouse
             success = self.day_bar_table.insert(day_bar_df)
             if success:
-                self.logger.info(f"Successfully imported {len(day_bar_df)} day bar records for year {year}.")
+                self.logger.info(
+                    f"Successfully imported {len(day_bar_df)} day bar records for year {year}."
+                )
                 return True
             else:
                 self.logger.error(f"Failed to import day bar data for year {year}.")
@@ -213,7 +211,7 @@ class DataImportJob:
             self.logger.error(f"Failed to process day bar data for year {year}: {e}")
             return False
 
-    def _process_day_bar_incremental(self, year: int, symbols: Optional[list[str]] = None) -> bool:
+    def _process_day_bar_incremental(self, year: int, symbols: list[str] | None = None) -> bool:
         """
         Incrementally update day bar data for specified year (read latest records).
 
@@ -236,15 +234,15 @@ class DataImportJob:
             result = self.day_bar_table.query(query)
 
             latest_date_in_db = None
-            if result is not None and not result.empty and result['max_date'].iloc[0] is not None:
-                latest_date_in_db = pd.to_datetime(result['max_date'].iloc[0])
-                self.logger.info(f"Latest date in database for year {year}: {latest_date_in_db.strftime('%Y-%m-%d')}")
+            if result is not None and not result.empty and result["max_date"].iloc[0] is not None:
+                latest_date_in_db = pd.to_datetime(result["max_date"].iloc[0])
+                self.logger.info(
+                    f"Latest date in database for year {year}: {latest_date_in_db.strftime('%Y-%m-%d')}"
+                )
 
             # 2. Read all day bar data for this year from HDB
             day_bar_df = read_day_bar_from_local(
-                db_path=str(self.day_bar_path),
-                year=year,
-                symbols=symbols
+                db_path=str(self.day_bar_path), year=year, symbols=symbols
             )
 
             if day_bar_df.empty:
@@ -253,7 +251,7 @@ class DataImportJob:
 
             # 3. Filter out records that are not in database
             if latest_date_in_db is not None:
-                day_bar_df = day_bar_df[day_bar_df['local_time'] > latest_date_in_db]
+                day_bar_df = day_bar_df[day_bar_df["local_time"] > latest_date_in_db]
 
             if day_bar_df.empty:
                 self.logger.info(f"No new day bar data to import for year {year}.")
@@ -263,7 +261,9 @@ class DataImportJob:
             success = self.day_bar_table.insert(day_bar_df)
             if success:
                 record_count = len(day_bar_df)
-                self.logger.info(f"Successfully imported {record_count} incremental day bar records for year {year}.")
+                self.logger.info(
+                    f"Successfully imported {record_count} incremental day bar records for year {year}."
+                )
                 return True
             else:
                 self.logger.error(f"Failed to incrementally import day bar data for year {year}.")
@@ -285,23 +285,20 @@ class DataImportJob:
         """
         # Convert to string format for logging
         if isinstance(date, datetime):
-            date_str = date.strftime('%Y-%m-%d')
+            date_str = date.strftime("%Y-%m-%d")
         elif isinstance(date, int):
             date_obj = datetime.strptime(str(date), "%Y%m%d")
-            date_str = date_obj.strftime('%Y-%m-%d')
+            date_str = date_obj.strftime("%Y-%m-%d")
         else:
             date_str = str(date).replace("-", "")
             date_obj = datetime.strptime(date_str, "%Y%m%d")
-            date_str = date_obj.strftime('%Y-%m-%d')
+            date_str = date_obj.strftime("%Y-%m-%d")
 
         self.logger.info(f"Processing day bar CSV data for date {date_str}...")
 
         try:
             # Read day bar data from CSV
-            day_bar_df = read_day_bar_from_csv(
-                csv_path=str(self.day_bar_path),
-                date=date
-            )
+            day_bar_df = read_day_bar_from_csv(csv_path=str(self.day_bar_path), date=date)
 
             if day_bar_df.empty:
                 self.logger.info(f"No day bar data found for date {date_str}, skipping.")
@@ -310,7 +307,9 @@ class DataImportJob:
             # Import day bar data to ClickHouse
             success = self.day_bar_table.insert(day_bar_df)
             if success:
-                self.logger.info(f"Successfully imported {len(day_bar_df)} day bar records for date {date_str}.")
+                self.logger.info(
+                    f"Successfully imported {len(day_bar_df)} day bar records for date {date_str}."
+                )
                 return True
             else:
                 self.logger.error(f"Failed to import day bar data for date {date_str}.")
@@ -335,23 +334,20 @@ class DataImportJob:
         """
         # Convert to string format for logging
         if isinstance(date, datetime):
-            date_str = date.strftime('%Y-%m-%d')
+            date_str = date.strftime("%Y-%m-%d")
         elif isinstance(date, int):
             date_obj = datetime.strptime(str(date), "%Y%m%d")
-            date_str = date_obj.strftime('%Y-%m-%d')
+            date_str = date_obj.strftime("%Y-%m-%d")
         else:
             date_str = str(date).replace("-", "")
             date_obj = datetime.strptime(date_str, "%Y%m%d")
-            date_str = date_obj.strftime('%Y-%m-%d')
+            date_str = date_obj.strftime("%Y-%m-%d")
 
         self.logger.info(f"Processing day bar Parquet data for date {date_str}...")
 
         try:
             # Read day bar data from Parquet
-            day_bar_df = read_day_bar_from_parquet(
-                parquet_path=str(self.day_bar_path),
-                date=date
-            )
+            day_bar_df = read_day_bar_from_parquet(parquet_path=str(self.day_bar_path), date=date)
 
             if day_bar_df.empty:
                 self.logger.info(f"No day bar data found for date {date_str}, skipping.")
@@ -360,7 +356,9 @@ class DataImportJob:
             # Import day bar data to ClickHouse
             success = self.day_bar_table.insert(day_bar_df)
             if success:
-                self.logger.info(f"Successfully imported {len(day_bar_df)} day bar records for date {date_str}.")
+                self.logger.info(
+                    f"Successfully imported {len(day_bar_df)} day bar records for date {date_str}."
+                )
                 return True
             else:
                 self.logger.error(f"Failed to import day bar data for date {date_str}.")
@@ -376,9 +374,9 @@ class DataImportJob:
     def _process_single_day(
         self,
         date_to_process: datetime,
-        symbols: Optional[list[str]] = None,
+        symbols: list[str] | None = None,
         import_min_bar: bool = True,
-        import_code_info: bool = True
+        import_code_info: bool = True,
     ):
         """
         Process MinBar and CodeInfo data import for a single day.
@@ -391,7 +389,7 @@ class DataImportJob:
             import_min_bar: Whether to import minute bar data
             import_code_info: Whether to import contract info
         """
-        date_str = date_to_process.strftime('%Y-%m-%d')
+        date_str = date_to_process.strftime("%Y-%m-%d")
         year = date_to_process.year
 
         self.logger.info(f"[{date_str}] Processing MinBar...")
@@ -401,14 +399,13 @@ class DataImportJob:
             year_path = self.min_bar_path / str(year)
 
             if not year_path.exists():
-                self.logger.warning(f"[{date_str}] MinBar year directory does not exist: {year_path}")
+                self.logger.warning(
+                    f"[{date_str}] MinBar year directory does not exist: {year_path}"
+                )
                 return
 
             # 2. Read MinBar and CodeInfo data from HDB
-            min_bar_df, code_info_df = self._process_single_file(
-                date_to_process,
-                symbols=symbols
-            )
+            min_bar_df, code_info_df = self._process_single_file(date_to_process, symbols=symbols)
 
             if min_bar_df.empty and code_info_df.empty:
                 self.logger.info(f"[{date_str}] No data found, skipping.")
@@ -418,7 +415,9 @@ class DataImportJob:
             if import_min_bar and not min_bar_df.empty:
                 success = self.min_bar_table.insert(min_bar_df)
                 if success:
-                    self.logger.info(f"[{date_str}] Successfully imported {len(min_bar_df)} minute bar records.")
+                    self.logger.info(
+                        f"[{date_str}] Successfully imported {len(min_bar_df)} minute bar records."
+                    )
                 else:
                     self.logger.error(f"[{date_str}] Failed to import minute bar data.")
 
@@ -426,7 +425,9 @@ class DataImportJob:
             if import_code_info and not code_info_df.empty:
                 success = self.code_info_table.insert(code_info_df)
                 if success:
-                    self.logger.info(f"[{date_str}] Successfully imported {len(code_info_df)} contract info records.")
+                    self.logger.info(
+                        f"[{date_str}] Successfully imported {len(code_info_df)} contract info records."
+                    )
                 else:
                     self.logger.error(f"[{date_str}] Failed to import contract info.")
 
@@ -435,7 +436,7 @@ class DataImportJob:
         except Exception as e:
             self.logger.error(f"[{date_str}] Processing failed: {e}")
 
-    def get_latest_date_in_db(self) -> Optional[datetime]:
+    def get_latest_date_in_db(self) -> datetime | None:
         """
         Get the latest data date in database.
 
@@ -449,8 +450,8 @@ class DataImportJob:
             """
             result = self.min_bar_table.query(query)
 
-            if result is not None and not result.empty and result['max_date'].iloc[0] is not None:
-                max_date = pd.to_datetime(result['max_date'].iloc[0])
+            if result is not None and not result.empty and result["max_date"].iloc[0] is not None:
+                max_date = pd.to_datetime(result["max_date"].iloc[0])
                 self.logger.info(f"Latest date in database: {max_date.strftime('%Y-%m-%d')}")
                 return max_date
 
@@ -465,11 +466,11 @@ class DataImportJob:
         self,
         start_year: int = 2005,
         end_year: int = 2025,
-        symbols: Optional[list[str]] = None,
+        symbols: list[str] | None = None,
         skip_existing: bool = True,
         import_min_bar: bool = True,
         import_day_bar: bool = True,
-        import_code_info: bool = True
+        import_code_info: bool = True,
     ):
         """
         全量导入：导入指定年份范围内的所有数据。
@@ -545,7 +546,9 @@ class DataImportJob:
 
                         # Skip existing data if needed
                         if skip_existing and latest_date and file_date <= latest_date:
-                            self.logger.debug(f"Skipping existing date: {file_date.strftime('%Y-%m-%d')}")
+                            self.logger.debug(
+                                f"Skipping existing date: {file_date.strftime('%Y-%m-%d')}"
+                            )
                             continue
 
                         files_to_process.append(file_date)
@@ -560,8 +563,8 @@ class DataImportJob:
                 files_to_process.sort()  # Sort by date
 
                 self.logger.info(f"Found {len(files_to_process)} MinBar files to import")
-                start_date = files_to_process[0].strftime('%Y-%m-%d')
-                end_date = files_to_process[-1].strftime('%Y-%m-%d')
+                start_date = files_to_process[0].strftime("%Y-%m-%d")
+                end_date = files_to_process[-1].strftime("%Y-%m-%d")
                 self.logger.info(f"Date range: {start_date} to {end_date}")
 
                 # Parallel processing
@@ -575,7 +578,7 @@ class DataImportJob:
                             date,
                             symbols,
                             import_min_bar,
-                            import_code_info
+                            import_code_info,
                         ): date
                         for date in files_to_process
                     }
@@ -587,7 +590,9 @@ class DataImportJob:
                             min_bar_success += 1
                         except Exception as e:
                             min_bar_fail += 1
-                            self.logger.error(f"Failed to process date {date.strftime('%Y-%m-%d')}: {e}")
+                            self.logger.error(
+                                f"Failed to process date {date.strftime('%Y-%m-%d')}: {e}"
+                            )
 
                 self.logger.info("=" * 80)
                 result_msg = f"Minute bar import completed! Success: {min_bar_success}, Failed: {min_bar_fail}"
@@ -600,11 +605,11 @@ class DataImportJob:
 
     def run_incremental_import(
         self,
-        target_date: Optional[datetime] = None,
-        symbols: Optional[list[str]] = None,
+        target_date: datetime | None = None,
+        symbols: list[str] | None = None,
         import_min_bar: bool = True,
         import_day_bar: bool = True,
-        import_code_info: bool = True
+        import_code_info: bool = True,
     ):
         """
         增量导入：导入最新的数据。
@@ -629,13 +634,17 @@ class DataImportJob:
         # ========== 1. Incrementally import DayBar data (current year) ==========
         if import_day_bar:
             self.logger.info("\n" + "=" * 80)
-            self.logger.info(f"Starting incremental import for day bar data of year {current_year}...")
+            self.logger.info(
+                f"Starting incremental import for day bar data of year {current_year}..."
+            )
             self.logger.info("=" * 80)
 
             try:
                 self._process_day_bar_incremental(current_year, symbols)
             except Exception as e:
-                self.logger.error(f"Failed to incrementally import day bar data for year {current_year}: {e}")
+                self.logger.error(
+                    f"Failed to incrementally import day bar data for year {current_year}: {e}"
+                )
 
             self.logger.info("=" * 80)
             self.logger.info("Day bar incremental import completed!")
@@ -644,7 +653,9 @@ class DataImportJob:
         # ========== 2. Incrementally import MinBar and CodeInfo data ==========
         if import_min_bar or import_code_info:
             self.logger.info("\n" + "=" * 80)
-            self.logger.info("Starting incremental import for minute bar (MinBar) and contract info (CodeInfo)...")
+            self.logger.info(
+                "Starting incremental import for minute bar (MinBar) and contract info (CodeInfo)..."
+            )
             self.logger.info("=" * 80)
 
             if target_date is None:
@@ -659,9 +670,11 @@ class DataImportJob:
                 start_date = latest_date + timedelta(days=1)
                 end_date = datetime.now()
 
-                self.logger.info(f"Latest date in MinBar database: {latest_date.strftime('%Y-%m-%d')}")
-                start_str = start_date.strftime('%Y-%m-%d')
-                end_str = end_date.strftime('%Y-%m-%d')
+                self.logger.info(
+                    f"Latest date in MinBar database: {latest_date.strftime('%Y-%m-%d')}"
+                )
+                start_str = start_date.strftime("%Y-%m-%d")
+                end_str = end_date.strftime("%Y-%m-%d")
                 self.logger.info(f"Will import data from {start_str} to {end_str}")
 
                 # Generate date list
@@ -689,7 +702,7 @@ class DataImportJob:
                             date,
                             symbols,
                             import_min_bar,
-                            import_code_info
+                            import_code_info,
                         ): date
                         for date in dates_to_process
                     }
@@ -701,7 +714,9 @@ class DataImportJob:
                             min_bar_success += 1
                         except Exception as e:
                             min_bar_fail += 1
-                            self.logger.error(f"Failed to process date {date.strftime('%Y-%m-%d')}: {e}")
+                            self.logger.error(
+                                f"Failed to process date {date.strftime('%Y-%m-%d')}: {e}"
+                            )
 
                 self.logger.info("=" * 80)
                 msg = f"Minute bar incremental import completed! Success: {min_bar_success}, Failed: {min_bar_fail}"
@@ -713,9 +728,7 @@ class DataImportJob:
         self.logger.info("=" * 80)
 
     def run_csv_import(
-        self,
-        start_date: datetime | str | int,
-        end_date: Optional[datetime | str | int] = None
+        self, start_date: datetime | str | int, end_date: datetime | str | int | None = None
     ):
         """
         Import day bar data from CSV files for specified date range.
@@ -775,9 +788,7 @@ class DataImportJob:
         self.logger.info("=" * 80)
 
     def run_parquet_import(
-        self,
-        start_date: datetime | str | int,
-        end_date: Optional[datetime | str | int] = None
+        self, start_date: datetime | str | int, end_date: datetime | str | int | None = None
     ):
         """
         Import day bar data from Parquet files for specified date range.
@@ -830,26 +841,30 @@ class DataImportJob:
                     fail_count += 1
             except Exception as e:
                 fail_count += 1
-                self.logger.error(f"Failed to import Parquet for date {date.strftime('%Y-%m-%d')}: {e}")
+                self.logger.error(
+                    f"Failed to import Parquet for date {date.strftime('%Y-%m-%d')}: {e}"
+                )
 
         self.logger.info("=" * 80)
-        self.logger.info(f"Parquet import completed! Success: {success_count}, Failed: {fail_count}")
+        self.logger.info(
+            f"Parquet import completed! Success: {success_count}, Failed: {fail_count}"
+        )
         self.logger.info("=" * 80)
 
     def close(self):
         """Close database connections"""
-        if hasattr(self, 'min_bar_table'):
+        if hasattr(self, "min_bar_table"):
             self.min_bar_table.close()
-        if hasattr(self, 'day_bar_table'):
+        if hasattr(self, "day_bar_table"):
             self.day_bar_table.close()
-        if hasattr(self, 'code_info_table'):
+        if hasattr(self, "code_info_table"):
             self.code_info_table.close()
         self.logger.info("Database connections closed")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Task usage examples
-    main_logger = Logger(module_name='data_import_main')
+    main_logger = Logger(module_name="data_import_main")
 
     # 1. HDB data path configuration
     # HDB_BASE_PATH is the root directory of data
@@ -859,6 +874,9 @@ if __name__ == '__main__':
     #   - HDB_BASE_PATH/day_bar/day_bar_2005.hdat, day_bar_2005.hidx
     #   - HDB_BASE_PATH/day_bar/day_bar_2006.hdat, ...
     HDB_BASE_PATH = r"E:\data\bar"
+
+    # 初始化为 None，确保变量已定义
+    importer_job: DataImportJob | None = None
 
     try:
         # ========== Initialization Examples ==========
@@ -885,11 +903,7 @@ if __name__ == '__main__':
 
         # Method 3: Use client instance (recommended, shared connection across tables)
         client = ClickHouseClient()
-        importer_job = DataImportJob(
-            hdb_base_path=HDB_BASE_PATH,
-            client=client,
-            max_workers=4
-        )
+        importer_job = DataImportJob(hdb_base_path=HDB_BASE_PATH, client=client, max_workers=4)
 
         # Method 4: Use connection pool (high concurrency scenario)
         # from ..pool import ClickHouseConnectionPool
@@ -915,7 +929,7 @@ if __name__ == '__main__':
             skip_existing=True,  # Skip existing data (only applies to MinBar)
             import_min_bar=True,  # Import minute bar data
             import_day_bar=False,  # Import day bar data
-            import_code_info=True  # Import contract info (imported along with MinBar)
+            import_code_info=True,  # Import contract info (imported along with MinBar)
         )
 
         # ========== Use Case 2: Incremental Import (Daily Update) ==========
@@ -960,11 +974,8 @@ if __name__ == '__main__':
         #     import_code_info=True  # Import contract info only (reads MinBar files but only imports CodeInfo)
         # )
 
-    except Exception as e:
-        main_logger.error(f"Import task execution failed: {e}")
-
     finally:
         # 4. Close database connections
-        if 'importer_job' in locals():
+        if importer_job is not None:
             importer_job.close()
             main_logger.info("Import task finished")

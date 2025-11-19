@@ -9,9 +9,11 @@ ClickHouse 表操作基类
 - ClickHouseConnectionPool: 连接池管理
 - ClickHouseTable: 表操作逻辑
 """
+
 from __future__ import annotations
-from typing import Optional, Dict, Any, TYPE_CHECKING
+
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from lntools import Logger
@@ -60,14 +62,14 @@ class ClickHouseTable(ABC):
     def __init__(
         self,
         table_name: str,
-        client: Optional[ClickHouseClient] = None,
-        pool: Optional[ClickHouseConnectionPool] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
-        database: Optional[str] = None,
-        logger_name: Optional[str] = None
+        client: ClickHouseClient | None = None,
+        pool: ClickHouseConnectionPool | None = None,
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
+        logger_name: str | None = None,
     ):
         """
         初始化 ClickHouse 表操作类。
@@ -114,15 +116,15 @@ class ClickHouseTable(ABC):
         else:
             client_kwargs = {}
             if host is not None:
-                client_kwargs['host'] = host
+                client_kwargs["host"] = host
             if port is not None:
-                client_kwargs['port'] = port
+                client_kwargs["port"] = port
             if user is not None:
-                client_kwargs['user'] = user
+                client_kwargs["user"] = user
             if password is not None:
-                client_kwargs['password'] = password
+                client_kwargs["password"] = password
             if database is not None:
-                client_kwargs['database'] = database
+                client_kwargs["database"] = database
 
             self.client = ClickHouseClient(**client_kwargs)
             self._use_pool = False
@@ -162,7 +164,7 @@ class ClickHouseTable(ABC):
         if self._use_pool:
             # 连接池模式：检查池是否有可用连接
             stats = self._pool.get_stats()
-            return stats['pool_size'] > 0
+            return stats["pool_size"] > 0
         return self.client is not None and self.client.is_connected()
 
     def close(self) -> None:
@@ -189,7 +191,7 @@ class ClickHouseTable(ABC):
         """
         ...  # pylint: disable=unnecessary-ellipsis
 
-    def insert(self, df: pd.DataFrame, batch_size: Optional[int] = None) -> bool:
+    def insert(self, df: pd.DataFrame, batch_size: int | None = None) -> bool:
         """
         将 Pandas DataFrame 插入到表中。
 
@@ -207,11 +209,7 @@ class ClickHouseTable(ABC):
         client = self._get_client()
         try:
             # 委托给客户端处理
-            success = client.insert_data(
-                table_name=self.table_name,
-                data=df,
-                batch_size=batch_size
-            )
+            success = client.insert_data(table_name=self.table_name, data=df, batch_size=batch_size)
 
             if success:
                 self.logger.info(f"Successfully inserted {len(df)} rows into '{self.table_name}'.")
@@ -265,7 +263,7 @@ class ClickHouseTable(ABC):
         finally:
             self._release_client(client)
 
-    def query(self, sql: str, params: Optional[Dict[str, Any]] = None) -> Optional[pd.DataFrame]:
+    def query(self, sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame | None:
         """
         执行查询并以 Pandas DataFrame 形式返回结果。
 
@@ -287,7 +285,7 @@ class ClickHouseTable(ABC):
         finally:
             self._release_client(client)
 
-    def execute(self, sql: str, params: Optional[Dict[str, Any]] = None) -> bool:
+    def execute(self, sql: str, params: dict[str, Any] | None = None) -> bool:
         """
         执行任意 SQL 语句（主要用于 DDL 或不返回数据的 DML）。
 
@@ -317,11 +315,11 @@ class ClickHouseTable(ABC):
             query = f"""
                 SELECT count() as cnt
                 FROM system.tables
-                WHERE database = '{config['database']}' AND name = '{self.table_name}'
+                WHERE database = '{config["database"]}' AND name = '{self.table_name}'
             """
             result_df = client.query(query)
             if result_df is not None and len(result_df) > 0:
-                return int(result_df.iloc[0]['cnt']) > 0
+                return int(result_df.iloc[0]["cnt"]) > 0
             return False
         except Exception as e:
             self.logger.error(f"Failed to check table existence: {e}")
@@ -329,7 +327,7 @@ class ClickHouseTable(ABC):
         finally:
             self._release_client(client)
 
-    def count(self, condition: Optional[str] = None) -> Optional[int]:
+    def count(self, condition: str | None = None) -> int | None:
         """
         获取表中的记录数。
 
@@ -348,7 +346,7 @@ class ClickHouseTable(ABC):
 
             result_df = client.query(query)
             if result_df is not None and len(result_df) > 0:
-                return int(result_df.iloc[0]['cnt'])
+                return int(result_df.iloc[0]["cnt"])
             return 0
         except Exception as e:
             self.logger.error(f"Failed to count records: {e}")
@@ -386,7 +384,7 @@ class ClickHouseTable(ABC):
         """支持上下文管理器"""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """退出上下文管理器时关闭连接"""
         self.close()
 

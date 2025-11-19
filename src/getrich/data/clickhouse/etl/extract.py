@@ -1,3 +1,7 @@
+# pylint: disable=no-member
+# pylint: disable=w0719, E0401
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportMissingImports=false
 from __future__ import annotations
 
 from datetime import datetime
@@ -5,13 +9,9 @@ from datetime import datetime
 import hdb
 import pandas as pd
 
-# pylint: disable=no-member
-# pylint: disable=w0719
-# pyright: reportAttributeAccessIssue=false
-
 
 def read_hdb_to_df(
-    hdb_file,
+    hdb_file,  # type: ignore
     symbols: list[str],
     data_type: str,
     begin: datetime | None = None,
@@ -56,9 +56,7 @@ def read_hdb_to_df(
     return df
 
 
-def process_data_to_df(
-    data_type_def, data, items
-) -> pd.DataFrame:
+def process_data_to_df(data_type_def, data, items) -> pd.DataFrame:  # type: ignore
     df = pd.DataFrame()
 
     # 将 hdb 数据结构扁平化到 dataframe
@@ -81,9 +79,11 @@ def process_data_to_df(
 
     # local_time 字段转换为 datetime
     if "local_time" in df.columns:
-        df["local_time"] = (pd.to_datetime(df["local_time"], unit="ms", utc=True)
-                            .dt.tz_convert('Asia/Shanghai')
-                            .dt.tz_localize(None))
+        df["local_time"] = (
+            pd.to_datetime(df["local_time"], unit="ms", utc=True)
+            .dt.tz_convert("Asia/Shanghai")
+            .dt.tz_localize(None)
+        )
 
     return df
 
@@ -114,9 +114,7 @@ def read_day_bar_from_local(
     return df
 
 
-def read_day_bar_from_csv(
-    csv_path: str, date: datetime | str | int
-) -> pd.DataFrame:
+def read_day_bar_from_csv(csv_path: str, date: datetime | str | int) -> pd.DataFrame:
     """
     从本地 CSV 文件中读取日线数据。
 
@@ -151,7 +149,7 @@ def read_day_bar_from_csv(
             if pd.api.types.is_integer_dtype(df["local_time"]):
                 df["local_time"] = (
                     pd.to_datetime(df["local_time"], unit="ms", utc=True)
-                    .dt.tz_convert('Asia/Shanghai')
+                    .dt.tz_convert("Asia/Shanghai")
                     .dt.tz_localize(None)
                 )
             # 如果是字符串格式
@@ -166,9 +164,7 @@ def read_day_bar_from_csv(
         raise Exception(f"Failed to read CSV file {file_path}: {e}") from e
 
 
-def read_day_bar_from_parquet(
-    parquet_path: str, date: datetime | str | int
-) -> pd.DataFrame:
+def read_day_bar_from_parquet(parquet_path: str, date: datetime | str | int) -> pd.DataFrame:
     """
     从本地 Parquet 文件中读取日线数据。
 
@@ -203,7 +199,7 @@ def read_day_bar_from_parquet(
             if pd.api.types.is_integer_dtype(df["local_time"]):
                 df["local_time"] = (
                     pd.to_datetime(df["local_time"], unit="ms", utc=True)
-                    .dt.tz_convert('Asia/Shanghai')
+                    .dt.tz_convert("Asia/Shanghai")
                     .dt.tz_localize(None)
                 )
             # 如果是字符串格式
@@ -218,7 +214,7 @@ def read_day_bar_from_parquet(
         raise Exception(f"Failed to read Parquet file {file_path}: {e}") from e
 
 
-def _read_codeinfo_from_hdb_file(hdb_file) -> pd.DataFrame:
+def _read_codeinfo_from_hdb_file(hdb_file) -> pd.DataFrame:  # type: ignore
     """从 HDB 文件中提取代码信息。"""
     codeinfo_df = pd.DataFrame()
     if hdb_file.codetable.data is not None and len(hdb_file.codetable.data) > 0:
@@ -227,14 +223,10 @@ def _read_codeinfo_from_hdb_file(hdb_file) -> pd.DataFrame:
         # 解码 sec_name
         if "sec_name" in codeinfo_df.columns:
             try:
-                codeinfo_df["sec_name"] = codeinfo_df["sec_name"].apply(
-                    lambda x: x.decode("gbk")
-                )
+                codeinfo_df["sec_name"] = codeinfo_df["sec_name"].apply(lambda x: x.decode("gbk"))
             except (UnicodeDecodeError, AttributeError):
                 codeinfo_df["sec_name"] = codeinfo_df["sec_name"].apply(
-                    lambda x: x.decode("utf-8", errors="ignore")
-                    if isinstance(x, bytes)
-                    else x
+                    lambda x: x.decode("utf-8", errors="ignore") if isinstance(x, bytes) else x
                 )
 
         if "sec_name_ext" in codeinfo_df.columns:
@@ -244,9 +236,7 @@ def _read_codeinfo_from_hdb_file(hdb_file) -> pd.DataFrame:
                 )
             except (UnicodeDecodeError, AttributeError):
                 codeinfo_df["sec_name_ext"] = codeinfo_df["sec_name_ext"].apply(
-                    lambda x: x.decode("utf-8", errors="ignore")
-                    if isinstance(x, bytes)
-                    else x
+                    lambda x: x.decode("utf-8", errors="ignore") if isinstance(x, bytes) else x
                 )
         # 添加 symbol
         codeinfo_df["symbol"] = hdb_file.codetable.symbols
@@ -294,6 +284,7 @@ if __name__ == "__main__":
     # 使用示例
     # 请根据您的实际路径修改
     from lntools import Logger
+
     log = Logger("extract_main")
     #
     HDB_DATA_PATH = "E:\\data\\bar\\min_bar\\2023"

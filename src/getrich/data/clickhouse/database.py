@@ -1,10 +1,11 @@
 # 数据访问层
 from __future__ import annotations
-from typing import Optional, Dict, Any, Union, List
-import clickhouse_connect
-from clickhouse_connect.driver.client import Client
-import pandas as pd
 
+from typing import Any
+
+import clickhouse_connect
+import pandas as pd
+from clickhouse_connect.driver.client import Client
 from lntools import Logger, read_pkg_yaml
 
 log = Logger(module_name="ClickhouseClient")
@@ -18,7 +19,7 @@ def load_db_config():
     """
     # 方法 1: 使用 pkg_resources（打包后）
     try:
-        config = read_pkg_yaml('config/config.yml', package='getrich')
+        config = read_pkg_yaml("config/config.yml", package="getrich")
         if config:
             return config
     except Exception as e:
@@ -27,14 +28,14 @@ def load_db_config():
 
 
 # 在模块加载时读取配置
-DEFAULT_DB_CONFIG = load_db_config().get('default_database', {})
+DEFAULT_DB_CONFIG = load_db_config().get("default_database", {})
 
 # 从配置中获取默认值,如果配置不存在则使用硬编码的备用值
-DEFAULT_HOST = DEFAULT_DB_CONFIG.get('host', '192.168.1.232')
-DEFAULT_PORT = DEFAULT_DB_CONFIG.get('port', 8123)
-DEFAULT_USER = DEFAULT_DB_CONFIG.get('user', 'default')
-DEFAULT_PASSWORD = DEFAULT_DB_CONFIG.get('password', 'getrich')
-DEFAULT_DATABASE = DEFAULT_DB_CONFIG.get('database', 'default')
+DEFAULT_HOST = DEFAULT_DB_CONFIG.get("host", "192.168.1.232")
+DEFAULT_PORT = DEFAULT_DB_CONFIG.get("port", 8123)
+DEFAULT_USER = DEFAULT_DB_CONFIG.get("user", "default")
+DEFAULT_PASSWORD = DEFAULT_DB_CONFIG.get("password", "getrich")
+DEFAULT_DATABASE = DEFAULT_DB_CONFIG.get("database", "default")
 
 
 class ClickHouseClient:
@@ -56,12 +57,15 @@ class ClickHouseClient:
         # 方式3: 运行时修改配置
         client.configure(database='new_db', reconnect=True)
     """
-    def __init__(self,
-                 host: str = DEFAULT_HOST,
-                 port: int = DEFAULT_PORT,
-                 user: str = DEFAULT_USER,
-                 password: str = DEFAULT_PASSWORD,
-                 database: str = DEFAULT_DATABASE):
+
+    def __init__(
+        self,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        user: str = DEFAULT_USER,
+        password: str = DEFAULT_PASSWORD,
+        database: str = DEFAULT_DATABASE,
+    ):
         """
         初始化 ClickHouse 客户端。
 
@@ -73,16 +77,16 @@ class ClickHouseClient:
             database: 数据库名
         """
         # 存储配置
-        self._config = {
-            'host': host,
-            'port': port,
-            'user': user,
-            'password': password,
-            'database': database
+        self._config: dict[str, Any] = {
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": password,
+            "database": database,
         }
 
         # 底层连接对象
-        self._connection: Optional[Client] = None
+        self._connection: Client | None = None
 
         # 自动连接
         self.connect()
@@ -123,12 +127,12 @@ class ClickHouseClient:
 
     def configure(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
-        database: Optional[str] = None,
-        reconnect: bool = True
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
+        reconnect: bool = True,
     ) -> None:
         """
         更新数据库连接配置。
@@ -143,15 +147,15 @@ class ClickHouseClient:
         """
         # 更新配置
         if host is not None:
-            self._config['host'] = host
+            self._config["host"] = host
         if port is not None:
-            self._config['port'] = port
+            self._config["port"] = port
         if user is not None:
-            self._config['user'] = user
+            self._config["user"] = user
         if password is not None:
-            self._config['password'] = password
+            self._config["password"] = password
         if database is not None:
-            self._config['database'] = database
+            self._config["database"] = database
 
         log.info(
             f"Configuration updated: "
@@ -163,7 +167,7 @@ class ClickHouseClient:
             self.close()
             self.connect()
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """
         获取当前的数据库配置。
 
@@ -193,7 +197,7 @@ class ClickHouseClient:
             return self.connect()
         return True
 
-    def execute(self, sql: str, params: Optional[Dict[str, Any]] = None) -> bool:
+    def execute(self, sql: str, params: dict[str, Any] | None = None) -> bool:
         """
         执行任意 SQL 语句(主要用于 DDL 或不返回数据的 DML)。
 
@@ -217,7 +221,7 @@ class ClickHouseClient:
             log.error(f"Error executing SQL: {e}\nSQL: {sql}")
             return False
 
-    def query(self, sql: str, params: Optional[Dict[str, Any]] = None) -> Optional[pd.DataFrame]:
+    def query(self, sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame | None:
         """
         执行查询并以 Pandas DataFrame 形式返回结果。
 
@@ -239,10 +243,9 @@ class ClickHouseClient:
             log.error(f"Error executing query: {e}\nSQL: {sql}")
             return None
 
-    def query_sql(self,
-                  sql_query: str,
-                  params: Optional[Dict[str, Any]] = None,
-                  use_df: bool = True) -> Optional[Union[pd.DataFrame, List[List[Any]]]]:
+    def query_sql(
+        self, sql_query: str, params: dict[str, Any] | None = None, use_df: bool = True
+    ) -> pd.DataFrame | list[list[Any]] | None:
         """
         执行 SELECT SQL 查询并返回结果（向后兼容）。
 
@@ -269,14 +272,16 @@ class ClickHouseClient:
             log.error(f"Error executing SQL query: {e}\nSQL: {sql_query}")
             return None
 
-    def read_data(self,
-                  table_name: str,
-                  columns: str = '*',
-                  condition: Optional[str] = None,
-                  params: Optional[Dict[str, Any]] = None,
-                  limit: Optional[int] = None,
-                  offset: Optional[int] = None,
-                  order_by: Optional[str] = None) -> Optional[pd.DataFrame]:
+    def read_data(
+        self,
+        table_name: str,
+        columns: str = "*",
+        condition: str | None = None,
+        params: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        order_by: str | None = None,
+    ) -> pd.DataFrame | None:
         """
         从表中读取数据并返回一个pandas DataFrame, 支持参数化查询和分页
         :param table_name: 表名
@@ -313,11 +318,13 @@ class ClickHouseClient:
             log.error(f"Error reading data from table {table_name}: {e}\nSQL: {query}")
             return None
 
-    def insert_data(self,
-                    table_name: str,
-                    data: Union[pd.DataFrame, List[List[Any]]],
-                    column_names: Optional[List[str]] = None,
-                    batch_size: Optional[int] = None) -> bool:
+    def insert_data(
+        self,
+        table_name: str,
+        data: pd.DataFrame | list[list[Any]],
+        column_names: list[str] | None = None,
+        batch_size: int | None = None,
+    ) -> bool:
         """
         向表中插入数据, 支持批量插入
         :param table_name: 表名
@@ -338,7 +345,7 @@ class ClickHouseClient:
                     if batch_size and len(data) > batch_size:
                         # 分批次插入
                         for i in range(0, len(data), batch_size):
-                            self._connection.insert_df(table_name, data.iloc[i:i+batch_size])
+                            self._connection.insert_df(table_name, data.iloc[i : i + batch_size])
                     else:
                         self._connection.insert_df(table_name, data)
                 except Exception as e:
@@ -348,7 +355,7 @@ class ClickHouseClient:
                 log.info(f"Successfully inserted {len(data)} records into table {table_name}")
                 return True
 
-            elif isinstance(data, list):
+            elif isinstance(data, list):  # type: ignore
                 if not data:
                     log.warning("Data list is empty")
                     return False
@@ -360,7 +367,7 @@ class ClickHouseClient:
                 # 分批处理列表数据
                 if batch_size and len(data) > batch_size:
                     for i in range(0, len(data), batch_size):
-                        batch = data[i:i+batch_size]
+                        batch = data[i : i + batch_size]
                         self._connection.insert(table_name, batch, column_names=column_names)
                 else:
                     self._connection.insert(table_name, data, column_names=column_names)
@@ -374,11 +381,13 @@ class ClickHouseClient:
             log.error(f"Error inserting data into table {table_name}: {e}")
             return False
 
-    def upsert_data(self,
-                    table_name: str,
-                    data: pd.DataFrame,
-                    key_columns: list[str],
-                    batch_size: Optional[int] = None) -> bool:
+    def upsert_data(
+        self,
+        table_name: str,
+        data: pd.DataFrame,
+        key_columns: list[str],
+        batch_size: int | None = None,
+    ) -> bool:
         """
         向表中更新或插入数据 (Upsert)。
         如果表的ENGINE是ReplacingMergeTree, 使用insert以后自动去重的机制来update。
@@ -395,7 +404,7 @@ class ClickHouseClient:
         if not self.ensure_connection():
             return False
 
-        if not isinstance(data, pd.DataFrame) or data.empty:
+        if not isinstance(data, pd.DataFrame) or data.empty:  # type: ignore
             log.warning("Data must be a non-empty pandas DataFrame")
             return False
 
@@ -416,11 +425,13 @@ class ClickHouseClient:
             log.info(f"Starting batch upsert, total {total_rows} records, batch size {batch_size}")
             success_count = 0
             for i in range(0, total_rows, batch_size):
-                batch_data = data.iloc[i:i + batch_size].copy()
+                batch_data = data.iloc[i : i + batch_size].copy()
                 batch_num = i // batch_size + 1
                 total_batches = (total_rows + batch_size - 1) // batch_size
 
-                log.debug(f"Processing batch {batch_num}/{total_batches}, record count: {len(batch_data)}")
+                log.debug(
+                    f"Processing batch {batch_num}/{total_batches}, record count: {len(batch_data)}"
+                )
 
                 if self._process_upsert_batch(table_name, batch_data, key_columns):
                     success_count += len(batch_data)
@@ -474,7 +485,9 @@ class ClickHouseClient:
             log.error(f"Failed to drop table '{table_name}'")
             return False
 
-    def _process_upsert_batch(self, table_name: str, batch_data: pd.DataFrame, key_columns: list[str]) -> bool:
+    def _process_upsert_batch(
+        self, table_name: str, batch_data: pd.DataFrame, key_columns: list[str]
+    ) -> bool:
         """处理单个批次的upsert操作"""
         try:
             # 方案1: 使用 REPLACE INTO (推荐)
@@ -506,7 +519,9 @@ class ClickHouseClient:
             log.error(f"ReplacingMergeTree upsert operation failed: {e}")
             return False
 
-    def _upsert_with_delete_insert(self, table_name: str, data: pd.DataFrame, key_columns: list[str]) -> bool:
+    def _upsert_with_delete_insert(
+        self, table_name: str, data: pd.DataFrame, key_columns: list[str]
+    ) -> bool:
         """使用 DELETE + INSERT 进行upsert"""
         try:
             # 1. 构建安全的DELETE查询
@@ -520,7 +535,9 @@ class ClickHouseClient:
             log.error(f"DELETE+INSERT operation failed: {e}")
             return False
 
-    def _delete_existing_records(self, table_name: str, data: pd.DataFrame, key_columns: list[str]) -> bool:
+    def _delete_existing_records(
+        self, table_name: str, data: pd.DataFrame, key_columns: list[str]
+    ) -> bool:
         """安全地删除现有记录"""
         try:
             keys_df = data[key_columns].drop_duplicates()
@@ -529,7 +546,7 @@ class ClickHouseClient:
             batch_size = 500  # DELETE批次大小
 
             for i in range(0, len(keys_df), batch_size):
-                batch_keys = keys_df.iloc[i:i + batch_size]
+                batch_keys = keys_df.iloc[i : i + batch_size]
 
                 if len(key_columns) == 1:
                     # 单列键
@@ -538,9 +555,11 @@ class ClickHouseClient:
 
                     # 安全处理值类型
                     if pd.api.types.is_string_dtype(batch_keys[key_col]):
-                        values_str = ', '.join([f"'{str(v).replace(chr(39), chr(39)+chr(39))}'" for v in values])
+                        values_str = ", ".join(
+                            [f"'{str(v).replace(chr(39), chr(39) + chr(39))}'" for v in values]
+                        )
                     else:
-                        values_str = ', '.join(map(str, values))
+                        values_str = ", ".join(map(str, values))
 
                     where_clause = f"{key_col} IN ({values_str})"
                 else:
@@ -560,7 +579,7 @@ class ClickHouseClient:
 
                         conditions.append(f"({' AND '.join(condition_parts)})")
 
-                    where_clause = ' OR '.join(conditions)
+                    where_clause = " OR ".join(conditions)
 
                 delete_query = f"ALTER TABLE {table_name} DELETE WHERE {where_clause}"
                 self.execute(delete_query)
@@ -591,7 +610,7 @@ class ClickHouseClient:
             engine, primary_key = result[0]
 
             # ReplacingMergeTree 或有主键的表支持 REPLACE
-            return 'ReplacingMergeTree' in engine or bool(primary_key)
+            return "ReplacingMergeTree" in engine or bool(primary_key)
 
         except Exception as e:
             log.debug(f"Error checking REPLACE support, using traditional method: {e}")
@@ -601,7 +620,12 @@ class ClickHouseClient:
         """支持上下文管理器"""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any | None,
+    ):
         """退出上下文管理器时关闭连接"""
         self.close()
 

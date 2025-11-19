@@ -3,11 +3,13 @@ ClickHouse 连接池
 
 提供连接池管理功能,支持连接复用、自动重连、负载均衡等特性。
 """
+
 from __future__ import annotations
-from typing import Optional, Dict, Any, List
-from threading import RLock
+
 import time
 from contextlib import contextmanager
+from threading import RLock
+from typing import Any
 
 from lntools import Logger
 
@@ -17,7 +19,7 @@ from .database import ClickHouseClient
 class PooledConnection:
     """池化连接包装器"""
 
-    def __init__(self, client: ClickHouseClient, pool: 'ClickHouseConnectionPool'):
+    def __init__(self, client: ClickHouseClient, pool: ClickHouseConnectionPool):
         """
         初始化池化连接。
 
@@ -108,15 +110,15 @@ class ClickHouseConnectionPool:
         self,
         min_size: int = 2,
         max_size: int = 10,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
-        database: Optional[str] = None,
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
         max_idle_time: float = 300.0,  # 5分钟
         max_lifetime: float = 3600.0,  # 1小时
         connect_timeout: float = 10.0,
-        health_check_interval: float = 60.0  # 1分钟
+        health_check_interval: float = 60.0,  # 1分钟
     ):
         """
         初始化连接池。
@@ -148,29 +150,29 @@ class ClickHouseConnectionPool:
 
         # 连接配置
         self._config = {
-            'host': host,
-            'port': port,
-            'user': user,
-            'password': password,
-            'database': database
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": password,
+            "database": database,
         }
         # 过滤 None 值
-        self._config = {k: v for k, v in self._config.items() if v is not None}
+        self._config: dict[str, Any] = {k: v for k, v in self._config.items() if v is not None}
 
         # 连接池
-        self._pool: List[PooledConnection] = []
+        self._pool: list[PooledConnection] = []
         self._lock = RLock()  # 可重入锁
 
         # 统计信息
         self._stats = {
-            'total_connections': 0,
-            'active_connections': 0,
-            'get_requests': 0,
-            'get_timeouts': 0,
-            'connections_created': 0,
-            'connections_closed': 0,
-            'health_checks': 0,
-            'failed_health_checks': 0
+            "total_connections": 0,
+            "active_connections": 0,
+            "get_requests": 0,
+            "get_timeouts": 0,
+            "connections_created": 0,
+            "connections_closed": 0,
+            "health_checks": 0,
+            "failed_health_checks": 0,
         }
 
         # 日志
@@ -187,8 +189,8 @@ class ClickHouseConnectionPool:
     def _get_config_display(self) -> str:
         """获取配置显示字符串(隐藏密码)"""
         config = self._config.copy()
-        if 'password' in config:
-            config['password'] = '***'
+        if "password" in config:
+            config["password"] = "***"
         return str(config)
 
     def _initialize_pool(self):
@@ -199,7 +201,7 @@ class ClickHouseConnectionPool:
                 if conn:
                     self._pool.append(conn)
 
-    def _create_connection(self) -> Optional[PooledConnection]:
+    def _create_connection(self) -> PooledConnection | None:
         """
         创建新连接。
 
@@ -214,19 +216,17 @@ class ClickHouseConnectionPool:
 
             pooled_conn = PooledConnection(client, self)
 
-            self._stats['total_connections'] += 1
-            self._stats['connections_created'] += 1
+            self._stats["total_connections"] += 1
+            self._stats["connections_created"] += 1
 
-            self.logger.debug(
-                f"Created new connection (total: {self._stats['total_connections']})"
-            )
+            self.logger.debug(f"Created new connection (total: {self._stats['total_connections']})")
 
             return pooled_conn
         except Exception as e:
             self.logger.error(f"Error creating connection: {e}")
             return None
 
-    def get_connection(self, timeout: Optional[float] = None) -> ClickHouseClient:
+    def get_connection(self, timeout: float | None = None) -> ClickHouseClient:
         """
         从池中获取连接。
 
@@ -243,7 +243,7 @@ class ClickHouseConnectionPool:
         timeout = timeout or self.connect_timeout
         start_time = time.time()
 
-        self._stats['get_requests'] += 1
+        self._stats["get_requests"] += 1
 
         while True:
             with self._lock:
@@ -253,7 +253,7 @@ class ClickHouseConnectionPool:
                         # 检查连接健康
                         if self._is_connection_healthy(conn):
                             conn.mark_in_use()
-                            self._stats['active_connections'] += 1
+                            self._stats["active_connections"] += 1
                             self.logger.debug(
                                 f"Reused connection (active: {self._stats['active_connections']})"
                             )
@@ -268,16 +268,14 @@ class ClickHouseConnectionPool:
                     if conn:
                         self._pool.append(conn)
                         conn.mark_in_use()
-                        self._stats['active_connections'] += 1
-                        self.logger.debug(
-                            f"Created new connection (total: {len(self._pool)})"
-                        )
+                        self._stats["active_connections"] += 1
+                        self.logger.debug(f"Created new connection (total: {len(self._pool)})")
                         return conn.client
 
             # 3. 达到最大连接数,等待连接释放
             elapsed = time.time() - start_time
             if elapsed >= timeout:
-                self._stats['get_timeouts'] += 1
+                self._stats["get_timeouts"] += 1
                 raise TimeoutError(
                     f"Could not get connection within {timeout}s "
                     f"(pool size: {len(self._pool)}/{self.max_size})"
@@ -298,7 +296,7 @@ class ClickHouseConnectionPool:
                 if conn.client is client:
                     if conn.in_use:
                         conn.mark_available()
-                        self._stats['active_connections'] -= 1
+                        self._stats["active_connections"] -= 1
                         self.logger.debug(
                             f"Released connection (active: {self._stats['active_connections']})"
                         )
@@ -307,7 +305,7 @@ class ClickHouseConnectionPool:
             self.logger.warning("Attempted to release connection not in pool")
 
     @contextmanager
-    def connection(self, timeout: Optional[float] = None):
+    def connection(self, timeout: float | None = None):
         """
         获取连接的上下文管理器。
 
@@ -364,11 +362,9 @@ class ClickHouseConnectionPool:
         try:
             conn.close()
             self._pool.remove(conn)
-            self._stats['total_connections'] -= 1
-            self._stats['connections_closed'] += 1
-            self.logger.debug(
-                f"Removed connection (total: {self._stats['total_connections']})"
-            )
+            self._stats["total_connections"] -= 1
+            self._stats["connections_closed"] += 1
+            self.logger.debug(f"Removed connection (total: {self._stats['total_connections']})")
         except Exception as e:
             self.logger.error(f"Error removing connection: {e}")
 
@@ -383,7 +379,7 @@ class ClickHouseConnectionPool:
 
             # 计算需要关闭的连接数
             current_size = len(self._pool)
-            target_size = max(self.min_size, self._stats['active_connections'])
+            target_size = max(self.min_size, self._stats["active_connections"])
             to_close = current_size - target_size
 
             if to_close > 0:
@@ -423,8 +419,7 @@ class ClickHouseConnectionPool:
 
             if to_remove:
                 self.logger.info(
-                    f"Cleaned up {len(to_remove)} connections, "
-                    f"pool size: {len(self._pool)}"
+                    f"Cleaned up {len(to_remove)} connections, pool size: {len(self._pool)}"
                 )
 
     def health_check(self):
@@ -434,7 +429,7 @@ class ClickHouseConnectionPool:
         检查所有连接的健康状态,移除不健康的连接。
         """
         with self._lock:
-            self._stats['health_checks'] += 1
+            self._stats["health_checks"] += 1
 
             for conn in self._pool[:]:  # 复制列表以安全删除
                 if conn.in_use:
@@ -444,11 +439,11 @@ class ClickHouseConnectionPool:
                     # 执行简单查询测试连接
                     result = conn.client.query("SELECT 1 as test")
                     if result is None or result.empty:
-                        self._stats['failed_health_checks'] += 1
+                        self._stats["failed_health_checks"] += 1
                         self._remove_connection(conn)
                 except Exception as e:
                     self.logger.warning(f"Health check failed: {e}")
-                    self._stats['failed_health_checks'] += 1
+                    self._stats["failed_health_checks"] += 1
                     self._remove_connection(conn)
 
     def close_all(self):
@@ -459,12 +454,12 @@ class ClickHouseConnectionPool:
 
             closed_count = len(self._pool)
             self._pool.clear()
-            self._stats['total_connections'] = 0
-            self._stats['active_connections'] = 0
+            self._stats["total_connections"] = 0
+            self._stats["active_connections"] = 0
 
             self.logger.info(f"Closed all {closed_count} connections")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         获取连接池统计信息。
 
@@ -473,15 +468,20 @@ class ClickHouseConnectionPool:
         """
         with self._lock:
             stats = self._stats.copy()
-            stats['pool_size'] = len(self._pool)
-            stats['idle_connections'] = len([c for c in self._pool if not c.in_use])
+            stats["pool_size"] = len(self._pool)
+            stats["idle_connections"] = len([c for c in self._pool if not c.in_use])
             return stats
 
     def __enter__(self):
         """支持上下文管理器"""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any | None,
+    ) -> None:
         """退出上下文管理器时关闭所有连接"""
         self.close_all()
 

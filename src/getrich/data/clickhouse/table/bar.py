@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
+
 import pandas as pd
 
 from .base import ClickHouseTable
@@ -23,14 +24,14 @@ class MinBarTable(ClickHouseTable):
 
     def __init__(
         self,
-        table_name: str = 'min_bar',
-        client: Optional[ClickHouseClient] = None,
-        pool: Optional[ClickHouseConnectionPool] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
-        database: Optional[str] = None
+        table_name: str = "min_bar",
+        client: ClickHouseClient | None = None,
+        pool: ClickHouseConnectionPool | None = None,
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
     ) -> None:
         """
         初始化 MinBarTable。
@@ -55,26 +56,26 @@ class MinBarTable(ClickHouseTable):
             user=user,
             password=password,
             database=database,
-            logger_name="MinBarTable"
+            logger_name="MinBarTable",
         )
 
         # 表结构定义
         self.table_schema = {
-            'date': 'UInt32',
-            'time': 'Int32',
-            'pre_close': 'Int64',
-            'open': 'Int64',
-            'high': 'Int64',
-            'low': 'Int64',
-            'close': 'Int64',
-            'volume': 'Int64',
-            'turnover': 'Int64',
-            'open_interest': 'Int64',
-            'pre_settle_price': 'Int64',
-            'settle_price': 'Int64',
-            'symbol': 'String',
-            'local_time': 'DateTime64(3)',
-            'insert_time': 'DateTime'
+            "date": "UInt32",
+            "time": "Int32",
+            "pre_close": "Int64",
+            "open": "Int64",
+            "high": "Int64",
+            "low": "Int64",
+            "close": "Int64",
+            "volume": "Int64",
+            "turnover": "Int64",
+            "open_interest": "Int64",
+            "pre_settle_price": "Int64",
+            "settle_price": "Int64",
+            "symbol": "String",
+            "local_time": "DateTime64(3)",
+            "insert_time": "DateTime",
         }
 
     def create(self, if_not_exists: bool = True) -> bool:
@@ -129,12 +130,12 @@ class MinBarTable(ClickHouseTable):
 
     def read(
         self,
-        symbols: Optional[str | list[str]] = None,
-        start_date: Optional[datetime | str] = None,
-        end_date: Optional[datetime | str] = None,
+        symbols: str | list[str] | None = None,
+        start_date: datetime | str | None = None,
+        end_date: datetime | str | None = None,
         order_by: str = "symbol, local_time",
-        limit: Optional[int] = None
-    ) -> Optional[pd.DataFrame]:
+        limit: int | None = None,
+    ) -> pd.DataFrame | None:
         """
         读取 min_bar 表中的数据,支持灵活的日期和标的筛选。
 
@@ -164,11 +165,11 @@ class MinBarTable(ClickHouseTable):
         # 处理日期范围
         # 如果没有指定start_date,默认从2005-01-01开始
         if start_date is None:
-            start_date = '2005-01-01'
+            start_date = "2005-01-01"
 
         # 转换start_date为字符串格式
         if isinstance(start_date, datetime):
-            start_date_str = start_date.strftime('%Y-%m-%d %H:%M:%S')
+            start_date_str = start_date.strftime("%Y-%m-%d %H:%M:%S")
         else:
             start_date_str = str(start_date)
 
@@ -180,7 +181,7 @@ class MinBarTable(ClickHouseTable):
 
         # 转换end_date为字符串格式
         if isinstance(end_date, datetime):
-            end_date_str = end_date.strftime('%Y-%m-%d %H:%M:%S')
+            end_date_str = end_date.strftime("%Y-%m-%d %H:%M:%S")
         else:
             end_date_str = str(end_date)
 
@@ -190,7 +191,7 @@ class MinBarTable(ClickHouseTable):
         query = f"SELECT * FROM {self.table_name}"
 
         if conditions:
-            query += " WHERE " + ' AND '.join(conditions)
+            query += " WHERE " + " AND ".join(conditions)
 
         if order_by:
             query += f" ORDER BY {order_by}"
@@ -204,7 +205,9 @@ class MinBarTable(ClickHouseTable):
         if result is not None:
             self.logger.info(f"Successfully read {len(result)} records from '{self.table_name}'")
         else:
-            self.logger.warning(f"No data found or error occurred while reading from '{self.table_name}'")
+            self.logger.warning(
+                f"No data found or error occurred while reading from '{self.table_name}'"
+            )
 
         return result
 
@@ -220,14 +223,14 @@ class DayBarTable(ClickHouseTable):
 
     def __init__(
         self,
-        table_name: str = 'day_bar',
-        client: Optional[ClickHouseClient] = None,
-        pool: Optional[ClickHouseConnectionPool] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
-        database: Optional[str] = None
+        table_name: str = "day_bar",
+        client: ClickHouseClient | None = None,
+        pool: ClickHouseConnectionPool | None = None,
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
     ) -> None:
         """
         初始化 DayBarTable。
@@ -252,26 +255,26 @@ class DayBarTable(ClickHouseTable):
             user=user,
             password=password,
             database=database,
-            logger_name="DayBarTable"
+            logger_name="DayBarTable",
         )
 
         # 表结构定义（与 MinBarTable 相同）
         self.table_schema = {
-            'date': 'UInt32',
-            'time': 'Int32',
-            'pre_close': 'Int64',
-            'open': 'Int64',
-            'high': 'Int64',
-            'low': 'Int64',
-            'close': 'Int64',
-            'volume': 'Int64',
-            'turnover': 'Int64',
-            'open_interest': 'Int64',
-            'pre_settle_price': 'Int64',
-            'settle_price': 'Int64',
-            'symbol': 'String',
-            'local_time': 'DateTime64(3)',
-            'insert_time': 'DateTime'
+            "date": "UInt32",
+            "time": "Int32",
+            "pre_close": "Int64",
+            "open": "Int64",
+            "high": "Int64",
+            "low": "Int64",
+            "close": "Int64",
+            "volume": "Int64",
+            "turnover": "Int64",
+            "open_interest": "Int64",
+            "pre_settle_price": "Int64",
+            "settle_price": "Int64",
+            "symbol": "String",
+            "local_time": "DateTime64(3)",
+            "insert_time": "DateTime",
         }
 
     def create(self, if_not_exists: bool = True) -> bool:
@@ -327,12 +330,12 @@ class DayBarTable(ClickHouseTable):
 
     def read(
         self,
-        symbols: Optional[str | list[str]] = None,
-        start_date: Optional[int | str] = None,
-        end_date: Optional[int | str] = None,
+        symbols: str | list[str] | None = None,
+        start_date: int | str | None = None,
+        end_date: int | str | None = None,
         order_by: str = "symbol, date",
-        limit: Optional[int] = None
-    ) -> Optional[pd.DataFrame]:
+        limit: int | None = None,
+    ) -> pd.DataFrame | None:
         """
         读取 day_bar 表中的数据,支持灵活的日期和标的筛选。
 
@@ -371,21 +374,21 @@ class DayBarTable(ClickHouseTable):
                 start_date_int = start_date
             else:
                 # 字符串格式如 '2020-01-01' 转换为 20200101
-                start_date_str = str(start_date).replace('-', '')
+                start_date_str = str(start_date).replace("-", "")
                 start_date_int = int(start_date_str)
 
         conditions.append(f"date >= {start_date_int}")
 
         # 如果没有指定end_date,使用当前日期
         if end_date is None:
-            end_date_int = int(datetime.now().strftime('%Y%m%d'))
+            end_date_int = int(datetime.now().strftime("%Y%m%d"))
         else:
             # 转换为整数格式
             if isinstance(end_date, int):
                 end_date_int = end_date
             else:
                 # 字符串格式如 '2025-12-31' 转换为 20251231
-                end_date_str = str(end_date).replace('-', '')
+                end_date_str = str(end_date).replace("-", "")
                 end_date_int = int(end_date_str)
 
         conditions.append(f"date <= {end_date_int}")
@@ -394,7 +397,7 @@ class DayBarTable(ClickHouseTable):
         query = f"SELECT * FROM {self.table_name}"
 
         if conditions:
-            query += " WHERE " + ' AND '.join(conditions)
+            query += " WHERE " + " AND ".join(conditions)
 
         if order_by:
             query += f" ORDER BY {order_by}"
@@ -408,7 +411,9 @@ class DayBarTable(ClickHouseTable):
         if result is not None:
             self.logger.info(f"Successfully read {len(result)} records from '{self.table_name}'")
         else:
-            self.logger.warning(f"No data found or error occurred while reading from '{self.table_name}'")
+            self.logger.warning(
+                f"No data found or error occurred while reading from '{self.table_name}'"
+            )
 
         return result
 
@@ -424,14 +429,14 @@ class CodeInfoTable(ClickHouseTable):
 
     def __init__(
         self,
-        table_name: str = 'code_info',
-        client: Optional[ClickHouseClient] = None,
-        pool: Optional[ClickHouseConnectionPool] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
-        database: Optional[str] = None
+        table_name: str = "code_info",
+        client: ClickHouseClient | None = None,
+        pool: ClickHouseConnectionPool | None = None,
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
     ) -> None:
         """
         初始化 CodeInfoTable。
@@ -456,30 +461,30 @@ class CodeInfoTable(ClickHouseTable):
             user=user,
             password=password,
             database=database,
-            logger_name="CodeInfoTable"
+            logger_name="CodeInfoTable",
         )
 
         # 表结构定义
         self.table_schema = {
-            'sec_type': 'Int32',
-            'sec_name': 'String',
-            'date': 'UInt32',
-            'high_limited': 'Int64',
-            'low_limited': 'Int64',
-            'multiplier': 'Int32',
-            'margin_ratio': 'Int32',
-            'price_tick': 'Int64',
-            'capital': 'Int64',
-            'cap_change_date': 'UInt32',
-            'trade_date_in': 'UInt32',
-            'trade_date_out': 'UInt32',
-            'is_halt': 'Int8',
-            'margin_unit': 'Int32',
-            'margin_ratio_param1': 'Int32',
-            'margin_ratio_param2': 'Int32',
-            'sec_name_ext': 'String',
-            'symbol': 'String',
-            'insert_time': 'DateTime'
+            "sec_type": "Int32",
+            "sec_name": "String",
+            "date": "UInt32",
+            "high_limited": "Int64",
+            "low_limited": "Int64",
+            "multiplier": "Int32",
+            "margin_ratio": "Int32",
+            "price_tick": "Int64",
+            "capital": "Int64",
+            "cap_change_date": "UInt32",
+            "trade_date_in": "UInt32",
+            "trade_date_out": "UInt32",
+            "is_halt": "Int8",
+            "margin_unit": "Int32",
+            "margin_ratio_param1": "Int32",
+            "margin_ratio_param2": "Int32",
+            "sec_name_ext": "String",
+            "symbol": "String",
+            "insert_time": "DateTime",
         }
 
     def create(self, if_not_exists: bool = True) -> bool:
@@ -534,10 +539,10 @@ class CodeInfoTable(ClickHouseTable):
 
     def read(
         self,
-        symbols: Optional[str | list[str]] = None,
-        sec_type: Optional[int] = None,
-        limit: Optional[int] = None
-    ) -> Optional[pd.DataFrame]:
+        symbols: str | list[str] | None = None,
+        sec_type: int | None = None,
+        limit: int | None = None,
+    ) -> pd.DataFrame | None:
         """
         读取 code_info 表中的数据,支持按标的代码和证券类型筛选。
 
@@ -570,7 +575,7 @@ class CodeInfoTable(ClickHouseTable):
         query = f"SELECT * FROM {self.table_name}"
 
         if conditions:
-            query += " WHERE " + ' AND '.join(conditions)
+            query += " WHERE " + " AND ".join(conditions)
 
         query += " ORDER BY symbol"
 
@@ -583,11 +588,13 @@ class CodeInfoTable(ClickHouseTable):
         if result is not None:
             self.logger.info(f"Successfully read {len(result)} records from '{self.table_name}'")
         else:
-            self.logger.warning(f"No data found or error occurred while reading from '{self.table_name}'")
+            self.logger.warning(
+                f"No data found or error occurred while reading from '{self.table_name}'"
+            )
 
         return result
 
-    def get_by_symbol(self, symbol: str) -> Optional[pd.Series]:
+    def get_by_symbol(self, symbol: str) -> pd.Series | None:
         """
         获取指定标的的合约信息。
 

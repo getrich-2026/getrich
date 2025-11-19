@@ -1,0 +1,67 @@
+{
+    // --- 1. Python 核心与类型检查 ---
+    // 强制使用 Pylance 进行类型检查
+    "python.languageServer": "Pylance",
+    // 对应 Copilot 指令中的 "Strict Type Hinting required"
+    // 如果旧项目报错太多，可降级为 "basic"
+    "python.analysis.typeCheckingMode": "strict",
+    "python.analysis.autoImportCompletions": true,
+    // 启用更智能的数据分析库自动补全
+    "python.analysis.indexing": true,
+    // 内存优化：分析大文件时的内存限制
+    "python.analysis.userFileIndexingLimit": -1,
+
+    // --- 2. 格式化与 Linting (使用 Ruff) ---
+    // 优先使用 Ruff，因为它是 Rust 写的，速度极快，适合大型量化项目
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll": "explicit"
+        }
+    },
+    // Ruff 具体参数通常在 pyproject.toml 中配置，这里做编辑器集成
+    "ruff.organizeImports": true,
+
+    // --- 3. 量化数据文件优化 ---
+    // 极其重要：防止 VSCode 尝试搜索几百兆的行情数据文件导致卡死
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/__pycache__": true,
+        "**/*.parquet": true, // 忽略 Parquet
+        "**/*.h5": true,      // 忽略 HDF5
+        "**/*.csv": true,     // 忽略 CSV (如果文件很大)
+        "**/*.log": true,     // 忽略日志
+        "**/.git": true
+    },
+    "files.watcherExclude": {
+        "**/*.parquet": true,
+        "**/*.h5": true,
+        "**/*.csv": true
+    },
+
+    // --- 4. 终端与时区 ---
+    // 强制终端使用上海时区，避免 print(datetime.now()) 出现偏差
+    "terminal.integrated.env.osx": { "TZ": "Asia/Shanghai" },
+    "terminal.integrated.env.linux": { "TZ": "Asia/Shanghai" },
+    "terminal.integrated.env.windows": { "TZ": "Asia/Shanghai" },
+
+    // --- 5. 编辑器视觉辅助 ---
+    // 标尺：88 (Ruff 默认) 和 120 (宽屏限制)
+    "editor.rulers": [88, 120],
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": true,
+    
+    // --- 6. Copilot 深度集成 ---
+    "editor.inlineSuggest.enabled": true,
+    // [可选] 控制是否允许在输入时自动弹出 (设为 true 体验最流畅)
+    "editor.suggest.preview": true,
+    // 允许在 Notebook 中使用 Copilot
+    "github.copilot.enable": {
+        "*": true,
+        "plaintext": false,
+        "markdown": true,
+        "scminput": false
+    }
+}
