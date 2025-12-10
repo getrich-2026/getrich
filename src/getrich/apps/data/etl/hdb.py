@@ -280,6 +280,47 @@ def read_min_bar_from_local(
     return df, codeinfo_df
 
 
+def read_hdb_baseinfo_from_local(db_path: str, date: str) -> pd.DataFrame:
+    """
+    从本地 HDB 文件中读取指定日期的证券信息（baseinfo/SecurityInfo_YYYYMMDD）
+
+    Args:
+        db_path (str): HDB 数据库的根目录 (例如 "E:/data/base_info")。
+        date (str): 要读取的日期，格式为 "YYYYMMDD"
+    Returns:
+        pd.DataFrame: 包含证券信息的 DataFrame。
+    """
+    from datetime import datetime
+    db = hdb.DB(db_path)
+    hdb_file = db.open_file(f"SecurityInfo_{date}", mode="r")
+    ci_data = hdb_file.ci_type.items_data(hdb_file.codetable.data)
+    df = pd.DataFrame(ci_data)
+    df['dt'] = pd.to_datetime(date).strftime('%Y-%m-%d')
+    df = df[['dt','EXCHMARKET_ANN_CODE', 'INFO_NAME_NATIONAL', 'INFO_FULLNAME', 'SECURITYTYPE',
+             'INFO_EXCHANGE_ENG', 'INFO_EXCHANGE', 'MIN_PRC_CHG_UNIT', 'INFO_UNITPERLOT',
+             'INFO_LISTDATE','INFO_DELISTDATE','INFO_LISTPRICE','INFO_LISTBOARDNAME','TRADING_STATUS']]
+    for column in df.columns:
+        if df[column].apply(lambda x: isinstance(x, bytes)).any():
+            df[column] = df[column].apply(lambda x: x.decode('gbk') if isinstance(x, bytes) else x)
+
+    df = df.rename(columns={'EXCHMARKET_ANN_CODE': 'symbol', 'INFO_NAME_NATIONAL': 'asset_name', 'INFO_FULLNAME': 'full_asset_name',
+                            'SECURITYTYPE': 'asset_type', 'INFO_EXCHANGE_ENG': 'exchange_eng', 'INFO_EXCHANGE': 'exchange',
+                            'MIN_PRC_CHG_UNIT': 'min_price_chg_unit', 'INFO_UNITPERLOT': 'unit_per_lot', 'INFO_LISTDATE': 'list_date',
+                            'INFO_DELISTDATE': 'delist_date', 'INFO_LISTPRICE': 'list_price', 'INFO_LISTBOARDNAME': 'list_board_name', 'TRADING_STATUS': 'trading_status'})
+
+    hdb_file.close()
+    df=(df[df['trading_status']!=0])
+    return df
+
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
     # 使用示例
     # 请根据您的实际路径修改
