@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS ref.instruments (
     exchange LowCardinality(String) COMMENT '交易所, SH,SZ,SHF,CFFEX 等',
     name String COMMENT '标的名称',
     type String COMMENT '标的类型, A, S, FU, OP 等',
+	und_code String DEFAULT 0 COMMENT '衍生品标的资产代码，如IF的标的资产代码是000300.SH',
+	und_name String DEFAULT 0 COMMENT '衍生品标的资产名称，如IF的标的资产名称是沪深300指数',
     multiplier Float64 DEFAULT 1.0 COMMENT '合约乘数, 股票为1, 期货如300',
     margin_ratio Float32 DEFAULT 0.0 COMMENT '保证金比例',
     min_movement Float64 DEFAULT 0.01 COMMENT '最小变动价位',
