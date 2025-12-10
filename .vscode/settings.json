@@ -3,8 +3,6 @@
     // 强制使用 Pylance 进行类型检查
     "python.languageServer": "Pylance",
     // 对应 Copilot 指令中的 "Strict Type Hinting required"
-    // 如果旧项目报错太多，可降级为 "basic"
-    "python.analysis.typeCheckingMode": "strict",
     "python.analysis.autoImportCompletions": true,
     // 启用更智能的数据分析库自动补全
     "python.analysis.indexing": true,

@@ -1,15 +1,14 @@
-from getrich import ClickHouseConnectionPool, DEFAULT_DB_CONFIG, DataImportJob
+from getrich import DEFAULT_DB_CONFIG, ClickHouseConnectionPool, DataImportJob
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     pool = ClickHouseConnectionPool(
-        host=DEFAULT_DB_CONFIG['host'],
-        port=DEFAULT_DB_CONFIG['port'],
-        user=DEFAULT_DB_CONFIG['user'],
-        password=DEFAULT_DB_CONFIG['password'],
-        database=DEFAULT_DB_CONFIG['database']
+        host=DEFAULT_DB_CONFIG["host"],
+        port=DEFAULT_DB_CONFIG["port"],
+        user=DEFAULT_DB_CONFIG["user"],
+        password=DEFAULT_DB_CONFIG["password"],
+        database=DEFAULT_DB_CONFIG["database"],
     )
-    HDB_PATH = 'E:/data/bar'
+    HDB_PATH = "E:/data/bar"
     # with pool.get_connection() as conn:
     #     importer_job = DataImportJob(hdb_base_path=HDB_PATH, pool=pool, max_workers=5)
     #     importer_job.run_full_import(
@@ -40,10 +39,7 @@ if __name__ == '__main__':
 
     with pool.get_connection() as conn:
         parquet_importer_job = DataImportJob(hdb_base_path=HDB_PATH, pool=pool, max_workers=5)
-        parquet_importer_job.run_parquet_import(
-            start_date=20251117,
-            end_date=20251117
-        )
+        parquet_importer_job.run_parquet_import(start_date=20251117, end_date=20251117)
     # from getrich.apps.data.table import DayBarTable
     # day_bar_table = DayBarTable(pool=pool)
     # day_bar_table.drop()

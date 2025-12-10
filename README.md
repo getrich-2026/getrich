@@ -103,20 +103,58 @@ REDIS_PORT=6379
 ```sql
 -- 1. 分钟线表 (Minute Bars)
 CREATE TABLE IF NOT EXISTS market_data.bars_1m (
-    symbol LowCardinality(String) COMMENT '标的代码, e.g. sh.000300',
-    dt Date CODEC(Delta, ZSTD),
-    ts DateTime CODEC(Delta, ZSTD),
-    open Float32,
-    high Float32,
-    low Float32,
-    close Float32,
-    volume Float64,
-    amount Float64,
-    updated_at DateTime DEFAULT now()
+    symbol LowCardinality(String),
+    dt Date CODEC(Delta, ZSTD(1)),      -- 用于分区
+    ts DateTime CODEC(Delta, ZSTD(1)),  -- K线结束时间
+    pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前收盘价
+    open Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 开盘价
+    high Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 最高价
+    low Float64 DEFAULT 0 CODEC(ZSTD(1)),       -- 最低价
+    close Float64 DEFAULT 0 CODEC(ZSTD(1)),     -- 收盘价
+    volume Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 成交量
+    amount Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 成交额
+    open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 持仓量(期货)
+    settle Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 结算价
+    pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前结算价
+    updated_at DateTime('Asia/Shanghai') DEFAULT now()
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(dt)
 ORDER BY (symbol, ts)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, min_bytes_for_wide_part = 0, min_rows_for_wide_part = 0, enable_mixed_granularity_parts = 1;
+
+-- 1.1 日线 (宽表，包含常用衍生字段)
+CREATE TABLE IF NOT EXISTS market_data.bars_1d (
+    symbol LowCardinality(String),
+    dt Date CODEC(Delta, ZSTD(1)),
+
+    pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    open Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    high Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    low Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    close Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    volume Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    amount Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    
+    pct_chg Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    pct_chg_log Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    adj_factor Float64 DEFAULT 1 CODEC(ZSTD(1)),
+
+    limit_up Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    limit_down Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    turnover_rate Float32 DEFAULT 0 CODEC(ZSTD(1)),
+    total_shares Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    float_shares Float64 DEFAULT 0 CODEC(ZSTD(1)),
+
+    open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    settle Float64 DEFAULT 0 CODEC(ZSTD(1)),
+    pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)),
+
+    trading_status Enum8('UNKNOWN'=0, 'NORMAL'=1, 'HALTED'=2) DEFAULT 'UNKNOWN',
+    updated_at DateTime('Asia/Shanghai') DEFAULT now()
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(dt)
+ORDER BY (symbol, dt)
+SETTINGS index_granularity = 8192, min_bytes_for_wide_part = 0, min_rows_for_wide_part = 0, enable_mixed_granularity_parts = 1;
 
 -- 2. Tick 数据表 (带 TTL 自动清理)
 -- 重点: 定期删除旧Tick数据，节省空间

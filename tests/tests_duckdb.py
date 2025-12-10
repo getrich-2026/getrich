@@ -1,8 +1,7 @@
 import duckdb
-import pandas as pd
 
 # 创建一个内存数据库连接
-con = duckdb.connect(database=':memory:')
+con = duckdb.connect(database=":memory:")
 
 # 执行SQL查询
 con.execute("CREATE TABLE items(id INTEGER, name VARCHAR)")
