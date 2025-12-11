@@ -107,8 +107,10 @@ CREATE TABLE IF NOT EXISTS market_data.ticks (
     ts DateTime64(3) CODEC(DoubleDelta, ZSTD(1)),
     price Float64 CODEC(ZSTD(1)),
     volume Float64 CODEC(ZSTD(1)),
-    bid1 Float64,
-    ask1 Float64,
+    bid1_price Float64,
+	bid1_volume Float64,
+    ask1_price Float64,
+	ask1_volume Float64,
     bs_flag Enum8('Unknown'=0, 'Buy'=1, 'Sell'=2) COMMENT '主动买卖方向',
     received_at DateTime64(3) DEFAULT now64(3)    -- 记录入库物理时间，用于延时监控
 ) ENGINE = MergeTree()
