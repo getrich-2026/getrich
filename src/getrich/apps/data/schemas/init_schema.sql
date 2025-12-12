@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS ref.instruments (
     symbol_raw String COMMENT '交易所原始代码 (可选)',
     exchange LowCardinality(String) COMMENT '交易所, SH,SZ,SHF,CFFEX 等',
     name String COMMENT '标的名称',
-    type String COMMENT '标的类型, A, S, FU, OP 等',
-	und_code String DEFAULT 0 COMMENT '衍生品标的资产代码，如IF的标的资产代码是000300.SH',
-	und_name String DEFAULT 0 COMMENT '衍生品标的资产名称，如IF的标的资产名称是沪深300指数',
+    type LowCardinality(String) COMMENT '标的类型, A, S, FU, OP 等',
+    und_code String DEFAULT '' COMMENT '衍生品标的资产代码，如IF的标的资产代码是000300.SH',
+    und_name String DEFAULT '' COMMENT '衍生品标的资产名称，如IF的标的资产名称是沪深300指数',
     multiplier Float64 DEFAULT 1.0 COMMENT '合约乘数, 股票为1, 期货如300',
     margin_ratio Float32 DEFAULT 0.0 COMMENT '保证金比例',
     min_movement Float64 DEFAULT 0.01 COMMENT '最小变动价位',
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS ref.instruments (
     listed_date Date,
     delisted_date Date DEFAULT '2099-12-31',
     source LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
-    updated_at DateTime('Asia/Shanghai') DEFAULT now()
+    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (symbol);
 
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS ref.calendar (
     is_trading UInt8,
     prev_trading_day Date COMMENT '上一个交易日',
     next_trading_day Date COMMENT '下一个交易日',
-    updated_at DateTime('Asia/Shanghai') DEFAULT now()
+    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (exchange, trading_day);
 
@@ -40,7 +40,7 @@ ORDER BY (exchange, trading_day);
 CREATE TABLE IF NOT EXISTS market_data.bars_1m (
     symbol LowCardinality(String),
     dt Date CODEC(Delta, ZSTD(1)),      -- 用于分区
-    ts DateTime CODEC(Delta, ZSTD(1)),  -- K线结束时间
+    ts DateTime64(3, 'Asia/Shanghai') CODEC(DoubleDelta, ZSTD(1)),  -- K线结束时间（毫秒，含时区）
     pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前收盘价
     open Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 开盘价
     high Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 最高价
@@ -51,8 +51,9 @@ CREATE TABLE IF NOT EXISTS market_data.bars_1m (
     open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 持仓量(期货)
     settle Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 结算价
     pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前结算价
-    updated_at DateTime('Asia/Shanghai') DEFAULT now()
-) ENGINE = MergeTree()
+    source LowCardinality(String) DEFAULT 'UNKNOWN',  -- 数据来源
+    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(dt)
 ORDER BY (symbol, ts)
 SETTINGS index_granularity = 8192, 
@@ -88,7 +89,7 @@ CREATE TABLE IF NOT EXISTS market_data.bars_1d (
     trading_status Enum8('UNKNOWN'=0, 'NORMAL'=1, 'HALTED'=2) DEFAULT 'UNKNOWN',
     source LowCardinality(String) DEFAULT 'UNKNOWN',
 
-    updated_at DateTime('Asia/Shanghai') DEFAULT now()
+    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(dt)
 ORDER BY (symbol, dt)
@@ -98,13 +99,10 @@ SETTINGS index_granularity = 8192,
          enable_mixed_granularity_parts = 1;
 
 --- TODO: 检查以下表结构并建表入库
--- ...existing code...
-
---- TODO: 检查以下表结构并建表入库
 -- 2.2 Tick 快照 (带 TTL)
 CREATE TABLE IF NOT EXISTS market_data.ticks (
     symbol LowCardinality(String),
-    ts DateTime64(3) CODEC(DoubleDelta, ZSTD(1)),
+    ts DateTime64(3, 'Asia/Shanghai') CODEC(DoubleDelta, ZSTD(1)),
     price Float64 CODEC(ZSTD(1)),
     volume Float64 CODEC(ZSTD(1)),
     bid1_price Float64,
@@ -112,9 +110,10 @@ CREATE TABLE IF NOT EXISTS market_data.ticks (
     ask1_price Float64,
 	ask1_volume Float64,
     bs_flag Enum8('Unknown'=0, 'Buy'=1, 'Sell'=2) COMMENT '主动买卖方向',
-    received_at DateTime64(3) DEFAULT now64(3)    -- 记录入库物理时间，用于延时监控
+    source LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
+    received_at DateTime64(3) DEFAULT now64(3) COMMENT '入库物理时间，用于延时监控'
 ) ENGINE = MergeTree()
-PARTITION BY (toYYYYMM(toDate(ts)), symbol)       -- 复合分区避免单Part过大
+PARTITION BY toYYYYMM(toDate(ts))       -- 分区按月，避免按 symbol 导致大量小分区
 ORDER BY (symbol, ts)
 TTL toDateTime(ts) + INTERVAL 30 DAY DELETE       -- 30天自动滚动删除
 SETTINGS ttl_only_drop_parts = 1;
@@ -139,8 +138,8 @@ CREATE TABLE IF NOT EXISTS trade.orders (
     avg_price Float64 DEFAULT 0,      -- 成交均价
     
     -- 时间与版本控制
-    created_at DateTime,
-    updated_at DateTime64(3),
+    created_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3),
+    updated_at DateTime64(3, 'Asia/Shanghai'),
     ver UInt64 DEFAULT 0 COMMENT '版本号, 每次状态变更+1'
 ) ENGINE = ReplacingMergeTree(ver)    -- 按照 ver 字段保留最新状态
 PARTITION BY toYYYYMM(toDate(created_at))
@@ -157,6 +156,7 @@ CREATE TABLE IF NOT EXISTS trade.fills (
     price Float64,
     qty Float64,
     commission Float64 DEFAULT 0,
+    source LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '成交来源',
     
     fill_time DateTime64(3)
 ) ENGINE = MergeTree()
@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS strategy.signals_raw (
     action Enum8('NOOP'=0, 'OPEN_LONG'=1, 'OPEN_SHORT'=2, 'CLOSE_LONG'=3, 'CLOSE_SHORT'=4),
     price Float64,
     strength Float32, -- 信号强度仍可用 Float32
+    source LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '信号来源',
     
     json_meta String  -- 扩展字段
 ) ENGINE = MergeTree()
