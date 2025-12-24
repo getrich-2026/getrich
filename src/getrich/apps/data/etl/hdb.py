@@ -8,6 +8,9 @@ from datetime import datetime
 
 import hdb
 import pandas as pd
+from lntools import Logger
+
+log = Logger(module_name="HdbEtl")
 
 
 def read_hdb_to_df(
@@ -280,45 +283,129 @@ def read_min_bar_from_local(
     return df, codeinfo_df
 
 
-def read_hdb_baseinfo_from_local(db_path: str, date: str) -> pd.DataFrame:
+def read_baseinfo_from_local_all(db_path: str = r"Z:\hdb_data\baseinfo") -> pd.DataFrame:
     """
-    从本地 HDB 文件中读取指定日期的证券信息（baseinfo/SecurityInfo_YYYYMMDD）
-
-    Args:
-        db_path (str): HDB 数据库的根目录 (例如 "E:/data/base_info")。
-        date (str): 要读取的日期，格式为 "YYYYMMDD"
-    Returns:
-        pd.DataFrame: 包含证券信息的 DataFrame。
+    读取所有历史的基础信息，并保留每个 symbol 最新的记录。
     """
-    from datetime import datetime
-    db = hdb.DB(db_path)
-    hdb_file = db.open_file(f"SecurityInfo_{date}", mode="r")
-    ci_data = hdb_file.ci_type.items_data(hdb_file.codetable.data)
-    df = pd.DataFrame(ci_data)
-    df['dt'] = pd.to_datetime(date).strftime('%Y-%m-%d')
-    df = df[['dt','EXCHMARKET_ANN_CODE', 'INFO_NAME_NATIONAL', 'INFO_FULLNAME', 'SECURITYTYPE',
-             'INFO_EXCHANGE_ENG', 'INFO_EXCHANGE', 'MIN_PRC_CHG_UNIT', 'INFO_UNITPERLOT',
-             'INFO_LISTDATE','INFO_DELISTDATE','INFO_LISTPRICE','INFO_LISTBOARDNAME','TRADING_STATUS']]
-    for column in df.columns:
-        if df[column].apply(lambda x: isinstance(x, bytes)).any():
-            df[column] = df[column].apply(lambda x: x.decode('gbk') if isinstance(x, bytes) else x)
+    try:
+        db = hdb.DB(db_path)
+        files = db.get_file_names(sub_folder="")
+    except Exception as e:
+        log.error(f"Failed to open baseinfo DB at {db_path}: {e}")
+        return pd.DataFrame()
 
-    df = df.rename(columns={'EXCHMARKET_ANN_CODE': 'symbol', 'INFO_NAME_NATIONAL': 'asset_name', 'INFO_FULLNAME': 'full_asset_name',
-                            'SECURITYTYPE': 'asset_type', 'INFO_EXCHANGE_ENG': 'exchange_eng', 'INFO_EXCHANGE': 'exchange',
-                            'MIN_PRC_CHG_UNIT': 'min_price_chg_unit', 'INFO_UNITPERLOT': 'unit_per_lot', 'INFO_LISTDATE': 'list_date',
-                            'INFO_DELISTDATE': 'delist_date', 'INFO_LISTPRICE': 'list_price', 'INFO_LISTBOARDNAME': 'list_board_name', 'TRADING_STATUS': 'trading_status'})
+    # 按时间倒序排列，这样最新的数据在前面
+    files = sorted(files, reverse=True)
 
-    hdb_file.close()
-    df=(df[df['trading_status']!=0])
-    return df
+    try:
+        tick_db = hdb.DB(r"Z:\hdb_data\marketdata")
+    except Exception as e:
+        log.error(f"Failed to open tick DB: {e}")
+        return pd.DataFrame()
+
+    all_dfs = []
+
+    for f in files:
+        log.info(f"Processing {f}...")
+        date_str = f[-8:]
+
+        secinfo_file = None
+        tick_file = None
+
+        try:
+            secinfo_file = db.open_file(f, mode="r")
+            secinfo_df = _read_secinfo_from_hdb_file(secinfo_file)
+
+            if secinfo_df.empty:
+                continue
+
+            # 筛选需要的列
+            required_cols = {
+                "EXCHMARKET_ANN_CODE": "symbol_raw",
+                "INFO_EXCHANGE_ENG": "exchange",
+                "INFO_FULLNAME": "name",
+                "SECURITYTYPE": "type",
+                "CRNCY_CODE": "currency",
+                "INFO_LISTDATE": "listed_date",
+                "INFO_DELISTDATE": "delisted_date",
+            }
+
+            # 检查列是否存在
+            available_cols = [c for c in required_cols if c in secinfo_df.columns]
+            if not available_cols:
+                continue
+
+            secinfo_df = secinfo_df[["symbol"] + available_cols].rename(columns=required_cols)
+
+            # 读取 tick 库中的补充信息
+            try:
+                tick_file = tick_db.open_file(f"tick_{date_str}", mode="r")
+                codeinfo_df = _read_codeinfo_from_hdb_file(tick_file)
+
+                if not codeinfo_df.empty:
+                    tick_cols = {
+                        "multiplier": "multiplier",
+                        "margin_ratio": "margin_ratio",
+                        "price_tick": "min_movement",
+                        "margin_ratio_param1": "margin_ratio_param1",
+                        "margin_ratio_param2": "margin_ratio_param2",
+                    }
+
+                    available_tick_cols = [c for c in tick_cols if c in codeinfo_df.columns]
+                    if available_tick_cols:
+                        codeinfo_df = codeinfo_df[["symbol"] + available_tick_cols].rename(
+                            columns=tick_cols
+                        )
+                        # Inner merge: 只有两者都有的 symbol 才保留
+                        secinfo_df = pd.merge(secinfo_df, codeinfo_df, on="symbol", how="inner")
+            except Exception as e:
+                log.warning(f"Failed to read tick info for {date_str}: {e}")
+                # 如果读取 tick 失败，跳过这一天的合并
+                continue
+
+            if not secinfo_df.empty:
+                all_dfs.append(secinfo_df)
+
+        except Exception as e:
+            log.error(f"Error processing file {f}: {e}")
+            continue
+        finally:
+            if secinfo_file:
+                secinfo_file.close()
+            if tick_file:
+                tick_file.close()
+
+    if not all_dfs:
+        return pd.DataFrame()
+
+    log.info(f"Concatenating {len(all_dfs)} dataframes...")
+    full_df = pd.concat(all_dfs, ignore_index=True)
+
+    # 保留每个 symbol 的第一条记录（因为是按时间倒序读取的，所以第一条就是最新的）
+    final_df = full_df.drop_duplicates(subset=["symbol"], keep="first")
+
+    log.info(f"Finished processing baseinfo. Total symbols: {len(final_df)}")
+    return final_df
 
 
+def _read_secinfo_from_hdb_file(hdb_file) -> pd.DataFrame:  # type: ignore
+    """从 HDB 文件中提取代码信息。"""
+    secinfo_df = pd.DataFrame()
+    try:
+        if hdb_file.codetable.data is not None and len(hdb_file.codetable.data) > 0:
+            ci_data = hdb_file.ci_type.items_data(hdb_file.codetable.data)
+            secinfo_df = pd.DataFrame(ci_data)
+            # 只对 object 类型的列进行解码
+            for col in secinfo_df.select_dtypes(include=["object"]).columns:
+                secinfo_df[col] = secinfo_df[col].apply(
+                    lambda x: x.decode("gbk", errors="ignore") if isinstance(x, bytes) else x
+                )
+            secinfo_df["symbol"] = hdb_file.codetable.symbols
+    except Exception as e:
+        log.error(f"Error reading secinfo from hdb file: {e}")
+        return pd.DataFrame()
 
-
-
-
-
-
+    return secinfo_df
 
 
 if __name__ == "__main__":
