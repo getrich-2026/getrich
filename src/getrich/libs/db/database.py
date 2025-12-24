@@ -31,7 +31,7 @@ def load_db_config():
 DEFAULT_DB_CONFIG = load_db_config().get("default_database", {})
 
 # 从配置中获取默认值,如果配置不存在则使用硬编码的备用值
-DEFAULT_HOST = DEFAULT_DB_CONFIG.get("host", "192.168.1.232")
+DEFAULT_HOST = DEFAULT_DB_CONFIG.get("host", "192.168.1.60")
 DEFAULT_PORT = DEFAULT_DB_CONFIG.get("port", 8123)
 DEFAULT_USER = DEFAULT_DB_CONFIG.get("user", "default")
 DEFAULT_PASSWORD = DEFAULT_DB_CONFIG.get("password", "getrich")
@@ -219,6 +219,41 @@ class ClickHouseClient:
             return True
         except Exception as e:
             log.error(f"Error executing SQL: {e}\nSQL: {sql}")
+            return False
+
+    def execute_sql_file(self, file_path: str) -> bool:
+        """
+        从 SQL 文件中读取并执行多个 SQL 语句。
+        主要用于执行包含多个 DDL 语句的 SQL 脚本文件。
+
+        Args:
+            file_path: SQL 文件路径
+
+        Returns:
+            全部执行成功返回 True, 遇到错误停止并返回 False
+        """
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                sql_content = f.read()
+
+            # 简单的按分号分割, 过滤空语句
+            # 注意: 这种简单的分割不支持 SQL 字符串中包含分号的情况
+            # 但对于通常的 schema 定义文件来说已经足够
+            statements = [s.strip() for s in sql_content.split(";") if s.strip()]
+
+            log.info(f"Found {len(statements)} SQL statements in {file_path}")
+
+            for i, sql in enumerate(statements):
+                log.info(f"Executing statement {i + 1}/{len(statements)}...")
+                if not self.execute(sql):
+                    log.error(f"Failed to execute statement {i + 1} in {file_path}")
+                    return False
+
+            log.info(f"Successfully executed all statements in {file_path}")
+            return True
+
+        except Exception as e:
+            log.error(f"Error reading or executing SQL file {file_path}: {e}")
             return False
 
     def query(self, sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame | None:
