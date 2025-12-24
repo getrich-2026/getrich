@@ -1,13 +1,16 @@
+# pyright: reportMissingParameterType=false
 """
 从akshare获取利率数据
 Author: QiuZiHua
 Date: 2025/08/01
 """
 
-import akshare as ak
-import pandas as pd
 import warnings
-warnings.filterwarnings('ignore')
+
+import akshare as ak
+
+warnings.filterwarnings("ignore")
+
 
 # 1. 银行间同业拆借利率
 def get_bank_interest(marekt, symbol, indicator):
@@ -28,8 +31,9 @@ def get_repo_rate_hist(start_date, end_date):
     start_date    str    开始日期
     end_date    str    结束日期
     """
-    df= ak.repo_rate_hist(start_date=start_date, end_date=end_date)
+    df = ak.repo_rate_hist(start_date=start_date, end_date=end_date)
     return df
+
 
 # 3. 回购定盘利率-近期
 def get_repo_rate(symbol):

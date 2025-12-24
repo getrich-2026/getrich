@@ -1,14 +1,18 @@
+# pyright: reportMissingParameterType=false
 """
 # -*- coding: utf-8 -*-
 从AKShare获取期货数据
 Author: QiuZiHua
 Date: 2025/07/31
 """
+
+import warnings
+
 import akshare as ak
 import pandas as pd
-import time
-import warnings
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
+
 
 # 1. 获取期货手续费和保证金
 def get_futures_commission(symbol):
@@ -19,6 +23,7 @@ def get_futures_commission(symbol):
     """
     df = ak.futures_comm_info(symbol=symbol)
     return df
+
 
 # 2. 获取期货交易日历表
 def get_futures_calendar_rule(date):
@@ -34,6 +39,7 @@ def get_futures_calendar_rule(date):
         df = pd.DataFrame()
     return df
 
+
 # 3. 获取所有期货品种指定日期的基差数据
 def get_futures_basis_1(symbol):
     """
@@ -44,6 +50,7 @@ def get_futures_basis_1(symbol):
     df = ak.futures_spot_price_previous(symbol)
     return df
 
+
 # 4. 获取指定品种的历史某段时间的基差值
 def get_futures_basis_2(symbol, start_date, end_date):
     """
@@ -53,8 +60,9 @@ def get_futures_basis_2(symbol, start_date, end_date):
     end_date = '20250731'
     :return: df
     """
-    df = ak.futures_spot_price_daily(start_day= start_date, end_day = end_date, vars_list=symbol)
+    df = ak.futures_spot_price_daily(start_day=start_date, end_day=end_date, vars_list=symbol)
     return df
+
 
 # 5. 获取某段时间的会员持仓排名前5名，前10名，前15名，前20名的总和
 def get_futures_position_rank_sum(symbol, start_date, end_date):
@@ -64,8 +72,9 @@ def get_futures_position_rank_sum(symbol, start_date, end_date):
     end_date = '20250731'
     :return: df
     """
-    df = ak.get_rank_sum_daily(vars_list=symbol, start_day= start_date, end_day = end_date)
+    df = ak.get_rank_sum_daily(vars_list=symbol, start_day=start_date, end_day=end_date)
     return df
+
 
 # 6. 获取某个交易日所有品种的持仓排名榜
 def get_futures_position_rank_table(exchangename, date):
@@ -73,21 +82,22 @@ def get_futures_position_rank_table(exchangename, date):
     date = '20250731'
     eschangename = 交易所名称：大商所，郑商所，上期所，中金所，广期所
     """
-    if exchangename=='郑商所':
-        df = ak.get_czce_rank_table(date=date)
+    if exchangename == "郑商所":
+        df = ak.get_rank_table_czce(date=date)
         return df
-    elif exchangename=='大商所':
+    elif exchangename == "大商所":
         df = ak.futures_dce_position_rank(date=date)
         return df
-    elif exchangename=='上期所':
+    elif exchangename == "上期所":
         df = ak.get_shfe_rank_table(date=date)
         return df
-    elif exchangename=='中金所':
+    elif exchangename == "中金所":
         df = ak.get_cffex_rank_table(date=date)
         return df
-    elif exchangename=='广期所':
+    elif exchangename == "广期所":
         df = ak.futures_gfex_position_rank(date=date)
         return df
+
 
 # 7. 获取某个交易日所有品种的仓单日报
 def get_futures_warrant_table(exchangename, date):
@@ -95,18 +105,19 @@ def get_futures_warrant_table(exchangename, date):
     date = '20250731'
     eschangename = 交易所名称：大商所，郑商所，上期所，中金所，广期所
     """
-    if exchangename=='郑商所':
-        df = ak.futures_czce_warehouse_receipt(date=date)
+    if exchangename == "郑商所":
+        df = ak.futures_warehouse_receipt_czce(date=date)
         return df
-    elif exchangename=='大商所':
-        df = ak.futures_dce_warehouse_receipt(date=date)
+    elif exchangename == "大商所":
+        df = ak.futures_warehouse_receipt_dce(date=date)
         return df
-    elif exchangename=='上期所':
+    elif exchangename == "上期所":
         df = ak.futures_shfe_warehouse_receipt(date=date)
         return df
-    elif exchangename=='广期所':
+    elif exchangename == "广期所":
         df = ak.futures_gfex_warehouse_receipt(date=date)
         return df
+
 
 # 8. 指定日期，指定交易所在交易的期货合约信息
 def get_futures_contract_info(exchangename, date=None):
@@ -114,24 +125,25 @@ def get_futures_contract_info(exchangename, date=None):
     date = '20250731'
     eschangename = 交易所名称：大商所，郑商所，上期所，中金所，广期所,上海能源中心
     """
-    if exchangename=='郑商所':
-        df = ak.futures_contract_info_czce(date=date)
+    if exchangename == "郑商所":
+        df = ak.futures_contract_info_czce(date=date)  # type: ignore
         return df
-    elif exchangename=='大商所':
+    elif exchangename == "大商所":
         df = ak.futures_contract_info_dce()
         return df
-    elif exchangename=='上期所':
-        df = ak.futures_contract_info_shfe(date=date)
+    elif exchangename == "上期所":
+        df = ak.futures_contract_info_shfe(date=date)  # type: ignore
         return df
-    elif exchangename=='中金所':
-        df = ak.futures_contract_info_cffex(date=date)
+    elif exchangename == "中金所":
+        df = ak.futures_contract_info_cffex(date=date)  # type: ignore
         return df
-    elif exchangename=='广期所':
+    elif exchangename == "广期所":
         df = ak.futures_contract_info_gfex()
         return df
-    elif exchangename=='上海能源中心':
-        df = ak.futures_contract_info_ine(date=date)
+    elif exchangename == "上海能源中心":
+        df = ak.futures_contract_info_ine(date=date)  # type: ignore
         return df
+
 
 # 9. 获取内盘期货的实时行情
 def get_futures_realtime(subscribe_str, market, adjust):
@@ -144,33 +156,31 @@ def get_futures_realtime(subscribe_str, market, adjust):
     df = ak.futures_zh_spot(symbol=subscribe_str, market=market, adjust=adjust)
     return df
 
+
 # 10. 获取主力合约的实时行情
 def get_futures_main_contract_realtime():
-    """
-
-    """
+    """ """
     dce_text = ak.match_main_contract(symbol="dce")
     czce_text = ak.match_main_contract(symbol="czce")
     shfe_text = ak.match_main_contract(symbol="shfe")
     gfex_text = ak.match_main_contract(symbol="gfex")
     df = ak.futures_zh_spot(
-            symbol=",".join([dce_text, czce_text, shfe_text, gfex_text]),
-            market="CF",
-            adjust='0')
+        symbol=",".join([dce_text, czce_text, shfe_text, gfex_text]), market="CF", adjust="0"
+    )
     return df
+
 
 # 11. 订阅中心所所有金融期货主力合约
 def get_futures_financial_main_contract():
-    """
-    """
+    """ """
     cffex_text = ak.match_main_contract(symbol="cffex")
-    df = ak.futures_zh_spot(symbol=cffex_text, market="FF", adjust='0')
+    df = ak.futures_zh_spot(symbol=cffex_text, market="FF", adjust="0")
     return df
+
 
 # 12. 获取所有主力合约
 def get_futures_all_main_contract():
-    """
-    """
+    """ """
     dce_text = ak.match_main_contract(symbol="dce")
     czce_text = ak.match_main_contract(symbol="czce")
     shfe_text = ak.match_main_contract(symbol="shfe")
@@ -181,15 +191,17 @@ def get_futures_all_main_contract():
         "czce": czce_text,
         "shfe": shfe_text,
         "gfex": gfex_text,
-        "cffex": cffex_text}
+        "cffex": cffex_text,
+    }
     return df
+
 
 # 13. 所有品种命名表
 def get_futures_all_name():
-    """
-    """
+    """ """
     df = ak.futures_symbol_mark()
     return df
+
 
 # 14. 根据品种获取实时行情数据
 def get_futures_realtime_by_name(symbol):
@@ -222,6 +234,7 @@ def get_futures_realtime_by_name(symbol):
     df = ak.futures_zh_realtime(symbol=symbol)
     return df
 
+
 # 15. 内盘获取分时行情数据
 def get_futures_minute(symbol, period):
     """
@@ -250,12 +263,13 @@ def get_futures_hist_em(symbol, period, start_date, end_date):
     df = ak.futures_hist_em(symbol=symbol, period=period, start_date=start_date, end_date=end_date)
     return df
 
+
 # 17. 获取所有当期能获取数据的合约表
 def get_futures_hist_table_em():
-    """
-    """
+    """ """
     df = ak.futures_hist_table_em()
     return df
+
 
 # 18. 获取历史行情数据-新浪
 def get_futures_hist_sina(symbol):
@@ -265,6 +279,7 @@ def get_futures_hist_sina(symbol):
     """
     df = ak.futures_zh_daily_sina(symbol=symbol)
     return df
+
 
 # 19. 从交易所获取历史行情数据
 def get_futures_hist_exchange(start_date, end_date, market):
@@ -288,6 +303,7 @@ def get_futures_hist_exchange(start_date, end_date, market):
     df = ak.get_futures_daily(start_date=start_date, end_date=end_date, market=market)
     return df
 
+
 # 20.获取外盘品种
 def get_futures_foreign_info():
     """
@@ -295,6 +311,7 @@ def get_futures_foreign_info():
     """
     df = ak.futures_hq_subscribe_exchange_symbol()
     return df
+
 
 # 21. 获取外盘实时行情数据
 def get_futures_foreign_realtime(symbol):
@@ -304,12 +321,13 @@ def get_futures_foreign_realtime(symbol):
     df = ak.futures_foreign_commodity_realtime(symbol=symbol)
     return df
 
+
 # 22. 获取外盘的实时行情-东财
 def get_futures_foreign_realtime_em():
-    """
-    """
+    """ """
     df = ak.futures_global_spot_em()
     return df
+
 
 # 23. 外盘历史行情数据-东财
 def get_futures_foreign_hist_em(symbol):
@@ -319,6 +337,7 @@ def get_futures_foreign_hist_em(symbol):
     df = ak.futures_global_hist_em(symbol=symbol)
     return df
 
+
 # 24. 外盘历史行情数据-新浪
 def get_futures_foreign_hist_sina(symbol):
     """
@@ -327,6 +346,7 @@ def get_futures_foreign_hist_sina(symbol):
     df = ak.futures_foreign_hist(symbol=symbol)
     return df
 
+
 # 25. 获取外盘期货合约详情
 def get_futures_foreign_contract_info(symbol):
     """
@@ -334,6 +354,7 @@ def get_futures_foreign_contract_info(symbol):
     """
     df = ak.futures_foreign_detail(symbol=symbol)
     return df
+
 
 # 26. 新加坡交易所期货合约信息
 def get_futures_contract_info_xjs(date):
@@ -373,6 +394,7 @@ def get_futures_continuous_sina(symbol, start_date, end_date):
     """
     df = ak.futures_main_sina(symbol=symbol, start_date=start_date, end_date=end_date)
     return df
+
 
 # 28. 获取期货连续合约数据-新浪
 """
@@ -454,6 +476,7 @@ def get_futures_continuous_sina(symbol, start_date, end_date):
 75	PS0	gfex	多晶硅连续
 """
 
+
 # 29. 期货对应的股票
 def get_futures_stock(symbol):
     """
@@ -471,6 +494,7 @@ def get_futures_stock(symbol):
     """
     df = ak.futures_spot_stock(symbol=symbol)
     return df
+
 
 # 30. 获取COMEX黄金和白银的库存数据
 def get_futures_commission_comex(symbol):
@@ -493,6 +517,7 @@ def get_futures_pig_price(symbol):
     df = ak.futures_hog_core(symbol=symbol)
     return df
 
+
 # 32. 获取成本维度-玉米
 def get_futures_pig_cost_dimension(symbol):
     """
@@ -503,6 +528,7 @@ def get_futures_pig_cost_dimension(symbol):
     df = ak.futures_hog_cost(symbol=symbol)
     return df
 
+
 # 33. 供应维度
 def get_futures_pig_supply_dimension(symbol):
     """
@@ -512,7 +538,6 @@ def get_futures_pig_supply_dimension(symbol):
     """
     df = ak.futures_hog_supply(symbol=symbol)
     return df
-
 
 
 # 34. 生猪市场价格指数
@@ -531,11 +556,7 @@ def get_futures_pig_price_index():
     return df
 
 
-
-
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     # df = get_futures_commission(symbol="所有")
     # print(get_futures_calendar_rule(date='20250731'))
     # print(get_futures_basis_1('20250731'))
@@ -565,5 +586,3 @@ if __name__ == '__main__':
 
     # print(get_futures_continuous_sina(symbol='FG0', start_date='20200701', end_date='20250731'))
     print(get_futures_stock(symbol="能源"))
-
-

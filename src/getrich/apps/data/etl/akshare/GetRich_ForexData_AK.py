@@ -1,12 +1,16 @@
+# pyright: reportMissingParameterType=false
 """
 从akshare获取外汇数据
 Author: QiuZiHua
 Date: 2025/08/01
 """
-import akshare as ak
-import pandas as pd
+
 import warnings
-warnings.filterwarnings('ignore')
+
+import akshare as ak
+
+warnings.filterwarnings("ignore")
+
 
 # 1. 获取外汇实时报价
 def get_forex_spot_em():
@@ -15,6 +19,7 @@ def get_forex_spot_em():
     """
     df = ak.forex_spot_em()
     return df
+
 
 # 2. 获取外汇历史报价
 def get_forex_hist(symbol):

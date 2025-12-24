@@ -1,10 +1,13 @@
+# pyright: reportMissingParameterType=false
+# pyright: reportArgumentType=false
 """
 从 akshare 获取数据
 Author: QiuZiHua
 Date: 2025/07/29
 """
+
 import akshare as ak
-import pandas as pd
+
 
 # 1. 个股信息查询-雪球
 def get_stock_info(symbol):
@@ -16,6 +19,7 @@ def get_stock_info(symbol):
     stock_info_df = ak.stock_individual_basic_info_xq(symbol=symbol)
     return stock_info_df
 
+
 # 2. 行情报价-东方财富
 def get_stock_quote(symbol):
     """
@@ -26,19 +30,21 @@ def get_stock_quote(symbol):
     stock_quote_df = ak.stock_bid_ask_em(symbol=symbol)
     return stock_quote_df
 
+
 # 3. 实时行情数据-东方财富
-def get_stock_realtime_quotes(dataapi='em'):
+def get_stock_realtime_quotes(dataapi="em"):
     """
     获取个股实时行情数据
     :param dataapi: 数据来源  em: 东方财富; sina: 新浪财经
     :return: A股市场所有个股实时行情数据
     """
-    if dataapi == 'em':
+    if dataapi == "em":
         df = ak.stock_zh_a_spot_em()
         return df
-    elif dataapi == 'sina':
+    elif dataapi == "sina":
         df = ak.stock_zh_a_spot()
         return df
+
 
 # 4. 沪市A股实时行情数据-东方财富
 def get_stock_sh_realtime_quotes():
@@ -49,6 +55,7 @@ def get_stock_sh_realtime_quotes():
     stock_sh_realtime_quotes_df = ak.stock_sh_a_spot_em()
     return stock_sh_realtime_quotes_df
 
+
 # 5. 深市A股实时行情数据-东方财富
 def get_stock_sz_realtime_quotes():
     """
@@ -57,6 +64,7 @@ def get_stock_sz_realtime_quotes():
     """
     stock_sz_realtime_quotes_df = ak.stock_sz_a_spot_em()
     return stock_sz_realtime_quotes_df
+
 
 # 6. 北交所实时行情数据-东方财富
 def get_stock_bj_realtime_quotes():
@@ -67,6 +75,7 @@ def get_stock_bj_realtime_quotes():
     stock_bj_realtime_quotes_df = ak.stock_bj_a_spot_em()
     return stock_bj_realtime_quotes_df
 
+
 # 7. 新股实时行情数据-东方财富
 def get_stock_new_realtime_quotes():
     """
@@ -75,6 +84,7 @@ def get_stock_new_realtime_quotes():
     """
     stock_new_realtime_quotes_df = ak.stock_new_a_spot_em()
     return stock_new_realtime_quotes_df
+
 
 # 8. 创业板板实时行情数据-东方财富
 def get_stock_cyb_realtime_quotes():
@@ -85,6 +95,7 @@ def get_stock_cyb_realtime_quotes():
     stock_cyb_realtime_quotes_df = ak.stock_cy_a_spot_em()
     return stock_cyb_realtime_quotes_df
 
+
 # 9. 科创板实时行情数据-东方财富
 def get_stock_kcb_realtime_quotes():
     """
@@ -94,6 +105,7 @@ def get_stock_kcb_realtime_quotes():
     stock_kcb_realtime_quotes_df = ak.stock_kc_a_spot_em()
     return stock_kcb_realtime_quotes_df
 
+
 # 10. 个股实时行情数据-雪球
 def get_stock_xq_realtime_quotes(symbol):
     """
@@ -101,11 +113,12 @@ def get_stock_xq_realtime_quotes(symbol):
     :param symbol: symbol="SH600000"; 证券代码，可以是 A 股个股代码，A 股场内基金代码，A 股指数，美股代码, 美股指数
     :return: 个股实时行情数据
     """
-    df =  ak.stock_individual_spot_xq(symbol=symbol)
+    df = ak.stock_individual_spot_xq(symbol=symbol)
     return df
 
+
 # 11. 个股历史行情数据-东财
-def get_stock_history_em(symbol=None, period='daily', start_date=None, end_date=None, adjust=""):
+def get_stock_history_em(symbol=None, period="daily", start_date=None, end_date=None, adjust=""):
     """
     获取个股历史行情数据
     :param symbol: symbol='603777'; 股票代码可以在 get_stock_realtime_quotes(dataapi='em')获取
@@ -115,7 +128,13 @@ def get_stock_history_em(symbol=None, period='daily', start_date=None, end_date=
     :param adjust: adjust="hfq"; choice of {'qfq', 'hfq'}
     :return: 个股历史行情数据
     """
-    df = ak.stock_zh_a_hist(symbol=symbol, period=period, start_date=start_date, end_date=end_date, adjust=adjust)
+    df = ak.stock_zh_a_hist(
+        symbol=symbol,
+        period=period,
+        start_date=start_date,
+        end_date=end_date,
+        adjust=adjust,
+    )
     return df
 
 
@@ -132,6 +151,7 @@ def get_stock_history_sina(symbol=None, start_date=None, end_date=None, adjust="
     df = ak.stock_zh_a_daily(symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust)
     return df
 
+
 # 13. 个股历史日度行情数据-腾讯
 def get_stock_history_tencent(symbol=None, start_date=None, end_date=None, adjust=""):
     """
@@ -142,11 +162,14 @@ def get_stock_history_tencent(symbol=None, start_date=None, end_date=None, adjus
     :param adjust: 默认返回不复权的数据; qfq: 返回前复权后的数据; hfq: 返回后复权后的数据;
     :return: 个股历史行情数据
     """
-    df = ak.stock_zh_a_hist_tx(symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust)
+    df = ak.stock_zh_a_hist_tx(
+        symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust
+    )
     return df
 
+
 # 14. 当前交易日的个股分钟数据-新浪
-def get_stock_minute_sina(symbol=None, period='1', adjust=""):
+def get_stock_minute_sina(symbol=None, period="1", adjust=""):
     """
     获取个股分钟数据
     :param symbol: symbol='sh600000';  股票代码可以在 get_stock_realtime_quotes(dataapi='sina')获取
@@ -157,8 +180,9 @@ def get_stock_minute_sina(symbol=None, period='1', adjust=""):
     df = ak.stock_zh_a_minute(symbol=symbol, period=period, adjust=adjust)
     return df
 
+
 # 15. 获取历史的个股分钟数据-东财
-def get_stock_minute_em(symbol=None, start_date=None, end_date=None, period='1', adjust=""):
+def get_stock_minute_em(symbol=None, start_date=None, end_date=None, period="1", adjust=""):
     """
     获取个股分钟数据
     :param symbol: symbol='000300';  股票代码可以在 get_stock_realtime_quotes(dataapi='em')获取
@@ -168,7 +192,9 @@ def get_stock_minute_em(symbol=None, start_date=None, end_date=None, period='1',
     :param adjust: adjust=''; choice of {'', 'qfq', 'hfq'}; '': 不复权, 'qfq': 前复权, 'hfq': 后复权, 其中 1 分钟数据返回近 5 个交易日数据且不复权
     :return: 个股分钟数据
     """
-    df = ak.stock_zh_a_hist_min_em(symbol=symbol, start_date=start_date, end_date=end_date, period=period, adjust=adjust)
+    df = ak.stock_zh_a_hist_min_em(
+        symbol=symbol, start_date=start_date, end_date=end_date, period=period, adjust=adjust
+    )
     return df
 
 
@@ -182,6 +208,7 @@ def get_stock_intraday_em(symbol):
     df = ak.stock_intraday_em(symbol=symbol)
     return df
 
+
 # 17. 日内分时个股行情数据-新浪
 def get_stock_intraday_sina(symbol, date):
     """
@@ -192,6 +219,7 @@ def get_stock_intraday_sina(symbol, date):
     """
     df = ak.stock_intraday_sina(symbol=symbol, date=date)
     return df
+
 
 # 18. 股票历史的盘前数据-东财
 def get_stock_pre_min_em(symbol=None, start_time=None, end_time=None):
@@ -205,6 +233,7 @@ def get_stock_pre_min_em(symbol=None, start_time=None, end_time=None):
     df = ak.stock_zh_a_hist_pre_min_em(symbol=symbol, start_time=start_time, end_time=end_time)
     return df
 
+
 # 19. 股票历史分笔数据-腾讯
 def get_stock_tick_tencent(symbol):
     """
@@ -215,6 +244,7 @@ def get_stock_tick_tencent(symbol):
     """
     df = ak.stock_zh_a_tick_tx_js(symbol=symbol)
     return df
+
 
 # 20. 获取新浪每天最新的次新股最近交易日数据
 def get_stock_new_stock_sina():
@@ -245,6 +275,7 @@ def get_stock_news_em(date):
     """
     df = ak.stock_gsrl_gsdt_em(date=date)
     return df
+
 
 # 22. 获取A股新股数据当前交易日的行情数据-东财
 def get_stock_new_stock_em():
@@ -288,6 +319,7 @@ def get_stock_kcb_history_sina(symbol, adjust=""):
     df = ak.stock_zh_kcb_daily(symbol=symbol, adjust=adjust)
     return df
 
+
 # 25. 科创板公告-东财
 def get_stock_kcb_report_em(from_page, to_page):
     """
@@ -305,6 +337,7 @@ def get_stock_kcb_report_em(from_page, to_page):
     """
     df = ak.stock_zh_kcb_report_em(from_page=from_page, to_page=to_page)
     return df
+
 
 # 26. AH股实时行情数据-东财
 def get_ah_realtime_spot_em():
@@ -329,6 +362,7 @@ def get_ah_history_tencent(symbol, start_year, end_year, adjust=""):
     """
     df = ak.stock_zh_ah_daily(symbol=symbol, start_year=start_year, end_year=end_year, adjust="")
     return df
+
 
 # 28. 获取AH股名单-腾讯
 def get_stock_ah_name_tencent():
@@ -365,6 +399,7 @@ def get_stock_us_realtime_quotes():
     df = ak.stock_us_spot_em()
     return df
 
+
 # 30. 获取美股实时行情数据-新浪
 def get_stock_us_realtime_quotes_sina():
     """
@@ -373,6 +408,7 @@ def get_stock_us_realtime_quotes_sina():
     """
     df = ak.stock_us_spot()
     return df
+
 
 # 31. 获取美股历史数据
 def get_stock_us_history(symbol, period, start_date, end_date, adjust=""):
@@ -385,7 +421,9 @@ def get_stock_us_history(symbol, period, start_date, end_date, adjust=""):
     :param adjust: adjust=""; 默认为空不复权; 'qfq': 前复权, 'hfq': 后复权
     :return: 美股历史数据
     """
-    df = ak.stock_us_hist(symbol=symbol, period=period, start_date=start_date, end_date=end_date, adjust=adjust)
+    df = ak.stock_us_hist(
+        symbol=symbol, period=period, start_date=start_date, end_date=end_date, adjust=adjust
+    )
     return df
 
 
@@ -397,6 +435,7 @@ def get_stock_hk_realtime_quotes():
     """
     df = ak.stock_hk_spot_em()
     return df
+
 
 # 33. 获取港股主板实时行情数据-东财
 def get_stock_hk_main_realtime_quotes():
@@ -419,8 +458,11 @@ def get_stock_hk_minute_em(symbol, period, start_date, end_date, adjust=""):
     :param adjust: adjust=''; choice of {'', 'qfq', 'hfq'}; '': 不复权, 'qfq': 前复权, 'hfq': 后复权, 其中 1 分钟数据返回近 5 个交易日数据且不复权
     :return: 港股分时数据
     """
-    df = ak.stock_hk_hist_min_em(symbol=symbol, period=period, start_date=start_date, end_date=end_date, adjust=adjust)
+    df = ak.stock_hk_hist_min_em(
+        symbol=symbol, period=period, start_date=start_date, end_date=end_date, adjust=adjust
+    )
     return df
+
 
 # 35. 港股历史行情数据-东财
 def get_stock_hk_history_em(symbol, period, start_date, end_date, adjust=""):
@@ -433,7 +475,9 @@ def get_stock_hk_history_em(symbol, period, start_date, end_date, adjust=""):
     :param adjust: adjust=""; 默认为空不复权; 'qfq': 前复权, 'hfq': 后复权
     :return: 港股历史行情数据
     """
-    df = ak.stock_hk_hist(symbol=symbol, period=period, start_date=start_date, end_date=end_date, adjust=adjust)
+    df = ak.stock_hk_hist(
+        symbol=symbol, period=period, start_date=start_date, end_date=end_date, adjust=adjust
+    )
     return df
 
 
@@ -445,6 +489,7 @@ def get_stock_hk_famous_spot_em():
     """
     df = ak.stock_hk_famous_spot_em()
     return df
+
 
 # 37. 获取知名美股实时数据-东财
 def get_stock_us_famous_spot_em():
@@ -466,6 +511,7 @@ def get_stock_jgdy_em(date):
     df = ak.stock_jgdy_tj_em(date=date)
     return df
 
+
 # 39. 股票质押市场概况
 def get_stock_pledge_em():
     """
@@ -474,6 +520,7 @@ def get_stock_pledge_em():
     """
     df = ak.stock_gpzy_profile_em()
     return df
+
 
 # 40. 上市公司质押比例
 def get_stock_pledge_ratio_em(date):
@@ -486,6 +533,7 @@ def get_stock_pledge_ratio_em(date):
     df = ak.stock_gpzy_pledge_ratio_em(date=date)
     return df
 
+
 # 41. 重要股东股份质押明细
 def get_stock_pledge_detail_em():
     """
@@ -497,6 +545,7 @@ def get_stock_pledge_detail_em():
     """
     df = ak.stock_gpzy_pledge_ratio_detail_em()
     return df
+
 
 # 42. 质押机构分布统计-证券公司
 def get_stock_pledge_company_em():
@@ -527,6 +576,7 @@ def get_industry_pledge_ratio_em():
     df = ak.stock_gpzy_industry_data_em()
     return df
 
+
 # 45. 股票账户月度统计
 def get_stock_account_month_em():
     """
@@ -535,6 +585,7 @@ def get_stock_account_month_em():
     """
     df = ak.stock_account_statistics_em()
     return df
+
 
 # 46. 分析师指数排行
 def get_stock_analyst_index_em(year):
@@ -545,6 +596,7 @@ def get_stock_analyst_index_em(year):
     """
     df = ak.stock_analyst_rank_em(year=year)
     return df
+
 
 # 47. 分析师预测详情
 def get_stock_analyst_detail_em(analyst_id, indicator):
@@ -557,6 +609,7 @@ def get_stock_analyst_detail_em(analyst_id, indicator):
     df = ak.stock_analyst_detail_em(analyst_id=analyst_id, indicator=indicator)
     return df
 
+
 # 48. 股票评论热度
 def get_stock_comment_hot_em():
     """
@@ -565,6 +618,7 @@ def get_stock_comment_hot_em():
     """
     df = ak.stock_comment_em()
     return df
+
 
 # 49. 股票评论热度-个股
 def get_stock_comment_hot_detail_em(symbol):
@@ -576,6 +630,7 @@ def get_stock_comment_hot_detail_em(symbol):
     df = ak.stock_comment_detail_zlkp_jgcyd_em(symbol=symbol)
     return df
 
+
 # 50. 股票-东财用户关注度
 def get_stock_user_attention_em(symbol):
     """
@@ -585,6 +640,7 @@ def get_stock_user_attention_em(symbol):
     """
     df = ak.stock_comment_detail_scrd_focus_em(symbol=symbol)
     return df
+
 
 # 51. 沪深港股通资金流向
 def get_stock_hsgt_em():
@@ -644,6 +700,7 @@ def get_stock_performance_em(date):
     df = ak.stock_yjbb_em(date=date)
     return df
 
+
 # 54. 业绩快报
 def get_stock_performance_fast_em(date):
     """
@@ -653,6 +710,7 @@ def get_stock_performance_fast_em(date):
     """
     df = ak.stock_yjkb_em(date=date)
     return df
+
 
 # 55. 业绩预告
 def get_stock_performance_forecast_em(date):
@@ -664,6 +722,7 @@ def get_stock_performance_forecast_em(date):
     df = ak.stock_yjyg_em(date=date)
     return df
 
+
 # 56. 资产负债表
 def get_stock_balance_sheet_em(date):
     """
@@ -673,6 +732,7 @@ def get_stock_balance_sheet_em(date):
     """
     df = ak.stock_zcfz_em(date=date)
     return df
+
 
 # 57. 资产负债表-北交所
 def get_stock_balance_sheet_bj_em(date):
@@ -684,6 +744,7 @@ def get_stock_balance_sheet_bj_em(date):
     df = ak.stock_zcfz_bj_em(date=date)
     return df
 
+
 # 58. 利润表
 def get_stock_income_statement_em(date):
     """
@@ -693,6 +754,7 @@ def get_stock_income_statement_em(date):
     """
     df = ak.stock_lrb_em(date=date)
     return df
+
 
 # 59. 现金流量表
 def get_stock_cash_flow_em(date):
@@ -715,6 +777,7 @@ def get_stock_shareholder_em(symbol="全部"):
     df = ak.stock_ggcg_em(symbol=symbol)
     return df
 
+
 # 61. 分红配送
 def get_stock_dividend_em(date):
     """
@@ -724,6 +787,7 @@ def get_stock_dividend_em(date):
     """
     df = ak.stock_fhps_em(date=date)
     return df
+
 
 # 62. 分红配送详情
 def get_stock_dividend_detail_em(symbol):
@@ -735,6 +799,7 @@ def get_stock_dividend_detail_em(symbol):
     df = ak.stock_fhps_detail_em(symbol=symbol)
     return df
 
+
 # 63. 个股资金流
 def get_stock_fund_flow_em(symbol="即时"):
     """
@@ -744,6 +809,7 @@ def get_stock_fund_flow_em(symbol="即时"):
     """
     df = ak.stock_fund_flow_individual(symbol=symbol)
     return df
+
 
 # 64. 概念资金流
 def get_stock_concept_fund_flow_em(symbol="即时"):
@@ -755,6 +821,7 @@ def get_stock_concept_fund_flow_em(symbol="即时"):
     df = ak.stock_fund_flow_concept(symbol=symbol)
     return df
 
+
 # 65. 行业资金流
 def get_stock_industry_fund_flow_em(symbol="即时"):
     """
@@ -765,6 +832,7 @@ def get_stock_industry_fund_flow_em(symbol="即时"):
     df = ak.stock_fund_flow_industry(symbol=symbol)
     return df
 
+
 # 66. 大单追踪
 def get_stock_big_order_em():
     """
@@ -773,6 +841,7 @@ def get_stock_big_order_em():
     """
     df = ak.stock_fund_flow_big_deal()
     return df
+
 
 # 67. 个股资金流
 def get_stock_fund_flow_detail_em(symbol, market):
@@ -785,6 +854,7 @@ def get_stock_fund_flow_detail_em(symbol, market):
     df = ak.stock_individual_fund_flow(stock=symbol, market=market)
     return df
 
+
 # 68. 个股资金流排名
 def get_stock_fund_flow_rank_em(indicator):
     """
@@ -795,6 +865,7 @@ def get_stock_fund_flow_rank_em(indicator):
     df = ak.stock_individual_fund_flow_rank(indicator=indicator)
     return df
 
+
 # 69. 大盘资金流
 def get_stock_market_fund_flow_em():
     """
@@ -803,6 +874,7 @@ def get_stock_market_fund_flow_em():
     """
     df = ak.stock_market_fund_flow()
     return df
+
 
 # 70. 板块资金流
 def get_sector_fund_flow_rank(indicator, sector_type):
@@ -815,6 +887,7 @@ def get_sector_fund_flow_rank(indicator, sector_type):
     df = ak.stock_sector_fund_flow_rank(indicator=indicator, sector_type=sector_type)
     return df
 
+
 # 71. 主力净流入排名
 def get_stock_main_fund_flow_rank_em(symbol):
     """
@@ -824,6 +897,7 @@ def get_stock_main_fund_flow_rank_em(symbol):
     """
     df = ak.stock_main_fund_flow(symbol=symbol)
     return df
+
 
 # 72. 筹码分布
 def get_stock_capital_distribution_em(symbol, adjust):
@@ -836,6 +910,7 @@ def get_stock_capital_distribution_em(symbol, adjust):
     df = ak.stock_cyq_em(symbol=symbol, adjust=adjust)
     return df
 
+
 # 73. A股指定日期公告
 def get_stock_announcement_em(date, symbol):
     """
@@ -846,6 +921,7 @@ def get_stock_announcement_em(date, symbol):
     """
     df = ak.stock_notice_report(symbol=symbol, date=date)
     return df
+
 
 # 74. 港股财务指标
 def get_stock_hk_finance_indicator_em(symbol, indicator):
@@ -858,6 +934,7 @@ def get_stock_hk_finance_indicator_em(symbol, indicator):
     df = ak.stock_financial_hk_analysis_indicator_em(symbol=symbol, indicator=indicator)
     return df
 
+
 # 75. 美股财务指标
 def get_stock_us_finance_indicator_em(symbol, indicator):
     """
@@ -868,6 +945,7 @@ def get_stock_us_finance_indicator_em(symbol, indicator):
     """
     df = ak.stock_financial_us_analysis_indicator_em(symbol=symbol, indicator=indicator)
     return df
+
 
 # 76. A股历史分红
 def get_stock_dividend_history_em():
@@ -891,7 +969,6 @@ def get_stock_shareholder_num_em(symbol):
     return df
 
 
-
 # 78. 股票列表-A股
 def get_stock_list_em(symbol, symbol_type=None):
     """
@@ -899,20 +976,21 @@ def get_stock_list_em(symbol, symbol_type=None):
     symbol="sh"; choice of {"sh", "sz", "bj", "all"}
     :return: 股票列表
     """
-    if symbol=='all':
+    if symbol == "all":
         df = ak.stock_info_a_code_name()
         return df
-    elif symbol=='sh':
+    elif symbol == "sh":
         # symbol_type = "主板A股"; choice of {"主板A股", "主板B股", "科创板"}
-        df = ak.stock_info_sh_name_code(symbol = symbol_type)
+        df = ak.stock_info_sh_name_code(symbol=symbol_type)
         return df
-    elif symbol=='sz':
+    elif symbol == "sz":
         # symbol_type = "A股列表"; choice of {"A股列表", "B股列表", "CDR列表", "AB股列表"}
-        df = ak.stock_info_sz_name_code(symbol = symbol_type)
+        df = ak.stock_info_sz_name_code(symbol=symbol_type)
         return df
-    elif symbol=='bj':
+    elif symbol == "bj":
         df = ak.stock_info_bj_name_code()
         return df
+
 
 # 79. 美股和港股的目标价格
 def get_stock_target_price_em(symbol):
@@ -926,14 +1004,15 @@ def get_stock_target_price_em(symbol):
 
 
 # 80. A股个股指标
-def get_stock_indicator_lg(symbol):
-    """
-    获取A股个股指标
-    symbol=="000001"; 参见 ak.stock_a_indicator_lg(symbol="all") 获取股票代码
-    :return: A股个股指标
-    """
-    df = ak.stock_a_indicator_lg(symbol=symbol)
-    return df
+# def get_stock_indicator_lg(symbol):
+#     """
+#     获取A股个股指标
+#     symbol=="000001"; 参见 ak.stock_a_indicator_lg(symbol="all") 获取股票代码
+#     :return: A股个股指标
+#     """
+#     df = ak.stock_a_indicator_lg(symbol=symbol)
+#     return df
+
 
 # 81. A股股息率
 def get_stock_dividend_rate_lg(symbol):
@@ -945,6 +1024,7 @@ def get_stock_dividend_rate_lg(symbol):
     df = ak.stock_a_gxl_lg(symbol=symbol)
     return df
 
+
 # 82. 恒生指数股息率
 def get_stock_hk_dividend_rate_lg():
     """
@@ -952,6 +1032,7 @@ def get_stock_hk_dividend_rate_lg():
     """
     df = ak.stock_hk_gxl_lg()
     return df
+
 
 # 83. 大盘拥挤度
 def get_stock_market_crowding_lg():
@@ -962,6 +1043,7 @@ def get_stock_market_crowding_lg():
     df = ak.stock_a_congestion_lg()
     return df
 
+
 # 84. 股债利差
 def get_stock_bond_spread_lg():
     """
@@ -970,6 +1052,7 @@ def get_stock_bond_spread_lg():
     """
     df = ak.stock_ebs_lg()
     return df
+
 
 # 85. 巴菲特指标
 def get_stock_baft_indicator_lg():
@@ -987,6 +1070,7 @@ def get_stock_baft_indicator_lg():
     """
     df = ak.stock_buffett_index_lg()
     return df
+
 
 # 86. A股等权重与中位数市盈率
 def get_stock_weighted_median_pe_lg():
@@ -1010,6 +1094,7 @@ def get_stock_weighted_median_pe_lg():
     """
     df = ak.stock_a_ttm_lyr()
     return df
+
 
 # 87. A股等权重与中位数市净率
 def get_stock_weighted_median_pb_lg():
@@ -1039,15 +1124,18 @@ def get_stock_mainboard_pe_lg(symbol):
     df = ak.stock_market_pe_lg(symbol=symbol)
     return df
 
+
 # 89. A股指数市盈率
 def get_stock_index_pe_lg(symbol):
     """
     获取A股指数市盈率
-    symbol=symbol="上证50"; choice of {"上证50", "沪深300", "上证380", "创业板50", "中证500", "上证180", "深证红利", "深证100", "中证1000", "上证红利", "中证100", "中证800"}
+    symbol="上证50"; choice of {"上证50", "沪深300", "上证380", "创业板50", "中证500", "上证180", "深证红利", "深证100",
+        "中证1000", "上证红利", "中证100", "中证800"}
     :return: A股指数市盈率
     """
     df = ak.stock_index_pe_lg(symbol=symbol)
     return df
+
 
 # 90. 主板市净率
 def get_stock_mainboard_pb_lg(symbol):
@@ -1059,11 +1147,14 @@ def get_stock_mainboard_pb_lg(symbol):
     df = ak.stock_market_pb_lg(symbol=symbol)
     return df
 
+
 # 91. 指数市净率
 def get_stock_index_pb_lg(symbol):
     """
     获取指数市净率
-    symbol="上证50"; choice of {"上证50", "沪深300", "上证380", "创业板50", "中证500", "上证180", "深证红利", "深证100", "中证1000", "上证红利", "中证100", "中证800"}
+    symbol="上证50";
+    choice of {"上证50", "沪深300", "上证380", "创业板50", "中证500", "上证180", "深证红利", "深证100",
+        "中证1000", "上证红利", "中证100", "中证800"}
     :return: 指数市净率
     """
     df = ak.stock_index_pb_lg(symbol=symbol)
@@ -1082,6 +1173,7 @@ def get_stock_valuation_baidu(symbol, indicator, period):
     df = ak.stock_zh_valuation_baidu(symbol=symbol, indicator=indicator, period=period)
     return df
 
+
 # 93. 个股估值指标
 def get_stock_valuation_em(symbol):
     """
@@ -1090,6 +1182,7 @@ def get_stock_valuation_em(symbol):
     """
     df = ak.stock_value_em(symbol=symbol)
     return df
+
 
 # 94. 百度情绪指标，股民投票
 def get_stock_baidu_trend(symbol, indicator):
@@ -1100,6 +1193,7 @@ def get_stock_baidu_trend(symbol, indicator):
     """
     df = ak.stock_zh_vote_baidu(symbol=symbol, indicator=indicator)
     return df
+
 
 # 95. 港股个股指标
 def get_stock_hk_indicator_baidu(symbol, indicator, period):
@@ -1114,7 +1208,6 @@ def get_stock_hk_indicator_baidu(symbol, indicator, period):
     return df
 
 
-
 # 96. A股创新高和新低的股票数量
 def get_stock_new_high_low(symbol):
     """
@@ -1124,6 +1217,7 @@ def get_stock_new_high_low(symbol):
     """
     df = ak.stock_a_high_low_statistics(symbol=symbol)
     return df
+
 
 # 97. A股破净值统计
 def get_stock_below_net_statistics(symbol):
@@ -1138,6 +1232,7 @@ def get_stock_below_net_statistics(symbol):
     """
     df = ak.stock_a_below_net_asset_statistics(symbol=symbol)
     return df
+
 
 # 98. 基金持股明细
 def get_fund_hold_detail(symbol, date):
@@ -1161,6 +1256,7 @@ def get_stock_margin_ratio(date):
     df = ak.stock_margin_ratio_pa(date=date)
     return df
 
+
 # 100. 两融账户信息
 def get_stock_margin_account_info():
     """
@@ -1169,6 +1265,7 @@ def get_stock_margin_account_info():
     """
     df = ak.stock_margin_account_info()
     return df
+
 
 # 101. 上交所两融汇总
 def get_stock_margin_summary_sh(start_date, end_date):
@@ -1181,6 +1278,7 @@ def get_stock_margin_summary_sh(start_date, end_date):
     df = ak.stock_margin_sse(start_date=start_date, end_date=end_date)
     return df
 
+
 # 102. 上交所两融明细
 def get_stock_margin_detail_sh(date):
     """
@@ -1190,6 +1288,7 @@ def get_stock_margin_detail_sh(date):
     """
     df = ak.stock_margin_detail_sse(date=date)
     return df
+
 
 # 103. 深交所两融汇总
 def get_stock_margin_summary_sz(date):
@@ -1201,6 +1300,7 @@ def get_stock_margin_summary_sz(date):
     df = ak.stock_margin_szse(date=date)
     return df
 
+
 # 104. 深交所两融明细
 def get_stock_margin_detail_sz(date):
     """
@@ -1211,6 +1311,7 @@ def get_stock_margin_detail_sz(date):
     df = ak.stock_margin_detail_szse(date=date)
     return df
 
+
 # 105。 同花顺行业列表
 def get_stock_industry_list_ths():
     """
@@ -1219,6 +1320,7 @@ def get_stock_industry_list_ths():
     """
     df = ak.stock_board_industry_summary_ths()
     return df
+
 
 # 106. 同花顺指数数据
 def get_stock_index_ths(symbol, start_date, end_date):
@@ -1243,6 +1345,7 @@ def get_stock_hot_tweet_xq(symbol):
     df = ak.stock_hot_tweet_xq(symbol=symbol)
     return df
 
+
 # 108. 雪球交易排行榜
 def get_stock_trade_rank_xq(symbol):
     """
@@ -1253,6 +1356,7 @@ def get_stock_trade_rank_xq(symbol):
     df = ak.stock_hot_deal_xq(symbol=symbol)
     return df
 
+
 # 109. 股票热度-东财
 def get_stock_hot_rank_em(symbol):
     """
@@ -1262,6 +1366,7 @@ def get_stock_hot_rank_em(symbol):
     df = ak.stock_hot_rank_em()
     return df
 
+
 # 110. 东财个股飙升榜
 def get_stock_rising_rank_em(symbol):
     """
@@ -1270,6 +1375,8 @@ def get_stock_rising_rank_em(symbol):
     """
     df = ak.stock_hot_up_em()
     return df
+
+
 # 111. 港股人气榜-东财
 def get_stock_hk_hot_rank_em():
     """
@@ -1278,6 +1385,7 @@ def get_stock_hk_hot_rank_em():
     """
     df = ak.stock_hk_hot_rank_em()
     return df
+
 
 # 112. 相关股票
 def get_stock_related_em(symbol):
@@ -1289,6 +1397,7 @@ def get_stock_related_em(symbol):
     df = ak.stock_hot_rank_relate_em(symbol=symbol)
     return df
 
+
 # 113. 昨天涨停股池
 def get_stock_yesterday_limit_em(date):
     """
@@ -1299,6 +1408,7 @@ def get_stock_yesterday_limit_em(date):
     df = ak.stock_zt_pool_previous_em(date=date)
     return df
 
+
 # 114. 强势股
 def get_stock_strong_em(date):
     """
@@ -1306,8 +1416,9 @@ def get_stock_strong_em(date):
     :param date:
     :return:
     """
-    df =  ak.stock_zt_pool_strong_em(date=date)
-    return  df
+    df = ak.stock_zt_pool_strong_em(date=date)
+    return df
+
 
 # 115. 跌停股池
 def get_stock_down_limit_em(date):
@@ -1318,6 +1429,7 @@ def get_stock_down_limit_em(date):
     df = ak.stock_zt_pool_dtgc_em(date=date)
     return df
 
+
 # 116. 赚钱效应
 def get_market_activity():
     """
@@ -1327,6 +1439,7 @@ def get_market_activity():
     df = ak.stock_market_activity_legu()
     return df
 
+
 # 117. 创造新高的个股
 def get_stock_new_high(symbol):
     """
@@ -1335,6 +1448,7 @@ def get_stock_new_high(symbol):
     """
     df = ak.stock_rank_cxg_ths(symbol=symbol)
     return df
+
 
 # 118. 创造新低的个股
 def get_stock_new_low(symbol):
@@ -1354,6 +1468,7 @@ def get_stock_continue_up():
     df = ak.stock_rank_lxsz_ths()
     return df
 
+
 # 120. 连续下跌
 def get_stock_continue_down():
     """
@@ -1361,6 +1476,7 @@ def get_stock_continue_down():
     """
     df = ak.stock_rank_lxxd_ths()
     return df
+
 
 # 121. 持续放量
 def get_stock_continue_up_volume():
@@ -1370,6 +1486,7 @@ def get_stock_continue_up_volume():
     df = ak.stock_rank_cxfl_ths()
     return df
 
+
 # 122. 持续缩量
 def get_stock_continue_down_volume():
     """
@@ -1377,6 +1494,7 @@ def get_stock_continue_down_volume():
     """
     df = ak.stock_rank_cxsl_ths()
     return df
+
 
 # 123. 向上突破
 def get_stock_break_up(symbol):
@@ -1387,6 +1505,7 @@ def get_stock_break_up(symbol):
     df = ak.stock_rank_xstp_ths(symbol=symbol)
     return df
 
+
 # 124. 向下突破
 def get_stock_break_down(symbol):
     """
@@ -1395,6 +1514,7 @@ def get_stock_break_down(symbol):
     """
     df = ak.stock_rank_xxtp_ths(symbol=symbol)
     return df
+
 
 # 125. 量价齐升
 def get_stock_up_pv():
@@ -1405,6 +1525,7 @@ def get_stock_up_pv():
     df = ak.stock_rank_ljqs_ths()
     return df
 
+
 # 126. 量价齐跌
 def get_stock_down_pv():
     """
@@ -1413,9 +1534,7 @@ def get_stock_down_pv():
     df = ak.stock_rank_ljqd_ths()
     return df
 
-
-
-# if __name__ == '__main__':
+    # if __name__ == '__main__':
     # print(get_stock_info('SH601127'))
     # print(get_stock_quote('000001'))
     # print(get_stock_realtime_quotes())
@@ -1430,7 +1549,8 @@ def get_stock_down_pv():
     # print(get_stock_history_sina(symbol='sh600000', start_date='20150101', end_date='20250729', adjust='qfq'))
     # print(get_stock_history_tencent(symbol='sh600000', start_date='20150101', end_date='20250729', adjust='qfq'))
     # print(get_stock_minute_sina(symbol='sh600000', period='1', adjust='qfq'))
-    # print(get_stock_minute_em(symbol='000001', start_date='2025-07-01 09:32:00', end_date='2225-07-29 09:32:00', period='1', adjust='qfq'))
+    # print(get_stock_minute_em(symbol='000001', start_date='2025-07-01 09:32:00', end_date='2225-07-29 09:32:00',
+    #   period='1', adjust='qfq'))
     # print(get_stock_intraday_em(symbol='000001'))
     # print(get_stock_intraday_sina(symbol='sh600000', date='20250729'))
     # print(get_stock_pre_min_em(symbol='000001', start_time='09:00:00', end_time='15:40:00'))
@@ -1446,11 +1566,14 @@ def get_stock_down_pv():
     # print(get_stock_ah_name_tencent())
     # print(get_stock_us_realtime_quotes())
     # print(get_stock_us_realtime_quotes_sina())
-    # print(get_stock_us_history(symbol='106.TTE', period='daily', start_date='20150101', end_date='20250729', adjust='hfq'))
+    # print(get_stock_us_history(symbol='106.TTE', period='daily', start_date='20150101', end_date='20250729',
+    #   adjust='hfq'))
     # print(get_stock_hk_realtime_quotes())
     # print(get_stock_hk_main_realtime_quotes())
-    # print(get_stock_hk_minute_em(symbol='00700', period='1', start_date='2025-07-01 09:32:00', end_date='2025-07-29 09:32:00', adjust=''))
-    # print(get_stock_hk_history_em(symbol='00700', period='daily', start_date='20150101', end_date='20250729', adjust=''))
+    # print(get_stock_hk_minute_em(symbol='00700', period='1', start_date='2025-07-01 09:32:00',
+    #   end_date='2025-07-29 09:32:00', adjust=''))
+    # print(get_stock_hk_history_em(symbol='00700', period='daily', start_date='20150101', end_date='20250729',
+    #   adjust=''))
     # print(get_stock_hk_famous_spot_em())
     # print(get_stock_us_famous_spot_em())
     # print(get_stock_jgdy_em(date='20250722'))
@@ -1523,4 +1646,4 @@ def get_stock_down_pv():
     # print(get_stock_margin_summary_sz(date='20250729'))
     # print(get_stock_margin_detail_sz(date='20250729'))
     # print(get_stock_hot_tweet_xq(symbol='最热门'))
-    print(get_stock_trade_rank_xq(symbol='最热门'))
+    print(get_stock_trade_rank_xq(symbol="最热门"))

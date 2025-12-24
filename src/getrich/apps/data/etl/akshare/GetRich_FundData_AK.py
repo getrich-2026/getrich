@@ -1,12 +1,16 @@
+# pyright: reportMissingParameterType=false
 """
 从akshare获取公募基金数据
 Author: QiuZiHua
 Date: 2025/08/01
 """
-import akshare as ak
-import pandas as pd
+
 import warnings
-warnings.filterwarnings('ignore')
+
+import akshare as ak
+
+warnings.filterwarnings("ignore")
+
 
 # 1. 获取公募基金数据
 def get_fund_name_em():
@@ -24,6 +28,7 @@ def get_etf_realtime_em():
     """
     df = ak.fund_etf_spot_em()
     return df
+
 
 # 3. ETF基金实时行情-同花顺
 def get_etf_realtime_ths(date):
@@ -44,8 +49,11 @@ def get_etf_minute_em(symbol, start_date, end_date, period, adjust):
     period	str	period='5'; choice of {'1', '5', '15', '30', '60'}; 其中 1 分钟数据返回近 5 个交易日数据且不复权
     adjust	str	adjust=''; choice of {'', 'qfq', 'hfq'}; '': 不复权, 'qfq': 前复权, 'hfq': 后复权, 其中 1 分钟数据返回近 5 个交易日数据且不复权
     """
-    df = ak.fund_etf_hist_min_em(symbol=symbol, period=period, adjust=adjust, start_date=start_date, end_date=end_date)
+    df = ak.fund_etf_hist_min_em(
+        symbol=symbol, period=period, adjust=adjust, start_date=start_date, end_date=end_date
+    )
     return df
+
 
 # 5. 获取基金历史净值数据-东财
 def get_fund_history_em(symbol, start_date, end_date, period, adjust):
@@ -59,6 +67,7 @@ def get_fund_history_em(symbol, start_date, end_date, period, adjust):
     """
     df = ak.fund_etf_hist_em(symbol=symbol, start_date=start_date, end_date=end_date)
     return df
+
 
 # 6. 获取开放式基金历史数据
 def get_fund_open_history(symbol, indicator, period):
@@ -80,6 +89,7 @@ def get_fund_open_history(symbol, indicator, period):
     df = ak.fund_open_fund_info_em(symbol=symbol, period=period, indicator=indicator)
     return df
 
+
 # 7. 获取开放式基金实时数据
 def get_fund_open_realtime():
     """
@@ -98,6 +108,7 @@ def get_fund_open_rank(symbol):
     """
     df = ak.fund_open_fund_rank_em()
     return df
+
 
 # 9. 获得基金持仓
 def get_fund_open_hold_portfolio(symbol, date):
@@ -120,6 +131,7 @@ def get_fund_open_bond_hold_portfolio(symbol, date):
     df = ak.fund_portfolio_bond_hold_em(symbol=symbol, date=date)
     return df
 
+
 # 11. 获得基金行业配置
 def get_fund_open_industry_config(symbol, date):
     """
@@ -130,25 +142,25 @@ def get_fund_open_industry_config(symbol, date):
     df = ak.fund_portfolio_industry_allocation_em(symbol=symbol, date=date)
     return df
 
+
 # 12. 获得全市场公募基金报告的配置内容
 def get_fund_open_report_config(date=None):
     """
     获得公募基金报告的配置内容
     date	str	date="20210630"; choice of {"XXXX0331", "XXXX0630", "XXXX0930", "XXXX1231"}, 其中 XXXX 为年份
     """
-    df_stock = ak.fund_report_stock_cninfo(date=date) # 股票配置
-    df_industry = ak.fund_report_industry_allocation_cninfo(date=date) # 行业配置
-    df_asset = ak.fund_report_asset_allocation_cninfo() # 资产配置
+    df_stock = ak.fund_report_stock_cninfo(date=date)  # 股票配置  # type: ignore
+    df_industry = ak.fund_report_industry_allocation_cninfo(date=date)  # 行业配置  # type: ignore
+    df_asset = ak.fund_report_asset_allocation_cninfo()  # 资产配置
     return df_stock, df_industry, df_asset
+
 
 #
 
 
-
-
 # if __name__ == '__main__':
-    # print(get_fund_name_em())
-    # print(get_etf_realtime_em())
-    # print(get_etf_realtime_ths(date='2021-08-01'))
-    # print(get_etf_minute_em(symbol='513500', start_date='2021-08-01', end_date='2021-08-01', period='5', adjust=''))
-    # print(get_fund_history_em(symbol='159707', start_date='20000101', end_date='20230104', period='daily', adjust='hfq'))
+# print(get_fund_name_em())
+# print(get_etf_realtime_em())
+# print(get_etf_realtime_ths(date='2021-08-01'))
+# print(get_etf_minute_em(symbol='513500', start_date='2021-08-01', end_date='2021-08-01', period='5', adjust=''))
+# print(get_fund_history_em(symbol='159707', start_date='20000101', end_date='20230104', period='daily', adjust='hfq'))

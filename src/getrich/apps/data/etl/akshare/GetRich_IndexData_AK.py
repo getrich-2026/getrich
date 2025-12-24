@@ -1,13 +1,16 @@
+# pyright: reportMissingParameterType=false
 """
 从AKShare获取指数数据
 Author: QiuZihua
 Date: 2025/08/04
 """
 
-import akshare as ak
-import pandas as pd
 import warnings
-warnings.filterwarnings('ignore')
+
+import akshare as ak
+
+warnings.filterwarnings("ignore")
+
 
 # 1. A股股票指数-实时行情-东财
 def get_index_spot_realtime_em(symbol):
@@ -18,6 +21,7 @@ def get_index_spot_realtime_em(symbol):
     df = ak.stock_zh_index_spot_em(symbol=symbol)
     return df
 
+
 # 2. A股股票指数实时行情-新浪
 def get_index_spot_realtime_sina():
     """
@@ -25,6 +29,7 @@ def get_index_spot_realtime_sina():
     """
     df = ak.stock_zh_index_spot_sina()
     return df
+
 
 # 3. 获取股票指数历史行情-新浪
 def get_index_spot_history_sina(symbol, period, start_date, end_date):
@@ -34,6 +39,7 @@ def get_index_spot_history_sina(symbol, period, start_date, end_date):
     """
     df = ak.stock_zh_index_daily(symbol=symbol)
     return df
+
 
 # 4. 获取历史行情数据-东财
 def get_index_spot_history_em(symbol):
@@ -45,6 +51,7 @@ def get_index_spot_history_em(symbol):
     """
     df = ak.stock_zh_index_daily_em(symbol=symbol)
     return df
+
 
 # 5. 获取指数历史行情数据-指定区间内
 def get_index_spot_history(symbol, period, start_date, end_date):
@@ -58,6 +65,7 @@ def get_index_spot_history(symbol, period, start_date, end_date):
     df = ak.index_zh_a_hist(symbol=symbol, period=period, start_date=start_date, end_date=end_date)
     return df
 
+
 # 6. 获取指数分时行情数据-东财
 def get_index_spot_minute_em(symbol, period, start_date, end_date):
     """
@@ -67,7 +75,9 @@ def get_index_spot_minute_em(symbol, period, start_date, end_date):
     start_date	str	start_date="1979-09-01 09:32:00"; 开始日期时间
     end_date	str	end_date="2222-01-01 09:32:00"; 结束时间时间
     """
-    df = ak.index_zh_a_hist_min_em(symbol=symbol, period=period, start_date=start_date, end_date=end_date)
+    df = ak.index_zh_a_hist_min_em(
+        symbol=symbol, period=period, start_date=start_date, end_date=end_date
+    )
     return df
 
 
@@ -78,6 +88,7 @@ def get_index_hk_realtime_sina():
     """
     df = ak.stock_hk_index_spot_sina()
     return df
+
 
 # 8. 港股股票指数-历史行情-新浪
 def get_index_hk_history_sina(symbol):
@@ -97,6 +108,7 @@ def get_index_hk_realtime_em():
     df = ak.stock_hk_index_spot_em()
     return df
 
+
 # 10. 港股股票指数-历史行情-东财
 def get_index_hk_history_em(symbol):
     """
@@ -106,6 +118,7 @@ def get_index_hk_history_em(symbol):
     df = ak.stock_hk_index_daily_em(symbol=symbol)
     return df
 
+
 # 11. 获取A股指数信息
 def get_index_info_em():
     """
@@ -113,6 +126,7 @@ def get_index_info_em():
     """
     df = ak.index_stock_info()
     return df
+
 
 # 12. 获取A股指数成份股
 def get_index_stock_em(symbol):
@@ -135,6 +149,7 @@ def get_index_zz_valuation(symbol, start_date, end_date):
     df = ak.stock_zh_index_hist_csindex(symbol=symbol, start_date=start_date, end_date=end_date)
     return df
 
+
 # 14. 申万指数实时行情
 def get_index_sw_realtime(symbol):
     """
@@ -143,6 +158,7 @@ def get_index_sw_realtime(symbol):
     """
     df = ak.index_realtime_fund_sw()
     return df
+
 
 # 15. 申万基金指数历史行情
 def get_index_sw_history(symbol, period):
@@ -154,6 +170,7 @@ def get_index_sw_history(symbol, period):
     df = ak.index_hist_fund_sw(symbol=symbol, period=period)
     return df
 
+
 # 16. 申万指数实时行情-sw
 def get_index_sw_realtime_sw(symbol):
     """
@@ -162,6 +179,7 @@ def get_index_sw_realtime_sw(symbol):
     """
     df = ak.index_realtime_sw(symbol=symbol)
     return df
+
 
 # 17. 申万指数历史行情-sw
 def get_index_sw_history_sw(symbol, period):
@@ -182,6 +200,7 @@ def get_index_sw_minute(symbol):
     """
     df = ak.index_min_sw(symbol=symbol)
     return df
+
 
 # 19. 申万指数成分股
 def get_index_sw_stock(symbol):
@@ -205,42 +224,7 @@ def get_index_sw_daily_report(symbol, start_date, end_date):
     return df
 
 
-
-
-
-
-
-
-
-
 # if __name__ == "__main__":
-    # print(get_index_info_em())
-    # print(get_index_stock_em("000300"))
-    # print(get_index_zz_valuation("000300", "20180526", "20250805"))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# print(get_index_info_em())
+# print(get_index_stock_em("000300"))
+# print(get_index_zz_valuation("000300", "20180526", "20250805"))
