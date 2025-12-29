@@ -2,7 +2,7 @@ from pathlib import Path
 
 from lntools import Logger
 
-from getrich.libs.db.database import ClickHouseClient
+from getrich.libs.clickhouse.database import ClickHouseClient
 
 log = Logger(module_name="InitDB")
 

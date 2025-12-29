@@ -4,6 +4,7 @@ CREATE DATABASE IF NOT EXISTS market_data;
 CREATE DATABASE IF NOT EXISTS strategy;
 CREATE DATABASE IF NOT EXISTS trade;
 CREATE DATABASE IF NOT EXISTS app;
+CREATE DATABASE IF NOT EXISTS rq;
 
 -- 1.1 标的信息表
 CREATE TABLE IF NOT EXISTS ref.instruments (
@@ -16,9 +17,9 @@ CREATE TABLE IF NOT EXISTS ref.instruments (
     und_name String DEFAULT '' COMMENT '衍生品标的资产名称，如IF的标的资产名称是沪深300指数',
     multiplier Float64 DEFAULT 1.0 COMMENT '合约乘数, 股票为1, 期货如300',
     margin_ratio Float32 DEFAULT 0.0 COMMENT '保证金比例',
-    margin_ratio_param1 Float32 DEFAULT 0.0 COMMENT '保证金比例1',
-    margin_ratio_param2 Float32 DEFAULT 0.0 COMMENT '保证金比例2',
-    min_movement Float64 DEFAULT 0.01 COMMENT '最小变动价位',
+    strike_price Float64 DEFAULT 0.0 COMMENT '期权行权价',
+    option_type LowCardinality(String) DEFAULT '' COMMENT '期权类型, Call/Put',
+    exercise_type LowCardinality(String) DEFAULT '' COMMENT '行权方式, American/European',
     currency LowCardinality(String) DEFAULT 'CNY',
     listed_date Date,
     delisted_date Date DEFAULT '2099-12-31',
@@ -37,6 +38,198 @@ CREATE TABLE IF NOT EXISTS ref.calendar (
     updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (exchange, trading_day);
+
+-- 1.3 RiceQuant 数据源索引视图
+-- 从 rq 数据库的多个 instruments_xx 表中整合数据到 ref.instruments 结构
+CREATE VIEW IF NOT EXISTS ref.instruments AS
+-- CS (股票)
+SELECT
+    order_book_id AS symbol,
+    trading_code AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    '' AS und_code,
+    '' AS und_name,
+    1.0 AS multiplier,
+    0.0 AS margin_ratio,
+    0.0 AS strike_price,
+    '' AS option_type,
+    '' AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_cs
+UNION ALL
+-- ETF (交易所交易基金)
+SELECT 
+    order_book_id AS symbol,
+    trading_code AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    COALESCE(underlying_order_book_id, '') AS und_code,
+    COALESCE(underlying_name, '') AS und_name,
+    1.0 AS multiplier,
+    0.0 AS margin_ratio,
+    0.0 AS strike_price,
+    '' AS option_type,
+    '' AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_etf
+UNION ALL
+-- LOF (上市型开放式基金)
+SELECT
+    order_book_id AS symbol,
+    trading_code AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    COALESCE(underlying_order_book_id, '') AS und_code,
+    COALESCE(underlying_name, '') AS und_name,
+    1.0 AS multiplier,
+    0.0 AS margin_ratio,
+    0.0 AS strike_price,
+    '' AS option_type,
+    '' AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_lof
+UNION ALL
+-- INDX (指数)
+SELECT
+    order_book_id AS symbol,
+    order_book_id AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    COALESCE(underlying_symbol, '') AS und_code,
+    COALESCE(underlying_symbol, '') AS und_name,
+    1.0 AS multiplier,
+    0.0 AS margin_ratio,
+    0.0 AS strike_price,
+    '' AS option_type,
+    '' AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_indx
+UNION ALL
+-- Future (期货)
+SELECT
+    order_book_id AS symbol,
+    trading_code AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    COALESCE(underlying_order_book_id, '') AS und_code,
+    COALESCE(underlying_symbol, '') AS und_name,
+    COALESCE(contract_multiplier, 1.0) AS multiplier,
+    COALESCE(margin_rate, 0.0) AS margin_ratio,
+    0.0 AS strike_price,
+    '' AS option_type,
+    '' AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_future
+UNION ALL
+-- Spot (现货)
+SELECT
+    order_book_id AS symbol,
+    order_book_id AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    '' AS und_code,
+    '' AS und_name,
+    COALESCE(contract_multiplier, 1.0) AS multiplier,
+    COALESCE(margin_rate, 0.0) AS margin_ratio,
+    0.0 AS strike_price,
+    '' AS option_type,
+    '' AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_spot
+UNION ALL
+-- Option (期权)
+SELECT
+    order_book_id AS symbol,
+    trading_code AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    COALESCE(underlying_order_book_id, '') AS und_code,
+    COALESCE(underlying_symbol, '') AS und_name,
+    COALESCE(contract_multiplier, 1.0) AS multiplier,
+    0.0 AS margin_ratio,
+    COALESCE(strike_price, 0.0) AS strike_price,
+    COALESCE(option_type, '') AS option_type,
+    COALESCE(exercise_type, '') AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_option
+UNION ALL
+-- Convertible (可转债)
+SELECT
+    order_book_id AS symbol,
+    trading_code AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    COALESCE(stock_code, '') AS und_code,
+    '' AS und_name,
+    1.0 AS multiplier,
+    0.0 AS margin_ratio,
+    0.0 AS strike_price,
+    '' AS option_type,
+    '' AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_convertible
+UNION ALL
+-- Repo (回购)
+SELECT
+    order_book_id AS symbol,
+    trading_code AS symbol_raw,
+    exchange,
+    symbol AS name,
+    type,
+    '' AS und_code,
+    '' AS und_name,
+    1.0 AS multiplier,
+    0.0 AS margin_ratio,
+    0.0 AS strike_price,
+    '' AS option_type,
+    '' AS exercise_type,
+    'CNY' AS currency,
+    listed_date,
+    COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
+    'RICEQUANT' AS source,
+    updated_at
+FROM rq.instruments_repo;
 
 
 CREATE TABLE IF NOT EXISTS market_data.bars_1m (
