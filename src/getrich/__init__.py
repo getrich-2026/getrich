@@ -2,21 +2,16 @@
 __version__ = "0.1.1"
 __author__ = "GetRich Team"
 
-# 从子模块导入常用类，方便用户使用
+# 导出主要子模块
+from . import apps, libs
 
-from .apps.data.jobs import DataImportJob
-from .apps.data.scripts import init_db
-from .apps.data.table import CodeInfoTable, DayBarTable, MinBarTable
-from .libs.db.database import DEFAULT_DB_CONFIG, ClickHouseClient
-from .libs.db.pool import ClickHouseConnectionPool
+# 常用功能快捷入口 (Shortcuts)
+# 允许用户直接从顶层导入核心类，如: from getrich import ClickHouseClient
+# from .libs.clickhouse import ClickHouseClient, ClickHouseConnectionPool
 
 __all__ = [
-    "ClickHouseClient",
-    "DEFAULT_DB_CONFIG",
-    "ClickHouseConnectionPool",
-    "DataImportJob",
-    "init_db",
-    "CodeInfoTable",
-    "MinBarTable",
-    "DayBarTable",
+    "apps",
+    "libs",
+    # "ClickHouseClient",
+    # "ClickHouseConnectionPool",
 ]

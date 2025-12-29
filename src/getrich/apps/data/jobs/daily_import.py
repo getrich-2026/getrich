@@ -6,15 +6,15 @@ from typing import Any
 import pandas as pd
 from lntools import Logger
 
-from getrich.apps.data.etl import (
+from getrich.libs.clickhouse import ClickHouseClient, ClickHouseConnectionPool
+
+from ..etl.hdb import (
     read_day_bar_from_csv,
     read_day_bar_from_local,
     read_day_bar_from_parquet,
     read_min_bar_from_local,
 )
-from getrich.apps.data.table import CodeInfoTable, DayBarTable, MinBarTable
-from getrich.libs.db.database import ClickHouseClient
-from getrich.libs.db.pool import ClickHouseConnectionPool
+from ..table import CodeInfoTable, DayBarTable, MinBarTable
 
 
 class DataImportJob:

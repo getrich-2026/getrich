@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from .base import ClickHouseTable
+from getrich.libs.clickhouse.table import ClickHouseTable
 
 if TYPE_CHECKING:  # 避免循环导入问题
-    from getrich.libs.db.database import ClickHouseClient
-    from getrich.libs.db.pool import ClickHouseConnectionPool
+    from getrich.libs.clickhouse.database import ClickHouseClient
+    from getrich.libs.clickhouse.pool import ClickHouseConnectionPool
 
 
 class MinBarTable(ClickHouseTable):

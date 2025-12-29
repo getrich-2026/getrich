@@ -1,14 +1,14 @@
-from getrich import DEFAULT_DB_CONFIG, ClickHouseConnectionPool, DataImportJob
+from getrich.apps.data.etl.ricequant import INSTRUMENT_TYPES
+from getrich.libs.clickhouse import ClickHouseConnectionPool
 
 if __name__ == "__main__":
-    pool = ClickHouseConnectionPool(
-        host=DEFAULT_DB_CONFIG["host"],
-        port=DEFAULT_DB_CONFIG["port"],
-        user=DEFAULT_DB_CONFIG["user"],
-        password=DEFAULT_DB_CONFIG["password"],
-        database=DEFAULT_DB_CONFIG["database"],
-    )
-    HDB_PATH = "E:/data/bar"
+    pool = ClickHouseConnectionPool()
+    with pool.get_connection() as conn:
+        for inst_type in INSTRUMENT_TYPES:
+            sql = f"select * from ref.instruments where type = '{inst_type}' limit 5;"
+            df = conn.query_sql(sql)
+            print(df)
+    # HDB_PATH = "E:/data/bar"
     # with pool.get_connection() as conn:
     #     importer_job = DataImportJob(hdb_base_path=HDB_PATH, pool=pool, max_workers=5)
     #     importer_job.run_full_import(
@@ -36,14 +36,3 @@ if __name__ == "__main__":
     #         start_date=20251113,
     #         end_date=20251114
     #     )
-
-    with pool.get_connection() as conn:
-        parquet_importer_job = DataImportJob(hdb_base_path=HDB_PATH, pool=pool, max_workers=5)
-        parquet_importer_job.run_parquet_import(start_date=20251117, end_date=20251117)
-    # from getrich.apps.data.table import DayBarTable
-    # day_bar_table = DayBarTable(pool=pool)
-    # day_bar_table.drop()
-
-    # from getrich.apps.data.table import MinBarTable
-    # min_bar_table = MinBarTable(pool=pool)
-    # min_bar_table.drop()

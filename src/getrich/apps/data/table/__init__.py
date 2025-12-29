@@ -11,10 +11,8 @@ ClickHouse 表操作模块
 """
 
 from .bar import CodeInfoTable, DayBarTable, MinBarTable
-from .base import ClickHouseTable
 
 __all__ = [
-    "ClickHouseTable",
     "MinBarTable",
     "DayBarTable",
     "CodeInfoTable",

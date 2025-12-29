@@ -410,9 +410,6 @@ def _read_secinfo_from_hdb_file(hdb_file) -> pd.DataFrame:  # type: ignore
 
 if __name__ == "__main__":
     # 使用示例
-    # 请根据您的实际路径修改
-    from lntools import Logger
-
     log = Logger("extract_main")
     #
     HDB_DATA_PATH = "E:\\data\\bar\\min_bar\\2023"

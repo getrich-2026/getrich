@@ -1,3 +1,5 @@
+# pyright: reportOptionalMemberAccess=false
+# pyright: reportReturnType=false
 """
 ClickHouse 表操作基类
 
@@ -18,14 +20,10 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 from lntools import Logger
 
-from getrich.libs.db.database import ClickHouseClient
+from .database import ClickHouseClient
 
 if TYPE_CHECKING:
-    from getrich.libs.db.pool import ClickHouseConnectionPool
-
-
-# pyright: reportOptionalMemberAccess=false
-# pyright: reportReturnType=false
+    from .pool import ClickHouseConnectionPool
 
 
 class ClickHouseTable(ABC):

@@ -13,7 +13,7 @@ from typing import Any
 
 from lntools import Logger
 
-from .database import ClickHouseClient
+from .database import DEFAULT_DB_CONFIG, ClickHouseClient
 
 
 class PooledConnection:
@@ -148,15 +148,15 @@ class ClickHouseConnectionPool:
         self.connect_timeout = connect_timeout
         self.health_check_interval = health_check_interval
 
-        # 连接配置
+        # 连接配置：优先使用传入参数，否则回退到 DEFAULT_DB_CONFIG
         self._config = {
-            "host": host,
-            "port": port,
-            "user": user,
-            "password": password,
-            "database": database,
+            "host": host or DEFAULT_DB_CONFIG.get("host"),
+            "port": port or DEFAULT_DB_CONFIG.get("port"),
+            "user": user or DEFAULT_DB_CONFIG.get("user"),
+            "password": password or DEFAULT_DB_CONFIG.get("password"),
+            "database": database or DEFAULT_DB_CONFIG.get("database"),
         }
-        # 过滤 None 值
+        # 过滤 None 值 (虽然有了默认值通常不会是None，但为了健壮性保留)
         self._config: dict[str, Any] = {k: v for k, v in self._config.items() if v is not None}
 
         # 连接池

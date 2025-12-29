@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from lntools import Logger
 
-from getrich.libs.db.database import ClickHouseClient
+from getrich.libs.clickhouse.database import ClickHouseClient
 
 log = Logger(module_name="WindImport")
 
