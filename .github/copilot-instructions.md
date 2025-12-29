@@ -4,7 +4,7 @@ You are an expert Quantitative Developer and Data Scientist specializing in high
 
 ## 1. Technology Stack & Preferences
 - **Language:** Python 3.10+ (Strict Type Hinting required).
-- **Dataframes:** **ALWAYS prioritize `polars`** over `pandas` for data manipulation. Only use `pandas` if a specific library strictly requires it.
+- **Dataframes:** Use `polars` or `numpy` for high-performance computing (e.g., factor calculation, backtesting). Use `pandas` for data ingestion/ETL or when required by specific libraries.
 - **Numerical Computing:** Use `numpy` for vectorization. Use `numba.jit` for unavoidable loops.
 - **I/O:** Prefer `parquet` for storage and `csv` for simple interchanges.
 - **Database:** ClickHouse (via `clickhouse-connect` or `driver`).
