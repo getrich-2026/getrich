@@ -61,21 +61,22 @@ class MinBarTable(ClickHouseTable):
 
         # 表结构定义
         self.table_schema = {
-            "date": "UInt32",
-            "time": "Int32",
-            "pre_close": "Int64",
-            "open": "Int64",
-            "high": "Int64",
-            "low": "Int64",
-            "close": "Int64",
-            "volume": "Int64",
-            "turnover": "Int64",
-            "open_interest": "Int64",
-            "pre_settle_price": "Int64",
-            "settle_price": "Int64",
-            "symbol": "String",
+            "symbol": "LowCardinality(String)",
+            "dt": "Date",
+            "ts": "DateTime64(3, 'Asia/Shanghai')",
+            "pre_close": "Float64",
+            "open": "Float64",
+            "high": "Float64",
+            "low": "Float64",
+            "close": "Float64",
+            "volume": "Float64",
+            "amount": "Float64",
+            "open_interest": "Float64",
+            "settle": "Float64",
+            "pre_settle": "Float64",
             "local_time": "DateTime64(3)",
-            "insert_time": "DateTime",
+            "source": "LowCardinality(String)",
+            "updated_at": "DateTime64(3, 'Asia/Shanghai')",
         }
 
     def create(self, if_not_exists: bool = True) -> bool:
@@ -95,29 +96,30 @@ class MinBarTable(ClickHouseTable):
         create_sql = f"""
         CREATE TABLE {exists_clause} {self.table_name}
         (
-            date UInt32 CODEC(Delta, ZSTD),
-            time Int32 CODEC(Delta, ZSTD),
-            pre_close Int64 CODEC(Delta, ZSTD),
-            open Int64 CODEC(Delta, ZSTD),
-            high Int64 CODEC(Delta, ZSTD),
-            low Int64 CODEC(Delta, ZSTD),
-            close Int64 CODEC(Delta, ZSTD),
-            volume Int64 CODEC(Delta, ZSTD),
-            turnover Int64 CODEC(Delta, ZSTD),
-            open_interest Int64 CODEC(Delta, ZSTD),
-            pre_settle_price Int64 CODEC(Delta, ZSTD),
-            settle_price Int64 CODEC(Delta, ZSTD),
-            symbol String,
+            symbol LowCardinality(String),
+            dt Date CODEC(Delta, ZSTD(1)),      -- 用于分区
+            ts DateTime64(3, 'Asia/Shanghai') CODEC(DoubleDelta, ZSTD(1)),  -- K线结束时间（毫秒，含时区）
+            pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前收盘价
+            open Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 开盘价
+            high Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 最高价
+            low Float64 DEFAULT 0 CODEC(ZSTD(1)),       -- 最低价
+            close Float64 DEFAULT 0 CODEC(ZSTD(1)),     -- 收盘价
+            volume Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 成交量
+            amount Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 成交额
+            open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 持仓量(期货)
+            settle Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 结算价
+            pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前结算价
             local_time DateTime64(3) CODEC(Delta, ZSTD),
-            insert_time DateTime('Asia/Shanghai') DEFAULT now() CODEC(Delta, ZSTD)
+            source LowCardinality(String) DEFAULT 'UNKNOWN',  -- 数据来源
+            updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
         )
-        ENGINE = MergeTree()
-        PARTITION BY toYYYYMM(local_time)
-        ORDER BY (symbol, date, local_time)
+        ENGINE = ReplacingMergeTree(updated_at)
+        PARTITION BY toYYYYMM(dt)
+        ORDER BY (symbol, ts)
         SETTINGS index_granularity = 8192,
-                 min_bytes_for_wide_part = 0,
-                 min_rows_for_wide_part = 0,
-                 enable_mixed_granularity_parts = 1
+                min_bytes_for_wide_part = 0,
+                min_rows_for_wide_part = 0,
+                enable_mixed_granularity_parts = 1;
         """
 
         # 使用父类的 execute 方法

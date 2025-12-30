@@ -1,7 +1,3 @@
-# pylint: disable=no-member
-# pylint: disable=w0719, E0401
-# pyright: reportAttributeAccessIssue=false
-# pyright: reportMissingImports=false
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,6 +5,8 @@ from datetime import datetime
 import hdb
 import pandas as pd
 from lntools import Logger
+
+from getrich.apps.data.etl.transforms import normalize_date_string, normalize_datetime_column
 
 log = Logger(module_name="HdbEtl")
 
@@ -80,13 +78,15 @@ def process_data_to_df(data_type_def, data, items) -> pd.DataFrame:  # type: ign
     if "symbol" in df.columns:
         df["symbol"] = df["symbol"].apply(lambda x: x.decode("utf-8"))
 
-    # local_time 字段转换为 datetime
-    if "local_time" in df.columns:
-        df["local_time"] = (
-            pd.to_datetime(df["local_time"], unit="ms", utc=True)
-            .dt.tz_convert("Asia/Shanghai")
-            .dt.tz_localize(None)
-        )
+    # local_time 字段转换为 datetime (复用 transforms 中的标准化函数)
+    df = normalize_datetime_column(df, column="local_time", inplace=True)
+    df.rename(columns={"symbol": "hdb_symbol"}, inplace=True)
+
+    # 转换 hdb_symbol 格式: "xx.yyyyyy" -> "yyyyyy.xx"
+    if "hdb_symbol" in df.columns:
+        parts = df["hdb_symbol"].str.split(".", n=1, expand=True)
+        # df["hdb_symbol"] = parts[1] + "." + parts[0]
+        df["hdb_symbol"] = parts[1].str.cat(parts[0], sep=".")
 
     return df
 
@@ -117,56 +117,6 @@ def read_day_bar_from_local(
     return df
 
 
-def read_day_bar_from_csv(csv_path: str, date: datetime | str | int) -> pd.DataFrame:
-    """
-    从本地 CSV 文件中读取日线数据。
-
-    Args:
-        csv_path (str): CSV 文件根目录 (例如 "E:/data/bar/day_bar")。
-        date (datetime | str | int): 日期，支持多种格式:
-            - datetime 对象
-            - 字符串格式 (如 "2024-01-01" 或 "20240101")
-            - 整数格式 (如 20240101)
-
-    Returns:
-        pd.DataFrame: 包含日线数据的 DataFrame
-    """
-    # 统一转换为文件名格式：day_bar_YYYYMMDD.csv
-    if isinstance(date, datetime):
-        date_str = date.strftime("%Y%m%d")
-    elif isinstance(date, int):
-        date_str = str(date)
-    else:
-        # 移除可能的分隔符
-        date_str = str(date).replace("-", "").replace("/", "")
-
-    file_path = f"{csv_path}/day_bar_{date_str}.csv"
-
-    try:
-        # 读取 CSV 文件
-        df = pd.read_csv(file_path)
-
-        # 处理 local_time 字段（如果存在）
-        if "local_time" in df.columns:
-            # 如果是时间戳格式
-            if pd.api.types.is_integer_dtype(df["local_time"]):
-                df["local_time"] = (
-                    pd.to_datetime(df["local_time"], unit="ms", utc=True)
-                    .dt.tz_convert("Asia/Shanghai")
-                    .dt.tz_localize(None)
-                )
-            # 如果是字符串格式
-            elif pd.api.types.is_string_dtype(df["local_time"]):
-                df["local_time"] = pd.to_datetime(df["local_time"])
-
-        return df
-
-    except FileNotFoundError as e:
-        raise FileNotFoundError(f"CSV file not found: {file_path}") from e
-    except Exception as e:
-        raise Exception(f"Failed to read CSV file {file_path}: {e}") from e
-
-
 def read_day_bar_from_parquet(parquet_path: str, date: datetime | str | int) -> pd.DataFrame:
     """
     从本地 Parquet 文件中读取日线数据。
@@ -181,40 +131,22 @@ def read_day_bar_from_parquet(parquet_path: str, date: datetime | str | int) -> 
     Returns:
         pd.DataFrame: 包含日线数据的 DataFrame
     """
-    # 统一转换为文件名格式：day_bar_YYYYMMDD.parquet
-    if isinstance(date, datetime):
-        date_str = date.strftime("%Y%m%d")
-    elif isinstance(date, int):
-        date_str = str(date)
-    else:
-        # 移除可能的分隔符
-        date_str = str(date).replace("-", "").replace("/", "")
-
+    date_str = normalize_date_string(date)
     file_path = f"{parquet_path}/day_bar_{date_str}.parquet"
 
     try:
-        # 读取 Parquet 文件
-        df = pd.read_parquet(file_path)
+        # 使用 engine='pyarrow' 以获得更好的性能
+        df = pd.read_parquet(file_path, engine="pyarrow")
 
-        # 处理 local_time 字段（如果存在）
-        if "local_time" in df.columns:
-            # 如果是时间戳格式
-            if pd.api.types.is_integer_dtype(df["local_time"]):
-                df["local_time"] = (
-                    pd.to_datetime(df["local_time"], unit="ms", utc=True)
-                    .dt.tz_convert("Asia/Shanghai")
-                    .dt.tz_localize(None)
-                )
-            # 如果是字符串格式
-            elif pd.api.types.is_string_dtype(df["local_time"]):
-                df["local_time"] = pd.to_datetime(df["local_time"])
+        # 标准化时间列 (支持任何数据源: HDB, Wind, RiceQuant 等)
+        df = normalize_datetime_column(df, column="local_time", inplace=True)
 
         return df
 
     except FileNotFoundError as e:
         raise FileNotFoundError(f"Parquet file not found: {file_path}") from e
     except Exception as e:
-        raise Exception(f"Failed to read Parquet file {file_path}: {e}") from e
+        raise Exception(f"Failed to read Parquet file {file_path}: {e}") from e  # pylint: disable=W0719
 
 
 def _read_codeinfo_from_hdb_file(hdb_file) -> pd.DataFrame:  # type: ignore
@@ -241,14 +173,14 @@ def _read_codeinfo_from_hdb_file(hdb_file) -> pd.DataFrame:  # type: ignore
                 codeinfo_df["sec_name_ext"] = codeinfo_df["sec_name_ext"].apply(
                     lambda x: x.decode("utf-8", errors="ignore") if isinstance(x, bytes) else x
                 )
-        # 添加 symbol
-        codeinfo_df["symbol"] = hdb_file.codetable.symbols
+        # 添加 hdb_symbol
+        codeinfo_df["hdb_symbol"] = hdb_file.codetable.symbols
     return codeinfo_df
 
 
 def read_min_bar_from_local(
     db_path: str, trade_date: datetime | str, symbols: list[str] | None = None
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> pd.DataFrame:
     """
     从本地 HDB 文件中读取指定日期的分钟线数据和代码信息。
 
@@ -260,13 +192,8 @@ def read_min_bar_from_local(
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]: 包含分钟线数据和代码信息的两个 DataFrame。
     """
-    # 统一转换为文件名格式：min_bar_YYYYMMDD
-    if isinstance(trade_date, datetime):
-        date_str = trade_date.strftime("%Y%m%d")
-    else:
-        # 移除可能的分隔符
-        date_str = str(trade_date).replace("-", "").replace("/", "")
-
+    # 使用通用函数统一转换日期格式
+    date_str = normalize_date_string(trade_date)
     file_path = f"min_bar_{date_str}"
 
     db = hdb.DB(db_path)
@@ -277,15 +204,15 @@ def read_min_bar_from_local(
     df = read_hdb_to_df(hdb_file, symbols=symbols, data_type="SecurityKdata")
 
     # 2. 读取代码信息
-    codeinfo_df = _read_codeinfo_from_hdb_file(hdb_file)
+    # codeinfo_df = _read_codeinfo_from_hdb_file(hdb_file)
 
     hdb_file.close()
-    return df, codeinfo_df
+    return df
 
 
 def read_baseinfo_from_local_all(db_path: str = r"Z:\hdb_data\baseinfo") -> pd.DataFrame:
     """
-    读取所有历史的基础信息，并保留每个 symbol 最新的记录。
+    读取所有历史的基础信息，并保留每个 hdb_symbol 最新的记录。
     """
     try:
         db = hdb.DB(db_path)
@@ -335,7 +262,7 @@ def read_baseinfo_from_local_all(db_path: str = r"Z:\hdb_data\baseinfo") -> pd.D
             if not available_cols:
                 continue
 
-            secinfo_df = secinfo_df[["symbol"] + available_cols].rename(columns=required_cols)
+            secinfo_df = secinfo_df[["hdb_symbol"] + available_cols].rename(columns=required_cols)
 
             # 读取 tick 库中的补充信息
             try:
@@ -353,11 +280,11 @@ def read_baseinfo_from_local_all(db_path: str = r"Z:\hdb_data\baseinfo") -> pd.D
 
                     available_tick_cols = [c for c in tick_cols if c in codeinfo_df.columns]
                     if available_tick_cols:
-                        codeinfo_df = codeinfo_df[["symbol"] + available_tick_cols].rename(
+                        codeinfo_df = codeinfo_df[["hdb_symbol"] + available_tick_cols].rename(
                             columns=tick_cols
                         )
-                        # Inner merge: 只有两者都有的 symbol 才保留
-                        secinfo_df = pd.merge(secinfo_df, codeinfo_df, on="symbol", how="inner")
+                        # Inner merge: 只有两者都有的 hdb_symbol 才保留
+                        secinfo_df = pd.merge(secinfo_df, codeinfo_df, on="hdb_symbol", how="inner")
             except Exception as e:
                 log.warning(f"Failed to read tick info for {date_str}: {e}")
                 # 如果读取 tick 失败，跳过这一天的合并
@@ -381,8 +308,8 @@ def read_baseinfo_from_local_all(db_path: str = r"Z:\hdb_data\baseinfo") -> pd.D
     log.info(f"Concatenating {len(all_dfs)} dataframes...")
     full_df = pd.concat(all_dfs, ignore_index=True)
 
-    # 保留每个 symbol 的第一条记录（因为是按时间倒序读取的，所以第一条就是最新的）
-    final_df = full_df.drop_duplicates(subset=["symbol"], keep="first")
+    # 保留每个 hdb_symbol 的第一条记录（因为是按时间倒序读取的，所以第一条就是最新的）
+    final_df = full_df.drop_duplicates(subset=["hdb_symbol"], keep="first")
 
     log.info(f"Finished processing baseinfo. Total symbols: {len(final_df)}")
     return final_df
@@ -400,7 +327,7 @@ def _read_secinfo_from_hdb_file(hdb_file) -> pd.DataFrame:  # type: ignore
                 secinfo_df[col] = secinfo_df[col].apply(
                     lambda x: x.decode("gbk", errors="ignore") if isinstance(x, bytes) else x
                 )
-            secinfo_df["symbol"] = hdb_file.codetable.symbols
+            secinfo_df["hdb_symbol"] = hdb_file.codetable.symbols
     except Exception as e:
         log.error(f"Error reading secinfo from hdb file: {e}")
         return pd.DataFrame()
@@ -408,42 +335,118 @@ def _read_secinfo_from_hdb_file(hdb_file) -> pd.DataFrame:  # type: ignore
     return secinfo_df
 
 
-if __name__ == "__main__":
-    # 使用示例
-    log = Logger("extract_main")
-    #
-    HDB_DATA_PATH = "E:\\data\\bar\\min_bar\\2023"
-    log.info("Reading minute K-line data for 2023-01-04...")
-    min_bar_df, codeinfo_df = read_min_bar_from_local(
-        db_path=HDB_DATA_PATH, trade_date="20230104", symbols=None
+# 全局缓存：用于存储 hdb_symbol 到 symbol 的映射关系，避免循环处理时重复调用转换接口
+_SYMBOL_CACHE = {}
+
+
+def process_hdb_df(df: pd.DataFrame):
+    """
+    处理原始 DataFrame 以符合 ClickHouse 存储要求。
+
+    参数:
+    df: 原始 pandas.DataFrame
+    """
+    try:
+        import rqdatac as rq
+
+        from getrich.apps.data.etl.ricequant import init_rq
+
+        init_rq()
+        rq_convert_func = rq.id_convert  # pylint: disable=E1101
+    except ImportError:
+        log.error("rqdatac is not installed; Please install the 'rqdatac' package.")
+        raise
+
+    # 深度拷贝一份数据以免修改原始 df
+    processed_df = df.copy()
+
+    # 1. hdb_symbol 转换成 symbol (增加批量缓存机制)
+    # global _SYMBOL_CACHE
+    unique_symbols = processed_df["hdb_symbol"].unique()
+
+    # 找出当前 df 中尚未进入缓存的 symbol
+    missing_symbols = [s for s in unique_symbols if s not in _SYMBOL_CACHE]
+
+    if missing_symbols:
+        try:
+            # 使用列表输入进行批量转换
+            converted_list = rq_convert_func(missing_symbols)
+            # 将结果更新至全局缓存
+            for original, converted in zip(missing_symbols, converted_list, strict=True):
+                _SYMBOL_CACHE[original] = converted
+        except Exception as e:
+            log.warning(
+                f"Failed to convert symbols in bulk: {e}. Falling back to iterative conversion."
+            )
+            # 如果批量转换失败，尝试逐个转换作为兜底
+            for s in missing_symbols:
+                try:
+                    _SYMBOL_CACHE[s] = rq_convert_func(s)
+                except Exception:
+                    _SYMBOL_CACHE[s] = s
+
+    # 使用全局缓存进行映射
+    processed_df["symbol"] = processed_df["hdb_symbol"].map(_SYMBOL_CACHE)
+
+    # 2. 价格字段缩放 (除以 10000)
+    price_columns = [
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "pre_settle_price",
+        "settle_price",
+    ]
+    processed_df[price_columns] = processed_df[price_columns].astype(float) / 10000.0
+
+    # 3. volume 和 turnover 缩放 (除以 100000000)
+    processed_df["volume"] = processed_df["volume"].astype(float) / 100000000.0
+    processed_df["turnover"] = processed_df["turnover"].astype(float) / 100000000.0
+
+    # 4. 重命名列
+    processed_df = processed_df.rename(
+        columns={
+            "date": "dt",
+            "time": "ts",
+            "turnover": "amount",
+            "settle_price": "settle",
+            "pre_settle_price": "pre_settle",
+        }
     )
 
-    if not min_bar_df.empty:
-        log.info("\n--- Minute K-line data (MinBar) read successfully! ---")
-        log.info("Data structure:")
-        print(min_bar_df.head())
-        log.info(f"\nTotal read {len(min_bar_df)} minute K-line records.")
-        print(min_bar_df.info())
-    else:
-        log.info("Failed to read minute K-line data. Please check the path and file.")
+    # 5. 增加 source 字段
+    processed_df["source"] = "gtja"
 
-    if not codeinfo_df.empty:
-        log.info("\n--- Code information (CodeInfo) read successfully! ---")
-        log.info("Data structure:")
-        print(codeinfo_df.head())
-        log.info(f"\nTotal read {len(codeinfo_df)} code info records.")
-        print(codeinfo_df.info())
-    else:
-        log.info("Failed to read code information.")
+    # 6. 处理 date 字段
+    processed_df["dt"] = pd.to_datetime(processed_df["dt"].astype(str)).dt.date
 
-    # HDB_DATA_PATH = "E:/data/bar/day_bar"
-    # log.info("Reading daily K-line data for 2005...")
-    # day_bar_df = read_day_bar_from_local(db_path=HDB_DATA_PATH, year=2024, symbols=None)
-    # if not day_bar_df.empty:
-    #     log.info("\n--- Daily K-line data read successfully! ---")
-    #     log.info("Data structure：")
-    #     print(day_bar_df.head())
-    #     log.info(f"\nTotal daily K-line records read: {len(day_bar_df)}")
-    #     print(day_bar_df.info())
-    # else:
-    #     log.info("Failed to read daily K-line data. Please check the path and files.")
+    # 7. 整理最终列顺序
+    final_columns = [
+        "dt",
+        "ts",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "open_interest",
+        "pre_close",
+        "pre_settle",
+        "settle",
+        "local_time",
+        "source",
+    ]
+
+    # 只保留需要的列
+    processed_df = processed_df[final_columns]
+
+    return processed_df
+
+
+if __name__ == "__main__":
+    df = read_min_bar_from_local(db_path=r"E:\data\hdb", trade_date="20251229")
+    df = process_hdb_df(df)
+    print(df.info())

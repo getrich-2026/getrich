@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS market_data.bars_1m (
     open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 持仓量(期货)
     settle Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 结算价
     pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前结算价
+    local_time DateTime64(3) CODEC(Delta, ZSTD),
     source LowCardinality(String) DEFAULT 'UNKNOWN',  -- 数据来源
     updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)

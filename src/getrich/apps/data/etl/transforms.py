@@ -1,26 +1,5 @@
 # pylint: disable=no-member
 # pyright: reportAttributeAccessIssue=false
-"""
-Transform functions for market data processing.
-
-该模块包含数据转换函数，用于计算衍生字段和数据清洗。
-
-Functions:
-    - convert_date_value: 将任意日期值转换为 datetime.date 对象
-    - clean_date_columns: 清洗 DataFrame 中的日期列
-    - clean_string_columns: 清洗 DataFrame 中的字符串列
-    - compute_adj_factor: 计算复权因子和复权价格
-    - compute_pct_chg: 计算涨跌幅 (简单收益率 & 对数收益率)
-    - transform_day_bar: 日线数据转换主入口
-
-Usage:
-    >>> from getrich.apps.data.etl.hdb import read_day_bar_from_local
-    >>> from getrich.apps.data.etl.transforms import transform_day_bar
-    >>>
-    >>> df_raw = read_day_bar_from_local(...)
-    >>> df_clean = transform_day_bar(df_raw, compute_adj=True)
-"""
-
 from __future__ import annotations
 
 import datetime
@@ -31,6 +10,92 @@ import pandas as pd
 from lntools import Logger
 
 log = Logger(module_name="ETLTransforms")
+
+# ============================================================================
+# Generic Data Utilities (可被任何数据源复用)
+# ============================================================================
+
+
+def normalize_date_string(date: datetime.datetime | str | int) -> str:
+    """
+    统一日期格式为 YYYYMMDD 字符串。
+
+    适用场景: 任何需要文件名或路径中使用日期的场景 (HDB, CSV, Parquet 等)。
+
+    Args:
+        date: 日期，支持 datetime 对象、字符串格式或整数格式
+
+    Returns:
+        str: YYYYMMDD 格式的日期字符串
+
+    Example:
+        >>> normalize_date_string(datetime.datetime(2024, 1, 15))
+        '20240115'
+        >>> normalize_date_string("2024-01-15")
+        '20240115'
+        >>> normalize_date_string(20240115)
+        '20240115'
+    """
+    if isinstance(date, datetime.datetime):
+        return date.strftime("%Y%m%d")
+    elif isinstance(date, int):
+        return str(date)
+    else:
+        # 移除可能的分隔符
+        return str(date).replace("-", "").replace("/", "")
+
+
+def normalize_datetime_column(
+    df: pd.DataFrame,
+    column: str = "local_time",
+    timezone: str = "Asia/Shanghai",
+    inplace: bool = False,
+) -> pd.DataFrame:
+    """
+    标准化 DataFrame 中的时间列，确保其为指定时区的 datetime 类型。
+
+    适用场景: 任何包含时间戳的市场数据 (行情、tick、分钟线等)。
+
+    Args:
+        df: 输入的 DataFrame
+        column: 时间列名，默认为 'local_time'
+        timezone: 目标时区，默认为 'Asia/Shanghai'
+        inplace: 是否原地修改，默认 False
+
+    Returns:
+        pd.DataFrame: 处理后的 DataFrame
+
+    Example:
+        >>> df = pd.DataFrame({'local_time': [1704038400000, 1704124800000]})
+        >>> df = normalize_datetime_column(df)
+        >>> df['local_time'].dtype
+        dtype('<M8[ns]')
+    """
+    if not inplace:
+        df = df.copy()
+
+    if column not in df.columns:
+        return df
+
+    # 如果是时间戳格式 (整数类型)
+    if pd.api.types.is_integer_dtype(df[column]):
+        df[column] = (
+            pd.to_datetime(df[column], unit="ms", utc=True)
+            .dt.tz_convert(timezone)
+            .dt.tz_localize(None)
+        )
+    # 如果是字符串格式
+    elif pd.api.types.is_string_dtype(df[column]):
+        df[column] = pd.to_datetime(df[column])
+        # 如果已有时区信息，转换到目标时区
+        if df[column].dt.tz is not None:
+            df[column] = df[column].dt.tz_convert(timezone).dt.tz_localize(None)
+    # 如果已是 datetime 但带时区
+    elif pd.api.types.is_datetime64_any_dtype(df[column]) and df[column].dt.tz is not None:
+        df[column] = df[column].dt.tz_convert(timezone).dt.tz_localize(None)
+
+    return df
+
 
 # ============================================================================
 # Date & String Cleaning Utilities

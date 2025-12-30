@@ -1,4 +1,4 @@
-from . import hdb, ricequant
+from . import import_hdb, ricequant
 from .transforms import (
     DEFAULT_DATE,
     clean_dataframe_for_clickhouse,
@@ -7,11 +7,13 @@ from .transforms import (
     compute_adj_factor,
     compute_pct_chg,
     convert_date_value,
+    normalize_date_string,
+    normalize_datetime_column,
     transform_day_bar,
 )
 
 __all__ = [
-    "hdb",
+    "import_hdb",
     "ricequant",
     # Market data transforms
     "transform_day_bar",
@@ -23,4 +25,6 @@ __all__ = [
     "clean_date_columns",
     "clean_string_columns",
     "clean_dataframe_for_clickhouse",
+    "normalize_date_string",
+    "normalize_datetime_column",
 ]
