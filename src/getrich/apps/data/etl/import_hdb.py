@@ -6,9 +6,26 @@ import hdb
 import pandas as pd
 from lntools import Logger
 
+from getrich.apps.data.etl.ricequant import init_rq
 from getrich.apps.data.etl.transforms import normalize_date_string, normalize_datetime_column
 
 log = Logger(module_name="HdbEtl")
+
+# 全局变量
+_symbol_cache = {}
+_rq_convert_func = None
+
+# 1. 在模块级别初始化外部依赖和 RiceQuant
+try:
+    # 第三方库导入
+    import rqdatac as rq
+
+    # 执行一次性初始化
+    init_rq()
+    # 将函数引用赋值给内部变量，供后续调用
+    _rq_convert_func = rq.id_convert  # pylint: disable=E1101
+except (ImportError, Exception) as e:
+    log.error(f"RiceQuant initialization failed: {e}")
 
 
 def read_hdb_to_df(
@@ -335,58 +352,42 @@ def _read_secinfo_from_hdb_file(hdb_file) -> pd.DataFrame:  # type: ignore
     return secinfo_df
 
 
-# 全局缓存：用于存储 hdb_symbol 到 symbol 的映射关系，避免循环处理时重复调用转换接口
-_SYMBOL_CACHE = {}
-
-
 def process_hdb_df(df: pd.DataFrame):
     """
     处理原始 DataFrame 以符合 ClickHouse 存储要求。
 
-    参数:
-    df: 原始 pandas.DataFrame
+    字段逻辑：
+    - dt: Date 类型，用于 ClickHouse 分区。
+    - ts: String 类型 (HH:mm:ss)，用于日内统计分析。
+    - local_time: DateTime64 类型，作为高精度时间戳。
     """
-    try:
-        import rqdatac as rq
+    if _rq_convert_func is None:
+        raise RuntimeError("RiceQuant converter is not initialized.")
 
-        from getrich.apps.data.etl.ricequant import init_rq
-
-        init_rq()
-        rq_convert_func = rq.id_convert  # pylint: disable=E1101
-    except ImportError:
-        log.error("rqdatac is not installed; Please install the 'rqdatac' package.")
-        raise
-
-    # 深度拷贝一份数据以免修改原始 df
+    # 深度拷贝一份数据
     processed_df = df.copy()
 
-    # 1. hdb_symbol 转换成 symbol (增加批量缓存机制)
-    # global _SYMBOL_CACHE
+    # 1. hdb_symbol 转换成 symbol (批量缓存机制)
     unique_symbols = processed_df["hdb_symbol"].unique()
-
-    # 找出当前 df 中尚未进入缓存的 symbol
-    missing_symbols = [s for s in unique_symbols if s not in _SYMBOL_CACHE]
+    missing_symbols = [s for s in unique_symbols if s not in _symbol_cache]
 
     if missing_symbols:
         try:
-            # 使用列表输入进行批量转换
-            converted_list = rq_convert_func(missing_symbols)
-            # 将结果更新至全局缓存
+            # 使用模块级的转换函数进行批量处理
+            converted_list = _rq_convert_func(missing_symbols)
             for original, converted in zip(missing_symbols, converted_list, strict=True):
-                _SYMBOL_CACHE[original] = converted
+                _symbol_cache[original] = converted
         except Exception as e:
             log.warning(
                 f"Failed to convert symbols in bulk: {e}. Falling back to iterative conversion."
             )
-            # 如果批量转换失败，尝试逐个转换作为兜底
             for s in missing_symbols:
                 try:
-                    _SYMBOL_CACHE[s] = rq_convert_func(s)
+                    _symbol_cache[s] = _rq_convert_func(s)
                 except Exception:
-                    _SYMBOL_CACHE[s] = s
+                    _symbol_cache[s] = s
 
-    # 使用全局缓存进行映射
-    processed_df["symbol"] = processed_df["hdb_symbol"].map(_SYMBOL_CACHE)
+    processed_df["symbol"] = processed_df["hdb_symbol"].map(_symbol_cache)
 
     # 2. 价格字段缩放 (除以 10000)
     price_columns = [
@@ -404,7 +405,15 @@ def process_hdb_df(df: pd.DataFrame):
     processed_df["volume"] = processed_df["volume"].astype(float) / 100000000.0
     processed_df["turnover"] = processed_df["turnover"].astype(float) / 100000000.0
 
-    # 4. 重命名列
+    # 4. 时间字段 (ts) 处理：将 int (如 900) 转换为标准字符串 "HH:mm:ss"
+    processed_df["time"] = (
+        processed_df["time"]
+        .astype(str)
+        .str.zfill(4)
+        .str.replace(r"(\d{2})(\d{2})", r"\1:\2:00", regex=True)
+    )
+
+    # 5. 重命名列以匹配 ClickHouse Schema
     processed_df = processed_df.rename(
         columns={
             "date": "dt",
@@ -415,13 +424,13 @@ def process_hdb_df(df: pd.DataFrame):
         }
     )
 
-    # 5. 增加 source 字段
+    # 6. 增加数据源标识
     processed_df["source"] = "gtja"
 
-    # 6. 处理 date 字段
+    # 7. 处理日期类型
     processed_df["dt"] = pd.to_datetime(processed_df["dt"].astype(str)).dt.date
 
-    # 7. 整理最终列顺序
+    # 8. 整理最终列顺序并过滤多余字段
     final_columns = [
         "dt",
         "ts",
@@ -436,14 +445,11 @@ def process_hdb_df(df: pd.DataFrame):
         "pre_close",
         "pre_settle",
         "settle",
-        "local_time",
         "source",
+        "local_time",
     ]
 
-    # 只保留需要的列
-    processed_df = processed_df[final_columns]
-
-    return processed_df
+    return processed_df[final_columns]
 
 
 if __name__ == "__main__":
