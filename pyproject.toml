@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "getrich"
 version = "0.1.2"
-description = "量化交易系统 - 模块化设计的期货/期权交易平台"
+description = "量化投研系统 - 模块化设计的多品种投研交易平台"
 readme = "README.md"
 authors = [
     {name = "GetRich Team", email = "linnan@nebulastar.com.cn"}
@@ -19,6 +19,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
@@ -42,6 +44,7 @@ dependencies = [
     "seaborn",
     "statsmodels",
     "tqdm",
+    "rqdatac"
 ]
 
 [project.optional-dependencies]
@@ -53,7 +56,6 @@ dev = [
     "flake8>=4.0.0",
     "mypy>=0.950",
     "ipython>=8.0.0",
-    "jupyter>=1.0.0",
 ]
 
 
@@ -73,7 +75,6 @@ exclude = ["tests*", "reference*", "docs*"]
 [tool.ruff]
 # 目标 Python 版本
 target-version = "py310"
-# 行长限制：量化代码通常包含较长的数学表达式或 Polars 链式调用，100 比 88 更合理
 line-length = 100
 
 [tool.ruff.lint]
@@ -138,5 +139,7 @@ reportUnnecessaryIsInstance = false
 exclude = [
     "**/node_modules",
     "**/__pycache__",
-    "**/.git"
+    "**/.git",
+    "**/.github",
+    "**/.vscode"
 ]
