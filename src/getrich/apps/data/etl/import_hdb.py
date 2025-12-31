@@ -6,14 +6,14 @@ import hdb
 import pandas as pd
 from lntools import Logger
 
-from getrich.apps.data.etl.ricequant import init_rq
-from getrich.apps.data.etl.transforms import normalize_date_string, normalize_datetime_column
+from .ricequant import init_rq
+from .transforms import normalize_date_string, normalize_datetime_column
 
 log = Logger(module_name="HdbEtl")
 
 # 全局变量
 _symbol_cache = {}
-_rq_convert_func = None
+_rq_convert_func = None  # pylint: disable=C0103
 
 # 1. 在模块级别初始化外部依赖和 RiceQuant
 try:
@@ -402,8 +402,8 @@ def process_hdb_df(df: pd.DataFrame):
     processed_df[price_columns] = processed_df[price_columns].astype(float) / 10000.0
 
     # 3. volume 和 turnover 缩放 (除以 100000000)
-    processed_df["volume"] = processed_df["volume"].astype(float) / 100000000.0
-    processed_df["turnover"] = processed_df["turnover"].astype(float) / 100000000.0
+    processed_df["volume"] = processed_df["volume"].astype(float)
+    processed_df["turnover"] = processed_df["turnover"].astype(float)
 
     # 4. 时间字段 (ts) 处理：将 int (如 900) 转换为标准字符串 "HH:mm:ss"
     processed_df["time"] = (
@@ -450,9 +450,3 @@ def process_hdb_df(df: pd.DataFrame):
     ]
 
     return processed_df[final_columns]
-
-
-if __name__ == "__main__":
-    df = read_min_bar_from_local(db_path=r"E:\data\hdb", trade_date="20251229")
-    df = process_hdb_df(df)
-    print(df.info())

@@ -34,27 +34,6 @@ class ClickHouseTable(ABC):
     - 管理表的结构（创建、删除）
     - 提供表级别的数据操作（插入、查询、统计）
     - 提供业务相关的查询接口（由子类实现）
-
-    使用方式：
-        1. 使用默认配置的客户端：
-           table = MinBarTable(table_name='min_bar')
-
-        2. 传入已有的客户端实例（推荐,可共享连接）：
-           client = ClickHouseClient()
-           table1 = MinBarTable(table_name='min_bar', client=client)
-           table2 = TickTable(table_name='tick_data', client=client)
-
-        3. 使用连接池（高性能场景）：
-           pool = ClickHouseConnectionPool(min_size=2, max_size=10)
-           table = MinBarTable(table_name='min_bar', pool=pool)
-           # 每次操作自动从池中获取/释放连接
-
-        4. 显式传入配置创建新客户端：
-           table = MinBarTable(
-               table_name='min_bar',
-               host='192.168.1.100',
-               database='mydb'
-           )
     """
 
     def __init__(

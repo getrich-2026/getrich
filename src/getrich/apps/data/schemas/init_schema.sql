@@ -235,7 +235,7 @@ FROM rq.instruments_repo;
 CREATE TABLE IF NOT EXISTS market_data.bars_1m (
     symbol LowCardinality(String),
     dt Date CODEC(Delta, ZSTD(1)),      -- 用于分区
-    ts DateTime64(3, 'Asia/Shanghai') CODEC(DoubleDelta, ZSTD(1)),  -- K线结束时间（毫秒，含时区）
+    ts String CODEC(ZSTD(1)),-- K线结束时间（毫秒，含时区）
     pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前收盘价
     open Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 开盘价
     high Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 最高价

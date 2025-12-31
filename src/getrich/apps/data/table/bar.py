@@ -24,7 +24,7 @@ class MinBarTable(ClickHouseTable):
 
     def __init__(
         self,
-        table_name: str = "min_bar",
+        table_name: str = "market_data.bars_1m",
         client: ClickHouseClient | None = None,
         pool: ClickHouseConnectionPool | None = None,
         host: str | None = None,
@@ -225,7 +225,7 @@ class DayBarTable(ClickHouseTable):
 
     def __init__(
         self,
-        table_name: str = "day_bar",
+        table_name: str = "market_data.bars_1d",
         client: ClickHouseClient | None = None,
         pool: ClickHouseConnectionPool | None = None,
         host: str | None = None,

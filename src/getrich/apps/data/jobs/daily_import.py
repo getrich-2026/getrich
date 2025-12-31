@@ -8,9 +8,7 @@ from lntools import Logger
 
 from getrich.libs.clickhouse import ClickHouseClient, ClickHouseConnectionPool
 
-from ..etl.import_hdb import (
-    read_min_bar_from_local,
-)
+from ..etl.import_hdb import process_hdb_df, read_min_bar_from_local
 from ..table import MinBarTable
 
 
@@ -119,6 +117,7 @@ class DataImportJob:
 
         # 文件路径格式为 hdb_base_path/min_bar/year/min_bar_yyyymmdd.hdat 和 .hidx
         year_path = self.min_bar_path / str(year)
+        self.logger.info(f"Looking for MinBar files in: {year_path}")
         hdat_file = year_path / f"{file_name}.hdat"
         hidx_file = year_path / f"{file_name}.hidx"
 
@@ -157,7 +156,7 @@ class DataImportJob:
             min_bar_df = read_min_bar_from_local(
                 db_path=str(year_path), trade_date=trade_date, symbols=symbols
             )
-
+            min_bar_df = process_hdb_df(min_bar_df)
             return min_bar_df
 
         except Exception as e:
@@ -323,52 +322,39 @@ class DataImportJob:
         import_min_bar: bool = True,
     ):
         """
-        Process MinBar and CodeInfo data import for a single day.
-
-        Note: DayBar data uses independent yearly processing method.
-
-        Args:
-            date_to_process: Date to process
-            symbols: List of symbol codes to import, None means all symbols
-            import_min_bar: Whether to import minute bar data
-            import_code_info: Whether to import contract info
+        处理单日的 MinBar 导入。
         """
         date_str = date_to_process.strftime("%Y-%m-%d")
         year = date_to_process.year
 
-        self.logger.info(f"[{date_str}] Processing MinBar...")
-
         try:
-            # 1. Check if MinBar HDB file exists
+            # 1. 检查目录
             year_path = self.min_bar_path / str(year)
-
             if not year_path.exists():
                 self.logger.warning(
                     f"[{date_str}] MinBar year directory does not exist: {year_path}"
                 )
                 return
 
-            # 2. Read MinBar and CodeInfo data from HDB
+            # 2. 读取数据
             min_bar_df = self._process_single_file(date_to_process, symbols=symbols)
 
             if min_bar_df.empty:
-                self.logger.info(f"[{date_str}] No data found, skipping.")
+                self.logger.info(f"[{date_str}] No data found in HDB, skipping.")
                 return
 
-            # 3. Import minute bar data to ClickHouse
-            if import_min_bar and not min_bar_df.empty:
+            # 3. 导入 ClickHouse
+            if import_min_bar:
                 success = self.min_bar_table.insert(min_bar_df)
-                if success:
-                    self.logger.info(
-                        f"[{date_str}] Successfully imported {len(min_bar_df)} minute bar records."
-                    )
-                else:
-                    self.logger.error(f"[{date_str}] Failed to import minute bar data.")
+                if not success:
+                    # 【关键点】这里必须抛出异常，否则 run_full_import 会认为导入成功
+                    raise RuntimeError(f"ClickHouse insert failed for {date_str}")
 
-        except FileNotFoundError as e:
-            self.logger.warning(f"[{date_str}] HDB file not found: {e}")
+                self.logger.info(f"[{date_str}] Successfully imported {len(min_bar_df)} records.")
+
         except Exception as e:
-            self.logger.error(f"[{date_str}] Processing failed: {e}")
+            self.logger.error(f"[{date_str}] Processing failed: {str(e)}")
+            raise
 
     def get_latest_date_in_db(self) -> datetime | None:
         """
@@ -516,15 +502,11 @@ class DataImportJob:
                     }
 
                     for future in as_completed(futures):
-                        date = futures[future]
                         try:
                             future.result()
                             min_bar_success += 1
-                        except Exception as e:
+                        except Exception:
                             min_bar_fail += 1
-                            self.logger.error(
-                                f"Failed to process date {date.strftime('%Y-%m-%d')}: {e}"
-                            )
 
                 self.logger.info("=" * 80)
                 result_msg = f"Minute bar import completed! Success: {min_bar_success}, Failed: {min_bar_fail}"
@@ -639,15 +621,11 @@ class DataImportJob:
                     }
 
                     for future in as_completed(futures):
-                        date = futures[future]
                         try:
                             future.result()
                             min_bar_success += 1
-                        except Exception as e:
+                        except Exception:
                             min_bar_fail += 1
-                            self.logger.error(
-                                f"Failed to process date {date.strftime('%Y-%m-%d')}: {e}"
-                            )
 
                 self.logger.info("=" * 80)
                 msg = f"Minute bar incremental import completed! Success: {min_bar_success}, Failed: {min_bar_fail}"
@@ -661,116 +639,18 @@ class DataImportJob:
 
 if __name__ == "__main__":
     # Task usage examples
-    main_logger = Logger(module_name="data_import_main")
-
-    # 1. HDB data path configuration
-    # HDB_BASE_PATH is the root directory of data
-    # Directory structure should be:
-    #   - HDB_BASE_PATH/min_bar/2005/min_bar_20050101.hdat, min_bar_20050101.hidx, ...
-    #   - HDB_BASE_PATH/min_bar/2006/...
-    #   - HDB_BASE_PATH/day_bar/day_bar_2005.hdat, day_bar_2005.hidx
-    #   - HDB_BASE_PATH/day_bar/day_bar_2006.hdat, ...
     HDB_BASE_PATH = r"E:\data\bar"
 
     # 初始化为 None，确保变量已定义
     importer_job: DataImportJob | None = None
 
-    try:
-        # ========== Initialization Examples ==========
-
-        # Method 1: Use default configuration (simplest)
-        # importer_job = DataImportJob(
-        #     hdb_base_path=HDB_BASE_PATH,
-        #     max_workers=4  # Adjust based on your CPU cores and IO capability
-        # )
-
-        # Method 2: Use configuration dict
-        # clickhouse_config = {
-        #     'host': 'localhost',
-        #     'port': 9000,
-        #     'user': 'default',
-        #     'password': '',
-        #     'database': 'default'
-        # }
-        # importer_job = DataImportJob(
-        #     hdb_base_path=HDB_BASE_PATH,
-        #     clickhouse_config=clickhouse_config,
-        #     max_workers=4
-        # )
-
-        # Method 3: Use client instance (recommended, shared connection across tables)
-        client = ClickHouseClient()
-        importer_job = DataImportJob(hdb_base_path=HDB_BASE_PATH, client=client, max_workers=4)
-
-        # Method 4: Use connection pool (high concurrency scenario)
-        # from ..pool import ClickHouseConnectionPool
-        # pool = ClickHouseConnectionPool(
-        #     min_size=2,
-        #     max_size=10,
-        #     host='localhost',
-        #     database='default'
-        # )
-        # importer_job = DataImportJob(
-        #     hdb_base_path=HDB_BASE_PATH,
-        #     pool=pool,
-        #     max_workers=4
-        # )
-
-        # ========== Use Case 1: Full Import (Initial Import) ==========
-        # Import all data from 2005-2025 (minute bar + day bar + contract info)
-        main_logger.info("Starting full import...")
-        importer_job.run_full_import(
-            start_year=2005,
-            end_year=2005,
-            symbols=None,  # None means import all symbols, can also specify like ["SH.*", "SZ.*"]
-            skip_existing=True,  # Skip existing data (only applies to MinBar)
-            import_min_bar=True,  # Import minute bar data
-            import_day_bar=False,  # Import day bar data
-        )
-
-        # ========== Use Case 2: Incremental Import (Daily Update) ==========
-        # MinBar: Auto import all dates after latest date in database
-        # DayBar: Read current year file (e.g. day_bar_2025), import latest records
-        # main_logger.info("Starting incremental import...")
-        # importer_job.run_incremental_import(
-        #     import_min_bar=True,
-        #     import_day_bar=True,
-        #     import_code_info=True
-        # )
-
-        # ========== Use Case 3: Import MinBar Data for Specific Date ==========
-        # target_date = datetime(2025, 11, 3)
-        # main_logger.info(f"Importing MinBar for specific date: {target_date.strftime('%Y-%m-%d')}")
-        # importer_job.run_incremental_import(
-        #     target_date=target_date,
-        #     import_min_bar=True,
-        #     import_day_bar=False,  # Don't import day bar
-        #     import_code_info=True
-        # )
-
-        # ========== Use Case 4: Import DayBar Data Only ==========
-        # main_logger.info("Importing day bar data only...")
-        # importer_job.run_full_import(
-        #     start_year=2005,
-        #     end_year=2025,
-        #     skip_existing=False,
-        #     import_min_bar=False,
-        #     import_day_bar=True,
-        #     import_code_info=False
-        # )
-
-        # ========== Use Case 5: Import Contract Info Only ==========
-        # main_logger.info("Importing contract info only...")
-        # importer_job.run_full_import(
-        #     start_year=2005,
-        #     end_year=2025,
-        #     skip_existing=False,
-        #     import_min_bar=False,  # Don't import minute bar data
-        #     import_day_bar=False,  # Don't import day bar data
-        #     import_code_info=True  # Import contract info only (reads MinBar files but only imports CodeInfo)
-        # )
-
-    finally:
-        # 4. Close database connections
-        if importer_job is not None:
-            main_logger.info("Import task finished")
+    client = ClickHouseClient()
+    importer_job = DataImportJob(hdb_base_path=HDB_BASE_PATH, client=client, max_workers=4)
+    importer_job.run_full_import(
+        start_year=2005,
+        end_year=2005,
+        symbols=None,  # None means import all symbols, can also specify like ["SH.*", "SZ.*"]
+        skip_existing=True,  # Skip existing data (only applies to MinBar)
+        import_min_bar=True,  # Import minute bar data
+        import_day_bar=False,  # Import day bar data
+    )
