@@ -1,4 +1,4 @@
-# 数据访问层
+# pyright: reportOptionalMemberAccess=false
 from __future__ import annotations
 
 from typing import Any
@@ -6,25 +6,27 @@ from typing import Any
 import clickhouse_connect
 import pandas as pd
 from clickhouse_connect.driver.client import Client
-from lntools import Logger, read_pkg_yaml
+from lntools import Logger
+
+from getrich.config.settings import get_clickhouse_config
 
 log = Logger(module_name="ClickhouseClient")
 
-# pyright: reportOptionalMemberAccess=false
 
+def load_db_config() -> dict[str, Any]:
+    """
+    从settings.py读取ClickHouse配置。
 
-def load_db_config():
+    Returns:
+        dict[str, Any]: 包含"default_database"键的配置字典
     """
-    从 config.yml 文件加载数据库配置。
-    """
-    # 方法 1: 使用 pkg_resources（打包后）
     try:
-        config = read_pkg_yaml("config/config.yml", package="getrich")
-        if config:
-            return config
+        config = get_clickhouse_config()
+        return {"default_database": config}
     except Exception as e:
-        log.warning(f"Failed to load config from package resources: {e}")
-        return {}
+        log.error(f"Failed to load ClickHouse config from settings: {e}")
+        # 返回空配置, 使用硬编码的备用默认值
+        return {"default_database": {}}
 
 
 # 在模块加载时读取配置
@@ -103,6 +105,13 @@ class ClickHouseClient:
         Returns:
             连接成功返回 True,否则返回 False
         """
+        if self._connection is not None:
+            try:
+                self._connection.ping()
+                return True
+            except Exception:
+                log.warning("Connection check failed, reconnecting...")
+                self._connection = None
         try:
             self._connection = clickhouse_connect.get_client(**self._config)
             log.info(
@@ -219,6 +228,7 @@ class ClickHouseClient:
             return True
         except Exception as e:
             log.error(f"Error executing SQL: {e}\nSQL: {sql}")
+            self._connection = None
             return False
 
     def execute_sql_file(self, file_path: str) -> bool:
@@ -256,7 +266,7 @@ class ClickHouseClient:
             log.error(f"Error reading or executing SQL file {file_path}: {e}")
             return False
 
-    def query(self, sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame | None:
+    def query(self, sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
         """
         执行查询并以 Pandas DataFrame 形式返回结果。
 
@@ -265,18 +275,19 @@ class ClickHouseClient:
             params: 查询参数
 
         Returns:
-            包含查询结果的 DataFrame,如果出错则返回 None
+            包含查询结果的 DataFrame,如果出错或无数据则返回空的 DataFrame
         """
         if not self.ensure_connection():
-            return None
+            return pd.DataFrame()
 
         try:
             result_df = self._connection.query_df(sql, parameters=params)
             log.info(f"Query executed successfully, returned {len(result_df)} rows")
             return result_df
         except Exception as e:
+            self._connection = None
             log.error(f"Error executing query: {e}\nSQL: {sql}")
-            return None
+            return pd.DataFrame()
 
     def query_sql(
         self, sql_query: str, params: dict[str, Any] | None = None, use_df: bool = True
@@ -305,6 +316,7 @@ class ClickHouseClient:
             return result  # type: ignore
         except Exception as e:
             log.error(f"Error executing SQL query: {e}\nSQL: {sql_query}")
+            self._connection = None
             return None
 
     def read_data(
@@ -351,6 +363,7 @@ class ClickHouseClient:
             return df
         except Exception as e:
             log.error(f"Error reading data from table {table_name}: {e}\nSQL: {query}")
+            self._connection = None
             return None
 
     def insert_data(
@@ -413,6 +426,7 @@ class ClickHouseClient:
                 log.warning("Unsupported data type, must be DataFrame or list")
                 return False
         except Exception as e:
+            self._connection = None
             log.error(f"Error inserting data into table {table_name}: {e}")
             return False
 
@@ -477,6 +491,7 @@ class ClickHouseClient:
             log.info(f"Batch upsert completed, successfully processed {success_count} records")
             return True
         except Exception as e:
+            self._connection = None
             log.error(f"Error upserting data into table {table_name}: {e}")
             return False
 

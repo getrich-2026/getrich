@@ -240,7 +240,7 @@ class ClickHouseTable(ABC):
         finally:
             self._release_client(client)
 
-    def query(self, sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame | None:
+    def query(self, sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
         """
         执行查询并以 Pandas DataFrame 形式返回结果。
 
@@ -249,15 +249,16 @@ class ClickHouseTable(ABC):
             params: 查询参数
 
         Returns:
-            包含查询结果的 DataFrame,如果出错则返回 None
+            包含查询结果的 DataFrame,如果出错或无数据则返回空的 DataFrame
         """
         client = self._get_client()
         try:
             result = client.query(sql, params=params)
-            if result is not None:
+            if not result.empty:
                 self.logger.info(f"Query executed successfully, returned {len(result)} rows.")
             else:
-                self.logger.error("Failed to execute query")
+                # 注意：这里可能是真的没数据，也可能是 client.query 内部报错返回了空 DF
+                self.logger.info("Query returned empty result.")
             return result
         finally:
             self._release_client(client)
@@ -295,7 +296,7 @@ class ClickHouseTable(ABC):
                 WHERE database = '{config["database"]}' AND name = '{self.table_name}'
             """
             result_df = client.query(query)
-            if result_df is not None and len(result_df) > 0:
+            if not result_df.empty:
                 return int(result_df.iloc[0]["cnt"]) > 0
             return False
         except Exception as e:
@@ -322,7 +323,7 @@ class ClickHouseTable(ABC):
                 query = f"SELECT count() as cnt FROM {self.table_name}"
 
             result_df = client.query(query)
-            if result_df is not None and len(result_df) > 0:
+            if not result_df.empty:
                 return int(result_df.iloc[0]["cnt"])
             return 0
         except Exception as e:

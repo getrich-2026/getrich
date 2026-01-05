@@ -63,7 +63,7 @@ class MinBarTable(ClickHouseTable):
         self.table_schema = {
             "symbol": "LowCardinality(String)",
             "dt": "Date",
-            "ts": "DateTime64(3, 'Asia/Shanghai')",
+            "ts": "String",
             "pre_close": "Float64",
             "open": "Float64",
             "high": "Float64",
@@ -98,7 +98,7 @@ class MinBarTable(ClickHouseTable):
         (
             symbol LowCardinality(String),
             dt Date CODEC(Delta, ZSTD(1)),      -- 用于分区
-            ts DateTime64(3, 'Asia/Shanghai') CODEC(DoubleDelta, ZSTD(1)),  -- K线结束时间（毫秒，含时区）
+            ts String CODEC(ZSTD(1)),           -- K线结束时间 (HH:mm:ss)
             pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前收盘价
             open Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 开盘价
             high Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 最高价
@@ -115,7 +115,7 @@ class MinBarTable(ClickHouseTable):
         )
         ENGINE = ReplacingMergeTree(updated_at)
         PARTITION BY toYYYYMM(dt)
-        ORDER BY (symbol, ts)
+        ORDER BY (symbol, local_time)
         SETTINGS index_granularity = 8192,
                 min_bytes_for_wide_part = 0,
                 min_rows_for_wide_part = 0,
@@ -135,9 +135,10 @@ class MinBarTable(ClickHouseTable):
         symbols: str | list[str] | None = None,
         start_date: datetime | str | None = None,
         end_date: datetime | str | None = None,
+        columns: list[str] | None = None,
         order_by: str = "symbol, local_time",
         limit: int | None = None,
-    ) -> pd.DataFrame | None:
+    ) -> pd.DataFrame:
         """
         读取 min_bar 表中的数据,支持灵活的日期和标的筛选。
 
@@ -145,52 +146,58 @@ class MinBarTable(ClickHouseTable):
             symbols: 标的代码,可以是单个字符串、字符串列表或 None(读取所有标的)
             start_date: 开始日期,支持 datetime 或字符串格式(如 '2020-01-01'),None 表示从 2005-01-01 开始
             end_date: 结束日期,支持 datetime 或字符串格式(如 '2025-12-31'),None 表示到当前日期
+            columns: 需要查询的列名列表，None 表示查询所有列
             order_by: 排序字段,默认按 symbol 和 local_time 排序
             limit: 限制返回的记录数,None 表示不限制
 
         Returns:
-            包含查询结果的 DataFrame,如果出错则返回 None
+            包含查询结果的 DataFrame (无数据时返回空 DataFrame)
         """
         # 构建条件列表
         conditions = []
 
-        # 处理symbols参数
+        # 1. 处理 symbols 参数
         if symbols is not None:
             if isinstance(symbols, str):
-                # 单个标的
                 conditions.append(f"symbol = '{symbols}'")
             elif isinstance(symbols, list) and len(symbols) > 0:
-                # 多个标的
-                symbols_str = "', '".join(symbols)
+                # 简单的防注入处理：确保都是字符串且不含单引号
+                safe_symbols = [s.replace("'", "") for s in symbols]
+                symbols_str = "', '".join(safe_symbols)
                 conditions.append(f"symbol IN ('{symbols_str}')")
 
-        # 处理日期范围
-        # 如果没有指定start_date,默认从2005-01-01开始
+        # 2. 处理日期范围 (同时生成 local_time 和 dt 的过滤条件以利用分区索引)
+        # 默认开始时间
         if start_date is None:
-            start_date = "2005-01-01"
+            start_date = datetime(2005, 1, 1)
+        elif isinstance(start_date, str):
+            start_date = pd.to_datetime(start_date)
 
-        # 转换start_date为字符串格式
-        if isinstance(start_date, datetime):
-            start_date_str = start_date.strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            start_date_str = str(start_date)
-
-        conditions.append(f"local_time >= '{start_date_str}'")
-
-        # 如果没有指定end_date,使用当前日期
+        # 默认结束时间
         if end_date is None:
             end_date = datetime.now()
+        elif isinstance(end_date, str):
+            end_date = pd.to_datetime(end_date)
 
-        # 转换end_date为字符串格式
-        if isinstance(end_date, datetime):
-            end_date_str = end_date.strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            end_date_str = str(end_date)
+        # 添加 local_time 过滤 (精确时间)
+        conditions.append(f"local_time >= '{start_date}'")
+        conditions.append(f"local_time <= '{end_date}'")
 
-        conditions.append(f"local_time <= '{end_date_str}'")
+        # 添加 dt 过滤 (分区裁剪优化)
+        # ClickHouse 的 dt 是 Date 类型，直接比较字符串 'YYYY-MM-DD' 即可
+        conditions.append(f"dt >= '{start_date.date()}'")
+        conditions.append(f"dt <= '{end_date.date()}'")
 
-        # 构建完整的查询语句
-        query = f"SELECT * FROM {self.table_name}"
+        # 3. 构建查询列
+        select_cols = "*"
+        if columns and isinstance(columns, list):
+            # 简单的防注入：确保列名只包含字母数字下划线
+            safe_columns = [c for c in columns if c.isidentifier()]
+            if safe_columns:
+                select_cols = ", ".join(safe_columns)
+
+        # 4. 构建完整的查询语句
+        query = f"SELECT {select_cols} FROM {self.table_name}"
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
@@ -201,17 +208,15 @@ class MinBarTable(ClickHouseTable):
         if limit:
             query += f" LIMIT {limit}"
 
-        # 使用父类的 query 方法
-        result = self.query(query)
-
-        if result is not None:
-            self.logger.info(f"Successfully read {len(result)} records from '{self.table_name}'")
-        else:
-            self.logger.warning(
-                f"No data found or error occurred while reading from '{self.table_name}'"
-            )
-
-        return result
+        # 5. 执行查询
+        try:
+            result = self.query(query)
+            if not result.empty:
+                self.logger.info(f"Successfully read {len(result)} records from '{self.table_name}'")
+            return result
+        except Exception as e:
+            self.logger.error(f"Error reading from '{self.table_name}': {e}")
+            return pd.DataFrame()
 
 
 class DayBarTable(ClickHouseTable):
