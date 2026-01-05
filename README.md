@@ -20,7 +20,7 @@
     end
 
     % 业务容器群
-    subgraph "Docker Compose Group"
+    subgraph "Docker Compose Group / Local Dev / Server Deploy"
         DataSvc(getrich-data) -->|Batch Write| CH
         StratSvc(getrich-strategy) -->|Read/Write| CH
         Gateway(getrich-gateway) -->|Query| CH
@@ -46,7 +46,7 @@
 | Web Frontend | /apps/web | 用户交互界面。K线展示、信号订阅、仪表盘。 | React, Next.js, Tailwind, Lightweight-Charts |
 
 ## 2.3. 技术栈选型 (Tech Stack)
-- 编程语言: Python 3.11+ (后端/策略), TypeScript (前端)
+- 编程语言: Python 3.12+ (后端/策略), TypeScript (前端)
 - 数据库 (OLAP): ClickHouse (核心数据仓库)
 - 缓存/消息总线: Redis (最新信号缓存 + Pub/Sub 消息队列)
 - Web 框架: FastAPI (高性能异步框架)

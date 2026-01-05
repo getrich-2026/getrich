@@ -1,10 +1,14 @@
+--find-links ./local_packages
+
 akshare
 clickhouse-connect
+hdb
 lntools
 matplotlib
 numpy
 pandas
 polars
+python-dotenv
 py_vollib
 pyyaml
 python-dateutil
