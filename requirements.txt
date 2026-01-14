@@ -2,6 +2,7 @@
 
 akshare
 clickhouse-connect
+dotenv
 hdb
 lntools
 matplotlib

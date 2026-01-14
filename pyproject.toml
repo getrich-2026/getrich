@@ -30,6 +30,7 @@ keywords = ["quantitative trading", "futures", "options", "financial", "trading 
 dependencies = [
     "akshare",
     "clickhouse-connect",
+    "dotenv",
     "lntools",
     "matplotlib",
     "numpy",
