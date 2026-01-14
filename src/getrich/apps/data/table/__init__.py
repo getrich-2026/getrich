@@ -10,10 +10,9 @@ ClickHouse 表操作模块
 - CodeInfoTable: 合约信息表
 """
 
-from .bar import CodeInfoTable, DayBarTable, MinBarTable
+from .bar import DayBarTable, MinBarTable
 
 __all__ = [
     "MinBarTable",
     "DayBarTable",
-    "CodeInfoTable",
 ]

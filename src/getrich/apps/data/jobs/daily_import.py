@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -8,7 +9,7 @@ from lntools.utils import Logger
 
 from getrich.libs.clickhouse import ClickHouseClient, ClickHouseConnectionPool
 
-from ..etl.import_hdb import process_hdb_df, read_min_bar_from_local
+from ..etl.import_hdb import process_hdb_df, read_min_bar_from_local, symbol_cache
 from ..table import MinBarTable
 
 
@@ -17,7 +18,7 @@ class DataImportJob:
     数据导入任务，支持 MinBar、DayBar 的全量和增量导入。
 
     功能：
-    - 分钟线数据导入 (MinBar): 一天一个文件，存放在 hdb_base_path/min_bar/year/ 下
+    - 分钟线数据导入 (MinBar): 一天一个文件，存放在 hdb_base_path/min_bar/ 下
     - 日线数据导入 (DayBar): 一年一个文件，存放在 hdb_base_path/day_bar/ 下
     - 支持全量/增量导入
     - 支持并发处理
@@ -52,8 +53,7 @@ class DataImportJob:
 
         Args:
             hdb_base_path (str): HDB 数据文件的根目录
-                - MinBar 数据存放在: hdb_base_path/min_bar/year/min_bar_yyyymmdd
-                - DayBar 数据存放在: hdb_base_path/day_bar/day_bar_yyyy
+                - MinBar 数据存放在: hdb_base_path/min_bar/min_bar_yyyymmdd
             client (Optional[ClickHouseClient]): ClickHouse 客户端实例（与 pool、clickhouse_config 互斥）
             pool (Optional[ClickHouseConnectionPool]): ClickHouse 连接池实例（与 client、clickhouse_config 互斥，优先级最高）
             clickhouse_config (Optional[dict]): ClickHouse 连接配置字典（当 client 和 pool 都为 None 时使用）
@@ -63,27 +63,119 @@ class DataImportJob:
         self.min_bar_path = self.hdb_base_path / "min_bar"
         self.max_workers = max_workers
         self.logger = Logger(module_name="DataImportJob")
+        self.known_symbols = set()  # To track what we've already loaded/saved
+
+        self._pool = None
+        self._client = None
 
         # Mode 1: Using connection pool (highest priority)
         if pool is not None:
             self.min_bar_table = MinBarTable(pool=pool)
+            self._pool = pool
 
         # Mode 2: Using client instance
         elif client is not None:
             self.min_bar_table = MinBarTable(client=client)
+            self._client = client
 
         # Mode 3: Using configuration dict to create new client
         elif clickhouse_config is not None:
             self.min_bar_table = MinBarTable(**clickhouse_config)
+            self._client = ClickHouseClient(**clickhouse_config)
 
         # Mode 4: Using default configuration
         else:
             self.min_bar_table = MinBarTable()
+            self._client = ClickHouseClient()
 
         # Ensure tables are created
         self.min_bar_table.create(if_not_exists=True)
+        self._ensure_mapping_table_exists()
+
+        # Load existing symbol mappings into cache
+        self._load_symbol_mappings()
 
         self.logger.info("DataImportJob initialized successfully")
+
+    @contextmanager
+    def _db_connection(self):
+        """Context manager to get a DB client (from pool or instance)."""
+        if self._pool:
+            with self._pool.connection() as client:
+                yield client
+        else:
+            if self._client is None:
+                raise RuntimeError("Database client is not initialized")
+            yield self._client
+
+    def _ensure_mapping_table_exists(self):
+        """Ensure ref.symbol_mapping table exists."""
+        try:
+            with self._db_connection() as client:
+                client.execute("CREATE DATABASE IF NOT EXISTS ref")
+
+                query = """
+                CREATE TABLE IF NOT EXISTS ref.symbol_mapping (
+                    symbol String COMMENT '标准代码, 如 RB2405',
+                    provider LowCardinality(String) COMMENT '数据源标识, 如 hdb, rq, wind',
+                    mapped_symbol String COMMENT '数据源对应的代码',
+                    update_time DateTime DEFAULT now() COMMENT '更新时间'
+                )
+                ENGINE = ReplacingMergeTree(update_time)
+                ORDER BY (provider, mapped_symbol)
+                SETTINGS index_granularity = 8192;
+                """
+                client.execute(query)
+        except Exception as e:
+            self.logger.error(f"Failed to ensure symbol mapping table exists: {e}")
+
+    def _load_symbol_mappings(self, provider: str = "gtja"):
+        """Load symbol mappings from DB to memory cache."""
+        try:
+            query = f"""
+            SELECT mapped_symbol, symbol
+            FROM ref.symbol_mapping
+            FINAL
+            WHERE provider = '{provider}'
+            """
+
+            with self._db_connection() as client:
+                df = client.query(query)
+
+            if not df.empty:
+                mappings = dict(zip(df["mapped_symbol"], df["symbol"], strict=False))
+                symbol_cache.update(mappings)
+                self.known_symbols.update(mappings.keys())
+
+        except Exception as e:
+            self.logger.error(f"Failed to load symbol mappings: {e}")
+
+    def _sync_new_mappings(self, provider: str = "gtja"):
+        """Identify and save new mappings generated during processing."""
+        current_keys = set(symbol_cache.keys())
+        new_keys = current_keys - self.known_symbols
+
+        if new_keys:
+            try:
+                new_mappings = {k: symbol_cache[k] for k in new_keys}
+                df = pd.DataFrame(
+                    [
+                        {
+                            "symbol": sym,
+                            "provider": provider,
+                            "mapped_symbol": mapped,
+                            "update_time": datetime.now(),
+                        }
+                        for mapped, sym in new_mappings.items()
+                    ]
+                )
+
+                with self._db_connection() as client:
+                    client.insert_data("ref.symbol_mapping", df)
+
+                self.known_symbols.update(new_keys)
+            except Exception as e:
+                self.logger.error(f"Failed to sync new symbol mappings: {e}")
 
     def _get_min_bar_file_path(self, date_to_process: datetime) -> str | None:
         """
@@ -95,14 +187,12 @@ class DataImportJob:
         Returns:
             MinBar HDB 文件路径，如果不存在则返回 None
         """
-        year = date_to_process.year
         date_str = date_to_process.strftime("%Y%m%d")
         file_name = f"min_bar_{date_str}"
 
-        # 文件路径格式为 hdb_base_path/min_bar/year/min_bar_yyyymmdd.hdat 和 .hidx
-        year_path = self.min_bar_path / str(year)
-        hdat_file = year_path / f"{file_name}.hdat"
-        hidx_file = year_path / f"{file_name}.hidx"
+        # 文件路径格式为 hdb_base_path/min_bar/min_bar_yyyymmdd.hdat 和 .hidx
+        hdat_file = self.min_bar_path / f"{file_name}.hdat"
+        hidx_file = self.min_bar_path / f"{file_name}.hidx"
 
         if not hdat_file.exists() or not hidx_file.exists():
             if not hdat_file.exists():
@@ -112,7 +202,7 @@ class DataImportJob:
             return None
 
         # 返回不带扩展名的文件路径
-        return str(year_path / file_name)
+        return str(self.min_bar_path / file_name)
 
     def _process_single_file(
         self, trade_date: datetime, symbols: list[str] | None = None
@@ -132,12 +222,9 @@ class DataImportJob:
 
         try:
             # Read data from HDB file
-            # db_path is the year directory: min_bar/year/
-            year = trade_date.year
-            year_path = self.min_bar_path / str(year)
-
+            # db_path is the directory: min_bar/
             min_bar_df = read_min_bar_from_local(
-                db_path=str(year_path), trade_date=trade_date, symbols=symbols
+                db_path=str(self.min_bar_path), trade_date=trade_date, symbols=symbols
             )
             return process_hdb_df(min_bar_df)
 
@@ -155,15 +242,11 @@ class DataImportJob:
         处理单日的 MinBar 导入。
         """
         date_str = date_to_process.strftime("%Y-%m-%d")
-        year = date_to_process.year
 
         try:
-            # 1. 检查目录
-            year_path = self.min_bar_path / str(year)
-            if not year_path.exists():
-                self.logger.warning(
-                    f"[{date_str}] MinBar year directory does not exist: {year_path}"
-                )
+            # 1. 检查文件是否存在
+            if self._get_min_bar_file_path(date_to_process) is None:
+                # _get_min_bar_file_path 已经打印了 debug 日志
                 return
 
             # 2. 读取数据
@@ -179,6 +262,9 @@ class DataImportJob:
                 if not success:
                     # 【关键点】这里必须抛出异常，否则 run_full_import 会认为导入成功
                     raise RuntimeError(f"ClickHouse insert failed for {date_str}")
+
+                # Sync any new symbol mappings found during processing
+                self._sync_new_mappings()
 
                 self.logger.info(f"[{date_str}] Successfully imported {len(min_bar_df)} records.")
 
@@ -265,38 +351,39 @@ class DataImportJob:
             # Collect all MinBar files that need to be processed
             files_to_process = []
 
-            for year in range(start_year, end_year + 1):
-                year_path = self.min_bar_path / str(year)
+            if not self.min_bar_path.exists():
+                self.logger.error(f"MinBar directory does not exist: {self.min_bar_path}")
+                return
 
-                if not year_path.exists():
-                    self.logger.warning(f"MinBar year directory does not exist: {year_path}")
-                    continue
+            # Find all min_bar_*.hdat files directly under min_bar/
+            hdat_files = list(self.min_bar_path.glob("min_bar_*.hdat"))
 
-                # Find all min_bar_*.hdat files under this year
-                hdat_files = list(year_path.glob("min_bar_*.hdat"))
+            for hdat_file in hdat_files:
+                # Extract date
+                try:
+                    date_str = hdat_file.stem.replace("min_bar_", "")
+                    file_date = datetime.strptime(date_str, "%Y%m%d")
 
-                for hdat_file in hdat_files:
-                    # Extract date
-                    try:
-                        date_str = hdat_file.stem.replace("min_bar_", "")
-                        file_date = datetime.strptime(date_str, "%Y%m%d")
-
-                        # Skip existing data if needed
-                        if skip_existing:
-                            if skip_mode == "all":
-                                # 模式1: 只要数据库里有这个日期，就跳过
-                                if file_date in existing_dates_set:
-                                    continue
-                            else:
-                                # 模式2: 只导入比最大日期大的文件
-                                if latest_date and file_date <= latest_date:
-                                    continue
-
-                        files_to_process.append(file_date)
-
-                    except ValueError:
-                        self.logger.warning(f"Cannot parse date from filename: {hdat_file.name}")
+                    # Filter by year range
+                    if not start_year <= file_date.year <= end_year:
                         continue
+
+                    # Skip existing data if needed
+                    if skip_existing:
+                        if skip_mode == "all":
+                            # 模式1: 只要数据库里有这个日期，就跳过
+                            if file_date in existing_dates_set:
+                                continue
+                        else:
+                            # 模式2: 只导入比最大日期大的文件
+                            if latest_date and file_date <= latest_date:
+                                continue
+
+                    files_to_process.append(file_date)
+
+                except ValueError:
+                    self.logger.warning(f"Cannot parse date from filename: {hdat_file.name}")
+                    continue
 
             if not files_to_process:
                 self.logger.info("No MinBar files need to be imported")
