@@ -7,35 +7,36 @@ CREATE DATABASE IF NOT EXISTS app;
 CREATE DATABASE IF NOT EXISTS rq;
 
 -- 1.1 标的信息表
-CREATE TABLE IF NOT EXISTS ref.instruments (
-    symbol LowCardinality(String) COMMENT '统一代码, e.g. 000300.SH',
-    symbol_raw String COMMENT '交易所原始代码 (可选)',
-    exchange LowCardinality(String) COMMENT '交易所, SH,SZ,SHF,CFFEX 等',
-    name String COMMENT '标的名称',
-    type LowCardinality(String) COMMENT '标的类型, A, S, FU, OP 等',
-    und_code String DEFAULT '' COMMENT '衍生品标的资产代码，如IF的标的资产代码是000300.SH',
-    und_name String DEFAULT '' COMMENT '衍生品标的资产名称，如IF的标的资产名称是沪深300指数',
-    multiplier Float64 DEFAULT 1.0 COMMENT '合约乘数, 股票为1, 期货如300',
-    margin_ratio Float32 DEFAULT 0.0 COMMENT '保证金比例',
-    strike_price Float64 DEFAULT 0.0 COMMENT '期权行权价',
-    option_type LowCardinality(String) DEFAULT '' COMMENT '期权类型, Call/Put',
-    exercise_type LowCardinality(String) DEFAULT '' COMMENT '行权方式, American/European',
-    currency LowCardinality(String) DEFAULT 'CNY',
-    listed_date Date,
-    delisted_date Date DEFAULT '2099-12-31',
-    source LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
-    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
-) ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY (symbol);
+-- * 改成使用 VIEW，从 rq 数据库的多个 instruments_xx 表中整合数据
+-- CREATE TABLE IF NOT EXISTS ref.instruments (
+--     symbol LowCardinality(String) COMMENT '统一代码, e.g. 000300.SH',
+--     symbol_raw String COMMENT '交易所原始代码 (可选)',
+--     exchange LowCardinality(String) COMMENT '交易所, SH,SZ,SHF,CFFEX 等',
+--     name String COMMENT '标的名称',
+--     type LowCardinality(String) COMMENT '标的类型, A, S, FU, OP 等',
+--     und_code String DEFAULT '' COMMENT '衍生品标的资产代码，如IF的标的资产代码是000300.SH',
+--     und_name String DEFAULT '' COMMENT '衍生品标的资产名称，如IF的标的资产名称是沪深300指数',
+--     multiplier Float64 DEFAULT 1.0 COMMENT '合约乘数, 股票为1, 期货如300',
+--     margin_ratio Float32 DEFAULT 0.0 COMMENT '保证金比例',
+--     strike_price Float64 DEFAULT 0.0 COMMENT '期权行权价',
+--     option_type LowCardinality(String) DEFAULT '' COMMENT '期权类型, Call/Put',
+--     exercise_type LowCardinality(String) DEFAULT '' COMMENT '行权方式, American/European',
+--     currency LowCardinality(String) DEFAULT 'CNY',
+--     listed_date Date,
+--     delisted_date Date DEFAULT '2099-12-31',
+--     provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
+--     updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
+-- ) ENGINE = ReplacingMergeTree(updated_at)
+-- ORDER BY (symbol);
 
 -- 1.2 交易日历 (保持原设计，简单好用)
 CREATE TABLE IF NOT EXISTS ref.calendar (
-    exchange LowCardinality(String),
-    trading_day Date,
-    is_trading UInt8,
+    exchange LowCardinality(String) COMMENT '交易所',
+    trading_day Date COMMENT '交易日期',
+    is_trading UInt8 COMMENT '是否交易日',
     prev_trading_day Date COMMENT '上一个交易日',
     next_trading_day Date COMMENT '下一个交易日',
-    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
+    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3) COMMENT '数据更新时间'
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (exchange, trading_day);
 
@@ -59,7 +60,7 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_cs
 UNION ALL
@@ -80,7 +81,7 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_etf
 UNION ALL
@@ -101,7 +102,7 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_lof
 UNION ALL
@@ -122,7 +123,7 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_indx
 UNION ALL
@@ -143,7 +144,7 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_future
 UNION ALL
@@ -164,7 +165,7 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_spot
 UNION ALL
@@ -185,7 +186,7 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_option
 UNION ALL
@@ -206,7 +207,7 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_convertible
 UNION ALL
@@ -227,34 +228,45 @@ SELECT
     'CNY' AS currency,
     listed_date,
     COALESCE(de_listed_date, toDate('2099-12-31')) AS delisted_date,
-    'RICEQUANT' AS source,
+    'RICEQUANT' AS provider,
     updated_at
 FROM rq.instruments_repo;
 
+-- 1.4 标的映射表 (支持多数据源映射)
+-- 用于将统一 Symbol 映射到不同数据源的标的名称
+CREATE TABLE ref.symbol_mapping (
+    symbol String COMMENT '标准代码, 如 RB2405',
+    provider LowCardinality(String) COMMENT '数据源标识, 如 hdb, rq, wind',
+    mapped_symbol String COMMENT '数据源对应的代码',
+    update_time DateTime DEFAULT now() COMMENT '更新时间'
+) 
+ENGINE = ReplacingMergeTree(update_time)
+ORDER BY (provider, symbol)
+SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS market_data.bars_1m (
-    symbol LowCardinality(String),
-    dt Date CODEC(Delta, ZSTD(1)),      -- 用于分区
-    ts String CODEC(ZSTD(1)),           -- K线结束时间 (HH:mm:ss)
-    pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前收盘价
-    open Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 开盘价
-    high Float64 DEFAULT 0 CODEC(ZSTD(1)),      -- 最高价
-    low Float64 DEFAULT 0 CODEC(ZSTD(1)),       -- 最低价
-    close Float64 DEFAULT 0 CODEC(ZSTD(1)),     -- 收盘价
-    volume Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 成交量
-    amount Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 成交额
-    open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 持仓量(期货)
-    settle Float64 DEFAULT 0 CODEC(ZSTD(1)),    -- 结算价
-    pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)), -- 前结算价
-    local_time DateTime64(3) CODEC(Delta, ZSTD),
-    source LowCardinality(String) DEFAULT 'UNKNOWN',  -- 数据来源
-    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
+    symbol LowCardinality(String) COMMENT '统一代码, e.g. 000300.XSHG',
+    dt Date COMMENT '业务日期' CODEC(Delta, ZSTD(1)),
+    bar_time DateTime COMMENT 'K 线对齐时间 (2025-12-31 10:00:00)' CODEC(Delta, ZSTD(1)) ,
+    pre_close Float64 DEFAULT 0  COMMENT '前收盘价' CODEC(ZSTD(1)),
+    open Float64 DEFAULT 0 COMMENT '开盘价' CODEC(ZSTD(1)),
+    high Float64 DEFAULT 0 COMMENT '最高价' CODEC(ZSTD(1)),
+    low Float64 DEFAULT 0 COMMENT '最低价' CODEC(ZSTD(1)),
+    close Float64 DEFAULT 0 COMMENT '收盘价' CODEC(ZSTD(1)),
+    volume Float64 DEFAULT 0 COMMENT '成交量' CODEC(ZSTD(1)),
+    amount Float64 DEFAULT 0 COMMENT '成交额' CODEC(ZSTD(1)),
+    open_interest Float64 DEFAULT 0 COMMENT '持仓量(期货)' CODEC(ZSTD(1)),
+    settle Float64 DEFAULT 0 COMMENT '结算价' CODEC(ZSTD(1)),
+    pre_settle Float64 DEFAULT 0 COMMENT '前结算价' CODEC(ZSTD(1)),
+    local_time DateTime64(3) COMMENT '本地时间' CODEC(Delta, ZSTD),
+    provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
+    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3) COMMENT '数据更新时间'
 ) ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(dt)
-ORDER BY (symbol, local_time)
-SETTINGS index_granularity = 8192, 
-         min_bytes_for_wide_part = 0, 
-         min_rows_for_wide_part = 0, 
+ORDER BY (symbol, dt, bar_time)
+SETTINGS index_granularity = 8192,
+         min_bytes_for_wide_part = 0,
+         min_rows_for_wide_part = 0,
          enable_mixed_granularity_parts = 1;
 
 -- 2.1 日线 (宽表，包含常用衍生字段)
@@ -283,7 +295,7 @@ CREATE TABLE IF NOT EXISTS market_data.bars_1d (
     pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)),
 
     trading_status Enum8('UNKNOWN'=0, 'NORMAL'=1, 'HALTED'=2) DEFAULT 'UNKNOWN',
-    source LowCardinality(String) DEFAULT 'UNKNOWN',
+    provider LowCardinality(String) DEFAULT 'UNKNOWN',
 
     updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
@@ -306,7 +318,7 @@ CREATE TABLE IF NOT EXISTS market_data.ticks (
     ask1_price Float64,
 	ask1_volume Float64,
     bs_flag Enum8('Unknown'=0, 'Buy'=1, 'Sell'=2) COMMENT '主动买卖方向',
-    source LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
+    provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
     received_at DateTime64(3) DEFAULT now64(3) COMMENT '入库物理时间，用于延时监控'
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(toDate(ts))       -- 分区按月，避免按 symbol 导致大量小分区
@@ -352,7 +364,7 @@ CREATE TABLE IF NOT EXISTS trade.fills (
     price Float64,
     qty Float64,
     commission Float64 DEFAULT 0,
-    source LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '成交来源',
+    provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '成交来源',
     
     fill_time DateTime64(3)
 ) ENGINE = MergeTree()
@@ -388,7 +400,7 @@ CREATE TABLE IF NOT EXISTS strategy.signals_raw (
     action Enum8('NOOP'=0, 'OPEN_LONG'=1, 'OPEN_SHORT'=2, 'CLOSE_LONG'=3, 'CLOSE_SHORT'=4),
     price Float64,
     strength Float32, -- 信号强度仍可用 Float32
-    source LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '信号来源',
+    provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '信号来源',
     
     json_meta String  -- 扩展字段
 ) ENGINE = MergeTree()
