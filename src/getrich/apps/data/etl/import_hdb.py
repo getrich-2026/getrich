@@ -4,7 +4,7 @@ from datetime import datetime
 
 import hdb
 import pandas as pd
-from lntools import Logger
+from lntools.utils import Logger
 
 from .ricequant import init_rq
 from .transforms import normalize_date_string, normalize_datetime_column

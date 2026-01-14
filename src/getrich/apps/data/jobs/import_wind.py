@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from lntools import Logger
+from lntools.utils import Logger
 
 from getrich.libs.clickhouse.database import ClickHouseClient
 

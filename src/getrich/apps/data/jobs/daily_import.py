@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from lntools import Logger
+from lntools.utils import Logger
 
 from getrich.libs.clickhouse import ClickHouseClient, ClickHouseConnectionPool
 
@@ -200,7 +200,7 @@ class DataImportJob:
             """
             result = self.min_bar_table.query(query)
 
-            if result is not None and not result.empty and result["max_date"].iloc[0] is not None:
+            if not result.empty and result["max_date"].iloc[0] is not None:
                 max_date = pd.to_datetime(result["max_date"].iloc[0])
                 self.logger.info(f"Latest date in database: {max_date.strftime('%Y-%m-%d')}")
                 return max_date
@@ -216,7 +216,7 @@ class DataImportJob:
         try:
             query = f"SELECT DISTINCT toDate(local_time) as trade_date FROM {self.min_bar_table.table_name}"
             result = self.min_bar_table.query(query)
-            if result is not None and not result.empty:
+            if not result.empty:
                 # 转换为 datetime 对象集合，方便后续比对
                 return set(pd.to_datetime(result["trade_date"]).tolist())
             return set()

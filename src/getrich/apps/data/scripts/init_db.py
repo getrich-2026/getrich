@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from lntools import Logger
+from lntools.utils import Logger
 
 from getrich.libs.clickhouse.database import ClickHouseClient
 

@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from threading import RLock
 from typing import Any
 
-from lntools import Logger
+from lntools.utils import Logger
 
 from .database import DEFAULT_DB_CONFIG, ClickHouseClient
 

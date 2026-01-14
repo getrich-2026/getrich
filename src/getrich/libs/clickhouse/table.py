@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from lntools import Logger
+from lntools.utils import Logger
 
 from .database import ClickHouseClient
 
