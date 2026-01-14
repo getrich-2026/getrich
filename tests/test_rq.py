@@ -1,3 +1,4 @@
+# pylint: disable=no-member
 import rqdatac as rq
 
 from getrich.apps.data.etl.ricequant import init_rq

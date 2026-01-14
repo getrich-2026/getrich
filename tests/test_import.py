@@ -1,7 +1,14 @@
+from getrich.apps.data.etl.ricequant import export_all_instruments, init_rq
 from getrich.apps.data.jobs import DataImportJob
 from getrich.libs.clickhouse import ClickHouseConnectionPool
 
-if __name__ == "__main__":
+
+def import_rq_instruments(save_to_db: bool = True):
+    init_rq()
+    export_all_instruments(r"E:\data\ricequant", save_to_db=save_to_db)
+
+
+def import_hdb_minbars():
     hdb_path = r"D:\data\hdb"
     pool = ClickHouseConnectionPool()
     import_job = DataImportJob(hdb_base_path=hdb_path, pool=pool, max_workers=5)
@@ -13,4 +20,7 @@ if __name__ == "__main__":
         import_min_bar=True,
     )
 
-    # TODO: 再跑一遍，补足导入错误的历史数据
+
+if __name__ == "__main__":
+    import_hdb_minbars()
+    import_rq_instruments()
