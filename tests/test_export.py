@@ -19,9 +19,9 @@ if __name__ == "__main__":
 
     # 按半年度导出数据
     periods = []
-    for y in range(2020, 2026):
+    for y in range(2026, 2027):
         periods.append((y, 1, f"{y}-01-01", f"{y}-06-30", "H1"))  # 上半年
-        periods.append((y, 2, f"{y}-07-01", f"{y}-12-31", "H2"))  # 下半年
+        # periods.append((y, 2, f"{y}-07-01", f"{y}-12-31", "H2"))  # 下半年
 
     for year, _, start_date, end_date, period_label in track_simple(
         periods, msg="Exporting data by half-year"

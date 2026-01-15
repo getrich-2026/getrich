@@ -144,3 +144,20 @@ exclude = [
     "**/.github",
     "**/.vscode"
 ]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true  # 强制要求所有函数必须写类型，适合严谨的交易逻辑
+check_untyped_defs = true
+ignore_missing_imports = false # 先关闭全局忽略，改为针对性忽略以保留其它库的检查
+
+[[tool.mypy.overrides]]
+module = [
+    "lntools.*",
+    "akshare",
+    "py_vollib.*",
+    "rqdatac"
+]
+ignore_missing_imports = true
