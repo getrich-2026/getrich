@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from lntools import Logger
+from lntools.utils import Logger
 
 log = Logger(module_name="ETLTransforms")
 

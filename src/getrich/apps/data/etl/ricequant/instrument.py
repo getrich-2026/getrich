@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import rqdatac as rq
-from lntools import Logger, handle_path
+from lntools.utils import Logger, handle_path
 
 from getrich.libs.clickhouse.database import ClickHouseClient
 

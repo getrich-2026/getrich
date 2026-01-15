@@ -6,7 +6,7 @@ from typing import Any
 import clickhouse_connect
 import pandas as pd
 from clickhouse_connect.driver.client import Client
-from lntools import Logger
+from lntools.utils import Logger
 
 from getrich.config.settings import get_clickhouse_config
 

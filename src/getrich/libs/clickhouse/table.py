@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from lntools import Logger
+from lntools.utils import Logger
 
 from .database import ClickHouseClient
 
@@ -187,16 +187,9 @@ class ClickHouseTable(ABC):
         try:
             # 委托给客户端处理
             success = client.insert_data(table_name=self.table_name, data=df, batch_size=batch_size)
-
-            if success:
-                self.logger.info(f"Successfully inserted {len(df)} rows into '{self.table_name}'.")
-            else:
-                self.logger.error(f"Failed to insert data into '{self.table_name}'.")
-
             return success
 
-        except Exception as e:
-            self.logger.error(f"Failed to insert data into '{self.table_name}': {e}")
+        except Exception:
             return False
         finally:
             self._release_client(client)
@@ -211,10 +204,6 @@ class ClickHouseTable(ABC):
         client = self._get_client()
         try:
             success = client.truncate_data(self.table_name)
-            if success:
-                self.logger.info(f"Table '{self.table_name}' has been successfully truncated")
-            else:
-                self.logger.error(f"Failed to truncate table '{self.table_name}'")
             return success
         finally:
             self._release_client(client)
@@ -232,10 +221,6 @@ class ClickHouseTable(ABC):
         client = self._get_client()
         try:
             success = client.drop_table(self.table_name, if_exists=if_exists)
-            if success:
-                self.logger.info(f"Table '{self.table_name}' dropped successfully")
-            else:
-                self.logger.error(f"Failed to drop table '{self.table_name}'")
             return success
         finally:
             self._release_client(client)
@@ -254,11 +239,6 @@ class ClickHouseTable(ABC):
         client = self._get_client()
         try:
             result = client.query(sql, params=params)
-            if not result.empty:
-                self.logger.info(f"Query executed successfully, returned {len(result)} rows.")
-            else:
-                # 注意：这里可能是真的没数据，也可能是 client.query 内部报错返回了空 DF
-                self.logger.info("Query returned empty result.")
             return result
         finally:
             self._release_client(client)

@@ -2,11 +2,14 @@
 
 akshare
 clickhouse-connect
+dotenv
 hdb
 lntools
 matplotlib
+mypy
 numpy
 pandas
+pandas-stubs
 polars
 python-dotenv
 py_vollib

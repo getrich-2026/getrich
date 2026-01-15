@@ -1,10 +1,12 @@
+# pylint: disable=no-member  # rqdatac uses dynamic API binding
+# pyright: reportAttributeAccessIssue=false
 from __future__ import annotations
 
 from datetime import datetime
 
 import hdb
 import pandas as pd
-from lntools import Logger
+from lntools.utils import Logger
 
 from .ricequant import init_rq
 from .transforms import normalize_date_string, normalize_datetime_column
@@ -12,7 +14,7 @@ from .transforms import normalize_date_string, normalize_datetime_column
 log = Logger(module_name="HdbEtl")
 
 # 全局变量
-_symbol_cache = {}
+symbol_cache = {}
 _rq_convert_func = None  # pylint: disable=C0103
 
 # 1. 在模块级别初始化外部依赖和 RiceQuant
@@ -94,16 +96,12 @@ def process_data_to_df(data_type_def, data, items) -> pd.DataFrame:  # type: ign
     # symbol 字段解码
     if "symbol" in df.columns:
         df["symbol"] = df["symbol"].apply(lambda x: x.decode("utf-8"))
+        df.rename(columns={"symbol": "hdb_symbol"}, inplace=True)
+        parts = df["hdb_symbol"].str.split(".", n=1, expand=True)
+        df["hdb_symbol"] = parts[1].str.cat(parts[0], sep=".")
 
     # local_time 字段转换为 datetime (复用 transforms 中的标准化函数)
     df = normalize_datetime_column(df, column="local_time", inplace=True)
-    df.rename(columns={"symbol": "hdb_symbol"}, inplace=True)
-
-    # 转换 hdb_symbol 格式: "xx.yyyyyy" -> "yyyyyy.xx"
-    if "hdb_symbol" in df.columns:
-        parts = df["hdb_symbol"].str.split(".", n=1, expand=True)
-        # df["hdb_symbol"] = parts[1] + "." + parts[0]
-        df["hdb_symbol"] = parts[1].str.cat(parts[0], sep=".")
 
     return df
 
@@ -219,9 +217,6 @@ def read_min_bar_from_local(
 
     # 1. 读取分钟 K 线数据
     df = read_hdb_to_df(hdb_file, symbols=symbols, data_type="SecurityKdata")
-
-    # 2. 读取代码信息
-    # codeinfo_df = _read_codeinfo_from_hdb_file(hdb_file)
 
     hdb_file.close()
     return df
@@ -369,25 +364,25 @@ def process_hdb_df(df: pd.DataFrame):
 
     # 1. hdb_symbol 转换成 symbol (批量缓存机制)
     unique_symbols = processed_df["hdb_symbol"].unique()
-    missing_symbols = [s for s in unique_symbols if s not in _symbol_cache]
+    missing_symbols = [s for s in unique_symbols if s not in symbol_cache]
 
     if missing_symbols:
         try:
             # 使用模块级的转换函数进行批量处理
             converted_list = _rq_convert_func(missing_symbols)
             for original, converted in zip(missing_symbols, converted_list, strict=True):
-                _symbol_cache[original] = converted
+                symbol_cache[original] = converted
         except Exception as e:
             log.warning(
                 f"Failed to convert symbols in bulk: {e}. Falling back to iterative conversion."
             )
             for s in missing_symbols:
                 try:
-                    _symbol_cache[s] = _rq_convert_func(s)
+                    symbol_cache[s] = _rq_convert_func(s)
                 except Exception:
-                    _symbol_cache[s] = s
+                    symbol_cache[s] = s
 
-    processed_df["symbol"] = processed_df["hdb_symbol"].map(_symbol_cache)
+    processed_df["symbol"] = processed_df["hdb_symbol"].map(symbol_cache)
 
     # 2. 价格字段缩放 (除以 10000)
     price_columns = [
@@ -405,6 +400,13 @@ def process_hdb_df(df: pd.DataFrame):
     processed_df["volume"] = processed_df["volume"].astype(float)
     processed_df["turnover"] = processed_df["turnover"].astype(float)
 
+    # 3.5 构建 bar_time (合并 date 和 time)
+    # time: 930 -> 0930, date: 20220101
+    if "date" in processed_df.columns and "time" in processed_df.columns:
+        date_str = processed_df["date"].astype(str)
+        time_str = processed_df["time"].astype(str).str.zfill(4)
+        processed_df["bar_time"] = pd.to_datetime(date_str + time_str, format="%Y%m%d%H%M")
+
     # 4. 时间字段 (ts) 处理：将 int (如 900) 转换为标准字符串 "HH:mm:ss"
     processed_df["time"] = (
         processed_df["time"]
@@ -417,7 +419,6 @@ def process_hdb_df(df: pd.DataFrame):
     processed_df = processed_df.rename(
         columns={
             "date": "dt",
-            "time": "ts",
             "turnover": "amount",
             "settle_price": "settle",
             "pre_settle_price": "pre_settle",
@@ -425,16 +426,17 @@ def process_hdb_df(df: pd.DataFrame):
     )
 
     # 6. 增加数据源标识
-    processed_df["source"] = "gtja"
+    processed_df["provider"] = "gtja"
 
     # 7. 处理日期类型
     processed_df["dt"] = pd.to_datetime(processed_df["dt"].astype(str)).dt.date
 
     # 8. 整理最终列顺序并过滤多余字段
     final_columns = [
-        "dt",
-        "ts",
         "symbol",
+        "dt",
+        "bar_time",
+        "pre_close",
         "open",
         "high",
         "low",
@@ -442,11 +444,10 @@ def process_hdb_df(df: pd.DataFrame):
         "volume",
         "amount",
         "open_interest",
-        "pre_close",
-        "pre_settle",
         "settle",
-        "source",
+        "pre_settle",
         "local_time",
+        "provider",
     ]
 
     return processed_df[final_columns]
