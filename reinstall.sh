@@ -26,7 +26,7 @@ echo "[1/4] Activating 'dev' environment..."
 if command -v conda >/dev/null 2>&1; then
     conda activate dev || { 
         echo "Error: Could not activate conda environment 'dev'."
-        echo "Please ensure it exists: conda create -n dev python=3.13"
+        echo "Please ensure it exists: conda create -n dev python=3.12"
         exit 1
     }
 else

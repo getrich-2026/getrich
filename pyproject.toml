@@ -7,10 +7,8 @@ name = "getrich"
 version = "0.1.2"
 description = "量化投研系统 - 模块化设计的多品种投研交易平台"
 readme = "README.md"
-authors = [
-    {name = "GetRich Team", email = "linnan@nebulastar.com.cn"}
-]
-license = {text = "MIT"}
+authors = [{ name = "GetRich Team", email = "linnan@nebulastar.com.cn" }]
+license = { text = "MIT" }
 requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -24,7 +22,13 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-keywords = ["quantitative trading", "futures", "options", "financial", "trading system"]
+keywords = [
+    "quantitative trading",
+    "futures",
+    "options",
+    "financial",
+    "trading system",
+]
 
 # 项目依赖
 dependencies = [
@@ -44,7 +48,7 @@ dependencies = [
     "seaborn",
     "statsmodels",
     "tqdm",
-    "rqdatac"
+    "rqdatac",
 ]
 
 [project.optional-dependencies]
@@ -113,9 +117,7 @@ testpaths = ["tests"]
 # --durations=10: 列出最慢的 10 个测试 (用于性能优化)
 addopts = "-v -ra --durations=10"
 # 过滤器：将特定警告视为错误 (严格模式)
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
@@ -141,5 +143,17 @@ exclude = [
     "**/__pycache__",
     "**/.git",
     "**/.github",
-    "**/.vscode"
+    "**/.vscode",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true   # 强制要求所有函数必须写类型，适合严谨的交易逻辑
+check_untyped_defs = true
+ignore_missing_imports = false # 先关闭全局忽略，改为针对性忽略以保留其它库的检查
+
+[[tool.mypy.overrides]]
+module = ["lntools.*", "akshare", "py_vollib.*", "rqdatac"]
+ignore_missing_imports = true
