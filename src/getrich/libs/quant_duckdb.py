@@ -26,16 +26,16 @@ class QuantDuckDB:
         self.db_path = str(db_path) if db_path else ":memory:"
         self.read_only = read_only
         self.con: duckdb.DuckDBPyConnection | None = None
-        self._check_connection()
+        self._get_connection()
 
-    def _check_connection(self) -> duckdb.DuckDBPyConnection:
+    def _get_connection(self) -> duckdb.DuckDBPyConnection:
         """Ensure connection is open."""
         if self.con is None:
             self.con = duckdb.connect(database=self.db_path, read_only=self.read_only)
         return self.con
 
     def __enter__(self) -> "QuantDuckDB":
-        self._check_connection()
+        self._get_connection()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[no-untyped-def]
@@ -57,7 +57,7 @@ class QuantDuckDB:
         Returns:
             pl.DataFrame: Query result.
         """
-        con = self._check_connection()
+        con = self._get_connection()
         return con.sql(sql).pl()
 
     def execute(self, sql: str) -> None:
@@ -67,7 +67,7 @@ class QuantDuckDB:
         Args:
             sql: SQL statement.
         """
-        con = self._check_connection()
+        con = self._get_connection()
         con.execute(sql)
 
     def register(self, name: str, df: pl.DataFrame | pd.DataFrame) -> None:
@@ -78,7 +78,7 @@ class QuantDuckDB:
             name: Name of the virtual table.
             df: Polars or Pandas DataFrame.
         """
-        con = self._check_connection()
+        con = self._get_connection()
         # DuckDB supports direct registration of Polars and Pandas DataFrames
         con.register(name, df)
 
@@ -90,7 +90,7 @@ class QuantDuckDB:
             name: Name of the view to create.
             path: Path to parquet file(s). Can be a glob string or list of paths.
         """
-        con = self._check_connection()
+        con = self._get_connection()
         if isinstance(path, (list, tuple)):
             # Handle list of files: read_parquet(['a.parquet', 'b.parquet'])
             path_str = "[" + ", ".join([f"'{str(p)}'" for p in path]) + "]"
@@ -116,7 +116,7 @@ class QuantDuckDB:
             partition_by: List of columns to partition by (optional).
             compression: Compression codec (default: zstd).
         """
-        con = self._check_connection()
+        con = self._get_connection()
         sql = f"COPY (SELECT * FROM {table}) TO '{str(path)}' (FORMAT PARQUET, COMPRESSION {compression}"
 
         if partition_by:
