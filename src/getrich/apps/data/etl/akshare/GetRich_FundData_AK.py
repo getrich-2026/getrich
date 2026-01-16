@@ -8,39 +8,42 @@ Date: 2025/08/01
 import warnings
 
 import akshare as ak
+import pandas as pd
 
 warnings.filterwarnings("ignore")
 
 
 # 1. 获取公募基金数据
-def get_fund_name_em():
+def get_fund_name_em() -> pd.DataFrame:
     """
     获取公募基金数据
     """
-    df = ak.fund_name_em()
+    df: pd.DataFrame = ak.fund_name_em()
     return df
 
 
 # 2. ETF基金实时行情-东财
-def get_etf_realtime_em():
+def get_etf_realtime_em() -> pd.DataFrame:
     """
     获取ETF基金实时行情-东财
     """
-    df = ak.fund_etf_spot_em()
+    df: pd.DataFrame = ak.fund_etf_spot_em()
     return df
 
 
 # 3. ETF基金实时行情-同花顺
-def get_etf_realtime_ths(date):
+def get_etf_realtime_ths(date: str) -> pd.DataFrame:
     """
     获取ETF基金实时行情-同花顺
     """
-    df = ak.fund_etf_spot_ths(date=date)
+    df: pd.DataFrame = ak.fund_etf_spot_ths(date=date)
     return df
 
 
 # 4. ETF基金分时行情-东财
-def get_etf_minute_em(symbol, start_date, end_date, period, adjust):
+def get_etf_minute_em(
+    symbol: str, start_date: str, end_date: str, period: str, adjust: str
+) -> pd.DataFrame:
     """
     获取ETF基金分时行情-东财
     symbol	str	symbol='513500'; ETF 代码可以在 get_etf_realtime_em中获取
@@ -49,14 +52,16 @@ def get_etf_minute_em(symbol, start_date, end_date, period, adjust):
     period	str	period='5'; choice of {'1', '5', '15', '30', '60'}; 其中 1 分钟数据返回近 5 个交易日数据且不复权
     adjust	str	adjust=''; choice of {'', 'qfq', 'hfq'}; '': 不复权, 'qfq': 前复权, 'hfq': 后复权, 其中 1 分钟数据返回近 5 个交易日数据且不复权
     """
-    df = ak.fund_etf_hist_min_em(
+    df: pd.DataFrame = ak.fund_etf_hist_min_em(
         symbol=symbol, period=period, adjust=adjust, start_date=start_date, end_date=end_date
     )
     return df
 
 
 # 5. 获取基金历史净值数据-东财
-def get_fund_history_em(symbol, start_date, end_date, period, adjust):
+def get_fund_history_em(
+    symbol: str, start_date: str, end_date: str, period: str, adjust: str
+) -> pd.DataFrame:
     """
     获取基金历史净值数据-东财
     symbol	str	symbol='159707'; ETF 代码可以在 get_etf_realtime_em中获取或查看东财主页
@@ -65,12 +70,12 @@ def get_fund_history_em(symbol, start_date, end_date, period, adjust):
     end_date	str	end_date='20230104'; 结束查询的日期
     adjust	str	默认返回不复权的数据; qfq: 返回前复权后的数据; hfq: 返回后复权后的数据
     """
-    df = ak.fund_etf_hist_em(symbol=symbol, start_date=start_date, end_date=end_date)
+    df: pd.DataFrame = ak.fund_etf_hist_em(symbol=symbol, start_date=start_date, end_date=end_date)
     return df
 
 
 # 6. 获取开放式基金历史数据
-def get_fund_open_history(symbol, indicator, period):
+def get_fund_open_history(symbol: str, indicator: str, period: str) -> pd.DataFrame:
     """
     获取开放式基金历史数据
     symbol	str	symbol="710001"; 需要基金代码,通过get_fund_open_realtime()获取
@@ -86,72 +91,78 @@ def get_fund_open_history(symbol, indicator, period):
     拆分详情	-
     period	str	period="成立来"; 该参数只对 累计收益率走势 有效, choice of {"1月", "3月", "6月", "1年", "3年", "5年", "今年来", "成立来"}
     """
-    df = ak.fund_open_fund_info_em(symbol=symbol, period=period, indicator=indicator)
+    df: pd.DataFrame = ak.fund_open_fund_info_em(symbol=symbol, period=period, indicator=indicator)
     return df
 
 
 # 7. 获取开放式基金实时数据
-def get_fund_open_realtime():
+def get_fund_open_realtime() -> pd.DataFrame:
     """
     获取开放式基金实时数据
     symbol    str    symbol="710001"; 需要基金代码
     """
-    df = ak.fund_open_fund_daily_em()
+    df: pd.DataFrame = ak.fund_open_fund_daily_em()
     return df
 
 
 # 8. 获取开放式基金排名
-def get_fund_open_rank(symbol):
+def get_fund_open_rank(symbol: str) -> pd.DataFrame:
     """
     获取开放式基金排名
     symbol="全部"; choice of {"全部", "股票型", "混合型", "债券型", "指数型", "QDII", "FOF"}
     """
-    df = ak.fund_open_fund_rank_em()
+    df: pd.DataFrame = ak.fund_open_fund_rank_em()
     return df
 
 
 # 9. 获得基金持仓
-def get_fund_open_hold_portfolio(symbol, date):
+def get_fund_open_hold_portfolio(symbol: str, date: str) -> pd.DataFrame:
     """
     获得基金持仓
     symbol	str	symbol="000001"; 基金代码, 可以通过调用 get_fund_name_em() 接口获取
     date	str	date="2024"; 指定年份
     """
-    df = ak.fund_portfolio_hold_em(symbol=symbol, date=date)
+    df: pd.DataFrame = ak.fund_portfolio_hold_em(symbol=symbol, date=date)
     return df
 
 
 # 10. 获得基金债券持仓
-def get_fund_open_bond_hold_portfolio(symbol, date):
+def get_fund_open_bond_hold_portfolio(symbol: str, date: str) -> pd.DataFrame:
     """
     获得基金债券持仓
     symbol	str	symbol="000001"; 基金代码, 可以通过调用 get_fund_name_em() 接口获取
     date	str	date="2024"; 指定年份
     """
-    df = ak.fund_portfolio_bond_hold_em(symbol=symbol, date=date)
+    df: pd.DataFrame = ak.fund_portfolio_bond_hold_em(symbol=symbol, date=date)
     return df
 
 
 # 11. 获得基金行业配置
-def get_fund_open_industry_config(symbol, date):
+def get_fund_open_industry_config(symbol: str, date: str) -> pd.DataFrame:
     """
     获得基金行业配置
     symbol	str	symbol="000001"; 基金代码, 可以通过调用 get_fund_name_em() 接口获取
     date	str	date="2023"; 指定年份
     """
-    df = ak.fund_portfolio_industry_allocation_em(symbol=symbol, date=date)
+    df: pd.DataFrame = ak.fund_portfolio_industry_allocation_em(symbol=symbol, date=date)
     return df
 
 
 # 12. 获得全市场公募基金报告的配置内容
-def get_fund_open_report_config(date=None):
+def get_fund_open_report_config(
+    date: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     获得公募基金报告的配置内容
     date	str	date="20210630"; choice of {"XXXX0331", "XXXX0630", "XXXX0930", "XXXX1231"}, 其中 XXXX 为年份
     """
-    df_stock = ak.fund_report_stock_cninfo(date=date)  # 股票配置  # type: ignore
-    df_industry = ak.fund_report_industry_allocation_cninfo(date=date)  # 行业配置  # type: ignore
-    df_asset = ak.fund_report_asset_allocation_cninfo()  # 资产配置
+    df_stock: pd.DataFrame = ak.fund_report_stock_cninfo(
+        date=str(date) if date else None  # type: ignore
+    )  # 股票配置
+    df_industry: pd.DataFrame = ak.fund_report_industry_allocation_cninfo(
+        date=str(date) if date else None  # type: ignore
+    )  # 行业配置
+    df_asset: pd.DataFrame = ak.fund_report_asset_allocation_cninfo()  # 资产配置
     return df_stock, df_industry, df_asset
 
 

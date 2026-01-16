@@ -2,9 +2,14 @@
 # pyright: reportMissingTypeArgument=false
 # A股的tick数据模拟器
 import asyncio
+import inspect
 import logging
 import random
+from collections.abc import Callable, Coroutine
 from datetime import datetime
+from typing import Any
+
+import pandas as pd
 
 
 class AShareTickDataSimulator:
@@ -12,11 +17,13 @@ class AShareTickDataSimulator:
     A股实时tick数据模拟器
     """
 
-    def __init__(self, stock_count: int = 5000):
-        self.stock_count = stock_count
+    def __init__(self, stock_count: int = 5000) -> None:
+        self.stock_count: int = stock_count
 
-        self.is_running = False
-        self.callbacks = []
+        self.is_running: bool = False
+        self.callbacks: list[
+            Callable[[dict[str, Any]], Any] | Callable[[dict[str, Any]], Coroutine[Any, Any, Any]]
+        ] = []
 
         # 交易时间配置
         self.trading_hours = {
@@ -28,10 +35,10 @@ class AShareTickDataSimulator:
 
         # 初始化日志
         logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-        self.logger = logging.getLogger(__name__)
-        self.stocks = self._generate_stocks()  # 生成股票池
+        self.logger: logging.Logger = logging.getLogger(__name__)
+        self.stocks: list[dict[str, Any]] = self._generate_stocks()  # 生成股票池
 
-    def _generate_stocks(self) -> list[dict]:
+    def _generate_stocks(self) -> list[dict[str, Any]]:
         """
         生成股票池, 优先从AKShare获取真实数据
         """
@@ -43,7 +50,7 @@ class AShareTickDataSimulator:
 
             self.logger.info("尝试从AKShare获取实时股票数据...")
             # 获取A股实时行情数据
-            df = ak.stock_zh_a_spot_em()
+            df: pd.DataFrame = ak.stock_zh_a_spot_em()
             if not df.empty:
                 self.logger.info("成功获取 %d 只股票数据", len(df))
                 # 过滤有效数据（昨收大于0）
@@ -180,7 +187,7 @@ class AShareTickDataSimulator:
             afternoon_open <= current_time <= afternoon_close
         )
 
-    def _generate_tick_data(self, stock_info: dict) -> dict:
+    def _generate_tick_data(self, stock_info: dict[str, Any]) -> dict[str, Any]:
         """生成单只股票的tick数据"""
         base_price = stock_info["base_price"]
         volatility = stock_info["volatility"]
@@ -257,24 +264,30 @@ class AShareTickDataSimulator:
 
         return tick_data
 
-    def add_callback(self, callback):
+    def add_callback(
+        self,
+        callback: Callable[[dict[str, Any]], Any]
+        | Callable[[dict[str, Any]], Coroutine[Any, Any, Any]],
+    ) -> None:
         """
         添加回调函数
         """
         self.callbacks.append(callback)
 
-    async def _push_tick_data(self, tick_data: dict):
+    async def _push_tick_data(self, tick_data: dict[str, Any]) -> None:
         """推送tick数据到所有回调函数"""
         for callback in self.callbacks:
             try:
-                if asyncio.iscoroutinefunction(callback):
+                if inspect.iscoroutinefunction(callback):
                     await callback(tick_data)
                 else:
                     callback(tick_data)
             except Exception as e:
                 self.logger.error("Callback error: %s", e)
 
-    async def _simulate_stock_group(self, stock_group: list[dict], interval: float):
+    async def _simulate_stock_group(
+        self, stock_group: list[dict[str, Any]], interval: float
+    ) -> None:
         """模拟一组股票的tick数据流"""
         while self.is_running:
             if not self._is_trading_time():
@@ -292,7 +305,7 @@ class AShareTickDataSimulator:
             # 控制推送频率
             await asyncio.sleep(interval)
 
-    async def start(self, ticks_per_second: int = 10):
+    async def start(self, ticks_per_second: int = 10) -> None:
         """
         启动模拟器
         ticks_per_second: 每秒推送的tick次数
@@ -326,7 +339,7 @@ class AShareTickDataSimulator:
         finally:
             self.is_running = False
 
-    def stop(self):
+    def stop(self) -> None:
         """停止模拟器"""
         self.is_running = False
         self.logger.info("Stopping simulator...")
@@ -334,7 +347,7 @@ class AShareTickDataSimulator:
 
 # 使用示例
 # 使用示例
-async def example_callback(tick_data: dict):
+async def example_callback(tick_data: dict[str, Any]) -> None:
     """示例回调函数 - 处理接收到的tick数据"""
     # 这里可以替换为实际的数据处理逻辑，比如:
     # - 存储到数据库
@@ -344,7 +357,7 @@ async def example_callback(tick_data: dict):
     print(tick_data)
 
 
-async def main():
+async def main() -> None:
     # 创建模拟器实例
     simulator = AShareTickDataSimulator(stock_count=5000)  # 测试时使用100只股票
 

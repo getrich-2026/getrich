@@ -1,7 +1,7 @@
 import rqdatac as rq
 
 
-def init_rq():
+def init_rq() -> None:
     """Initialize RiceQuant connection."""
     rq.init(
         "tcp://license:"
