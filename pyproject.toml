@@ -99,7 +99,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 # 将这些库识别为“第三方库”，确保 import 排序正确
-known-third-party = ["numpy", "pandas", "polars", "numba", "clickhouse_connect"]
+known-third-party = ["numpy", "pandas", "polars", "numba", "duckdb", "clickhouse_connect"]
 
 [tool.ruff.lint.per-file-ignores]
 # 在 Notebook 中忽略某些规则 (如未使用的导入)

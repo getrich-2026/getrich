@@ -3,6 +3,7 @@
 akshare
 clickhouse-connect
 dotenv
+duckdb
 hdb
 lntools
 matplotlib

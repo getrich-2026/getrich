@@ -3,7 +3,7 @@ description: test the functions
 ---
 
 Goal: Ensure data integrity and factor correctness.
-Scope: Critical paths and boundary conditions (e.g., market open/close).
-Method: Fast, deterministic assert or pytest snippets.
-Pandas Check: Verify index continuity and column-level null counts.
-Data: Generate realistic dummy data (OHLCV) for testing.
+1. Scope: Test critical paths, boundary conditions (Market Open/Close).
+2. Data: Generate realistic mock data (including gaps & outliers).
+3. Precision: Use `decimal.Decimal` for PnL verification where critical.
+4. Continuity: Verify index/datetime alignment and null counts.

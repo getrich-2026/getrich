@@ -1,13 +1,33 @@
 {
     // --- 1. Python 核心与类型检查 ---
     // 强制使用 Pylance 进行类型检查
-    "python.languageServer": "Pylance",
+    "python.languageServer": "None",
     // 对应 Copilot 指令中的 "Strict Type Hinting required"
     "python.analysis.autoImportCompletions": true,
     // 启用更智能的数据分析库自动补全
     "python.analysis.indexing": true,
     // 内存优化：分析大文件时的内存限制
     "python.analysis.userFileIndexingLimit": -1,
+
+    "basedpyright.analysis.typeCheckingMode": "standard", // 可选: "basic", "standard", "strict", "all"
+    "basedpyright.analysis.diagnosticMode": "openFilesOnly", // 大型量化项目建议用 openFilesOnly 提升性能
+    // 启用自动导入优化
+    "basedpyright.analysis.autoImportCompletions": true,
+    "basedpyright.analysis.indexing": true,
+    // 针对量化库（如 Pandas/Numpy）的优化
+    "basedpyright.analysis.useLibraryCodeForTypes": true,
+    // 开启“内联提示”
+    "basedpyright.analysis.inlayHints.variableTypes": true,
+    "basedpyright.analysis.inlayHints.callArgumentNames": true,
+    "basedpyright.analysis.inlayHints.functionReturnTypes": true,
+    "basedpyright.analysis.inlayHints.genericTypes": true,
+    // 优化：关闭不必要的提示
+    "basedpyright.analysis.diagnosticSeverityOverrides": {
+        "reportUnknownMemberAccess": "none",
+        "reportUnknownVariableType": "none",
+        "reportUnknownArgumentType": "none",
+        "reportMissingTypeArgument": "warning"
+    },
 
     // --- 2. 格式化与 Linting (使用 Ruff) ---
     // 优先使用 Ruff，因为它是 Rust 写的，速度极快，适合大型量化项目
