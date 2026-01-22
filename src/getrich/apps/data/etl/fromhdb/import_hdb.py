@@ -2,10 +2,14 @@
 # pyright: reportAttributeAccessIssue=false
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from typing import Any
 
-import hdb  # type: ignore[import-untyped]
+if sys.platform != "darwin":
+    import hdb  # type: ignore[import-untyped]
+else:
+    hdb = Any
 import numpy as np
 import pandas as pd
 from lntools.utils import Logger
@@ -44,7 +48,7 @@ else:
 
 
 def _read_hdb_to_df(
-    hdb_file: hdb.File,
+    hdb_file: Any,
     symbols: list[str],
     data_type: str,
     begin: datetime | None = None,
@@ -483,7 +487,7 @@ def prepare_min_bar_for_db(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================================
 
 
-def read_codeinfo_from_hdb_file(hdb_file: hdb.File) -> pd.DataFrame:
+def read_codeinfo_from_hdb_file(hdb_file: Any) -> pd.DataFrame:
     """
     从 HDB 文件中提取代码信息。
 

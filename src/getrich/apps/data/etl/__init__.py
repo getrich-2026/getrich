@@ -1,4 +1,4 @@
-from . import hdb, ricequant
+from . import fromhdb, ricequant
 from .transforms import (
     DEFAULT_DATE,
     clean_dataframe_for_clickhouse,
@@ -14,7 +14,7 @@ from .transforms import (
 )
 
 __all__ = [
-    "hdb",
+    "fromhdb",
     "ricequant",
     # Generic utilities
     "normalize_date_string",

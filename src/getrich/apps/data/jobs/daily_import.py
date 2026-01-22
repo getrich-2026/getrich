@@ -10,7 +10,7 @@ from lntools.utils import Logger
 
 from getrich.libs.clickhouse import ClickHouseClient, ClickHouseConnectionPool
 
-from ..etl.hdb import (
+from ..etl.fromhdb import (
     prepare_day_bar_for_db,
     prepare_min_bar_for_db,
     read_day_bar_from_local,
