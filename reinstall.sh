@@ -8,14 +8,14 @@ echo "Reinstalling GetRich (macOS/Linux)"
 echo "================================================"
 
 # 1. 初始化 Conda
-# 优先使用用户提供的路径 /opt/miniconda3
-CONDA_BASE="/opt/miniconda3"
+# 优先使用用户提供的路径 /opt/anaconda
+CONDA_BASE="/opt/anaconda3"
 
 # 尝试 source conda.sh 以启用 conda activate 命令
 if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
     source "$CONDA_BASE/etc/profile.d/conda.sh"
-elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
-    source "$HOME/miniconda3/etc/profile.d/conda.sh"
+elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+    source "$HOME/anaconda3/etc/profile.d/conda.sh"
 elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
     source "$HOME/anaconda3/etc/profile.d/conda.sh"
 fi
