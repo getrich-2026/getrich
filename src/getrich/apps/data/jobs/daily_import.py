@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime
@@ -9,7 +10,14 @@ from lntools.utils import Logger
 
 from getrich.libs.clickhouse import ClickHouseClient, ClickHouseConnectionPool
 
-from ..etl.import_hdb import process_hdb_df, read_min_bar_from_local, symbol_cache
+from ..etl.hdb import (
+    prepare_day_bar_for_db,
+    prepare_min_bar_for_db,
+    read_day_bar_from_local,
+    read_min_bar_from_local,
+    symbol_cache,
+)
+from ..etl.transforms import transform_day_bar
 from ..table import MinBarTable
 
 
@@ -47,7 +55,7 @@ class DataImportJob:
         pool: ClickHouseConnectionPool | None = None,
         clickhouse_config: dict[str, Any] | None = None,
         max_workers: int = 4,
-    ):
+    ) -> None:
         """
         初始化 DataImportJob。
 
@@ -61,9 +69,10 @@ class DataImportJob:
         """
         self.hdb_base_path = Path(hdb_base_path)
         self.min_bar_path = self.hdb_base_path / "min_bar"
+        self.day_bar_path = self.hdb_base_path / "day_bar"
         self.max_workers = max_workers
         self.logger = Logger(module_name="DataImportJob")
-        self.known_symbols = set()  # To track what we've already loaded/saved
+        self.known_symbols: set[str] = set()  # 跟踪已加载/保存的 symbol
 
         self._pool = None
         self._client = None
@@ -98,7 +107,7 @@ class DataImportJob:
         self.logger.info("DataImportJob initialized successfully")
 
     @contextmanager
-    def _db_connection(self):
+    def _db_connection(self) -> Generator[ClickHouseClient, None, None]:
         """Context manager to get a DB client (from pool or instance)."""
         if self._pool:
             with self._pool.connection() as client:
@@ -108,7 +117,7 @@ class DataImportJob:
                 raise RuntimeError("Database client is not initialized")
             yield self._client
 
-    def _ensure_mapping_table_exists(self):
+    def _ensure_mapping_table_exists(self) -> None:
         """Ensure ref.symbol_mapping table exists."""
         try:
             with self._db_connection() as client:
@@ -129,7 +138,7 @@ class DataImportJob:
         except Exception as e:
             self.logger.error(f"Failed to ensure symbol mapping table exists: {e}")
 
-    def _load_symbol_mappings(self, provider: str = "gtja"):
+    def _load_symbol_mappings(self, provider: str = "gtja") -> None:
         """Load symbol mappings from DB to memory cache."""
         try:
             query = f"""
@@ -150,7 +159,7 @@ class DataImportJob:
         except Exception as e:
             self.logger.error(f"Failed to load symbol mappings: {e}")
 
-    def _sync_new_mappings(self, provider: str = "gtja"):
+    def _sync_new_mappings(self, provider: str = "gtja") -> None:
         """Identify and save new mappings generated during processing."""
         current_keys = set(symbol_cache.keys())
         new_keys = current_keys - self.known_symbols
@@ -226,7 +235,7 @@ class DataImportJob:
             min_bar_df = read_min_bar_from_local(
                 db_path=str(self.min_bar_path), trade_date=trade_date, symbols=symbols
             )
-            return process_hdb_df(min_bar_df)
+            return prepare_min_bar_for_db(min_bar_df)
 
         except Exception as e:
             self.logger.error(f"Failed to read data for {trade_date.strftime('%Y-%m-%d')}: {e}")
@@ -237,7 +246,7 @@ class DataImportJob:
         date_to_process: datetime,
         symbols: list[str] | None = None,
         import_min_bar: bool = True,
-    ):
+    ) -> None:
         """
         处理单日的 MinBar 导入。
         """
@@ -287,7 +296,7 @@ class DataImportJob:
             result = self.min_bar_table.query(query)
 
             if not result.empty and result["max_date"].iloc[0] is not None:
-                max_date = pd.to_datetime(result["max_date"].iloc[0])
+                max_date: pd.Timestamp = pd.to_datetime(result["max_date"].iloc[0])
                 self.logger.info(f"Latest date in database: {max_date.strftime('%Y-%m-%d')}")
                 return max_date
 
@@ -318,7 +327,7 @@ class DataImportJob:
         skip_existing: bool = True,
         skip_mode: Literal["latest", "all"] = "latest",
         import_min_bar: bool = True,
-    ):
+    ) -> None:
         """
         全量导入：导入指定年份范围内的所有数据。
 
@@ -422,7 +431,7 @@ class DataImportJob:
 
     def run_incremental_import(
         self, target_date: datetime | None = None, symbols: list[str] | None = None
-    ):
+    ) -> None:
         """
         便捷入口：增量导入。
         - 如果指定 target_date，只导入该日期。
@@ -440,3 +449,115 @@ class DataImportJob:
                 skip_existing=True,
                 skip_mode="latest",
             )
+
+    def run_day_bar_import(
+        self,
+        start_year: int = 2005,
+        end_year: int = 2025,
+        symbols: list[str] | None = None,
+    ) -> None:
+        """
+        导入 HDB 日线数据到 ClickHouse bars_1d 表。
+
+        处理流程:
+            1. (可选) 如果 RiceQuant 已启用，导出合约信息
+            2. 扫描 day_bar_YYYY 文件
+            3. 读取 HDB 数据
+            4. Symbol 转换 (从 ref.symbol_mapping 或 rq.id_convert)
+            5. 调用 prepare_day_bar_for_db 处理字段映射
+            6. 调用 transform_day_bar 计算 adj_factor 和 pct_chg
+            7. 写入 market_data.bars_1d
+
+        Args:
+            start_year: 开始年份
+            end_year: 结束年份
+            symbols: 要导入的标的代码列表，None 表示所有
+
+        Note:
+            RiceQuant 合约导出由 .env 中的 RICEQUANT_ENABLED 配置控制
+        """
+        from getrich.config import settings
+
+        self.logger.info("=" * 80)
+        self.logger.info(f"Starting day bar import: {start_year} - {end_year}")
+        self.logger.info("=" * 80)
+
+        # 可选: 导出 RiceQuant 合约信息 (根据配置)
+        if settings.ricequant.enabled:
+            try:
+                from ..etl.ricequant import export_all_instruments, init_rq
+
+                self.logger.info("RiceQuant is enabled, exporting instruments...")
+                init_rq()
+                export_all_instruments(
+                    output_dir=str(self.hdb_base_path / "ricequant"),
+                    save_to_db=True,
+                )
+                self.logger.info("RiceQuant instruments exported successfully")
+            except Exception as e:
+                self.logger.error(f"Failed to export RiceQuant instruments: {e}")
+        else:
+            self.logger.info("RiceQuant is disabled, skipping instrument export")
+
+        # 检查 day_bar 目录
+        if not self.day_bar_path.exists():
+            self.logger.error(f"Day bar directory does not exist: {self.day_bar_path}")
+            return
+
+        # 加载 symbol 映射
+        symbol_mapping = dict(symbol_cache)  # 从缓存复制一份
+        self._load_symbol_mappings("gtja")
+        symbol_mapping.update(symbol_cache)
+
+        # 扫描并处理每年的文件
+        success_count = 0
+        fail_count = 0
+
+        for year in range(start_year, end_year + 1):
+            try:
+                self.logger.info(f"Processing year {year}...")
+
+                # 读取 HDB 文件
+                df_raw = read_day_bar_from_local(
+                    db_path=str(self.day_bar_path),
+                    year=year,
+                    symbols=symbols,
+                )
+
+                if df_raw.empty:
+                    self.logger.info(f"[{year}] No data found, skipping")
+                    continue
+
+                # 处理字段映射 (包含 symbol 转换)
+                df_processed = prepare_day_bar_for_db(df_raw, symbol_mapping=symbol_mapping)
+
+                # 计算 adj_factor 和 pct_chg
+                df_final = transform_day_bar(df_processed, compute_adj=True, adj_method="forward")
+
+                # 写入 ClickHouse
+                with self._db_connection() as client:
+                    result = client.insert_data("market_data.bars_1d", df_final)
+
+                if result:
+                    self.logger.info(f"[{year}] Successfully imported {len(df_final)} records")
+                    success_count += 1
+                else:
+                    self.logger.error(f"[{year}] Failed to insert data")
+                    fail_count += 1
+
+                # 同步新的 symbol 映射
+                self._sync_new_mappings("gtja")
+
+            except FileNotFoundError:
+                self.logger.warning(f"[{year}] Day bar file not found, skipping")
+                continue
+            except Exception as e:
+                self.logger.error(f"[{year}] Error processing: {e}")
+                fail_count += 1
+                continue
+
+        self.logger.info("=" * 80)
+        self.logger.info(
+            f"Day bar import completed! Success: {success_count}, Failed: {fail_count}"
+        )
+        self.logger.info("=" * 80)

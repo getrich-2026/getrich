@@ -19,22 +19,44 @@ log = Logger(module_name="RiceQuantInstrumentETL")
 
 
 def export_all_instruments(
-    output_dir: str, save_to_db: bool = True, inst_types: list[str] | None = None
+    output_dir: str | None = None,
+    save_to_parquet: bool = False,
+    save_to_db: bool = True,
+    inst_types: list[str] | None = None,
 ) -> dict[str, bool]:
     """
-    Export all instrument types from RiceQuant to Parquet files and optionally to ClickHouse.
+    Export all instrument types from RiceQuant to Parquet files and/or ClickHouse.
 
     Args:
-        output_dir: Directory to save the parquet files.
-        save_to_db: Whether to also save data to ClickHouse database.
+        output_dir: Directory to save the parquet files. Required if save_to_parquet=True.
+        save_to_parquet: Whether to save data as parquet files locally.
+        save_to_db: Whether to save data to ClickHouse database.
         inst_types: List of instrument types to export. Defaults to all INSTRUMENT_TYPES.
 
     Returns:
         Dict mapping instrument type to export success status.
+
+    Raises:
+        ValueError: If save_to_parquet=True but output_dir is not provided.
+        ValueError: If both save_to_parquet and save_to_db are False.
     """
-    root: Path = handle_path(output_dir)
+    # 参数验证
+    if save_to_parquet and output_dir is None:
+        raise ValueError("output_dir is required when save_to_parquet=True")
+
+    if not save_to_parquet and not save_to_db:
+        raise ValueError("At least one of save_to_parquet or save_to_db must be True")
+
+    # 只在需要保存 parquet 时处理 output_dir
+    root: Path | None = None
+    if save_to_parquet:
+        assert output_dir is not None  # 类型检查辅助
+        root = handle_path(output_dir)
+        log.info(f"Starting export to {root}...")
+    else:
+        log.info("Starting export (database only)...")
+
     types_to_export = inst_types or INSTRUMENT_TYPES
-    log.info(f"Starting export to {root}...")
 
     client: ClickHouseClient | None = None
     if save_to_db:
@@ -53,10 +75,12 @@ def export_all_instruments(
                 results[inst_type] = False
                 continue
 
-            # Save as Parquet locally
-            file_path = root / f"all_instruments_{inst_type}.parquet"
-            df_pandas.to_parquet(file_path)
-            log.info(f"Saved {inst_type} to {file_path} (Rows: {len(df_pandas)})")
+            # Save as Parquet locally (if enabled)
+            if save_to_parquet:
+                assert root is not None  # 类型检查辅助
+                file_path = root / f"all_instruments_{inst_type}.parquet"
+                df_pandas.to_parquet(file_path)
+                log.info(f"Saved {inst_type} to {file_path} (Rows: {len(df_pandas)})")
 
             # Save to ClickHouse
             if save_to_db and client is not None:
@@ -85,4 +109,11 @@ def export_all_instruments(
 
 if __name__ == "__main__":
     init_rq()
-    export_all_instruments(r"E:\data\ricequant", save_to_db=True, inst_types=["Option"])
+    # 示例 1: 只保存到数据库
+    # export_all_instruments(save_to_db=True)
+
+    # 示例 2: 只保存 parquet
+    # export_all_instruments(output_dir=r"E:\data\ricequant", save_to_parquet=True, save_to_db=False)
+
+    # 示例 3: 两者都保存
+    export_all_instruments(output_dir=r"E:\data\ricequant", save_to_parquet=True, save_to_db=True)

@@ -285,16 +285,16 @@ CREATE TABLE IF NOT EXISTS market_data.bars_1d (
     pct_chg Float64 DEFAULT 0 CODEC(ZSTD(1)),
     pct_chg_log Float64 DEFAULT 0 CODEC(ZSTD(1)),
     adj_factor Float64 DEFAULT 1 CODEC(ZSTD(1)),
+    amplitude Float64 DEFAULT 0 CODEC(ZSTD(1)),
 
     limit_up Float64 DEFAULT 0 CODEC(ZSTD(1)),
     limit_down Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    turnover_rate Float32 DEFAULT 0 CODEC(ZSTD(1)),
 
     open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)),
     settle Float64 DEFAULT 0 CODEC(ZSTD(1)),
     pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)),
 
-    trading_status Enum8('UNKNOWN'=0, 'NORMAL'=1, 'HALTED'=2) DEFAULT 'UNKNOWN',
+    trading_status Enum8('NORMAL'=0, 'HALTED'=1, 'UNKNOWN'=2) DEFAULT 'UNKNOWN',
     provider LowCardinality(String) DEFAULT 'UNKNOWN',
 
     updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)

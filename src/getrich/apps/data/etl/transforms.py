@@ -97,6 +97,45 @@ def normalize_datetime_column(
     return df
 
 
+def convert_symbol(
+    source_symbol: str,
+    source_provider: str = "gtja",
+    target_provider: str = "ricequant",
+) -> str:
+    """
+    通用 symbol 转换函数（跨数据源代码映射）。
+
+    适用场景: 将不同数据源的 symbol 格式进行标准化转换。
+    例如: HDB (国泰君安) 的 "SH600000" 转换为 RiceQuant 的 "600000.XSHG"
+
+    Args:
+        source_symbol: 原始 symbol 代码
+        source_provider: 源数据提供商 (如 "gtja", "wind", "tushare")
+        target_provider: 目标数据提供商 (如 "ricequant", "standard")
+
+    Returns:
+        转换后的 symbol 代码
+
+    Note:
+        这是一个占位函数，实际转换逻辑需要根据业务需求实现。
+        可能的实现方式：
+        1. 基于正则表达式的规则转换
+        2. 查询数据库中的映射表
+        3. 调用第三方 API (如 rqdatac.id_convert)
+
+    Example:
+        >>> convert_symbol("600000.SH", source_provider="gtja")
+        "600000.XSHG"  # 转换为 RiceQuant 格式
+    """
+    # TODO: 实现不同数据源的 symbol 转换逻辑
+    # 当前返回原 symbol，等待后续补充实现
+    log.warning(
+        f"Symbol conversion not implemented: {source_symbol} "
+        f"({source_provider} -> {target_provider}), returning original"
+    )
+    return source_symbol
+
+
 # ============================================================================
 # Date & String Cleaning Utilities
 # ============================================================================
@@ -394,6 +433,7 @@ def compute_adj_factor(
 
     if method == "forward":
         # 前复权:
+        # 以最新日期为基准 (adj_factor=1)，除权前的价格需要向下调整
         # 1. 按 symbol 分组，日期 降序 (DESC) 排列 (最新日期在最前)
         # 2. 这样 "下一日 PreClose" 就变成了 "上一行 PreClose" (shift(1))
         # 3. 直接 cumprod 累乘，无需 reverse
@@ -404,12 +444,11 @@ def compute_adj_factor(
         next_pre_close = df.groupby("symbol")["pre_close_safe"].shift(1)
 
         # 计算比价因子: Ratio = PreClose(T+1) / Close(T)
+        # 当发生除权时 (pre_close[t+1] != close[t])，ratio < 1，使除权前价格向下调整
         # 最新一天的 next_pre_close 是 NaN，fillna(1.0) 保证基准为 1
         ratio = (next_pre_close / df["close_safe"]).fillna(1.0)
 
         # 累乘计算因子
-        # 注意: groupby().cumprod() 会保留索引，直接赋值即可
-        # 如果 ratio 是 Series，需要先 groupby 再 cumprod 以防跨 symbol 累乘
         df["adj_factor"] = ratio.groupby(df["symbol"]).cumprod()
 
     elif method == "backward":
@@ -482,6 +521,32 @@ def compute_pct_chg(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def compute_amplitude(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    计算振幅。
+
+    Args:
+        df: 包含 high, low, pre_close 字段的 DataFrame
+
+    Returns:
+        pd.DataFrame: 原始数据 + 新增字段:
+            - amplitude: 振幅 (high - low) / pre_close * 100
+
+    Note:
+        - pre_close <= 0 时，振幅设为 0
+    """
+    df = df.copy()
+
+    # 计算振幅: (high - low) / pre_close * 100
+    df["amplitude"] = np.where(
+        df["pre_close"] > 0,
+        ((df["high"] - df["low"]) / df["pre_close"] * 100).round(4),
+        0.0,
+    )
+
+    return df
+
+
 def transform_day_bar(
     df: pd.DataFrame,
     compute_adj: bool = True,
@@ -511,7 +576,10 @@ def transform_day_bar(
     # 1. 计算涨跌幅
     result = compute_pct_chg(df)
 
-    # 2. 计算复权因子和复权价格
+    # 2. 计算振幅
+    result = compute_amplitude(result)
+
+    # 3. 计算复权因子和复权价格
     if compute_adj:
         result = compute_adj_factor(result, method=adj_method)
 

@@ -1,43 +1,26 @@
-# pyright: reportOptionalMemberAccess=false
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import clickhouse_connect
 import pandas as pd
 from clickhouse_connect.driver.client import Client
 from lntools.utils import Logger
 
-from getrich.config.settings import get_clickhouse_config
+from getrich.config.settings import settings
 
 log = Logger(module_name="ClickhouseClient")
 
 
-def load_db_config() -> dict[str, Any]:
-    """
-    从settings.py读取ClickHouse配置。
-
-    Returns:
-        dict[str, Any]: 包含"default_database"键的配置字典
-    """
-    try:
-        config = get_clickhouse_config()
-        return {"default_database": config}
-    except Exception as e:
-        log.error(f"Failed to load ClickHouse config from settings: {e}")
-        # 返回空配置, 使用硬编码的备用默认值
-        return {"default_database": {}}
-
-
 # 在模块加载时读取配置
-DEFAULT_DB_CONFIG = load_db_config().get("default_database", {})
+DEFAULT_DB_CONFIG = settings.clickhouse
 
 # 从配置中获取默认值,如果配置不存在则使用硬编码的备用值
-DEFAULT_HOST = DEFAULT_DB_CONFIG.get("host", "192.168.1.60")
-DEFAULT_PORT = DEFAULT_DB_CONFIG.get("port", 8123)
-DEFAULT_USER = DEFAULT_DB_CONFIG.get("user", "default")
-DEFAULT_PASSWORD = DEFAULT_DB_CONFIG.get("password", "getrich")
-DEFAULT_DATABASE = DEFAULT_DB_CONFIG.get("database", "default")
+DEFAULT_HOST = DEFAULT_DB_CONFIG.host
+DEFAULT_PORT = DEFAULT_DB_CONFIG.port
+DEFAULT_USER = DEFAULT_DB_CONFIG.user
+DEFAULT_PASSWORD = DEFAULT_DB_CONFIG.password
+DEFAULT_DATABASE = DEFAULT_DB_CONFIG.database
 
 
 class ClickHouseClient:
@@ -94,7 +77,7 @@ class ClickHouseClient:
         self.connect()
 
     @property
-    def client(self):
+    def client(self) -> Client | None:
         """获取底层连接对象（向后兼容）"""
         return self._connection
 
@@ -124,7 +107,7 @@ class ClickHouseClient:
             self._connection = None
             return False
 
-    def close(self):
+    def close(self) -> None:
         """关闭数据库连接。"""
         if self._connection:
             try:
@@ -221,6 +204,7 @@ class ClickHouseClient:
             return False
 
         try:
+            assert self._connection is not None
             if params:
                 self._connection.command(sql, parameters=params)
             else:
@@ -281,7 +265,8 @@ class ClickHouseClient:
             return pd.DataFrame()
 
         try:
-            result_df = self._connection.query_df(sql, parameters=params)
+            assert self._connection is not None
+            result_df = cast(pd.DataFrame, self._connection.query_df(sql, parameters=params))
             log.info(f"Query executed successfully, returned {len(result_df)} rows")
             return result_df
         except Exception as e:
@@ -307,13 +292,18 @@ class ClickHouseClient:
             return None
 
         try:
+            assert self._connection is not None
             if use_df:
-                result = self._connection.query_df(sql_query, parameters=params)
-                log.info(f"SQL query executed successfully, returned {len(result)} records")
+                res_df = cast(pd.DataFrame, self._connection.query_df(sql_query, parameters=params))
+                log.info(f"SQL query executed successfully, returned {len(res_df)} records")
+                return res_df
             else:
-                result = self._connection.query(sql_query, parameters=params).result_rows
-                log.info(f"SQL query executed successfully, returned {len(result)} records")
-            return result  # type: ignore
+                res_list = cast(
+                    list[list[Any]],
+                    self._connection.query(sql_query, parameters=params).result_rows,
+                )
+                log.info(f"SQL query executed successfully, returned {len(res_list)} records")
+                return res_list
         except Exception as e:
             log.error(f"Error executing SQL query: {e}\nSQL: {sql_query}")
             self._connection = None
@@ -355,12 +345,13 @@ class ClickHouseClient:
             query += f" OFFSET {offset}"
 
         try:
+            assert self._connection is not None
             if params:
                 df = self._connection.query_df(query, parameters=params)
             else:
                 df = self._connection.query_df(query)
             log.info(f"Successfully read {len(df)} records from table {table_name}")
-            return df
+            return cast(pd.DataFrame, df)
         except Exception as e:
             log.error(f"Error reading data from table {table_name}: {e}\nSQL: {query}")
             self._connection = None
@@ -385,6 +376,7 @@ class ClickHouseClient:
             return False
 
         try:
+            assert self._connection is not None
             if isinstance(data, pd.DataFrame):
                 if data.empty:
                     log.warning("DataFrame is empty, no insertion needed")
@@ -646,6 +638,7 @@ class ClickHouseClient:
             return False
 
         try:
+            assert self._connection is not None
             # 检查表引擎和主键设置
             sql = f"""
                 SELECT engine, primary_key
@@ -666,7 +659,7 @@ class ClickHouseClient:
             log.debug(f"Error checking REPLACE support, using traditional method: {e}")
             return False
 
-    def __enter__(self):
+    def __enter__(self) -> ClickHouseClient:
         """支持上下文管理器"""
         return self
 
@@ -675,11 +668,11 @@ class ClickHouseClient:
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: Any | None,
-    ):
+    ) -> None:
         """退出上下文管理器时关闭连接"""
         self.close()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """字符串表示"""
         return (
             f"ClickHouseClient("

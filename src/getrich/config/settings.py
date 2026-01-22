@@ -20,7 +20,7 @@ from typing import Any
 try:
     from dotenv import load_dotenv
 except ImportError:
-    load_dotenv = None
+    load_dotenv = None  # type: ignore[assignment]
 
 
 # ------------------------------------------------------------------------------
@@ -77,7 +77,7 @@ def _parse_bool(value: str | None) -> bool:
     return value.lower() in ("true", "1", "yes", "on")
 
 
-def _warn(msg: str, strict: bool):
+def _warn(msg: str, strict: bool) -> None:
     if strict:
         raise SettingsError(msg)
     # Use a specific logger to avoid polluting root logger before config
@@ -102,10 +102,10 @@ class ClickHouseConfig:
 
     @classmethod
     def from_env(cls, strict: bool) -> ClickHouseConfig:
-        host = _get_env("CLICKHOUSE_HOST", "127.0.0.1")
+        host = _get_env("CLICKHOUSE_HOST", "192.168.1.60")
         port_str = _get_env("CLICKHOUSE_PORT", "8123")
         user = _get_env("CLICKHOUSE_USER", "default")
-        password = _get_env("CLICKHOUSE_PASSWORD", "")
+        password = _get_env("CLICKHOUSE_PASSWORD", "getrich")
         database = _get_env("CLICKHOUSE_DB", "default")
         protocol = _get_env("CLICKHOUSE_PROTOCOL", "http")
 
@@ -177,6 +177,23 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class RiceQuantConfig:
+    """RiceQuant Data Source Configuration"""
+
+    enabled: bool
+    api_key: str
+
+    @classmethod
+    def from_env(cls, strict: bool) -> RiceQuantConfig:
+        enabled = _parse_bool(_get_env("RICEQUANT_ENABLED", "false"))
+        api_key = _get_env("RICEQUANT_API_KEY", "")
+        if enabled and not api_key:
+            _warn("RiceQuant API key is not set", strict)
+
+        return cls(enabled=enabled, api_key=api_key or "")
+
+
+@dataclass(frozen=True)
 class Settings:
     """Global Settings Container"""
 
@@ -185,6 +202,7 @@ class Settings:
     clickhouse: ClickHouseConfig
     duckdb: DuckDBConfig
     logging: LoggingConfig
+    ricequant: RiceQuantConfig
 
     @property
     def is_dev(self) -> bool:
@@ -208,7 +226,7 @@ def load_settings(env_file: str | None = None) -> Settings:
     root = find_project_root()
 
     # Load .env file
-    if load_dotenv:
+    if load_dotenv is not None:
         target_env = Path(env_file) if env_file else root / ".env"
         if target_env.exists():
             load_dotenv(dotenv_path=target_env, override=True)
@@ -222,6 +240,7 @@ def load_settings(env_file: str | None = None) -> Settings:
     ch_config = ClickHouseConfig.from_env(strict=strict_mode)
     duck_config = DuckDBConfig.from_env(root, strict=strict_mode)
     log_config = LoggingConfig.from_env(root)
+    rq_config = RiceQuantConfig.from_env(strict=strict_mode)
 
     return Settings(
         root=root,
@@ -229,6 +248,7 @@ def load_settings(env_file: str | None = None) -> Settings:
         clickhouse=ch_config,
         duckdb=duck_config,
         logging=log_config,
+        ricequant=rq_config,
     )
 
 

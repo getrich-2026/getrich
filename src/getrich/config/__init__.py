@@ -1,8 +1,24 @@
-# TODO
-# 1. 从.env 文件中读取数据库配置
-# 2. 修改ClickhouseClient类的初始化方法，使用读取到的配置参数进行连接
-# 3. 确保日志记录功能正常工作
-# 4. 修改_init__.py 文件，确保配置模块正确导入和使用
-from .settings import get_clickhouse_config
+"""
+配置模块入口。
+提供全局配置单例 settings 及其相关的初始化函数。
+"""
 
-__all__ = ["get_clickhouse_config"]
+from .settings import (
+    ClickHouseConfig,
+    DuckDBConfig,
+    LoggingConfig,
+    Settings,
+    load_settings,
+    settings,
+    setup_logging,
+)
+
+__all__ = [
+    "settings",
+    "load_settings",
+    "setup_logging",
+    "Settings",
+    "ClickHouseConfig",
+    "DuckDBConfig",
+    "LoggingConfig",
+]
