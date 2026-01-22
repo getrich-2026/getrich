@@ -290,7 +290,7 @@ class DataImportJob:
         """
         try:
             query = f"""
-                SELECT max(toDate(local_time)) as max_date
+                SELECT max(dt) as max_date
                 FROM {self.min_bar_table.table_name}
             """
             result = self.min_bar_table.query(query)
@@ -309,7 +309,7 @@ class DataImportJob:
     def get_all_existing_dates(self) -> set[datetime]:
         """获取数据库中所有已存在的日期集合"""
         try:
-            query = f"SELECT DISTINCT toDate(local_time) as trade_date FROM {self.min_bar_table.table_name}"
+            query = f"SELECT DISTINCT dt as trade_date FROM {self.min_bar_table.table_name}"
             result = self.min_bar_table.query(query)
             if not result.empty:
                 # 转换为 datetime 对象集合，方便后续比对
