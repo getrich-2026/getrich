@@ -5,21 +5,22 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import cast
 
 import pandas as pd
 
 # 尝试导入第三方库，如果不可用，则在运行的时处理异常
 # 尝试导入 insight
 try:
-    from insight_python.com.insight import common
-    from insight_python.com.insight.market_service import market_service
-    from insight_python.com.insight.playback import *
-    from insight_python.com.insight.query import *
+    from insight_python.com.insight import common  # type: ignore
+    from insight_python.com.insight.market_service import market_service  # type: ignore
+    from insight_python.com.insight.playback import *  # type: ignore
+    from insight_python.com.insight.query import *  # type: ignore
 except ImportError:
     print("无法导入第三方库，请检查是否安装了insight_python")
 # 尝试导入同花顺
 try:
-    from iFinDPy import *
+    from iFinDPy import *  # type: ignore
 except ImportError:
     print("无法导入同花顺库，请检查是否安装了iFinDPy")
 
@@ -31,12 +32,12 @@ class DataAPI(ABC):
     """
 
     @abstractmethod
-    def login(self):
+    def login(self) -> None:
         """登录数据API"""
         pass
 
     @abstractmethod
-    def GetTradeDayList(self, start_date, end_date):
+    def GetTradeDayList(self, start_date: str, end_date: str) -> pd.DataFrame:
         """获取交易日列表
         Args:
             start_date(str): 开始日期，格式 'YYYY-MM-DD'
@@ -48,7 +49,7 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetOptionBasicInfo(self, undcode=None):
+    def GetOptionBasicInfo(self, undcode: str | None = None) -> pd.DataFrame | None:
         """获取某个标的期权合约要素表
         Args:
             undcode(str): 标的代码
@@ -58,7 +59,9 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetOptionTradingContract(self, date=None, undcode=None):
+    def GetOptionTradingContract(
+        self, date: str | None = None, undcode: str | None = None
+    ) -> pd.DataFrame | None:
         """
         获取合约信息
         :param date: 指定交易日 YYYY-MM-DD
@@ -68,7 +71,7 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetStockMarketQuote(self, date=None):
+    def GetStockMarketQuote(self, date: str | None = None) -> pd.DataFrame | None:
         """
         获取某个交易日的所有股票行情数据
         :param date: 交易日 YYYY-MM-DD
@@ -77,7 +80,7 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetFuturesMarketQuote(self, date=None):
+    def GetFuturesMarketQuote(self, date: str | None = None) -> pd.DataFrame | None:
         """
         获取date交易日股指期货的行情数据
         :param date: 交易日 YYYY-MM-DD
@@ -87,7 +90,13 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetOptionMarketQuote(self, exchange=None, date=None, undcode=None, undname=None):
+    def GetOptionMarketQuote(
+        self,
+        exchange: str | None = None,
+        date: str | None = None,
+        undcode: str | None = None,
+        undname: str | None = None,
+    ) -> pd.DataFrame | None:
         """
         获取date交易日，undecode期权行情数据
         :param date: 交易日 YYYY-MM-DD
@@ -97,7 +106,9 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetETFMarketQuote(self, start_date=None, end_date=None, etfcode=None):
+    def GetETFMarketQuote(
+        self, start_date: str | None = None, end_date: str | None = None, etfcode: str | None = None
+    ) -> pd.DataFrame | None:
         """
         获取从start_date到end_date的etfcode的行情数据
         :param start_date: 开始日期 YYYY-MM-DD
@@ -108,12 +119,17 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetFundDailyInfo(self):
+    def GetFundDailyInfo(self) -> pd.DataFrame | None:
         """获取全市场基金当天的开盘的信息表"""
         pass
 
     @abstractmethod
-    def GetFundMarketQuote(self, start_date=None, end_date=None, fundcode=None):
+    def GetFundMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        fundcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """
         获取基金净值数据
         :param start_date: 开始日期 YYYY-MM-DD
@@ -124,12 +140,17 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetIndexDailyInfo(self):
+    def GetIndexDailyInfo(self) -> pd.DataFrame | None:
         """获取当天所有指数列表"""
         pass
 
     @abstractmethod
-    def GetIndexMarketQuote(self, start_date=None, end_date=None, indexcode=None):
+    def GetIndexMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        indexcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """
         获取指数行情数据
         :param start_date: 开始日期 YYYY-MM-DD
@@ -140,7 +161,7 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetRateMarketQuote(self):
+    def GetRateMarketQuote(self) -> pd.DataFrame | None:
         """
         获取无风险利率的数据
         :return: DF
@@ -148,7 +169,7 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetCbondInfo(self, date=None):
+    def GetCbondInfo(self, date: str | None = None) -> pd.DataFrame | None:
         """
         获取交易日date所有的可转债信息
         :param date: 交易日期 YYYY-MM-DD
@@ -157,7 +178,12 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetCbondMarketQuote(self, start_date=None, end_date=None, cbondcode=None):
+    def GetCbondMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        cbondcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """
         获取可转债cbondcode的行情数据
         :param start_date:开始日期 YYYY-MM-DD
@@ -168,7 +194,9 @@ class DataAPI(ABC):
         pass
 
     @abstractmethod
-    def GetComFuturesMarketQuote(self, date=None, futcode=None):
+    def GetComFuturesMarketQuote(
+        self, date: str | None = None, futcode: str | None = None
+    ) -> pd.DataFrame | None:
         """获取商品期货的行情数据
         date：交易日 YYYY-MM-DD
         futcode：期货代码
@@ -181,21 +209,21 @@ class InsightDataAPI(DataAPI):
     """Insight 数据源实现类"""
 
     def __init__(self):
-        self.market_service = market_service
+        self.market_service = market_service  # type: ignore
 
-    def login(self):
+    def login(self) -> None:
         """登录Insight数据源"""
-        self.market_service = self.market_service
+        # self.market_service = self.market_service # Redundant assignment removed
         user = "MDIL1_00338"
         password = "Xyzh@230ehfy6"
-        result = common.login(self.market_service, user, password)
+        result = common.login(self.market_service, user, password)  # type: ignore
         print(result)
 
-    def GetTradeDayList(self, start_date, end_date):
+    def GetTradeDayList(self, start_date: str, end_date: str) -> pd.DataFrame:
         """从Insight获取交易日列表"""
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        data = get_trading_days(exchange="XSHE", trading_day=[start_dt, end_dt])
+        data = get_trading_days(exchange="XSHE", trading_day=[start_dt, end_dt])  # type: ignore
         data = pd.DataFrame(data=data[1])
         data = data.sort_values(by="TradingDay", ascending=True)
         data = data.rename(columns={"TradingDay": "交易日"})
@@ -203,16 +231,18 @@ class InsightDataAPI(DataAPI):
         data["数据源"] = "Insight"
         return data
 
-    def GetOptionBasicInfo(self, undcode=None):
+    def GetOptionBasicInfo(self, undcode: str | None = None) -> pd.DataFrame | None:
         """从Insight获取合约信息(暂未实现,返回None)"""
         print("暂不支持从insight获取期权合约要素")
         return None
 
-    def GetStockMarketQuote(self, date=None):
+    def GetStockMarketQuote(self, date: str | None = None) -> pd.DataFrame | None:
         """从Insight获取股票数据"""
+        if date is None:
+            return None
         start_date = datetime.strptime(date, "%Y-%m-%d")
         end_date = datetime.strptime(date, "%Y-%m-%d")
-        df = get_daily_basic(trading_day=[start_date, end_date])
+        df = get_daily_basic(trading_day=[start_date, end_date])  # type: ignore
         df = df.rename(
             columns={
                 "htsc_code": "股票代码",
@@ -258,13 +288,22 @@ class InsightDataAPI(DataAPI):
             ]
         ]
         df["数据源"] = "Insight"
-        return df
+        return cast(pd.DataFrame, df)
 
-    def GetETFMarketQuote(self, start_date=None, end_date=None, etfcode=None):
+    def GetETFMarketQuote(
+        self, start_date: str | None = None, end_date: str | None = None, etfcode: str | None = None
+    ) -> pd.DataFrame | None:
         """从Insight获取ETF数据"""
+        if start_date is None or end_date is None:
+            return None
         time_start = datetime.strptime(start_date + " 09:00:00", "%Y-%m-%d %H:%M:%S")
         time_end = datetime.strptime(end_date + " 16:00:00", "%Y-%m-%d %H:%M:%S")
-        df = get_kline(htsc_code=etfcode, time=[time_start, time_end], frequency="daily", fq="none")
+        df = get_kline(htsc_code=etfcode, time=[time_start, time_end], frequency="daily", fq="none")  # type: ignore
+        # cast df to DataFrame or ignore to satisfy linter
+        if df is None:
+            return None  # Robustness check
+        # df is Any here due to ignore. Linter complains about returning Any.
+        # We assume it is a DataFrame.
         df["time"] = [pd.to_datetime(date).strftime("%Y-%m-%d") for date in df["time"]]
         df = df[
             ["htsc_code", "time", "open", "high", "low", "close", "volume", "num_trades", "value"]
@@ -282,16 +321,16 @@ class InsightDataAPI(DataAPI):
                 "value": "成交额",
             }
         )
-        df = [["ETF代码", "交易日期", "开盘价", "最高价", "最低价", "收盘价", "成交量", "成交额"]]
+        df = df[["ETF代码", "交易日期", "开盘价", "最高价", "最低价", "收盘价", "成交量", "成交额"]]
         df["数据源"] = "Insight"
-        return df
+        return df  # type: ignore
 
     def GetFundDailyInfo(self):
         """从Insight获取基金信息"""
         security_type = "fund"
         exchange = ["XSHG", "XSHE"]
         today = False
-        df = get_all_basic_info(security_type=security_type, exchange=exchange, today=today)
+        df = get_all_basic_info(security_type=security_type, exchange=exchange, today=today)  # type: ignore
         df = df[["htsc_code", "name", "listing_date", "prev_close"]]
         df = df.rename(
             columns={
@@ -302,14 +341,14 @@ class InsightDataAPI(DataAPI):
             }
         )
         df["数据源"] = "Insight"
-        return df
+        return cast(pd.DataFrame, df)
 
     def GetIndexDailyInfo(self):
         """从Insight获取指数信息。"""
         security_type = "index"
         exchange = ["XSHG", "XSHE"]
         today = False
-        df = get_all_basic_info(security_type=security_type, exchange=exchange, today=today)
+        df = get_all_basic_info(security_type=security_type, exchange=exchange, today=today)  # type: ignore
         df = df[["htsc_code", "name", "time", "prev_close"]]
         df = df.rename(
             columns={
@@ -320,13 +359,20 @@ class InsightDataAPI(DataAPI):
             }
         )
         df["数据源"] = "Insight"
-        return df
+        return cast(pd.DataFrame, df)
 
-    def GetIndexMarketQuote(self, start_date=None, end_date=None, indexcode=None):
+    def GetIndexMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        indexcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """从Insight获取指数行情数据"""
+        if start_date is None or end_date is None:
+            return None
         time_start = datetime.strptime(start_date + " 09:00:00", "%Y-%m-%d %H:%M:%S")
         time_end = datetime.strptime(end_date + " 23:00:00", "%Y-%m-%d %H:%M:%S")
-        df = get_kline(
+        df = get_kline(  # type: ignore
             htsc_code=indexcode, time=[time_start, time_end], frequency="daily", fq="none"
         )
         df["time"] = [pd.to_datetime(date).strftime("%Y-%m-%d") for date in df["time"]]
@@ -347,7 +393,7 @@ class InsightDataAPI(DataAPI):
             ["指数代码", "交易日期", "开盘价", "最高价", "最低价", "收盘价", "成交量", "成交额"]
         ]
         df["数据源"] = "Insight"
-        return df
+        return cast(pd.DataFrame, df)
 
     def GetRateMarketQuote(self):
         """
@@ -367,7 +413,7 @@ class InsightDataAPI(DataAPI):
         ]
         df_pool = pd.DataFrame()
         for code in codelist:
-            df = get_repo_price(htsc_code=code)
+            df = get_repo_price(htsc_code=code)  # type: ignore
             df = df.sort_values(by=["trading_day"], ascending=True)
             df = df[
                 [
@@ -401,7 +447,7 @@ class InsightDataAPI(DataAPI):
         df_pool["数据源"] = "Insight"
         return df_pool
 
-    def GetCbondInfo(self, date=None):
+    def GetCbondInfo(self, date: str | None = None) -> pd.DataFrame | None:
         """
         从Insight获取可转债表
         :param date:
@@ -410,32 +456,52 @@ class InsightDataAPI(DataAPI):
         print("Insight可转债名单数据还没实现")
         return None
 
-    def GetCbondMarketQuote(self, start_date=None, end_date=None, cbondcode=None):
+    def GetCbondMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        cbondcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """从Insight获取可转债行情数据（暂未实现）"""
         print("暂不支持从Insight获取可转债行情数据")
         return None
 
-    def GetComFuturesMarketQuote(self, date=None, futcode=None):
+    def GetComFuturesMarketQuote(
+        self, date: str | None = None, futcode: str | None = None
+    ) -> pd.DataFrame | None:
         """从Insight获取商品期货行情数据（暂未实现）"""
         print("暂不支持从Insight获取商品期货行情数据")
         return None
 
-    def GetFundMarketQuote(self, start_date=None, end_date=None, fundcode=None):
+    def GetFundMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        fundcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """从Insight获取基金净值数据（暂未实现）"""
         print("暂不支持从Insight获取基金净值数据")
         return None
 
-    def GetFuturesMarketQuote(self, date=None):
+    def GetFuturesMarketQuote(self, date: str | None = None) -> pd.DataFrame | None:
         """从Insight获取金融期货数据（暂未实现）"""
         print("暂不支持从Insight获取金融期货数据")
         return None
 
-    def GetOptionMarketQuote(self, exchange=None, date=None, undcode=None, undname=None):
+    def GetOptionMarketQuote(
+        self,
+        exchange: str | None = None,
+        date: str | None = None,
+        undcode: str | None = None,
+        undname: str | None = None,
+    ) -> pd.DataFrame | None:
         """从Insight获取期权行情数据（暂未实现）"""
         print("暂不支持从Insight获取期权行情数据")
         return None
 
-    def GetOptionTradingContract(self, date=None, undcode=None):
+    def GetOptionTradingContract(
+        self, date: str | None = None, undcode: str | None = None
+    ) -> pd.DataFrame | None:
         """从Insight获取期权合约信息（暂未实现）"""
         print("暂不支持从Insight获取期权合约信息")
         return None
@@ -445,17 +511,17 @@ class InsightDataAPI(DataAPI):
 class THDataAPI(DataAPI):
     """同花顺数据源实现类"""
 
-    def login(self):
+    def login(self) -> None:
         """登录同花顺数据源"""
-        thslogin = THS_iFinDLogin("xyzhsm003", "zihuaXY2025")
+        thslogin = THS_iFinDLogin("xyzhsm003", "zihuaXY2025")  # type: ignore
         if thslogin != 0:
             print("同花顺登录失败")
         else:
             print("同花顺登录成功")
 
-    def GetTradeDayList(self, start_date, end_date):
+    def GetTradeDayList(self, start_date: str, end_date: str) -> pd.DataFrame:
         """从同花顺获取交易日列表"""
-        data = THS_Date_Query(
+        data = THS_Date_Query(  # type: ignore
             "212001", "mode:1,dateType:0,period:D,dateFormat:0", start_date, end_date, "format:dict"
         )
         data = pd.DataFrame(data.data)
@@ -463,14 +529,18 @@ class THDataAPI(DataAPI):
         data["数据源"] = "同花顺"
         return data
 
-    def GetOptionTradingContract(self, date=None, undcode=None):
+    def GetOptionTradingContract(
+        self, date: str | None = None, undcode: str | None = None
+    ) -> pd.DataFrame | None:
         """
         从同花顺获取正在交易的期权合约信息
         :param date:
         :param undcode:
         :return:
         """
-        data = THS_DR(
+        if date is None:
+            return None
+        data = THS_DR(  # type: ignore
             "p02653",
             f"sdate={date};edate={date};bdid={undcode};hyzt=0",
             "p02653_f001:Y,p02653_f002:Y,p02653_f008:Y,"
@@ -491,15 +561,19 @@ class THDataAPI(DataAPI):
             }
         )
         data["数据源"] = "同花顺"
-        return data
+        return data  # type: ignore
 
-    def GetStockMarketQuote(self, date=None):
+    def GetStockMarketQuote(self, date: str | None = None) -> pd.DataFrame | None:
         """从同花顺获取股票数据"""
         print("从同花顺获取股票数据暂未实现，返回None")
         return None
 
-    def GetComFuturesMarketQuote(self, date=None, futcode=None):
+    def GetComFuturesMarketQuote(
+        self, date: str | None = None, futcode: str | None = None
+    ) -> pd.DataFrame | None:
         """从同花顺获取商品期货行情数据"""
+        if date is None or futcode is None:
+            return None
         exchangecode = {
             "212020003": "郑商所",
             "212020004": "大商所",
@@ -509,8 +583,7 @@ class THDataAPI(DataAPI):
         df_pool = pd.DataFrame()
         for code in exchangecode:
             exchange_code = code
-            exchange_name = exchangecode[code]
-            data = THS_DR(
+            data = THS_DR(  # type: ignore
                 "p03258",
                 "sdate="
                 + date
@@ -562,9 +635,11 @@ class THDataAPI(DataAPI):
         df_pool["数据源"] = "同花顺"
         return df_pool
 
-    def GetFuturesMarketQuote(self, date=None):
+    def GetFuturesMarketQuote(self, date: str | None = None) -> pd.DataFrame | None:
         """从同花顺获取金融期货数据"""
-        data = THS_DR(
+        if date is None:
+            return None
+        data = THS_DR(  # type: ignore
             "p00755",
             "sclx=中金所股指期货;date=" + date + "",
             "p00755_f001:Y,"
@@ -599,9 +674,15 @@ class THDataAPI(DataAPI):
                 }
             )
             df["数据源"] = "同花顺"
-            return df
+            return cast(pd.DataFrame, df)
 
-    def GetOptionMarketQuote(self, exchange=None, date=None, undcode=None, undname=None):
+    def GetOptionMarketQuote(
+        self,
+        exchange: str | None = None,
+        date: str | None = None,
+        undcode: str | None = None,
+        undname: str | None = None,
+    ) -> pd.DataFrame | None:
         """
         从同花顺获取期权行情数据
         :param exchange: 上海证券交易所，深圳证券交易所，大连商品交易所，上海期货交易所，大连商品期货交易所，中国金融期货交易所
@@ -610,7 +691,9 @@ class THDataAPI(DataAPI):
         :param undname:50ETF(510050); 300ETF(510300) ; 500ETF(510500); 科创50(588000); 创业板ETF(159915); 上证50指数(000016); 沪深300指数(000300)；中证1000指数(000852)
         :return:
         """
-        df = THS_DR(
+        if date is None or exchange is None or undname is None or undcode is None:
+            return None
+        df = THS_DR(  # type: ignore
             "p02834",
             "sdate="
             + date
@@ -657,46 +740,63 @@ class THDataAPI(DataAPI):
                 }
             )
             df["数据源"] = "同花顺"
-            return df
+            return cast(pd.DataFrame, df)
 
-    def GetETFMarketQuote(self, start_date=None, end_date=None, etfcode=None):
+    def GetETFMarketQuote(
+        self, start_date: str | None = None, end_date: str | None = None, etfcode: str | None = None
+    ) -> pd.DataFrame | None:
         print("同花顺ETF数据还没写")
         return None
 
-    def GetFundDailyInfo(self):
+    def GetFundDailyInfo(self) -> pd.DataFrame | None:
         print("同花顺对基金数据还没写")
         return None
 
-    def GetRateMarketQuote(self):
+    def GetRateMarketQuote(self) -> pd.DataFrame | None:
         print("同花顺对回购利率数据还没写好")
         return None
 
-    def GetCbondInfo(self, date=None):
+    def GetCbondInfo(self, date: str | None = None) -> pd.DataFrame | None:
         """从同花顺获取可转债信息（暂未实现）"""
         print("暂不支持从同花顺获取可转债信息")
         return None
 
-    def GetCbondMarketQuote(self, start_date=None, end_date=None, cbondcode=None):
+    def GetCbondMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        cbondcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """从同花顺获取可转债行情数据（暂未实现）"""
         print("暂不支持从同花顺获取可转债行情数据")
         return None
 
-    def GetFundMarketQuote(self, start_date=None, end_date=None, fundcode=None):
+    def GetFundMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        fundcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """从同花顺获取基金净值数据（暂未实现）"""
         print("暂不支持从同花顺获取基金净值数据")
         return None
 
-    def GetIndexDailyInfo(self):
+    def GetIndexDailyInfo(self) -> pd.DataFrame | None:
         """从同花顺获取指数信息（暂未实现）"""
         print("暂不支持从同花顺获取指数信息")
         return None
 
-    def GetIndexMarketQuote(self, start_date=None, end_date=None, indexcode=None):
+    def GetIndexMarketQuote(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        indexcode: str | None = None,
+    ) -> pd.DataFrame | None:
         """从同花顺获取指数行情数据（暂未实现）"""
         print("暂不支持从同花顺获取指数行情数据")
         return None
 
-    def GetOptionBasicInfo(self, undcode=None):
+    def GetOptionBasicInfo(self, undcode: str | None = None) -> pd.DataFrame | None:
         """从同花顺获取期权合约要素（暂未实现）"""
         print("暂不支持从同花顺获取期权合约要素")
         return None
@@ -707,7 +807,7 @@ class DataSourceAPI:
     """数据源选择"""
 
     @staticmethod
-    def create_data_source(source_type):
+    def create_data_source(source_type: str) -> DataAPI:
         """
         :param source_type: str 数据源类型，insight或者tonghuashun
         :return: DataSource 数据源实例
@@ -724,27 +824,27 @@ class DataSourceAPI:
 class DataManager:
     """金融数据管理器, 用于最终的统一数据获取并支持数据源切换"""
 
-    def __init__(self, data_source_type="insight"):
+    def __init__(self, data_source_type: str = "insight"):
         """初始化金融数据管理器
         Args:
             data_source_type: str 数据源类型，insight或者tonghuashun
         """
-        self._data_source = None
+        self._data_source: DataAPI | None = None
         self.switch_data_source(data_source_type)
 
-    def switch_data_source(self, data_source_type):
+    def switch_data_source(self, data_source_type: str) -> None:
         """切换数据源
         Args:
             data_source_type: str 数据源类型，insight或者tonghuashun
         """
         api_source = DataSourceAPI()
         self._data_source = api_source.create_data_source(data_source_type)
-        if self._data_source is None:
-            raise ValueError(f"无效的数据源类型: {data_source_type}")
+        # if self._data_source is None: # Dead code, create_data_source raises or returns DataAPI
+        #     raise ValueError(f"无效的数据源类型: {data_source_type}")
         self._data_source.login()
         print(f"切换数据源为：{data_source_type}")
 
-    def GetTradeDayList(self, start_date=None, end_date=None):
+    def GetTradeDayList(self, start_date: str, end_date: str) -> pd.DataFrame:
         """获取交易日列表"""
         if self._data_source is None:
             raise ValueError("数据源未初始化，请先调用 switch_data_source 方法")
