@@ -1,15 +1,11 @@
-# pylint: disable=no-member  # rqdatac uses dynamic API binding
+# pylint: disable=no-member, invalid-name  # rqdatac uses dynamic API binding
 # pyright: reportAttributeAccessIssue=false
+# mypy: disable-error-code="import-untyped"
 from __future__ import annotations
 
-import sys
 from datetime import datetime
 from typing import Any
 
-if sys.platform != "darwin":
-    import hdb  # type: ignore[import-untyped]
-else:
-    hdb = Any
 import numpy as np
 import pandas as pd
 from lntools.utils import Logger
@@ -18,6 +14,12 @@ from getrich.config import settings
 
 from ..ricequant import init_rq
 from ..transforms import convert_symbol, normalize_date_string, normalize_datetime_column
+
+# 根据配置决定是否导入 HDB 模块
+if settings.hdb.enabled:
+    import hdb
+else:
+    hdb = Any
 
 log = Logger(module_name="HdbEtl")
 
@@ -184,7 +186,7 @@ def _convert_symbols(
                 for s in missing_symbols:
                     mapping[s] = s
 
-    processed_df["symbol"] = processed_df["hdb_symbol"].map(mapping)
+    processed_df["symbol"] = processed_df["hdb_symbol"].replace(mapping)
     return processed_df
 
 
@@ -241,7 +243,7 @@ def read_day_bar_from_parquet(
 
         # 如果指定了 symbols，进行筛选
         if symbols is not None and "hdb_symbol" in df.columns:
-            df = df[df["hdb_symbol"].isin(symbols)]
+            df = df.loc[df["hdb_symbol"].isin(symbols)]
 
         return df
 
@@ -319,7 +321,7 @@ def prepare_day_bar_for_db(
     # 7. 添加 trading_status (从 is_halt 映射)
     if "is_halt" in processed_df.columns:
         processed_df["trading_status"] = (
-            processed_df["is_halt"].map({0: "NORMAL", 1: "HALTED"}).fillna("UNKNOWN")
+            processed_df["is_halt"].replace({0: "NORMAL", 1: "HALTED"}).fillna("UNKNOWN")
         )
     else:
         processed_df["trading_status"] = "UNKNOWN"
@@ -356,7 +358,8 @@ def prepare_day_bar_for_db(
     ]
 
     available_cols = [c for c in output_columns if c in processed_df.columns]
-    return processed_df[available_cols]
+    result = processed_df.loc[:, available_cols]
+    return result
 
 
 # ============================================================================
@@ -479,7 +482,7 @@ def prepare_min_bar_for_db(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     available_cols = [c for c in final_columns if c in processed_df.columns]
-    return processed_df[available_cols]
+    return processed_df.loc[:, available_cols]
 
 
 # ============================================================================

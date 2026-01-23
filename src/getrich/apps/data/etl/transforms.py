@@ -1,5 +1,6 @@
 # pylint: disable=no-member
 # pyright: reportAttributeAccessIssue=false
+# mypy: disable-error-code="import-untyped"
 from __future__ import annotations
 
 import datetime
@@ -204,7 +205,7 @@ def convert_date_value(
     if isinstance(val, pd.Timestamp):
         if pd.isna(val):
             return default
-        return val.date()
+        return val.date()  # type: ignore[no-any-return]
 
     # 字符串类型
     if isinstance(val, str):
@@ -225,9 +226,9 @@ def convert_date_value(
     # 未知类型，尝试通过 pd.Timestamp 转换
     try:
         ts = pd.Timestamp(val)
-        if pd.isna(ts):
+        if not isinstance(ts, pd.Timestamp):
             return default
-        return ts.date()
+        return ts.date()  # type: ignore[no-any-return]
     except Exception:
         if warn_on_error:
             log.warning(f"Cannot convert value to date: {val} (type={type(val).__name__})")

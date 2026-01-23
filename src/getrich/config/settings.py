@@ -49,6 +49,96 @@ def find_project_root(
     return Path.cwd()
 
 
+def get_user_config_dir() -> Path:
+    """
+    获取用户配置目录路径（跨平台）。
+
+    所有平台统一使用: ~/.config/getrich
+    """
+    base = Path.home() / ".config"
+    return base / "getrich"
+
+
+def _get_default_env_content() -> str:
+    """返回默认 .env 文件内容。"""
+    return """# GetRich Configuration File
+# 此文件已自动创建，请根据实际需要修改配置值
+
+# --- 应用配置 (Application Configuration) ---
+APP_ENV = dev  # 'dev', 'prod', 'research'
+STRICT_MODE = false
+
+# --- 数据库配置 (Database Configuration) ---
+ENABLE_HDB = false  # 是否启用 HDB 模块
+
+CLICKHOUSE_HOST = localhost
+CLICKHOUSE_PORT = 8123
+CLICKHOUSE_USER = default
+CLICKHOUSE_PASSWORD = your_password_here
+CLICKHOUSE_DB = default
+CLICKHOUSE_PROTOCOL = http
+
+# --- RiceQuant 配置 ---
+# RICEQUANT_ENABLED = false
+# RICEQUANT_API_KEY = your_api_key_here
+
+# --- 日志配置 (Logging Configuration) ---
+# LOG_LEVEL = INFO
+"""
+
+
+def find_or_create_env_file() -> Path:
+    """
+    查找或创建 .env 配置文件。
+
+    优先级:
+    1. 用户配置目录
+    2. 项目根目录（向后兼容）
+
+    如果都不存在，则在用户配置目录创建默认配置。
+    """
+    # 用户配置目录
+    user_config_dir = get_user_config_dir()
+    user_env_path = user_config_dir / ".env"
+
+    # 项目根目录
+    project_root = find_project_root()
+    project_env_path = project_root / ".env"
+
+    # 优先级检查
+    if user_env_path.exists():
+        return user_env_path
+
+    if project_env_path.exists():
+        logging.getLogger("settings").info(
+            "Using .env from project directory: %s\nConsider moving it to user config: %s",
+            project_env_path,
+            user_env_path,
+        )
+        return project_env_path
+
+    # 都不存在，创建默认配置
+    user_config_dir.mkdir(parents=True, exist_ok=True)
+
+    # 从 .env.example 复制或创建默认配置
+    example_path = project_root / ".env.example"
+    if example_path.exists():
+        import shutil
+
+        shutil.copy(example_path, user_env_path)
+    else:
+        # 创建最小默认配置
+        default_content = _get_default_env_content()
+        user_env_path.write_text(default_content, encoding="utf-8")
+
+    logging.getLogger("settings").warning(
+        "Created default .env file at: %s\nPlease review and update the configuration values.",
+        user_env_path,
+    )
+
+    return user_env_path
+
+
 # ------------------------------------------------------------------------------
 # 2. Helper Functions
 # ------------------------------------------------------------------------------
@@ -194,6 +284,18 @@ class RiceQuantConfig:
 
 
 @dataclass(frozen=True)
+class HdbConfig:
+    """HDB Module Configuration"""
+
+    enabled: bool
+
+    @classmethod
+    def from_env(cls) -> HdbConfig:
+        enabled = _parse_bool(_get_env("ENABLE_HDB", "false"))
+        return cls(enabled=enabled)
+
+
+@dataclass(frozen=True)
 class Settings:
     """Global Settings Container"""
 
@@ -203,6 +305,7 @@ class Settings:
     duckdb: DuckDBConfig
     logging: LoggingConfig
     ricequant: RiceQuantConfig
+    hdb: HdbConfig
 
     @property
     def is_dev(self) -> bool:
@@ -221,13 +324,14 @@ class Settings:
 def load_settings(env_file: str | None = None) -> Settings:
     """
     Main entry point to load settings.
-    Auto-detects project root and loads .env file.
+    Auto-detects or creates .env file in user config directory.
     """
     root = find_project_root()
 
     # Load .env file
     if load_dotenv is not None:
-        target_env = Path(env_file) if env_file else root / ".env"
+        target_env = Path(env_file) if env_file else find_or_create_env_file()
+
         if target_env.exists():
             load_dotenv(dotenv_path=target_env, override=True)
 
@@ -241,6 +345,7 @@ def load_settings(env_file: str | None = None) -> Settings:
     duck_config = DuckDBConfig.from_env(root, strict=strict_mode)
     log_config = LoggingConfig.from_env(root)
     rq_config = RiceQuantConfig.from_env(strict=strict_mode)
+    hdb_config = HdbConfig.from_env()
 
     return Settings(
         root=root,
@@ -249,6 +354,7 @@ def load_settings(env_file: str | None = None) -> Settings:
         duckdb=duck_config,
         logging=log_config,
         ricequant=rq_config,
+        hdb=hdb_config,
     )
 
 
