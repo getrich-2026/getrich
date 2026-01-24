@@ -186,7 +186,8 @@ def _convert_symbols(
                 for s in missing_symbols:
                     mapping[s] = s
 
-    processed_df["symbol"] = processed_df["hdb_symbol"].replace(mapping)
+    current_mapping = {s: mapping[s] for s in unique_symbols if s in mapping}
+    processed_df["symbol"] = processed_df["hdb_symbol"].map(current_mapping)
     return processed_df
 
 
@@ -321,7 +322,7 @@ def prepare_day_bar_for_db(
     # 7. 添加 trading_status (从 is_halt 映射)
     if "is_halt" in processed_df.columns:
         processed_df["trading_status"] = (
-            processed_df["is_halt"].replace({0: "NORMAL", 1: "HALTED"}).fillna("UNKNOWN")
+            processed_df["is_halt"].map({0: "NORMAL", 1: "HALTED"}).fillna("UNKNOWN")
         )
     else:
         processed_df["trading_status"] = "UNKNOWN"

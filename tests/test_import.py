@@ -15,8 +15,8 @@ def import_hdb_minbars() -> None:
     import_job.run_full_import(
         start_year=2026,
         end_year=2026,
-        skip_existing=False,
-        skip_mode="all",  # check all existing dates
+        skip_existing=True,
+        skip_mode="latest",  # check all existing dates
         import_min_bar=True,
     )
 
