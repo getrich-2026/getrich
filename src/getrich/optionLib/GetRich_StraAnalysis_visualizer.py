@@ -23,8 +23,7 @@ class Visualizer:
         Returns:
             Line: 折线图对象
         """
-        data = [(df["price_change"].round(4).tolist()[i], df["vol_change"].round(4).tolist()[i],
-                 df["pnl"].round(4).tolist()[i]) for i in range(len(df))]
+        data = df[["price_change", "vol_change", "pnl"]].round(4).to_numpy().tolist()
         scatter = (
             Scatter3D(init_opts=opts.InitOpts(width="1000px", height="800px"))
             .add(
@@ -50,14 +49,19 @@ class Visualizer:
         Returns:
             Bar: 柱状图对象
         """
+        mean_values = greeks_df.mean()
         bar = (
             Bar(init_opts=opts.InitOpts(width="1000px", height="800px"))
             .add_xaxis(greeks_df.columns.tolist())
-            .add_yaxis("风险敞口均值", greeks_df.mean().tolist())
+            .add_yaxis("风险敞口均值", mean_values.tolist())
            .set_global_opts(
                 title_opts=opts.TitleOpts(title="希腊字母风险敞口"),
                 yaxis_opts=opts.AxisOpts(name="风险敞口大小"),
-                visualmap_opts=opts.VisualMapOpts(max_=max(greeks_df.mean()), min_=min(greeks_df.mean()),range_color=Faker.visual_color)
+                visualmap_opts=opts.VisualMapOpts(
+                    max_=mean_values.max(),
+                    min_=mean_values.min(),
+                    range_color=Faker.visual_color,
+                )
             )
         )
         return bar
@@ -72,7 +76,6 @@ class Visualizer:
         """
         # 计算VaR分布
         hist, bins = np.histogram(pnl_series, bins=50)
-        var_95 = RiskAnalyzer.RiskAnalyzer().calculate_var(pnl_series=pnl_series, confidence_level=0.95)
         line = (
             Line(init_opts=opts.InitOpts(width="1000px", height="800px"))
             .add_xaxis([f"{b:.0f}" for b in bins[:-1]])

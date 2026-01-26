@@ -607,10 +607,9 @@ class ClickHouseClient:
                 else:
                     # 多列键
                     conditions = []
-                    for _, row in batch_keys.iterrows():
+                    for row in batch_keys.itertuples(index=False, name=None):
                         condition_parts = []
-                        for col in key_columns:
-                            value = row[col]
+                        for col, value in zip(key_columns, row):
                             if pd.isna(value):
                                 condition_parts.append(f"{col} IS NULL")
                             elif isinstance(value, str):

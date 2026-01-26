@@ -227,7 +227,7 @@ class InsightDataAPI(DataAPI):
         data = pd.DataFrame(data=data[1])
         data = data.sort_values(by="TradingDay", ascending=True)
         data = data.rename(columns={"TradingDay": "交易日"})
-        data["交易日"] = [pd.to_datetime(date).strftime("%Y-%m-%d") for date in data["交易日"]]
+        data["交易日"] = pd.to_datetime(data["交易日"]).dt.strftime("%Y-%m-%d")
         data["数据源"] = "Insight"
         return data
 
@@ -304,7 +304,7 @@ class InsightDataAPI(DataAPI):
             return None  # Robustness check
         # df is Any here due to ignore. Linter complains about returning Any.
         # We assume it is a DataFrame.
-        df["time"] = [pd.to_datetime(date).strftime("%Y-%m-%d") for date in df["time"]]
+        df["time"] = pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%d")
         df = df[
             ["htsc_code", "time", "open", "high", "low", "close", "volume", "num_trades", "value"]
         ]
@@ -375,7 +375,7 @@ class InsightDataAPI(DataAPI):
         df = get_kline(  # type: ignore
             htsc_code=indexcode, time=[time_start, time_end], frequency="daily", fq="none"
         )
-        df["time"] = [pd.to_datetime(date).strftime("%Y-%m-%d") for date in df["time"]]
+        df["time"] = pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%d")
         df = df[["htsc_code", "time", "open", "high", "low", "close", "volume", "value"]]
         df = df.rename(
             columns={
@@ -411,7 +411,7 @@ class InsightDataAPI(DataAPI):
             "204091.SH",
             "204182.SH",
         ]
-        df_pool = pd.DataFrame()
+        frames: list[pd.DataFrame] = []
         for code in codelist:
             df = get_repo_price(htsc_code=code)  # type: ignore
             df = df.sort_values(by=["trading_day"], ascending=True)
@@ -437,10 +437,10 @@ class InsightDataAPI(DataAPI):
                     "lowest_rate": "最低利率",
                 }
             )
-            df_pool = pd.concat([df_pool, df], ignore_index=True)
-        df_pool["交易日期"] = [
-            pd.to_datetime(date).strftime("%Y-%m-%d") for date in df_pool["交易日期"]
-        ]
+            frames.append(df)
+        df_pool = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        if not df_pool.empty:
+            df_pool["交易日期"] = pd.to_datetime(df_pool["交易日期"]).dt.strftime("%Y-%m-%d")
         df_pool = df_pool[
             ["交易日期", "回购代码", "回购简称", "开盘利率", "收盘利率", "最高利率", "最低利率"]
         ]
@@ -580,7 +580,7 @@ class THDataAPI(DataAPI):
             "212020008": "上期所",
             "212020019": "广期所",
         }
-        df_pool = pd.DataFrame()
+        frames: list[pd.DataFrame] = []
         for code in exchangecode:
             exchange_code = code
             data = THS_DR(  # type: ignore
@@ -630,8 +630,9 @@ class THDataAPI(DataAPI):
                         "p03258_f017": "成交金额变化率(%)",
                     }
                 )
-                df_pool = pd.concat([df_pool, df], ignore_index=True)
+                frames.append(df)
 
+        df_pool = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         df_pool["数据源"] = "同花顺"
         return df_pool
 
