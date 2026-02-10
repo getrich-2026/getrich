@@ -2,16 +2,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pytz
 
-from getrich.libs.clickhouse.table import ClickHouseTable
-
 if TYPE_CHECKING:  # 避免循环导入问题
     from getrich.libs.clickhouse.database import ClickHouseClient
     from getrich.libs.clickhouse.pool import ClickHouseConnectionPool
+    from getrich.libs.clickhouse.table import ClickHouseTable
 
 
 class MinBarTable(ClickHouseTable):
@@ -157,7 +156,7 @@ class MinBarTable(ClickHouseTable):
         # 构建条件列表
         # 设定本地时区
         local_tz = pytz.timezone("Asia/Shanghai")
-        params = {}
+        params: dict[str, Any] = {}
         where_clauses = []
 
         # 1. 处理 symbols 参数
@@ -177,7 +176,7 @@ class MinBarTable(ClickHouseTable):
         # 统一转换为带时区的 pd.Timestamp，然后再转为原生 datetime
         def to_aware_datetime(
             dt_input: datetime | str | None, default_val: pd.Timestamp, is_end: bool = False
-        ):
+        ) -> datetime:
             ts = pd.to_datetime(dt_input or default_val)
             # 如果没有时区信息，加上本地时区
             ts = ts.tz_localize(local_tz) if ts.tz is None else ts.tz_convert(local_tz)
@@ -241,8 +240,6 @@ class DayBarTable(ClickHouseTable):
     用于操作 day_bar 表的类,负责日线数据的存储和查询。
 
     继承自 ClickHouseTable 基类,复用通用的表操作方法。
-
-    注意：日线数据按 (symbol, date) 排序,因为日线查询主要按日期范围进行。
     """
 
     def __init__(
@@ -260,7 +257,7 @@ class DayBarTable(ClickHouseTable):
         初始化 DayBarTable。
 
         Args:
-            table_name: 表名,默认为 'day_bar'
+            table_name: 表名,默认为 'market_data.bars_1d'
             client: ClickHouse 客户端实例,如果为 None 则自动创建
             pool: ClickHouse 连接池实例(优先级高于 client)
             host: ClickHouse 主机地址(仅在 client=None 且 pool=None 时使用)
@@ -282,23 +279,29 @@ class DayBarTable(ClickHouseTable):
             logger_name="DayBarTable",
         )
 
-        # 表结构定义（与 MinBarTable 相同）
+        # 表结构定义（与 MinBarTable 对齐类型）
         self.table_schema = {
-            "date": "UInt32",
-            "time": "Int32",
-            "pre_close": "Int64",
-            "open": "Int64",
-            "high": "Int64",
-            "low": "Int64",
-            "close": "Int64",
-            "volume": "Int64",
-            "turnover": "Int64",
-            "open_interest": "Int64",
-            "pre_settle_price": "Int64",
-            "settle_price": "Int64",
-            "symbol": "String",
-            "local_time": "DateTime64(3)",
-            "insert_time": "DateTime",
+            "symbol": "LowCardinality(String)",
+            "dt": "Date",
+            "pre_close": "Float64",
+            "open": "Float64",
+            "high": "Float64",
+            "low": "Float64",
+            "close": "Float64",
+            "volume": "Float64",
+            "amount": "Float64",
+            "pct_chg": "Float64",
+            "pct_chg_log": "Float64",
+            "adj_factor": "Float64",
+            "amplitude": "Float64",
+            "limit_up": "Float64",
+            "limit_down": "Float64",
+            "open_interest": "Float64",
+            "settle": "Float64",
+            "pre_settle": "Float64",
+            "trading_status": "Enum8('NORMAL'=0, 'HALTED'=1, 'UNKNOWN'=2)",
+            "provider": "LowCardinality(String)",
+            "updated_at": "DateTime64(3, 'Asia/Shanghai')",
         }
 
     def create(self, if_not_exists: bool = True) -> bool:
@@ -313,38 +316,45 @@ class DayBarTable(ClickHouseTable):
         """
         exists_clause = "IF NOT EXISTS" if if_not_exists else ""
 
-        # Day bar data partitioned by year, sorted by symbol+date for optimized date range queries
-        # Using local_time for partitioning (DateTime64 type supports toYear function)
-        # date field as part of primary key for efficient index utilization
         create_sql = f"""
-        CREATE TABLE {exists_clause} {self.table_name}
-        (
-            date UInt32 CODEC(Delta, ZSTD),
-            time Int32 CODEC(Delta, ZSTD),
-            pre_close Int64 CODEC(Delta, ZSTD),
-            open Int64 CODEC(Delta, ZSTD),
-            high Int64 CODEC(Delta, ZSTD),
-            low Int64 CODEC(Delta, ZSTD),
-            close Int64 CODEC(Delta, ZSTD),
-            volume Int64 CODEC(Delta, ZSTD),
-            turnover Int64 CODEC(Delta, ZSTD),
-            open_interest Int64 CODEC(Delta, ZSTD),
-            pre_settle_price Int64 CODEC(Delta, ZSTD),
-            settle_price Int64 CODEC(Delta, ZSTD),
-            symbol String,
-            local_time DateTime64(3) CODEC(Delta, ZSTD),
-            insert_time DateTime('Asia/Shanghai') DEFAULT now() CODEC(Delta, ZSTD)
-        )
-        ENGINE = MergeTree()
-        PARTITION BY toYear(local_time)
-        ORDER BY (symbol, date)
-        SETTINGS index_granularity = 8192,
-             min_bytes_for_wide_part = 0,
-             min_rows_for_wide_part = 0,
-             enable_mixed_granularity_parts = 1
+        CREATE TABLE {exists_clause} {self.table_name} (
+            symbol LowCardinality(String) COMMENT '统一代码',
+            dt Date CODEC(Delta, ZSTD(1)) COMMENT '业务日期',
+
+            pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '前收盘价',
+            open Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '开盘价',
+            high Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '最高价',
+            low Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '最低价',
+            close Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '收盘价',
+            volume Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '成交量',
+            amount Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '成交额',
+            
+            pct_chg Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '涨跌幅',
+            pct_chg_log Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '对数涨跌幅',
+            adj_factor Float64 DEFAULT 1 CODEC(ZSTD(1)) COMMENT '复权因子',
+            amplitude Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '振幅',
+
+            limit_up Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '涨停价',
+            limit_down Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '跌停价',
+
+            open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '持仓量',
+            settle Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '结算价',
+            pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '前结算价',
+
+            trading_status Enum8('NORMAL'=0, 'HALTED'=1, 'UNKNOWN'=2) DEFAULT 'UNKNOWN' COMMENT '交易状态',
+            provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
+
+            updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3) COMMENT '数据更新时间'
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        PARTITION BY toYYYYMM(dt)
+        ORDER BY (symbol, dt)
+        SETTINGS index_granularity = 8192, 
+                min_bytes_for_wide_part = 0, 
+                min_rows_for_wide_part = 0, 
+                enable_mixed_granularity_parts = 1;
         """
 
-        # Use parent class execute method
+        # 使用父类的 execute 方法
         if self.execute(create_sql):
             self.logger.info(f"Table '{self.table_name}' created successfully.")
             return True
@@ -355,73 +365,79 @@ class DayBarTable(ClickHouseTable):
     def read(
         self,
         symbols: str | list[str] | None = None,
-        start_date: int | str | None = None,
-        end_date: int | str | None = None,
-        order_by: str = "symbol, date",
+        start_date: datetime | str | None = None,
+        end_date: datetime | str | None = None,
+        columns: list[str] | None = None,
+        order_by: str = "symbol, dt",
         limit: int | None = None,
-    ) -> pd.DataFrame | None:
+        final: bool = False,
+        is_prefix: bool = False,
+    ) -> pd.DataFrame:
         """
         读取 day_bar 表中的数据,支持灵活的日期和标的筛选。
 
         Args:
             symbols: 标的代码,可以是单个字符串、字符串列表或 None(读取所有标的)
-            start_date: 开始日期,支持整数格式(如 20200101)或字符串格式(如 '2020-01-01'),
-                       None 表示从 20050101 开始
-            end_date: 结束日期,支持整数格式(如 20251231)或字符串格式(如 '2025-12-31'),
-                     None 表示到当前日期
-            order_by: 排序字段,默认按 symbol 和 date 排序
+            start_date: 开始日期,支持 datetime 或字符串格式(如 '2020-01-01'),None 表示从 2005-01-01 开始
+            end_date: 结束日期,支持 datetime 或字符串格式(如 '2025-12-31'),None 表示到当前日期
+            columns: 需要查询的列名列表，None 表示查询所有列
+            order_by: 排序字段,默认按 symbol 和 dt 排序
             limit: 限制返回的记录数,None 表示不限制
+            final: 是否使用 FINAL 关键字读取最终数据版本
+            is_prefix: symbols 参数是否为前缀匹配模式
 
         Returns:
-            包含查询结果的 DataFrame,如果出错则返回 None
+            包含查询结果的 DataFrame (无数据时返回空 DataFrame)
         """
         # 构建条件列表
-        conditions = []
+        # 设定本地时区
+        local_tz = pytz.timezone("Asia/Shanghai")
+        params: dict[str, Any] = {}
+        where_clauses = []
 
-        # 处理symbols参数
-        if symbols is not None:
+        # 1. 处理 symbols 参数
+        if symbols:
             if isinstance(symbols, str):
-                # 单个标的
-                conditions.append(f"symbol = '{symbols}'")
-            elif isinstance(symbols, list) and len(symbols) > 0:
-                # 多个标的
-                symbols_str = "', '".join(symbols)
-                conditions.append(f"symbol IN ('{symbols_str}')")
+                symbols = [symbols]
+            params["syms"] = symbols
 
-        # 处理日期范围 - 使用 date 字段(UInt32)进行比较
-        # 如果没有指定start_date,默认从20050101开始
-        if start_date is None:
-            start_date_int = 20050101
-        else:
-            # 转换为整数格式
-            if isinstance(start_date, int):
-                start_date_int = start_date
+            if is_prefix:
+                # 前缀匹配
+                where_clauses.append("multiMatchAny(symbol, {syms:Array(String)})")
             else:
-                # 字符串格式如 '2020-01-01' 转换为 20200101
-                start_date_str = str(start_date).replace("-", "")
-                start_date_int = int(start_date_str)
+                # 精确匹配
+                where_clauses.append("symbol IN {syms:Array(String)}")
 
-        conditions.append(f"date >= {start_date_int}")
+        # 2. 处理日期逻辑
+        def to_aware_datetime(
+            dt_input: datetime | str | None, default_val: pd.Timestamp
+        ) -> datetime:
+            ts = pd.to_datetime(dt_input or default_val)
+            ts = ts.tz_localize(local_tz) if ts.tz is None else ts.tz_convert(local_tz)
+            return ts.to_pydatetime()
 
-        # 如果没有指定end_date,使用当前日期
-        if end_date is None:
-            end_date_int = int(datetime.now().strftime("%Y%m%d"))
-        else:
-            # 转换为整数格式
-            if isinstance(end_date, int):
-                end_date_int = end_date
-            else:
-                # 字符串格式如 '2025-12-31' 转换为 20251231
-                end_date_str = str(end_date).replace("-", "")
-                end_date_int = int(end_date_str)
+        start_dt_aware = to_aware_datetime(start_date, pd.Timestamp("2005-01-01"))
+        end_dt_aware = to_aware_datetime(end_date, pd.Timestamp.now())
 
-        conditions.append(f"date <= {end_date_int}")
+        # 日线表使用 dt (Date 类型) 进行筛选
+        params["start"] = start_dt_aware.date()
+        params["end"] = end_dt_aware.date()
+        where_clauses.append("dt >= {start:Date}")
+        where_clauses.append("dt <= {end:Date}")
 
-        # 构建完整的查询语句
-        query = f"SELECT * FROM {self.table_name}"
+        # 3. 构建查询列
+        select_cols = "*"
+        if columns:
+            safe_columns = [c for c in columns if c.isidentifier()]
+            if safe_columns:
+                select_cols = ", ".join(safe_columns)
 
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
+        # 4. 构建完整的查询语句
+        final_str = "FINAL" if final else ""
+        query = f"SELECT {select_cols} FROM {self.table_name} {final_str}"
+
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
 
         if order_by:
             query += f" ORDER BY {order_by}"
@@ -429,6 +445,13 @@ class DayBarTable(ClickHouseTable):
         if limit:
             query += f" LIMIT {limit}"
 
-        # 使用父类的 query 方法
-        result = self.query(query)
-        return result
+        # 5. 执行查询
+        try:
+            result = self.query(query, params=params)
+            if result.empty:
+                return pd.DataFrame()
+            self.logger.info(f"Read {len(result)} records from '{self.table_name}'")
+            return result
+        except Exception as e:
+            self.logger.error(f"Error reading from '{self.table_name}': {e}")
+            return pd.DataFrame()

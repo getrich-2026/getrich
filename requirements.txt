@@ -5,6 +5,7 @@ clickhouse-connect
 dotenv
 duckdb
 hdb
+insight-py-win
 lntools
 matplotlib
 mypy

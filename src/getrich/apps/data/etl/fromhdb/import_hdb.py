@@ -12,14 +12,17 @@ from lntools.utils import Logger
 
 from getrich.config import settings
 
-from ..ricequant import init_rq
+from ..fromrq import init_rq
 from ..transforms import convert_symbol, normalize_date_string, normalize_datetime_column
 
 # 根据配置决定是否导入 HDB 模块
 if settings.hdb.enabled:
-    import hdb
+    try:
+        import hdb
+    except ImportError:
+        hdb = None
 else:
-    hdb = Any
+    hdb = None
 
 log = Logger(module_name="HdbEtl")
 
@@ -210,6 +213,8 @@ def read_day_bar_from_local(
     Returns:
         包含日线数据的 DataFrame
     """
+    if hdb is None:
+        raise RuntimeError("HDB module is not initialized (check settings or install hdb)")
     db = hdb.DB(db_path)
     file_path = f"day_bar_{year}"
     hdb_file = db.open_file(file_path, mode="r")
@@ -385,6 +390,8 @@ def read_min_bar_from_local(
     date_str = normalize_date_string(trade_date)
     file_path = f"min_bar_{date_str}"
 
+    if hdb is None:
+        raise RuntimeError("HDB module is not initialized (check settings or install hdb)")
     db = hdb.DB(db_path)
     hdb_file = db.open_file(file_path, mode="r")
     symbols = symbols if symbols is not None else []

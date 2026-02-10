@@ -68,6 +68,10 @@ def _get_default_env_content() -> str:
 APP_ENV = dev  # 'dev', 'prod', 'research'
 STRICT_MODE = false
 
+ENABLE_INSIGHT = false  # 是否启用 Insight 功能
+INSIGHT_USER = your_user_here  # Insight 用户名
+INSIGHT_PASSWORD = your_password_here  # Insight 密码
+
 # --- 数据库配置 (Database Configuration) ---
 ENABLE_HDB = false  # 是否启用 HDB 模块
 
@@ -296,6 +300,28 @@ class HdbConfig:
 
 
 @dataclass(frozen=True)
+class InsightConfig:
+    """Insight Module Configuration"""
+
+    enabled: bool
+    user: str
+    password: str
+
+    @classmethod
+    def from_env(cls, strict: bool) -> InsightConfig:
+        enabled = _parse_bool(_get_env("ENABLE_INSIGHT", "false"))
+        user = _get_env("INSIGHT_USER", "")
+        password = _get_env("INSIGHT_PASSWORD", "")
+
+        if enabled and not user:
+            _warn("Insight user is not set", strict)
+        if enabled and not password:
+            _warn("Insight password is not set", strict)
+
+        return cls(enabled=enabled, user=user or "", password=password or "")
+
+
+@dataclass(frozen=True)
 class Settings:
     """Global Settings Container"""
 
@@ -306,6 +332,7 @@ class Settings:
     logging: LoggingConfig
     ricequant: RiceQuantConfig
     hdb: HdbConfig
+    insight: InsightConfig
 
     @property
     def is_dev(self) -> bool:
@@ -346,6 +373,7 @@ def load_settings(env_file: str | None = None) -> Settings:
     log_config = LoggingConfig.from_env(root)
     rq_config = RiceQuantConfig.from_env(strict=strict_mode)
     hdb_config = HdbConfig.from_env()
+    insight_config = InsightConfig.from_env(strict=strict_mode)
 
     return Settings(
         root=root,
@@ -355,6 +383,7 @@ def load_settings(env_file: str | None = None) -> Settings:
         logging=log_config,
         ricequant=rq_config,
         hdb=hdb_config,
+        insight=insight_config,
     )
 
 

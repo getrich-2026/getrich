@@ -52,17 +52,6 @@ dependencies = [
     "rqdatac",
 ]
 
-[project.optional-dependencies]
-# 开发依赖
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=3.0.0",
-    "black>=22.0.0",
-    "flake8>=4.0.0",
-    "mypy>=0.950",
-    "ipython>=8.0.0",
-]
-
 
 [tool.setuptools]
 zip-safe = false
@@ -156,5 +145,5 @@ check_untyped_defs = true
 ignore_missing_imports = false # 先关闭全局忽略，改为针对性忽略以保留其它库的检查
 
 [[tool.mypy.overrides]]
-module = ["lntools.*", "akshare", "py_vollib.*", "rqdatac"]
+module = ["lntools.*", "akshare", "py_vollib.*", "rqdatac", "pyarrow.*", "insight_python.*"]
 ignore_missing_imports = true

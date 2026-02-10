@@ -11,8 +11,9 @@ from typing import cast
 import pandas as pd
 import rqdatac as rq
 
-from src.getrich.apps.data.etl.ricequant.auth import init_rq
-from src.getrich.config.settings import settings, setup_logging
+from getrich.apps.data.api import RQDataAPI
+from getrich.apps.data.etl.fromrq import export_all_instruments, init_rq
+from getrich.config import settings, setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +78,36 @@ def test_query() -> None:
     logger.info("✓ RiceQuant query PASSED")
 
 
+def test_export_instruments() -> None:
+    """验证 RiceQuant 数据导出功能"""
+    logger.info("=" * 60)
+    logger.info("Testing RiceQuant Data Export...")
+    # Initialize RiceQuant using new API
+    api = RQDataAPI()
+    api.login()
+
+    # 示例 1: 只保存到数据库
+    # export_all_instruments(save_to_db=True)
+
+    # 示例 2: 只保存 parquet
+    # export_all_instruments(output_dir=r"E:\data\ricequant", save_to_parquet=True, save_to_db=False)
+
+    # 示例 3: 两者都保存
+    export_all_instruments(
+        output_dir=r"D:\data\ricequant", save_to_parquet=True, save_to_db=True, api=api
+    )
+    logger.info("✓ RiceQuant export PASSED")
+
+
 if __name__ == "__main__":
     # 配置日志
     setup_logging(settings)
 
     try:
-        test_config()
-        test_init()
-        test_query()
+        # test_config()
+        # test_init()
+        # test_query()
+        test_export_instruments()
         logger.info("=" * 60)
         logger.info("ALL RiceQuant integration tests PASSED")
     except Exception as e:

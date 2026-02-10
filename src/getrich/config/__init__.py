@@ -6,7 +6,10 @@
 from .settings import (
     ClickHouseConfig,
     DuckDBConfig,
+    HdbConfig,
+    InsightConfig,
     LoggingConfig,
+    RiceQuantConfig,
     Settings,
     load_settings,
     settings,
@@ -21,4 +24,7 @@ __all__ = [
     "ClickHouseConfig",
     "DuckDBConfig",
     "LoggingConfig",
+    "RiceQuantConfig",
+    "HdbConfig",
+    "InsightConfig",
 ]

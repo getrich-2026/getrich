@@ -1,11 +1,11 @@
-from getrich.apps.data.etl.ricequant import export_all_instruments, init_rq
+from getrich.apps.data.etl.fromrq import export_all_instruments, init_rq
 from getrich.apps.data.jobs import DataImportJob
 from getrich.libs.clickhouse import ClickHouseConnectionPool
 
 
 def import_rq_instruments(save_to_db: bool = True) -> None:
     init_rq()
-    export_all_instruments(r"E:\data\ricequant", save_to_db=save_to_db)
+    export_all_instruments(r"D:\data\ricequant", save_to_db=save_to_db)
 
 
 def import_hdb_minbars() -> None:
@@ -22,5 +22,5 @@ def import_hdb_minbars() -> None:
 
 
 if __name__ == "__main__":
-    import_hdb_minbars()
-    # import_rq_instruments()
+    # import_hdb_minbars()
+    import_rq_instruments()

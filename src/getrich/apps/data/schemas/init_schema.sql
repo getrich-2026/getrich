@@ -32,13 +32,13 @@ CREATE DATABASE IF NOT EXISTS rq;
 -- 1.2 交易日历 (保持原设计，简单好用)
 CREATE TABLE IF NOT EXISTS ref.calendar (
     exchange LowCardinality(String) COMMENT '交易所',
-    trading_day Date COMMENT '交易日期',
+    dt Date COMMENT '日期',
     is_trading UInt8 COMMENT '是否交易日',
-    prev_trading_day Date COMMENT '上一个交易日',
-    next_trading_day Date COMMENT '下一个交易日',
+    prev_trading_day Nullable(Date) COMMENT '上一个交易日',
+    next_trading_day Nullable(Date) COMMENT '下一个交易日',
     updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3) COMMENT '数据更新时间'
 ) ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY (exchange, trading_day);
+ORDER BY (exchange, dt);
 
 -- 1.3 RiceQuant 数据源索引视图
 -- 从 rq 数据库的多个 instruments_xx 表中整合数据到 ref.instruments 结构

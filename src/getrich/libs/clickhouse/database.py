@@ -609,7 +609,7 @@ class ClickHouseClient:
                     conditions = []
                     for row in batch_keys.itertuples(index=False, name=None):
                         condition_parts = []
-                        for col, value in zip(key_columns, row):
+                        for col, value in zip(key_columns, row, strict=True):
                             if pd.isna(value):
                                 condition_parts.append(f"{col} IS NULL")
                             elif isinstance(value, str):

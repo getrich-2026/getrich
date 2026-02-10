@@ -485,13 +485,14 @@ class DataImportJob:
         # 可选: 导出 RiceQuant 合约信息 (根据配置)
         if settings.ricequant.enabled:
             try:
-                from ..etl.ricequant import export_all_instruments, init_rq
+                from ..etl.fromrq import export_all_instruments, init_rq
 
                 self.logger.info("RiceQuant is enabled, exporting instruments...")
-                init_rq()
+                api = init_rq()
                 export_all_instruments(
                     output_dir=str(self.hdb_base_path / "ricequant"),
                     save_to_db=True,
+                    api=api,
                 )
                 self.logger.info("RiceQuant instruments exported successfully")
             except Exception as e:

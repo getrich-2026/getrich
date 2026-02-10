@@ -1,18 +1,15 @@
-# pylint: disable=no-member  # rqdatac uses dynamic API binding
 from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
-import rqdatac as rq
 from lntools.utils import Logger, handle_path
 
+from getrich.apps.data.api.rqapi import RQDataAPI
 from getrich.libs.clickhouse.database import ClickHouseClient
 
 from ..transforms import (
     clean_dataframe_for_clickhouse,
 )
-from .auth import init_rq
 from .constants import INSTRUMENT_TYPES
 
 log = Logger(module_name="RiceQuantInstrumentETL")
@@ -23,6 +20,7 @@ def export_all_instruments(
     save_to_parquet: bool = False,
     save_to_db: bool = True,
     inst_types: list[str] | None = None,
+    api: RQDataAPI | None = None,
 ) -> dict[str, bool]:
     """
     Export all instrument types from RiceQuant to Parquet files and/or ClickHouse.
@@ -32,6 +30,7 @@ def export_all_instruments(
         save_to_parquet: Whether to save data as parquet files locally.
         save_to_db: Whether to save data to ClickHouse database.
         inst_types: List of instrument types to export. Defaults to all INSTRUMENT_TYPES.
+        api: Optional RQDataAPI instance. If None, a new one will be created and login called.
 
     Returns:
         Dict mapping instrument type to export success status.
@@ -46,6 +45,11 @@ def export_all_instruments(
 
     if not save_to_parquet and not save_to_db:
         raise ValueError("At least one of save_to_parquet or save_to_db must be True")
+
+    # 初始化 API
+    if api is None:
+        api = RQDataAPI()
+        api.login()
 
     # 只在需要保存 parquet 时处理 output_dir
     root: Path | None = None
@@ -67,13 +71,16 @@ def export_all_instruments(
     for inst_type in types_to_export:
         try:
             log.info(f"Fetching {inst_type}...")
-            # Fetch data (returns pandas DataFrame)
-            df_pandas: pd.DataFrame = rq.all_instruments(type=inst_type, date=None, market="cn")
+            # Use RQDataAPI instead of direct rqdatac call
+            df = api.get_all_instruments(inst_type=inst_type, date=None, market="cn")
 
-            if df_pandas.empty:
+            if df.is_empty():
                 log.warning(f"No data found for {inst_type}")
                 results[inst_type] = False
                 continue
+
+            # Convert to pandas for downstream compatibility (parquet, clickhouse clean)
+            df_pandas = df.to_pandas()
 
             # Save as Parquet locally (if enabled)
             if save_to_parquet:
@@ -108,7 +115,10 @@ def export_all_instruments(
 
 
 if __name__ == "__main__":
-    init_rq()
+    # Initialize RiceQuant using new API
+    api = RQDataAPI()
+    api.login()
+
     # 示例 1: 只保存到数据库
     # export_all_instruments(save_to_db=True)
 
@@ -116,4 +126,6 @@ if __name__ == "__main__":
     # export_all_instruments(output_dir=r"E:\data\ricequant", save_to_parquet=True, save_to_db=False)
 
     # 示例 3: 两者都保存
-    export_all_instruments(output_dir=r"E:\data\ricequant", save_to_parquet=True, save_to_db=True)
+    export_all_instruments(
+        output_dir=r"D:\data\ricequant", save_to_parquet=True, save_to_db=True, api=api
+    )

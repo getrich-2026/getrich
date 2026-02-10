@@ -13,7 +13,7 @@ from getrich.libs.clickhouse.database import ClickHouseClient
 log = Logger(module_name="WindImport")
 
 
-def _import_single_file(client: ClickHouseClient, file_path: Path, db_name: str):
+def _import_single_file(client: ClickHouseClient, file_path: Path, db_name: str) -> None:
     """
     导入单个文件的核心逻辑。
     采用 PyArrow 流式读取 + 分块插入策略。
@@ -100,7 +100,7 @@ def _import_single_file(client: ClickHouseClient, file_path: Path, db_name: str)
         gc.collect()
 
 
-def import_wind_data_from_parquet(data_dir: str = r"D:\data\wind", db_name: str = "wind"):
+def import_wind_data_from_parquet(data_dir: str = r"D:\data\wind", db_name: str = "wind") -> None:
     """
     读取指定目录下的所有 parquet 文件并导入到 ClickHouse 对应的表中。
     包含重试机制和错误记录。
