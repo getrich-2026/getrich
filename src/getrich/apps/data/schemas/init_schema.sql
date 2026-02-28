@@ -245,9 +245,11 @@ ORDER BY (provider, symbol)
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS market_data.bars_1m (
-    symbol LowCardinality(String) COMMENT '统一代码, e.g. 000300.XSHG',
     dt Date COMMENT '业务日期' CODEC(Delta, ZSTD(1)),
     bar_time DateTime COMMENT 'K 线对齐时间 (2025-12-31 10:00:00)' CODEC(Delta, ZSTD(1)) ,
+    symbol LowCardinality(String) COMMENT '统一代码, e.g. 000300.XSHG',
+    raw_symbol LowCardinality(String) DEFAULT '' COMMENT '原始代码' CODEC(ZSTD(1)),
+    type LowCardinality(String) DEFAULT '' COMMENT '标的类型: stock, index, future, option, etf...' CODEC(ZSTD(1)),
     pre_close Float64 DEFAULT 0  COMMENT '前收盘价' CODEC(ZSTD(1)),
     open Float64 DEFAULT 0 COMMENT '开盘价' CODEC(ZSTD(1)),
     high Float64 DEFAULT 0 COMMENT '最高价' CODEC(ZSTD(1)),
@@ -271,33 +273,29 @@ SETTINGS index_granularity = 8192,
 
 -- 2.1 日线 (宽表，包含常用衍生字段)
 CREATE TABLE IF NOT EXISTS market_data.bars_1d (
-    symbol LowCardinality(String),
-    dt Date CODEC(Delta, ZSTD(1)),
-
-    pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    open Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    high Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    low Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    close Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    volume Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    amount Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    
-    pct_chg Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    pct_chg_log Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    adj_factor Float64 DEFAULT 1 CODEC(ZSTD(1)),
-    amplitude Float64 DEFAULT 0 CODEC(ZSTD(1)),
-
-    limit_up Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    limit_down Float64 DEFAULT 0 CODEC(ZSTD(1)),
-
-    open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    settle Float64 DEFAULT 0 CODEC(ZSTD(1)),
-    pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)),
-
-    trading_status Enum8('NORMAL'=0, 'HALTED'=1, 'UNKNOWN'=2) DEFAULT 'UNKNOWN',
-    provider LowCardinality(String) DEFAULT 'UNKNOWN',
-
-    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3)
+    dt Date COMMENT '业务日期' CODEC(Delta, ZSTD(1)),
+    symbol LowCardinality(String) COMMENT '统一代码, e.g. 000300.XSHG',
+    raw_symbol LowCardinality(String) DEFAULT '' COMMENT '原始代码' CODEC(ZSTD(1)),
+    type LowCardinality(String) DEFAULT '' COMMENT '标的类型: stock, index, future, option, etf...' CODEC(ZSTD(1)),
+    pre_close Float64 DEFAULT 0 COMMENT '前收盘价' CODEC(ZSTD(1)),
+    open Float64 DEFAULT 0 COMMENT '开盘价' CODEC(ZSTD(1)),
+    high Float64 DEFAULT 0 COMMENT '最高价' CODEC(ZSTD(1)),
+    low Float64 DEFAULT 0 COMMENT '最低价' CODEC(ZSTD(1)),
+    close Float64 DEFAULT 0 COMMENT '收盘价' CODEC(ZSTD(1)),
+    volume Float64 DEFAULT 0 COMMENT '成交量' CODEC(ZSTD(1)),
+    amount Float64 DEFAULT 0 COMMENT '成交额' CODEC(ZSTD(1)),
+    pct_chg Float64 DEFAULT 0 COMMENT '涨跌幅' CODEC(ZSTD(1)),
+    pct_chg_log Float64 DEFAULT 0 COMMENT '对数收益率' CODEC(ZSTD(1)),
+    adj_factor Float64 DEFAULT 1 COMMENT '复权因子' CODEC(ZSTD(1)),
+    amplitude Float64 DEFAULT 0 COMMENT '振幅' CODEC(ZSTD(1)),
+    limit_up Float64 DEFAULT 0 COMMENT '涨停价' CODEC(ZSTD(1)),
+    limit_down Float64 DEFAULT 0 COMMENT '跌停价' CODEC(ZSTD(1)),
+    open_interest Float64 DEFAULT 0 COMMENT '持仓量(期货)' CODEC(ZSTD(1)),
+    settle Float64 DEFAULT 0 COMMENT '结算价' CODEC(ZSTD(1)),
+    pre_settle Float64 DEFAULT 0 COMMENT '前结算价' CODEC(ZSTD(1)),
+    trading_status Enum8('NORMAL'=0, 'HALTED'=1, 'UNKNOWN'=2) DEFAULT 'UNKNOWN' COMMENT '交易状态',
+    provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
+    updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3) COMMENT '数据更新时间'
 ) ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(dt)
 ORDER BY (symbol, dt)

@@ -67,28 +67,34 @@ exclude = ["tests*", "reference*", "docs*"]
 "getrich.apps.data.table" = ["*.sql"]
 
 [tool.ruff]
+# 代码每行最大长度
+line-length = 100
 # 目标 Python 版本
 target-version = "py310"
-line-length = 100
 
 [tool.ruff.lint]
-# 启用规则集合：
-# E/F: 标准错误 (Flake8)
-# I: 自动导入排序 (Isort) - 极其重要
+# 融合后的规则集：你的原版 + 推荐增强
+# E/F: 标准错误
+# I: 自动导入排序 (Isort)
 # B: 潜在 Bug (Bugbear)
-# SIM: 代码简化 (Simplify) - 提升执行效率
-# NPY: NumPy 专项规则 - 防止数值计算错误
-# UP: 语法现代化 (Pyupgrade) - 保持代码使用最新特性
-# PL: Pylint 部分规则 (可选，较严格)
-select = ["E", "F", "I", "B", "SIM", "NPY", "UP"]
+# SIM: 代码简化 (Simplify) - 帮你写出更优雅的 Pythonic 代码
+# NPY: NumPy 专项规则 - 避免量化计算中的常见坑
+# UP: 语法现代化
+# N: 命名规范 (PEP8)
+select = ["E", "F", "I", "B", "SIM", "NPY", "UP", "N"]
+ignore = ["D203"]
 
-# 忽略规则：
-# E501: 行长过长 (交给 Formatter 自动处理，Linter 不报错)
-ignore = ["E501"]
+[tool.ruff.format]
+# 类似 Black 的自动格式化
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
 
 [tool.ruff.lint.isort]
-# 将这些库识别为“第三方库”，确保 import 排序正确
-known-third-party = ["numpy", "pandas", "polars", "numba", "duckdb", "clickhouse_connect"]
+# 让 Ruff 像 isort 一样自动整理 import
+known-third-party = ["numpy", "pandas", "polars", "clickhouse_connect"]
+combine-as-imports = true
+lines-after-imports = 2
 
 [tool.ruff.lint.per-file-ignores]
 # 在 Notebook 中忽略某些规则 (如未使用的导入)
@@ -110,18 +116,22 @@ addopts = "-v -ra --durations=10"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.pyright]
-typeCheckingMode = "strict"
+typeCheckingMode = "standard"
 # 允许导入没有类型存根 (.pyi) 的第三方库 (如 tushare, CTP 接口)
 # 如果不加这行，导入这些库时 import 语句会报错
 reportMissingTypeStubs = false
 
 # 忽略因为库定义缺失导致的 "Unknown" 类型
 # 解决 Pandas/Polars/Numpy 链式调用产生大量 Unknown 的问题
-reportUnknownArgumentType = false
-reportUnknownVariableType = false
-reportUnknownParameterType = false
-reportUnknownMemberType = false
-reportUnknownLambdaType = false
+# reportUnknownArgumentType = false
+# reportUnknownVariableType = false
+# reportUnknownParameterType = false
+# reportUnknownMemberType = false
+# reportUnknownLambdaType = false
+reportUnusedImport = "warning"         # 让 Ruff 负责删除，但这里显示警告
+reportUnusedVariable = "warning"
+reportDuplicateImport = "error"
+pythonVersion = "3.10"
 
 # 允许我写 "多余" 的 isinstance 检查
 # 在实盘中，我不信任上游数据，即使 Type Hint 说它是 int，我也要 check 它是 int
@@ -135,15 +145,3 @@ exclude = [
     "**/.github",
     "**/.vscode",
 ]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true   # 强制要求所有函数必须写类型，适合严谨的交易逻辑
-check_untyped_defs = true
-ignore_missing_imports = false # 先关闭全局忽略，改为针对性忽略以保留其它库的检查
-
-[[tool.mypy.overrides]]
-module = ["lntools.*", "akshare", "py_vollib.*", "rqdatac", "pyarrow.*", "insight_python.*"]
-ignore_missing_imports = true

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from lntools.utils import Logger
 
+
 log = Logger(module_name="ETLTransforms")
 
 # ============================================================================
@@ -135,6 +136,50 @@ def convert_symbol(
         f"({source_provider} -> {target_provider}), returning original"
     )
     return source_symbol
+
+
+def get_symbol_type(symbol: str) -> str:
+    """
+    根据 symbol 格式推断标的类型。
+
+    Args:
+        symbol: 标准代码, e.g. 000300.XSHG, IF2406.CCFX
+
+    Returns:
+        type: stock, index, future, option, etf, fund, bond, unknown
+    """
+    s = symbol.upper()
+
+    # 简单的期货/期权判断
+    if any(s.endswith(suffix) for suffix in [".CCFX", ".XSGE", ".XDCE", ".XZCE", ".XINE"]):
+        if "-" in s:
+            return "option"
+        return "future"
+
+    # 股票/指数/基金
+    code = s.split(".")[0]
+
+    # 指数
+    if s.endswith(".XSHG") and code.startswith("000"):
+        return "index"
+    if s.endswith(".XSHE") and code.startswith("399"):
+        return "index"
+
+    # ETF/LOF/Fund
+    if s.endswith(".XSHG") and code.startswith("5"):
+        return "etf"
+    if s.endswith(".XSHE") and code.startswith("15"):  # 159xxx ETF, 16xxxx LOF
+        return "etf"
+
+    # 股票
+    if s.endswith(".XSHG") and code.startswith("6"):
+        return "stock"
+    if s.endswith(".XSHE") and (code.startswith("0") or code.startswith("3")):
+        return "stock"
+    if s.endswith(".BJ") or s.endswith(".BSE"):
+        return "stock"
+
+    return "unknown"
 
 
 # ============================================================================

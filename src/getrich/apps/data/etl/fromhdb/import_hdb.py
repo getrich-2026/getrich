@@ -13,7 +13,13 @@ from lntools.utils import Logger
 from getrich.config import settings
 
 from ..fromrq import init_rq
-from ..transforms import convert_symbol, normalize_date_string, normalize_datetime_column
+from ..transforms import (
+    convert_symbol,
+    get_symbol_type,
+    normalize_date_string,
+    normalize_datetime_column,
+)
+
 
 # 根据配置决定是否导入 HDB 模块
 if settings.hdb.enabled:
@@ -323,6 +329,8 @@ def prepare_day_bar_for_db(
 
     # 6. 添加数据源标识
     processed_df["provider"] = "gtja"
+    # 标的类型
+    processed_df["type"] = processed_df["symbol"].apply(get_symbol_type)
 
     # 7. 添加 trading_status (从 is_halt 映射)
     if "is_halt" in processed_df.columns:
@@ -347,6 +355,7 @@ def prepare_day_bar_for_db(
     output_columns = [
         "symbol",
         "dt",
+        "type",
         "pre_close",
         "open",
         "high",
@@ -466,6 +475,8 @@ def prepare_min_bar_for_db(df: pd.DataFrame) -> pd.DataFrame:
 
     # 7. 添加数据源标识
     processed_df["provider"] = "gtja"
+    # 标的类型
+    processed_df["type"] = processed_df["symbol"].apply(get_symbol_type)
 
     # 8. 处理日期类型
     processed_df["dt"] = pd.to_datetime(processed_df["dt"].astype(str)).dt.date
@@ -475,6 +486,7 @@ def prepare_min_bar_for_db(df: pd.DataFrame) -> pd.DataFrame:
         "symbol",
         "dt",
         "bar_time",
+        "type",
         "pre_close",
         "open",
         "high",

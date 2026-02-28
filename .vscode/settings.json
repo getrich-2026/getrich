@@ -1,7 +1,7 @@
 {
     // --- 1. Python 核心与类型检查 ---
     // 强制使用 Pylance 进行类型检查
-    "python.languageServer": "Pylance",
+    "python.languageServer": "None",
     // 对应 Copilot 指令中的 "Strict Type Hinting required"
     "python.analysis.autoImportCompletions": true,
     // 启用更智能的数据分析库自动补全

@@ -10,6 +10,7 @@ import pandas as pd
 import polars as pl
 from lntools.utils import Logger
 
+
 # Initialize Logger
 log = Logger(module_name="IFindAPI")
 

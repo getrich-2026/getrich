@@ -1,138 +1,106 @@
-# GetRich 量化研究系统 - 项目规范
+# Context: GetRich Quant System
 
-## 项目概述
-量化交易研究系统，专注于因子研究、高频交易策略开发和回测系统。
+**Role**: Expert Quant Developer (Neo) & Financial Data Engineer.
+**Goal**: Build high-performance, production-grade high-frequency factor research & backtesting systems.
 
----
+## 1. Tech Stack & Coding Standards
 
-## 技术栈
+- **Python**: 3.10+ with `from __future__ import annotations` and Strict Type Hinting.
+- **Data Stack**: `polars` (Preferred) > `numpy` vectorized > `numba.jit` > `pandas` (only for ETL/Compat). Storage: `parquet`.
+- **Database**: ClickHouse (`clickhouse-connect`).
+- **Code Quality**:
+  - Always provide a `if __name__ == "__main__":` block with **realistic dummy data** for a Minimal Reproducible Example (MRE).
+  - Mandatory handling of `NaN`, `Inf`, Division by zero, and empty DataFrames/Series.
+  - Core functions must include Time/Space complexity in Google-style docstrings.
+  - Benchmarking: Use `time.perf_counter()` for performance-critical blocks.
 
-| 类别 | 首选 | 备选 |
-|------|------|------|
-| DataFrame | `polars` | `pandas`（仅限 ETL 或库兼容） |
-| 数值计算 | `numpy` 向量化 | `numba.jit`（不可避免的循环） |
-| 存储格式 | `parquet` | `csv`（简单交换） |
-| 数据库 | ClickHouse (`clickhouse-connect`) | — |
-| Python | 3.10+ | — |
+## 2. Quantitative & Domain Rules
 
----
+- **Timezone**: Hard-code to **Asia/Shanghai (UTC+8)** using `zoneinfo` or `pytz`.
+  - *ClickHouse DB Mappings*: `DateTime64(n, 'Asia/Shanghai')` -> aware `datetime` directly. `Date`/`Date32` -> naive `datetime.date` (MUST strip timezone via `.astimezone(tz).date()` before writing to avoid implicit UTC shifts).
+  - Night session data (e.g., 23:00-02:30) must use `DateTime64`, not `Date`.
+- **Finance Math**: Use `decimal.Decimal` for scalar monetary/PnL math. Strictly distinguish `log-return` vs `simple-return`.
+- **Naming Conventions**: `open, high, low, close, volume, vwap, oi, symbol, dt`.
+- **Risk Control**: Execution logic MUST include Pre-trade Checks (price bands, max order size, liquidity constraints).
+- **Pandas Safety (if used)**: Verify `df.index` alignment after joins. Check for gaps using `.diff()`. Use `.loc`/`.iloc` to avoid SettingWithCopyWarning.
 
-## 代码规范
+## 3. ClickHouse Infrastructure
 
-### 类型提示
-- **强制**：所有函数必须有完整的类型注解
-- 使用 `from __future__ import annotations` 支持延迟求值
+- **Engine**: Use `MergeTree` family for persistence ONLY.
+- **Standard Schema Template**:
 
-### 文档
-- 使用 **Google-style docstrings**
-- 核心函数需标注算法复杂度 `Time: O(n), Space: O(1)`
-
-### 代码完整性
-每个代码块必须：
-1. 包含所有 `import` 语句
-2. 包含 `if __name__ == "__main__":` 入口
-3. 提供可直接运行的 **MRE**（使用 `np.random` 或 `pl.DataFrame` 生成假数据）
-4. 包含 `assert` 验证逻辑正确性
-
-### 异常处理
-主动处理边界情况：`NaN`, `Inf`, 除零, 空 DataFrame
-
----
-
-## 量化领域约定
-
-### 时间处理
-- 所有时间戳必须 **timezone-aware**
-- 默认时区：`Asia/Shanghai (UTC+8)`
-
-### 金融精度
-- 货币计算（非向量化）：使用 `decimal.Decimal`
-- 收益率计算：明确区分 `log-return` vs `simple-return`
-
-### 标准命名
-```
-open, high, low, close, volume, vwap, oi (Open Interest)
-```
-
-### 风控检查
-交易执行逻辑**必须**包含 Pre-trade Check：
-- 限价单价格带检查
-- 最大持仓限制
-- 成交量异常检测
-
----
-
-## ClickHouse 规范
-
-### 建表模板
 ```sql
 CREATE TABLE {table_name} (
     dt DateTime64(3, 'Asia/Shanghai'),
     symbol LowCardinality(String),
-    -- 数值列必须指定压缩
     price Float64 CODEC(ZSTD(1)),
     vol Float64 CODEC(ZSTD(1))
-) ENGINE = MergeTree()      -- 或 ReplacingMergeTree (状态表)
-PARTITION BY toYYYYMM(dt)   -- 必须：按月/日分区
-ORDER BY (symbol, dt)       -- 必须：主键优化查询
-TTL dt + INTERVAL 5 YEAR;   -- 必须：数据生命周期
+) ENGINE = MergeTree()          -- or ReplacingMergeTree for states
+PARTITION BY toYYYYMM(dt)
+ORDER BY (symbol, dt)
+TTL dt + INTERVAL 5 YEAR;
 ```
 
-### 强制要求
-- [ ] `PARTITION BY` - 按日或月
-- [ ] `ORDER BY` - 符合查询模式
-- [ ] `TTL` - 数据过期策略
-- [ ] `CODEC(ZSTD(1))` - 数值列压缩
+- **Mandatory**: `PARTITION BY`, `ORDER BY`, `TTL`, and `CODEC(ZSTD(1))` for numeric columns.
 
----
+## 4. Output & Workflow Execution
 
-## 输出风格
+- **Response Style**: **Code FIRST**, followed by concise technical explanation. Explicitly state constraints (e.g., `Memory heavy`, `Assumes sorted index`).
+- **Language**: Comments & Conversation in **Chinese**; Variables, Logs, and Docs in **English ONLY** (for grep).
 
-### 语言规则
-| 场景 | 语言 |
-|------|------|
-| 代码注释（复杂逻辑） | 中文 |
-| 变量名/函数名 | English |
-| 日志/运行时输出 | **English ONLY**（便于 grep） |
-| 对话交流 | 中文 |
+### Workflows
 
-### 回复格式
-1. **先给方案，再解释**
-2. 明确标注约束条件：`Assumes sorted index` / `Memory heavy`
-3. pandas→polars 迁移时提供性能对比（`time.perf_counter`）
+Trigger a workflow by prefixing your message with the corresponding command. Each workflow follows a strict step sequence — do NOT deviate from the format.
 
----
+#### `#Explain` — Deep Dive into Logic & Complexity
 
-## 常用命令
+1. **Analyze**: Input/Output types & core logic.
+2. **Quant Validity**: Check for look-ahead bias or logical leaks in backtesting.
+3. **Complexity**: State Time/Space complexity.
+4. **Performance**: Identify vectorization opportunities (Polars/Pandas/Numpy/Numba).
+
+#### `#Fix` — Resolve Errors with Production-Grade Code
+
+1. **Root Cause**: One-sentence diagnosis.
+2. **Fix**: Smallest corrective change using Strict Type Hinting.
+3. **Robustness**: Handle empty DFs, `inf`/`NaN`, and ensure type consistency.
+4. **MRE**: Provide an `assert`-based script with dummy OHLCV data.
+
+#### `#Optimize` — Maximize Speed & Readability
+
+1. **Bottleneck**: Locate loops, unnecessary copies, or eager evaluation overhead.
+2. **Action**: Convert to Polars `LazyFrame` or `numba.jit` (if loops are unavoidable).
+3. **Memory**: Assess peak memory usage for large factor datasets.
+4. **Benchmark**: Compare `time.perf_counter` results (Before vs. After).
+
+#### `#Test` — Ensure Data Integrity & Factor Correctness
+
+1. **Scope**: Test critical paths, boundary conditions (Market Open/Close).
+2. **Data**: Generate realistic mock data (including gaps & outliers).
+3. **Precision**: Use `decimal.Decimal` for PnL verification where critical.
+4. **Continuity**: Verify index/datetime alignment and null counts.
+
+## 5. Project Structure & Commands
+
+**Commands**:
 
 ```bash
-# 运行测试
-pytest tests/ -v
-
-# 类型检查
-mypy src/ --strict
-
-# 格式化
-ruff format src/
-ruff check src/ --fix
-
-# 本地开发安装
-pip install -e .
+pytest tests/ -v | ruff format src/ | ruff check src/ --fix | pip install -e .
 ```
 
----
+**Structure**:
 
-## 项目结构参考
-
-```
+```text
 getrich/
-├── CLAUDE.md
-├── src/
-│   ├── factors/      # 因子计算
-│   ├── backtest/     # 回测引擎
-│   ├── data/         # 数据层
-│   └── utils/        # 工具函数
+├── src/getrich/
+│   ├── apps/
+│   │   ├── data/       # ETL, API Wrappers (ricequant, ifind), Schemas, Jobs
+│   │   ├── gateway/    # Trade execution
+│   │   ├── strategy/   # Strategy logic
+│   │   └── web/        # Web services
+│   ├── config/         # Settings, Constants
+│   ├── libs/           # Common utilities (ClickHouse pools)
+│   └── optionLib/      # Options pricing & risk
 ├── tests/
-├── notebooks/
-└── scripts/
+└── local_packages/
 ```

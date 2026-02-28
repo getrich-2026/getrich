@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import pytz
 
+
 if TYPE_CHECKING:  # 避免循环导入问题
     from getrich.libs.clickhouse.database import ClickHouseClient
     from getrich.libs.clickhouse.pool import ClickHouseConnectionPool
@@ -58,6 +59,7 @@ class MinBarTable(ClickHouseTable):
         # 表结构定义
         self.table_schema = {
             "symbol": "LowCardinality(String)",
+            "type": "LowCardinality(String)",
             "dt": "Date",
             "bar_time": "DateTime",
             "pre_close": "Float64",
@@ -93,6 +95,7 @@ class MinBarTable(ClickHouseTable):
         CREATE TABLE {exists_clause} {self.table_name}
         (
             symbol LowCardinality(String) COMMENT '统一代码, e.g. 000300.XSHG',
+            type LowCardinality(String) DEFAULT '' COMMENT '标的类型' CODEC(ZSTD(1)),
             dt Date COMMENT '业务日期' CODEC(Delta, ZSTD(1)),
             bar_time DateTime COMMENT 'K 线对齐时间 (2025-12-31 10:00:00)' CODEC(Delta, ZSTD(1)) ,
             pre_close Float64 DEFAULT 0  COMMENT '前收盘价' CODEC(ZSTD(1)),
@@ -282,6 +285,7 @@ class DayBarTable(ClickHouseTable):
         # 表结构定义（与 MinBarTable 对齐类型）
         self.table_schema = {
             "symbol": "LowCardinality(String)",
+            "type": "LowCardinality(String)",
             "dt": "Date",
             "pre_close": "Float64",
             "open": "Float64",
@@ -319,6 +323,7 @@ class DayBarTable(ClickHouseTable):
         create_sql = f"""
         CREATE TABLE {exists_clause} {self.table_name} (
             symbol LowCardinality(String) COMMENT '统一代码',
+            type LowCardinality(String) DEFAULT '' COMMENT '标的类型' CODEC(ZSTD(1)),
             dt Date CODEC(Delta, ZSTD(1)) COMMENT '业务日期',
 
             pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '前收盘价',
