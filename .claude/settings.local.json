@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ln -s \"C:/Users/develop/.claude/CLAUDE.md\" \"C:/Users/develop/.gemini/GEMINI.md\")",
+      "Bash(cmd.exe /c \"dir /AL C:\\\\Users\\\\develop\\\\.gemini\"\")",
+      "Bash(cmd.exe /c \"dir /AL C:\\\\Users\\\\develop\\\\.gemini\\\\\")",
+      "Bash(cmd.exe /c \"mklink /H C:\\\\Users\\\\develop\\\\.gemini\\\\GEMINI.md C:\\\\Users\\\\develop\\\\.claude\\\\CLAUDE.md\")",
+      "Bash(cmd.exe /c \"chcp 65001 && mklink /H C:\\\\Users\\\\develop\\\\.gemini\\\\GEMINI.md C:\\\\Users\\\\develop\\\\.claude\\\\CLAUDE.md && echo SUCCESS\")"
+    ]
+  }
+}
