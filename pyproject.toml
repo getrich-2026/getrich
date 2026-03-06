@@ -86,7 +86,7 @@ ignore = ["D203"]
 
 [tool.ruff.format]
 # 类似 Black 的自动格式化
-quote-style = "double"
+quote-style = "double"  
 indent-style = "space"
 skip-magic-trailing-comma = false
 
@@ -115,8 +115,8 @@ addopts = "-v -ra --durations=10"
 # 过滤器：将特定警告视为错误 (严格模式)
 filterwarnings = ["ignore::DeprecationWarning"]
 
-[tool.pyright]
-typeCheckingMode = "standard"
+[tool.basedpyright]
+typeCheckingMode = "all"
 # 允许导入没有类型存根 (.pyi) 的第三方库 (如 tushare, CTP 接口)
 # 如果不加这行，导入这些库时 import 语句会报错
 reportMissingTypeStubs = false
