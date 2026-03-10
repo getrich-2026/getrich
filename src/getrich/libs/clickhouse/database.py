@@ -9,6 +9,7 @@ from lntools.utils import Logger
 
 from getrich.config.settings import settings
 
+
 log = Logger(module_name="ClickhouseClient")
 
 
@@ -238,6 +239,20 @@ class ClickHouseClient:
             log.info(f"Found {len(statements)} SQL statements in {file_path}")
 
             for i, sql in enumerate(statements):
+                # 检查是否只有注释或为空
+                # 移除单行注释 (-- ) 并检查是否有剩余内容
+                lines = sql.split("\n")
+                has_content = False
+                for line in lines:
+                    line_content = line.strip()
+                    if line_content and not line_content.startswith("--"):
+                        has_content = True
+                        break
+
+                if not has_content:
+                    log.debug(f"Skipping empty or comment-only statement {i + 1}")
+                    continue
+
                 log.info(f"Executing statement {i + 1}/{len(statements)}...")
                 if not self.execute(sql):
                     log.error(f"Failed to execute statement {i + 1} in {file_path}")

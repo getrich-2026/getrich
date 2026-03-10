@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXCSI1000WEIGHT (
     INDEXNAME_ENG String CODEC(ZSTD(1)),
     S_CON_WINDCODE String CODEC(ZSTD(1)),
     CON_SEC_ID String CODEC(ZSTD(1)),
-    EXCHANGE LowCardinality(String) CODEC(ZSTD(1)),
+    EXCHANGE LowCardinality(String),
     TOT_SHR Float64 CODEC(ZSTD(1)),
     FREE_SHR_RATIO Float64 CODEC(ZSTD(1)),
     SHR_CALCULATION Float64 CODEC(ZSTD(1)),
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXCSI1000WEIGHT (
     MV_CALCULATION Float64 CODEC(ZSTD(1)),
     WEIGHT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXCSI500WEIGHT (
     INDEXNAME String CODEC(ZSTD(1)),
     INDEXNAME_ENG String CODEC(ZSTD(1)),
     S_CON_WINDCODE String CODEC(ZSTD(1)),
-    EXCHANGE LowCardinality(String) CODEC(ZSTD(1)),
+    EXCHANGE LowCardinality(String),
     TOT_SHR Float64 CODEC(ZSTD(1)),
     FREE_SHR_RATIO Float64 CODEC(ZSTD(1)),
     SHR_CALCULATION Float64 CODEC(ZSTD(1)),
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXCSI500WEIGHT (
     MV_CALCULATION Float64 CODEC(ZSTD(1)),
     WEIGHT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXEODPRICES (
     OBJECT_ID String CODEC(ZSTD(1)),
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     TRADE_DT String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_DQ_PRECLOSE Float64 CODEC(ZSTD(1)),
     S_DQ_OPEN Float64 CODEC(ZSTD(1)),
     S_DQ_HIGH Float64 CODEC(ZSTD(1)),
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXEODPRICES (
     S_DQ_AMOUNT Float64 CODEC(ZSTD(1)),
     SEC_ID String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXHS300WEIGHT (
     I_WEIGHT_17 Float64 CODEC(ZSTD(1)),
     I_WEIGHT_18 Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXMEMBERS (
     S_CON_OUTDATE String CODEC(ZSTD(1)),
     CUR_SIGN Int32 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXMEMBERSWIND (
     S_CON_OUTDATE String CODEC(ZSTD(1)),
     CUR_SIGN Int32 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXWINDINDUSTRIESEOD (
     OBJECT_ID String CODEC(ZSTD(1)),
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     TRADE_DT String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_DQ_PRECLOSE Float64 CODEC(ZSTD(1)),
     S_DQ_OPEN Float64 CODEC(ZSTD(1)),
     S_DQ_HIGH Float64 CODEC(ZSTD(1)),
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS wind.AINDEXWINDINDUSTRIESEOD (
     S_DQ_VOLUME Float64 CODEC(ZSTD(1)),
     S_DQ_AMOUNT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS wind.ASAREPLANTRADE (
     SPECIAL_CHANGES_MEMO String CODEC(ZSTD(1)),
     PROGRAM_ADJUSTMENT_MEMO String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREACCOUNTSRECEIVABLE (
     RATE Float64 CODEC(ZSTD(1)),
     CURRENCY_CODE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREAGINGSTRUCTURE (
     MAX_AGING Float64 CODEC(ZSTD(1)),
     CLASSIFICATION_CRITERIA String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -261,7 +261,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREANNFINANCIALINDICATOR (
     REPORT_PERIOD String CODEC(ZSTD(1)),
     IFLISTED_DATA Float64 CODEC(ZSTD(1)),
     STATEMENT_TYPE Int32 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_FA_EPS_DILUTED Float64 CODEC(ZSTD(1)),
     S_FA_EPS_BASIC Float64 CODEC(ZSTD(1)),
     S_FA_EPS_DILUTED2 Float64 CODEC(ZSTD(1)),
@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREANNFINANCIALINDICATOR (
     S_INFO_DIV String CODEC(ZSTD(1)),
     MEMO String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -324,7 +324,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREANNINF (
     N_INFO_WINDLINK String CODEC(ZSTD(1)),
     N_INFO_ANNLINK_NEW String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -349,7 +349,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREAUCTION (
     ask_size_volume Float64 CODEC(ZSTD(1)),
     bid_size_volume Float64 CODEC(ZSTD(1)),
     opdate DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -375,7 +375,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREAUDITOPINION (
     S_AUDIT_RESULT_MEMO String CODEC(ZSTD(1)),
     S_IN_CONTROL_AUDIT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -391,7 +391,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREBALANCESHEET (
     ANN_DT String CODEC(ZSTD(1)),
     REPORT_PERIOD String CODEC(ZSTD(1)),
     STATEMENT_TYPE String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     MONETARY_CAP Float64 CODEC(ZSTD(1)),
     TRADABLE_FIN_ASSETS Float64 CODEC(ZSTD(1)),
     NOTES_RCV Float64 CODEC(ZSTD(1)),
@@ -566,7 +566,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREBALANCESHEET (
     RIGHT_USE_ASSETS Float64 CODEC(ZSTD(1)),
     LEASE_LIAB Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -582,12 +582,12 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREBLOCKTRADE (
     S_BLOCK_PRICE Float64 CODEC(ZSTD(1)),
     S_BLOCK_VOLUME Float64 CODEC(ZSTD(1)),
     S_BLOCK_AMOUNT Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_BLOCK_BUYERNAME String CODEC(ZSTD(1)),
     S_BLOCK_SELLERNAME String CODEC(ZSTD(1)),
     S_BLOCK_FREQUENCY Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -601,7 +601,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARECALENDAR (
     TRADE_DAYS String CODEC(ZSTD(1)),
     S_INFO_EXCHMARKET String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -667,7 +667,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARECAPITALIZATION (
     S_SHARE_NONTRADABLE Float64 CODEC(ZSTD(1)),
     IS_VALID Int32 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -683,7 +683,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARECASHFLOW (
     ANN_DT String CODEC(ZSTD(1)),
     REPORT_PERIOD String CODEC(ZSTD(1)),
     STATEMENT_TYPE String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     CASH_RECP_SG_AND_RS Float64 CODEC(ZSTD(1)),
     RECP_TAX_RENDS Float64 CODEC(ZSTD(1)),
     NET_INCR_DEP_COB Float64 CODEC(ZSTD(1)),
@@ -800,7 +800,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARECASHFLOW (
     RIGHT_USE_ASSETS_DEP Float64 CODEC(ZSTD(1)),
     OTHER_ACCOUNTS Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -822,13 +822,13 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREDESCRIPTION (
     S_INFO_LISTDATE String CODEC(ZSTD(1)),
     S_INFO_DELISTDATE String CODEC(ZSTD(1)),
     S_INFO_SEDOLCODE String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_INFO_PINYIN String CODEC(ZSTD(1)),
     S_INFO_LISTBOARDNAME String CODEC(ZSTD(1)),
     IS_SHSC Int32 CODEC(ZSTD(1)),
     S_INFO_COMPCODE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -854,7 +854,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREDIVIDEND (
     DVD_ANN_DT String CODEC(ZSTD(1)),
     S_DIV_BASEDATE String CODEC(ZSTD(1)),
     S_DIV_BASESHARE Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     ANN_DT String CODEC(ZSTD(1)),
     IS_CHANGED Float64 CODEC(ZSTD(1)),
     REPORT_PERIOD String CODEC(ZSTD(1)),
@@ -869,7 +869,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREDIVIDEND (
     DISTRI_PROFIT_PARENT_COMP Float64 CODEC(ZSTD(1)),
     TOT_CASH_DVD Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -926,7 +926,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREEARNINGEST (
     S_EST_PS Float64 CODEC(ZSTD(1)),
     S_EST_GROSS_PROFIT_MARGIN Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -939,7 +939,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREEODDERIVATIVEINDICATOR (
     OBJECT_ID String CODEC(ZSTD(1)),
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     TRADE_DT String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_VAL_MV Float64 CODEC(ZSTD(1)),
     S_DQ_MV Float64 CODEC(ZSTD(1)),
     S_PQ_HIGH_52W_ Float64 CODEC(ZSTD(1)),
@@ -974,7 +974,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREEODDERIVATIVEINDICATOR (
     UP_DOWN_LIMIT_STATUS Float64 CODEC(ZSTD(1)),
     LOWEST_HIGHEST_STATUS Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -987,7 +987,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREEODPRICES (
     OBJECT_ID String CODEC(ZSTD(1)),
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     TRADE_DT String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_DQ_PRECLOSE Float64 CODEC(ZSTD(1)),
     S_DQ_OPEN Float64 CODEC(ZSTD(1)),
     S_DQ_HIGH Float64 CODEC(ZSTD(1)),
@@ -1010,7 +1010,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREEODPRICES (
     S_DQ_STOPPING Float64 CODEC(ZSTD(1)),
     S_DQ_ADJCLOSE_BACKWARD Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -1056,7 +1056,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREESOPDESCRIPTION (
     ANN_DATE_NEW String CODEC(ZSTD(1)),
     ANN_DATE_IMPLEMENTATION String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1080,7 +1080,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREEXRIGHTDIVIDENDRECORD (
     SEO_RATIO Float64 CODEC(ZSTD(1)),
     CONSOLIDATE_SPLIT_RATIO Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1103,7 +1103,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREFINANCIALEXPENSE (
     S_STMNOTE_FINEXP Float64 CODEC(ZSTD(1)),
     S_STMNOTE_FINEXP_1 Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1119,7 +1119,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREFINANCIALINDICATOR (
     S_INFO_COMPCODE String CODEC(ZSTD(1)),
     ANN_DT String CODEC(ZSTD(1)),
     REPORT_PERIOD String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_FA_EXTRAORDINARY Float64 CODEC(ZSTD(1)),
     S_FA_DEDUCTEDPROFIT Float64 CODEC(ZSTD(1)),
     S_FA_GROSSMARGIN Float64 CODEC(ZSTD(1)),
@@ -1284,7 +1284,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREFINANCIALINDICATOR (
     RD_EXPENSE Float64 CODEC(ZSTD(1)),
     WAA_ROE Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1301,7 +1301,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREFREEFLOAT (
     CHANGE_DT1 String CODEC(ZSTD(1)),
     ANN_DT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1321,7 +1321,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREFREEFLOATCALENDAR (
     S_SHARE_LSTTYPECODE Int32 CODEC(ZSTD(1)),
     S_SHARE_LST_IS_ANN String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1353,7 +1353,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREGUARANTEESTATISTICS (
     AMOUNT_OF_GUARANTEE_TOTAL Float64 CODEC(ZSTD(1)),
     NET_ASSETS_RATE2 Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1370,7 +1370,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREHOLDERNUMBER (
     S_HOLDER_NUM Float64 CODEC(ZSTD(1)),
     S_HOLDER_TOTAL_NUM Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1397,7 +1397,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREILLEGALITY (
     BAN_YEAR Float64 CODEC(ZSTD(1)),
     REF_RULE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1413,7 +1413,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREINCOME (
     ANN_DT String CODEC(ZSTD(1)),
     REPORT_PERIOD String CODEC(ZSTD(1)),
     STATEMENT_TYPE String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     TOT_OPER_REV Float64 CODEC(ZSTD(1)),
     OPER_REV Float64 CODEC(ZSTD(1)),
     INT_INC Float64 CODEC(ZSTD(1)),
@@ -1520,7 +1520,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREINCOME (
     TOT_OPT_COST_DIF Float64 CODEC(ZSTD(1)),
     TOT_OPT_COST_DIF_MEMO String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1539,7 +1539,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREINCQUANTITYDETAILS (
     S_INC_TOTALQTYPCT Float64 CODEC(ZSTD(1)),
     ANN_DT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     S_INC_RATIO_TO_TOTALSHARES Float64 CODEC(ZSTD(1)),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
@@ -1558,7 +1558,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREINDUSTRIESCLASSCITICS (
     REMOVE_DT String CODEC(ZSTD(1)),
     CUR_SIGN String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1581,7 +1581,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREINDUSTRIESCODE (
     INDUSTRIESCODE_OLD String CODEC(ZSTD(1)),
     REGION_CODE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1609,7 +1609,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREINSIDEHOLDER (
     REPORT_PERIOD String CODEC(ZSTD(1)),
     S_HOLDER_NAT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1629,7 +1629,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREINSTHOLDERDERDATA (
     S_HOLDER_PCT Float64 CODEC(ZSTD(1)),
     ANN_DATE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     S_FLOAT_A_SHR Float64 CODEC(ZSTD(1)),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
@@ -1642,7 +1642,7 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS wind.ASHAREIPO (
     OBJECT_ID String CODEC(ZSTD(1)),
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_IPO_PRICE Float64 CODEC(ZSTD(1)),
     S_IPO_PRE_DILUTEDPE Float64 CODEC(ZSTD(1)),
     S_IPO_DILUTEDPE Float64 CODEC(ZSTD(1)),
@@ -1739,7 +1739,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREIPO (
     S_IPO_OVER_ALLOTMENT_SHR_NUM Float64 CODEC(ZSTD(1)),
     ASSET_SCALE_DDL_LAST_MONTHEND String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1761,7 +1761,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREIPOROADSHOW (
     PLACE String CODEC(ZSTD(1)),
     ADDRESS String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1779,7 +1779,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREISACTIVITY (
     S_SURVEYTIME String CODEC(ZSTD(1)),
     ANN_DT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     S_SURVEYTYPECODE Int32 CODEC(ZSTD(1)),
     S_SURVEYINSTIS_TOT Float64 CODEC(ZSTD(1)),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
@@ -1798,7 +1798,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREISPARTICIPANT (
     S_INSTITUTIONTYPE Float64 CODEC(ZSTD(1)),
     S_ANALYSTNAME String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1817,7 +1817,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREISQA (
     S_ANSWERCONTENT String CODEC(ZSTD(1)),
     ORIGINALWEBSITE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1836,7 +1836,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREISSUINGDATEPREDICT (
     S_STM_CORRECT_ISSUINGDATE String CODEC(ZSTD(1)),
     ANN_DT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1856,7 +1856,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREMAJOREVENT (
     S_EVENT_TEMPLATEID Int64 CODEC(ZSTD(1)),
     SEC_ID String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1878,7 +1878,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREMANAGEMENTHOLDREWARD (
     MANID String CODEC(ZSTD(1)),
     S_MANAGER_RETURN_OTHER Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -1918,7 +1918,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREMARGINTRADE (
     S_MARGIN_SALETRADINGAMOUNT Float64 CODEC(ZSTD(1)),
     S_MARGIN_SALEREPAYAMOUNT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -1945,7 +1945,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREMARGINTRADESUM (
     S_MARSUM_CIRCULATION_VALUE Float64 CODEC(ZSTD(1)),
     S_MARSUM_TURNOVER_AMOUNT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -1975,7 +1975,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREMJRHOLDERTRADE (
     TRADE_DETAIL String CODEC(ZSTD(1)),
     NEW_HOLD_TOT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2084,7 +2084,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREMONEYFLOW (
     BUY_VOLUME_SMALL_ORDER_ACT Float64 CODEC(ZSTD(1)),
     SELL_VOLUME_SMALL_ORDER_ACT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -2103,7 +2103,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREPLEDGEPROPORTION (
     S_TOT_SHR Float64 CODEC(ZSTD(1)),
     S_PLEDGE_RATIO Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2121,7 +2121,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREPREVIOUSNAME (
     S_INFO_NAME String CODEC(ZSTD(1)),
     CHANGEREASON Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2166,7 +2166,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREPROFITEXPRESS (
     S_EARLY_BPS Float64 CODEC(ZSTD(1)),
     ACTUAL_ANN_DT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2200,7 +2200,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREPROFITNOTICE (
     S_PROFITNOTICE_BASICEARNMAX Float64 CODEC(ZSTD(1)),
     S_PROFITNOTICE_LASTBASICEARN Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2222,7 +2222,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARERDEXPENDITURE (
     ITEM_NAME String CODEC(ZSTD(1)),
     ITEM_TYPE_NAME String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2241,10 +2241,10 @@ CREATE TABLE IF NOT EXISTS wind.ASHARERELATEDCLAIMSDEBTS (
     ASHARE_FUNDING_BALANCE Float64 CODEC(ZSTD(1)),
     REPORT_PERIOD String CODEC(ZSTD(1)),
     ANN_DT String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     CONNECTION_RELATION String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2307,7 +2307,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARERIGHTISSUE (
     S_HOLDER_SUBSCRIPTION_NUMBER Float64 CODEC(ZSTD(1)),
     S_HOLDER_SUBSCRIPTION_METHOD String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2320,7 +2320,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESALESSEGMENT (
     OBJECT_ID String CODEC(ZSTD(1)),
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     REPORT_PERIOD String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_SEGMENT_ITEMCODE Int32 CODEC(ZSTD(1)),
     S_SEGMENT_ITEM String CODEC(ZSTD(1)),
     S_SEGMENT_SALES Float64 CODEC(ZSTD(1)),
@@ -2338,7 +2338,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESALESSEGMENT (
     S_INFO_COMPCODE String CODEC(ZSTD(1)),
     SUBJECT_CODE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2352,7 +2352,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESEO (
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     S_FELLOW_PROGRESS Int32 CODEC(ZSTD(1)),
     S_FELLOW_ISSUETYPE String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_FELLOW_PRICE Float64 CODEC(ZSTD(1)),
     S_FELLOW_AMOUNT Float64 CODEC(ZSTD(1)),
     S_FELLOW_COLLECTION Float64 CODEC(ZSTD(1)),
@@ -2422,7 +2422,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESEO (
     NUM_SHARES_PREAONLINE Float64 CODEC(ZSTD(1)),
     SHARE_RECORDDATE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2440,7 +2440,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREST (
     ANN_DT String CODEC(ZSTD(1)),
     REASON String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2471,7 +2471,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESTOCKRATING (
     S_RATING_VALIDENDDT String CODEC(ZSTD(1)),
     REPORT_ID String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2498,7 +2498,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESTOCKRATINGCONSUS (
     S_EST_PRICE Float64 CODEC(ZSTD(1)),
     S_EST_PRICEINSTNUM Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2519,7 +2519,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESTOCKREPO (
     AMT Float64 CODEC(ZSTD(1)),
     S_DQ_HIGH Float64 CODEC(ZSTD(1)),
     S_DQ_LOW Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     STOCK_REPO_OBJECTIVE_CODE Int32 CODEC(ZSTD(1)),
     S_SHARE_LSTTYPECODE Int32 CODEC(ZSTD(1)),
     TOTAL_SHARE_RATIO Float64 CODEC(ZSTD(1)),
@@ -2533,7 +2533,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESTOCKREPO (
     SHARE_CANCELLATION_DATE String CODEC(ZSTD(1)),
     SHARE_CANCELLATION_QUANTITY Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2550,7 +2550,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARESWINDUSTRIESCLASS (
     REMOVE_DT String CODEC(ZSTD(1)),
     CUR_SIGN String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2569,7 +2569,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARETRADINGSUSPENSION (
     S_DQ_TIME String CODEC(ZSTD(1)),
     S_DQ_CHANGEREASONTYPE Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2604,7 +2604,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARETRUSTINVESTMENTTOT (
     RP_OTHER_TRANSACTIONS Float64 CODEC(ZSTD(1)),
     PRICING_PRINCIPLE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2620,7 +2620,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARETYPECODE (
     S_ORIGIN_TYPCODE String CODEC(ZSTD(1)),
     S_CLASSIFICATION String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2636,7 +2636,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHARETYPECODEZL (
     S_ORIGIN_TYPCODE String CODEC(ZSTD(1)),
     S_CLASSIFICATION String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2686,7 +2686,7 @@ CREATE TABLE IF NOT EXISTS wind.ASHAREYIELD (
     ALPHA_24M Float64 CODEC(ZSTD(1)),
     ALPHA_60M Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -2711,7 +2711,7 @@ CREATE TABLE IF NOT EXISTS wind.ASWSINDEXEOD (
     S_DQ_MV Float64 CODEC(ZSTD(1)),
     S_VAL_MV Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -2729,7 +2729,7 @@ CREATE TABLE IF NOT EXISTS wind.CBONDREPO (
     B_TENDER_METHOD Float64 CODEC(ZSTD(1)),
     B_INFO_REPO_TYPE Int32 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -2747,7 +2747,7 @@ CREATE TABLE IF NOT EXISTS wind.CFUTURESINSTOCK (
     AVAILABLE_IN_STOCK Float64 CODEC(ZSTD(1)),
     UNIT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2772,7 +2772,7 @@ CREATE TABLE IF NOT EXISTS wind.CFUTURESWAREHOUSESTOCKS (
     CANCELLED_WARRANTS Float64 CODEC(ZSTD(1)),
     EFFECTIVE_FORECAST Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2814,7 +2814,7 @@ CREATE TABLE IF NOT EXISTS wind.CHINAOPTIONCONTPRO (
     S_INFO_COUNITDIMENSION String CODEC(ZSTD(1)),
     S_INFO_ID String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2843,7 +2843,7 @@ CREATE TABLE IF NOT EXISTS wind.CHINAOPTIONDESCRIPTION (
     S_INFO_EXNAME String CODEC(ZSTD(1)),
     S_INFO_COUNIT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2869,7 +2869,7 @@ CREATE TABLE IF NOT EXISTS wind.CHINAOPTIONEODPRICES (
     S_DQ_CHANGE1 Float64 CODEC(ZSTD(1)),
     S_DQ_CHANGE2 Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -2883,7 +2883,7 @@ CREATE TABLE IF NOT EXISTS wind.CHINAOPTIONINDEXEODPRICES (
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     S_INFO_NAME String CODEC(ZSTD(1)),
     TRADE_DT String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_DQ_PRECLOSE Float64 CODEC(ZSTD(1)),
     S_DQ_OPEN Float64 CODEC(ZSTD(1)),
     S_DQ_HIGH Float64 CODEC(ZSTD(1)),
@@ -2895,7 +2895,7 @@ CREATE TABLE IF NOT EXISTS wind.CHINAOPTIONINDEXEODPRICES (
     S_DQ_AMOUNT Float64 CODEC(ZSTD(1)),
     SEC_ID String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -2917,7 +2917,7 @@ CREATE TABLE IF NOT EXISTS wind.CHINAOPTIONVALUATION (
     SURGED_LIMIT Float64 CODEC(ZSTD(1)),
     DECLINE_LIMIT Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -2931,7 +2931,7 @@ CREATE TABLE IF NOT EXISTS wind.CMFINDEXEOD (
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     S_INFO_NAME String CODEC(ZSTD(1)),
     TRADE_DT String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_DQ_PRECLOSE Float64 CODEC(ZSTD(1)),
     S_DQ_OPEN Float64 CODEC(ZSTD(1)),
     S_DQ_HIGH Float64 CODEC(ZSTD(1)),
@@ -2943,7 +2943,7 @@ CREATE TABLE IF NOT EXISTS wind.CMFINDEXEOD (
     S_DQ_CHANGE Float64 CODEC(ZSTD(1)),
     S_DQ_PCTCHANGE Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -2966,7 +2966,7 @@ CREATE TABLE IF NOT EXISTS wind.COPTIONDESCRIPTIONCHANGE (
     S_UNIT_NEW Float64 CODEC(ZSTD(1)),
     S_CHANGE_REASON String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -2986,7 +2986,7 @@ CREATE TABLE IF NOT EXISTS wind.COPTIONIMPLIEDVOLATILITY (
     SOURCE1 String CODEC(ZSTD(1)),
     TRADE_DT String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -3032,11 +3032,11 @@ CREATE TABLE IF NOT EXISTS wind.HKFINANCIALINDICATOR (
     faturn Float64 CODEC(ZSTD(1)),
     assetsturn Float64 CODEC(ZSTD(1)),
     input_costs Float64 CODEC(ZSTD(1)),
-    crncy_code LowCardinality(String) CODEC(ZSTD(1)),
+    crncy_code LowCardinality(String),
     ann_dt String CODEC(ZSTD(1)),
     div_payout_ratio Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -3054,7 +3054,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSCMEMBERS (
     S_INFO_COMPCODE String CODEC(ZSTD(1)),
     S_INFO_SECTOR String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -3081,7 +3081,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREDESCRIPTION (
     S_INFO_LISTBOARD String CODEC(ZSTD(1)),
     S_INFO_COMPCODE String CODEC(ZSTD(1)),
     S_INFO_STATUS Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_INFO_PAR Float64 CODEC(ZSTD(1)),
     MIN_PRC_CHG_UNIT Float64 CODEC(ZSTD(1)),
     S_INFO_UNITPERLOT Float64 CODEC(ZSTD(1)),
@@ -3094,7 +3094,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREDESCRIPTION (
     TIME12 DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
     S_INFO_PINYIN String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -3125,7 +3125,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREEODDERIVATIVEINDEX (
     S_VAL_PS_LYR Float64 CODEC(ZSTD(1)),
     S_VAL_PS_TTM Float64 CODEC(ZSTD(1)),
     S_DQ_TURN Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     NET_ASSETS_TODAY Float64 CODEC(ZSTD(1)),
     NET_PROFIT_PARENT_COMP_LYR Float64 CODEC(ZSTD(1)),
     NET_PROFIT_PARENT_COMP_TTM Float64 CODEC(ZSTD(1)),
@@ -3136,7 +3136,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREEODDERIVATIVEINDEX (
     NET_INCR_CASH_CASH_EQU_LYR Float64 CODEC(ZSTD(1)),
     NET_INCR_CASH_CASH_EQU_TTM Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -3149,7 +3149,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREEODPRICES (
     OBJECT_ID String CODEC(ZSTD(1)),
     S_INFO_WINDCODE String CODEC(ZSTD(1)),
     TRADE_DT String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_DQ_OPEN Float64 CODEC(ZSTD(1)),
     S_DQ_HIGH Float64 CODEC(ZSTD(1)),
     S_DQ_LOW Float64 CODEC(ZSTD(1)),
@@ -3167,7 +3167,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREEODPRICES (
     DIVIDEND_YIELD Float64 CODEC(ZSTD(1)),
     S_DQ_ADJCLOSE_BACKWARD Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -3196,7 +3196,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREEVENT (
     SPLIT_RATIO Float64 CODEC(ZSTD(1)),
     EXCHANGE_RATIO Float64 CODEC(ZSTD(1)),
     CANCELLATION_RATIO Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     FANN_DATE String CODEC(ZSTD(1)),
     NANN_DATE String CODEC(ZSTD(1)),
     RSTART_DATE String CODEC(ZSTD(1)),
@@ -3220,7 +3220,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREEVENT (
     TYPE_CODE Float64 CODEC(ZSTD(1)),
     TRANSFER_RATIO Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -3238,7 +3238,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREFINANCIALDERIVATIVE (
     FISCALYEAR String CODEC(ZSTD(1)),
     REPORT_TYPE String CODEC(ZSTD(1)),
     STATEMENT_TYPE String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     TOT_SHR Float64 CODEC(ZSTD(1)),
     OPPROFIT1 Float64 CODEC(ZSTD(1)),
     OPERATEINCOME Float64 CODEC(ZSTD(1)),
@@ -3357,7 +3357,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSHAREFINANCIALDERIVATIVE (
     YOYASSETS Float64 CODEC(ZSTD(1)),
     YOYEQUITY Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -3374,7 +3374,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSTOCKHSINDUSTRIESMEMBERS (
     REMOVE_DT String CODEC(ZSTD(1)),
     CUR_SIGN Int32 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -3390,7 +3390,7 @@ CREATE TABLE IF NOT EXISTS wind.HKSTOCKINDUSTRIESCODE (
     INDUSTRIESNAME String CODEC(ZSTD(1)),
     LEVELNUM Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -3408,7 +3408,7 @@ CREATE TABLE IF NOT EXISTS wind.SHSCCHANNELHOLDINGS (
     S_RATIO Float64 CODEC(ZSTD(1)),
     S_INFO_CODE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -3424,7 +3424,7 @@ CREATE TABLE IF NOT EXISTS wind.SZSCQFIIRQFIIINVESTORINFO (
     FORINS_HOLDER_PCT Float64 CODEC(ZSTD(1)),
     OBJECT_ID String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -3564,7 +3564,7 @@ CREATE TABLE IF NOT EXISTS wind.TB_OBJECT_1022 (
     OB_MEMO_1022 String CODEC(ZSTD(1)),
     OB_REVISIONS_1022 String CODEC(ZSTD(1)),
     PROGRESS String CODEC(ZSTD(1)),
-    CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CODE LowCardinality(String),
     LEVELNUM Int64 CODEC(ZSTD(1)),
     ISLIST String CODEC(ZSTD(1)),
     NAME String CODEC(ZSTD(1)),
@@ -5728,11 +5728,11 @@ CREATE TABLE IF NOT EXISTS wind.TOP5BYACCOUNTSRECEIVABLE (
     REPORT_PERIOD String CODEC(ZSTD(1)),
     S_INFO_COMPNAME String CODEC(ZSTD(1)),
     AMOUNT Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     PERIOD String CODEC(ZSTD(1)),
     REASON String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -5755,10 +5755,10 @@ CREATE TABLE IF NOT EXISTS wind.TOP5BYLONGTERMBORROWING (
     END_DT String CODEC(ZSTD(1)),
     AMOUNT1 Float64 CODEC(ZSTD(1)),
     AMOUNT2 Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     RATE String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -5776,11 +5776,11 @@ CREATE TABLE IF NOT EXISTS wind.TOP5BYOPERATINGINCOME (
     S_INFO_COMPNAME String CODEC(ZSTD(1)),
     S_INFO_COMPCODE2 String CODEC(ZSTD(1)),
     SALESAMOUNT Float64 CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     PCT Float64 CODEC(ZSTD(1)),
     INTERCHANGE_CODE Int32 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)
@@ -5801,7 +5801,7 @@ CREATE TABLE IF NOT EXISTS wind.WINDCHINAOPTIONVALUATION (
     W_ANAL_VEGA Float64 CODEC(ZSTD(1)),
     W_ANAL_RHO Float64 CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY substring(TRADE_DT, 1, 6)
@@ -5822,7 +5822,7 @@ CREATE TABLE IF NOT EXISTS wind.WINDCUSTOMCODE (
     S_INFO_EXCHMARKETNAME String CODEC(ZSTD(1)),
     S_INFO_EXCHMARKET String CODEC(ZSTD(1)),
     CRNCY_NAME String CODEC(ZSTD(1)),
-    CRNCY_CODE LowCardinality(String) CODEC(ZSTD(1)),
+    CRNCY_CODE LowCardinality(String),
     S_INFO_ISINCODE String CODEC(ZSTD(1)),
     S_INFO_CODE String CODEC(ZSTD(1)),
     S_INFO_NAME String CODEC(ZSTD(1)),
@@ -5838,7 +5838,7 @@ CREATE TABLE IF NOT EXISTS wind.WINDCUSTOMCODE (
     S_INFO_SECTYPESCODE Float64 CODEC(ZSTD(1)),
     S_INFO_PINYIN String CODEC(ZSTD(1)),
     OPDATE DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1)),
-    OPMODE LowCardinality(String) CODEC(ZSTD(1)),
+    OPMODE LowCardinality(String),
     UPDATE_GTJA DateTime64(3, 'Asia/Shanghai') CODEC(ZSTD(1))
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(OPDATE)

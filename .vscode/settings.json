@@ -1,7 +1,7 @@
 {
     // --- 1. Python 核心与类型检查 ---
     // 强制使用 Basedpyright 进行类型检查
-    "python.languageServer": "Default",
+    "python.languageServer": "None",
 
     "basedpyright.analysis.typeCheckingMode": "all", // 可选: "basic", "standard", "strict", "all"
     "basedpyright.analysis.diagnosticMode": "openFilesOnly", // 大型量化项目建议用 openFilesOnly 提升性能
@@ -75,5 +75,7 @@
         "plaintext": false,
         "markdown": true,
         "scminput": false
-    }
+    },
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
 }

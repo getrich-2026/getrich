@@ -53,24 +53,43 @@ getrich has the following **strong preferences** on top of global standards:
 
 ### 4.1 Engine & Schema Template
 
+**Time-series tables** (bars, ticks — high volume):
+
 ```sql
 CREATE TABLE {table_name} (
-    dt DateTime64(3, 'Asia/Shanghai'),
+    dt DateTime64(3, 'Asia/Shanghai') CODEC(Delta, ZSTD(1)),
     symbol LowCardinality(String),
     price Float64 CODEC(ZSTD(1)),
     vol Float64 CODEC(ZSTD(1))
-) ENGINE = MergeTree()          -- or ReplacingMergeTree for states
+) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(dt)
 ORDER BY (symbol, dt)
 TTL dt + INTERVAL 5 YEAR;
+```
+
+**Dimension tables** (instruments, calendar — low volume, high read frequency):
+
+```sql
+CREATE TABLE {table_name} (
+    symbol LowCardinality(String),
+    name String,
+    exchange LowCardinality(String),
+    listed_date Date
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (symbol);
 ```
 
 ### 4.2 Mandatory Requirements
 
 - Persistent tables: `MergeTree` family engines **only**.
 - Every table must include: `PARTITION BY`, `ORDER BY`, `TTL`.
-- Numeric columns must use `CODEC(ZSTD(1))`.
 - Symbol fields must use `LowCardinality(String)`.
+
+### 4.3 CODEC Strategy (by table type)
+
+- **Dimension tables**: No CODEC — rely on default LZ4. Data volume is small, frequent reads benefit from low decompression cost.
+- **Time-series tables**: `Float64`/`Int` numeric columns → `CODEC(ZSTD(1))`; `Date`/`DateTime` columns → `CODEC(Delta, ZSTD(1))`; `DateTime64` tick timestamps → `CODEC(DoubleDelta, ZSTD(1))`.
+- **Never CODEC**: `LowCardinality(String)` (already dictionary-encoded), `Enum8`/`UInt8` (too small to benefit).
 
 ---
 

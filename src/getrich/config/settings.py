@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+
 # Optional: Load dotenv if available
 try:
     from dotenv import load_dotenv
@@ -109,17 +110,13 @@ def find_or_create_env_file() -> Path:
     project_root = find_project_root()
     project_env_path = project_root / ".env"
 
-    # 优先级检查
+    # Priority check
+    if project_env_path.exists():
+        logging.getLogger("settings").info("Using .env from project directory: %s", project_env_path)
+        return project_env_path
+
     if user_env_path.exists():
         return user_env_path
-
-    if project_env_path.exists():
-        logging.getLogger("settings").info(
-            "Using .env from project directory: %s\nConsider moving it to user config: %s",
-            project_env_path,
-            user_env_path,
-        )
-        return project_env_path
 
     # 都不存在，创建默认配置
     user_config_dir.mkdir(parents=True, exist_ok=True)

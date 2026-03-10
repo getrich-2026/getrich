@@ -8,10 +8,11 @@ import pandas as pd
 import pytz
 
 
+from getrich.libs.clickhouse.table import ClickHouseTable
+
 if TYPE_CHECKING:  # 避免循环导入问题
     from getrich.libs.clickhouse.database import ClickHouseClient
     from getrich.libs.clickhouse.pool import ClickHouseConnectionPool
-    from getrich.libs.clickhouse.table import ClickHouseTable
 
 
 class MinBarTable(ClickHouseTable):
@@ -95,20 +96,20 @@ class MinBarTable(ClickHouseTable):
         CREATE TABLE {exists_clause} {self.table_name}
         (
             symbol LowCardinality(String) COMMENT '统一代码, e.g. 000300.XSHG',
-            type LowCardinality(String) DEFAULT '' COMMENT '标的类型' CODEC(ZSTD(1)),
-            dt Date COMMENT '业务日期' CODEC(Delta, ZSTD(1)),
-            bar_time DateTime COMMENT 'K 线对齐时间 (2025-12-31 10:00:00)' CODEC(Delta, ZSTD(1)) ,
-            pre_close Float64 DEFAULT 0  COMMENT '前收盘价' CODEC(ZSTD(1)),
-            open Float64 DEFAULT 0 COMMENT '开盘价' CODEC(ZSTD(1)),
-            high Float64 DEFAULT 0 COMMENT '最高价' CODEC(ZSTD(1)),
-            low Float64 DEFAULT 0 COMMENT '最低价' CODEC(ZSTD(1)),
-            close Float64 DEFAULT 0 COMMENT '收盘价' CODEC(ZSTD(1)),
-            volume Float64 DEFAULT 0 COMMENT '成交量' CODEC(ZSTD(1)),
-            amount Float64 DEFAULT 0 COMMENT '成交额' CODEC(ZSTD(1)),
-            open_interest Float64 DEFAULT 0 COMMENT '持仓量(期货)' CODEC(ZSTD(1)),
-            settle Float64 DEFAULT 0 COMMENT '结算价' CODEC(ZSTD(1)),
-            pre_settle Float64 DEFAULT 0 COMMENT '前结算价' CODEC(ZSTD(1)),
-            local_time DateTime64(3) COMMENT '本地时间' CODEC(Delta, ZSTD),
+            type LowCardinality(String) CODEC(ZSTD(1) DEFAULT '' COMMENT '标的类型',
+            dt Date CODEC(Delta, ZSTD(1)) COMMENT '业务日期',
+            bar_time DateTime CODEC(Delta, ZSTD(1)) COMMENT 'K 线对齐时间 (2025-12-31 10:00:00)',
+            pre_close Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '前收盘价',
+            open Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '开盘价',
+            high Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '最高价',
+            low Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '最低价',
+            close Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '收盘价',
+            volume Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '成交量',
+            amount Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '成交额',
+            open_interest Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '持仓量(期货)',
+            settle Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '结算价',
+            pre_settle Float64 CODEC(Delta, ZSTD(1) DEFAULT 0 COMMENT '前结算价',
+            local_time DateTime64(3) CODEC(Delta, ZSTD(1)) COMMENT '本地时间',
             provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
             updated_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3) COMMENT '数据更新时间'
         )
@@ -144,7 +145,7 @@ class MinBarTable(ClickHouseTable):
         读取 min_bar 表中的数据,支持灵活的日期和标的筛选。
 
         Args:
-            symbols: 标的代码,可以是单个字符串、字符串列表或 None(读取所有标的)
+            symbols: 标的代码,可以是单个字符串、字符串列表 or None(读取所有标的)
             start_date: 开始日期,支持 datetime 或字符串格式(如 '2020-01-01'),None 表示从 2005-01-01 开始
             end_date: 结束日期,支持 datetime 或字符串格式(如 '2025-12-31'),None 表示到当前日期
             columns: 需要查询的列名列表，None 表示查询所有列
@@ -154,7 +155,7 @@ class MinBarTable(ClickHouseTable):
             is_prefix: symbols 参数是否为前缀匹配模式
 
         Returns:
-            包含查询结果的 DataFrame (无数据时返回空 DataFrame)
+            包含查询结果 of DataFrame (无数据时返回空 DataFrame)
         """
         # 构建条件列表
         # 设定本地时区
@@ -323,28 +324,28 @@ class DayBarTable(ClickHouseTable):
         create_sql = f"""
         CREATE TABLE {exists_clause} {self.table_name} (
             symbol LowCardinality(String) COMMENT '统一代码',
-            type LowCardinality(String) DEFAULT '' COMMENT '标的类型' CODEC(ZSTD(1)),
+            type LowCardinality(String) CODEC(ZSTD(1) DEFAULT '' COMMENT '标的类型',
             dt Date CODEC(Delta, ZSTD(1)) COMMENT '业务日期',
 
-            pre_close Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '前收盘价',
-            open Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '开盘价',
-            high Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '最高价',
-            low Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '最低价',
-            close Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '收盘价',
-            volume Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '成交量',
-            amount Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '成交额',
+            pre_close Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '前收盘价',
+            open Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '开盘价',
+            high Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '最高价',
+            low Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '最低价',
+            close Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '收盘价',
+            volume Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '成交量',
+            amount Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '成交额',
             
-            pct_chg Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '涨跌幅',
-            pct_chg_log Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '对数涨跌幅',
-            adj_factor Float64 DEFAULT 1 CODEC(ZSTD(1)) COMMENT '复权因子',
-            amplitude Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '振幅',
+            pct_chg Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '涨跌幅',
+            pct_chg_log Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '对数涨跌幅',
+            adj_factor Float64 CODEC(ZSTD(1) DEFAULT 1 COMMENT '复权因子',
+            amplitude Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '振幅',
 
-            limit_up Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '涨停价',
-            limit_down Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '跌停价',
+            limit_up Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '涨停价',
+            limit_down Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '跌停价',
 
-            open_interest Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '持仓量',
-            settle Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '结算价',
-            pre_settle Float64 DEFAULT 0 CODEC(ZSTD(1)) COMMENT '前结算价',
+            open_interest Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '持仓量',
+            settle Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '结算价',
+            pre_settle Float64 CODEC(ZSTD(1) DEFAULT 0 COMMENT '前结算价',
 
             trading_status Enum8('NORMAL'=0, 'HALTED'=1, 'UNKNOWN'=2) DEFAULT 'UNKNOWN' COMMENT '交易状态',
             provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
@@ -382,7 +383,7 @@ class DayBarTable(ClickHouseTable):
         读取 day_bar 表中的数据,支持灵活的日期和标的筛选。
 
         Args:
-            symbols: 标的代码,可以是单个字符串、字符串列表或 None(读取所有标的)
+            symbols: 标的代码,可以是单个字符串、字符串列表 or None(读取所有标的)
             start_date: 开始日期,支持 datetime 或字符串格式(如 '2020-01-01'),None 表示从 2005-01-01 开始
             end_date: 结束日期,支持 datetime 或字符串格式(如 '2025-12-31'),None 表示到当前日期
             columns: 需要查询的列名列表，None 表示查询所有列
@@ -392,7 +393,7 @@ class DayBarTable(ClickHouseTable):
             is_prefix: symbols 参数是否为前缀匹配模式
 
         Returns:
-            包含查询结果的 DataFrame (无数据时返回空 DataFrame)
+            包含查询结果 of DataFrame (无数据时返回空 DataFrame)
         """
         # 构建条件列表
         # 设定本地时区
