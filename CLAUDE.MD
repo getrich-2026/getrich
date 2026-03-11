@@ -123,5 +123,20 @@ getrich/
 ## 6. Commands
 
 ```bash
+# General
 pytest tests/ -v | ruff format src/ | ruff check src/ --fix | pip install -e .
+
+# Workflow (Agent Only)
+/sync  # Synchronize work logs and tasks to .agent/brain/
 ```
+
+---
+
+## 7. Work Sync System
+
+To ensure continuity across AI sessions, we maintain a persistent state in `.agent/brain/`:
+
+- **[active_tasks.md](file:///.agent/brain/active_tasks.md)**: Current "In Progress" and "Todo" tasks.
+- **[work_log.md](file:///.agent/brain/work_log.md)**: Chronological summary of work completed and decisions made.
+
+**Sync Protocol**: At the end of a session or a major milestone, the agent MUST run the `/sync` workflow to update these files. New sessions MUST start by reading these files to recover context.
