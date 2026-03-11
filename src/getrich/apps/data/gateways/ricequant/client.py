@@ -41,11 +41,12 @@ class RQDataAPI:
             return
 
         try:
-            rq.init(api_key)  # pyright: ignore[reportPossiblyUnboundVariable]
+            rq.init("license", api_key)  # pyright: ignore[reportPossiblyUnboundVariable]
             self.is_initialized = True
             log.info("RiceQuant connection initialized successfully")
         except Exception as e:
             log.error(f"RiceQuant login exception: {e}")
+            raise RuntimeError(f"RiceQuant login failed: {e}") from e
 
     def get_all_instruments(
         self, inst_type: str = "CS", date: str | None = None, market: str = "cn"

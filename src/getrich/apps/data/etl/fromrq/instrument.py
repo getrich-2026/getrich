@@ -4,7 +4,7 @@ from pathlib import Path
 
 from lntools.utils import Logger, handle_path
 
-from getrich.apps.data.api.rqapi import RQDataAPI
+from getrich.apps.data.gateways.ricequant.client import RQDataAPI
 from getrich.libs.clickhouse.database import ClickHouseClient
 
 from ..transforms import (

@@ -1,5 +1,5 @@
 # Import from new API location
-from getrich.apps.data.api.rqapi import RQDataAPI
+from getrich.apps.data.gateways.ricequant.client import RQDataAPI
 
 from .constants import INSTRUMENT_TYPES
 from .instrument import export_all_instruments

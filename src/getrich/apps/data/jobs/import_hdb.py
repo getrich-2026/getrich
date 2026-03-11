@@ -476,29 +476,9 @@ class DataImportJob:
         Note:
             RiceQuant 合约导出由 .env 中的 RICEQUANT_ENABLED 配置控制
         """
-        from getrich.config import settings
-
         self.logger.info("=" * 80)
         self.logger.info(f"Starting day bar import: {start_year} - {end_year}")
         self.logger.info("=" * 80)
-
-        # 可选: 导出 RiceQuant 合约信息 (根据配置)
-        if settings.ricequant.enabled:
-            try:
-                from ..etl.fromrq import export_all_instruments, init_rq
-
-                self.logger.info("RiceQuant is enabled, exporting instruments...")
-                api = init_rq()
-                export_all_instruments(
-                    output_dir=str(self.hdb_base_path / "ricequant"),
-                    save_to_db=True,
-                    api=api,
-                )
-                self.logger.info("RiceQuant instruments exported successfully")
-            except Exception as e:
-                self.logger.error(f"Failed to export RiceQuant instruments: {e}")
-        else:
-            self.logger.info("RiceQuant is disabled, skipping instrument export")
 
         # 检查 day_bar 目录
         if not self.day_bar_path.exists():

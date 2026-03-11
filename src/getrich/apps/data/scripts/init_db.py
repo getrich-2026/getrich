@@ -4,6 +4,7 @@ from lntools.utils import Logger
 
 from getrich.libs.clickhouse.database import ClickHouseClient
 
+
 log = Logger(module_name="InitDB")
 
 

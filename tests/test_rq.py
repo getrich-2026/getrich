@@ -11,7 +11,7 @@ from typing import cast
 import pandas as pd
 import rqdatac as rq
 
-from getrich.apps.data.api import RQDataAPI
+from getrich.apps.data.gateways.ricequant.client import RQDataAPI
 from getrich.apps.data.etl.fromrq import export_all_instruments, init_rq
 from getrich.config import settings, setup_logging
 
@@ -34,13 +34,7 @@ def test_config() -> None:
 
     # 验证逻辑
     assert settings.ricequant.enabled is True, "RiceQuant should be enabled"
-    assert settings.ricequant.api_key.startswith("tcp://license:"), (
-        "API Key should start with tcp://license:"
-    )
-    assert settings.ricequant.api_key.endswith("@rqdatad-pro.ricequant.com:16011"), (
-        "API Key should end with server address"
-    )
-    assert len(settings.ricequant.api_key) > 100, "API Key should be sufficiently long"
+    assert len(settings.ricequant.api_key) > 50, "API Key should be sufficiently long"
 
     logger.info("✓ RiceQuant configuration checks PASSED")
 
@@ -65,9 +59,8 @@ def test_query() -> None:
     init_rq()
 
     # 测试查询停牌信息
-    # 使用 test_rq.py 原有的测试用例
-    symbol = "149566.XSHE"
-    df = cast(pd.DataFrame, rq.is_suspended(symbol, start_date="20260110", end_date="20260120"))
+    symbol = "000001.XSHE"
+    df = cast(pd.DataFrame, rq.is_suspended(symbol, start_date="20240110", end_date="20240120"))
 
     logger.info("Query result for %s:", symbol)
     print(df.head())

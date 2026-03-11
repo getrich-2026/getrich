@@ -1,7 +1,5 @@
 import os
 
-from lntools.utils import track_simple
-
 from getrich.apps.data.table import MinBarTable
 from getrich.libs.clickhouse import ClickHouseConnectionPool
 
@@ -28,9 +26,8 @@ def export_cs_min_bars(pool: ClickHouseConnectionPool, output_dir: str, years: l
         periods.append((y, 1, f"{y}-01-01", f"{y}-06-30", "H1"))  # 上半年
         # periods.append((y, 2, f"{y}-07-01", f"{y}-12-31", "H2"))  # 下半年
 
-    for year, _, start_date, end_date, period_label in track_simple(
-        periods, msg="Exporting CS min bars"
-    ):
+    for year, _, start_date, end_date, period_label in periods:
+        print(f"Exporting CS min bars for {year} {period_label}...")
         params = {"symbols": cs_symbols, "start": start_date, "end": end_date}
 
         SQL_QUERY = """
@@ -77,7 +74,8 @@ def export_indices_futures_min_bars(
     all_symbols = indices + futures_symbols
     print(f"Found {len(indices)} indices and {len(futures_symbols)} future symbols")
 
-    for year in track_simple(years, msg="Exporting Indices and Futures min bars"):
+    for year in years:
+        print(f"Exporting Indices and Futures min bars for {year}...")
         start_date = f"{year}-01-01"
         end_date = f"{year}-12-31"
 
