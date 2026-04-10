@@ -1,3 +1,4 @@
+-- Active: 1773109768346@@192.168.1.216@8123@default
 -- ============================================================
 -- GetRich Quant Platform — 分布式集群初始化 Schema
 -- 集群: quant_cluster (2-shard, ClickHouse Keeper)
@@ -572,24 +573,26 @@ ENGINE = Distributed('quant_cluster', 'market_data', 'bars_1d_local', sipHash64(
 
 -- 4.3 Tick 快照 (带 TTL)
 CREATE TABLE IF NOT EXISTS market_data.ticks_local ON CLUSTER 'quant_cluster' (
-    symbol LowCardinality(String),
-    ts DateTime64(3, 'Asia/Shanghai') CODEC(DoubleDelta, ZSTD(1)),
-    price Float64,
-    volume Float64,
-    bid1_price Float64,
-    bid1_volume Float64,
-    ask1_price Float64,
-    ask1_volume Float64,
-    bs_flag Enum8('Unknown'=0, 'Buy'=1, 'Sell'=2) COMMENT '主动买卖方向',
-    provider LowCardinality(String) DEFAULT 'UNKNOWN' COMMENT '数据来源',
-    received_at DateTime64(3) DEFAULT now64(3) COMMENT '入库物理时间，用于延时监控'
+    symbol      LowCardinality(String)                        COMMENT '统一代码',
+    ts          DateTime64(3, 'Asia/Shanghai')                CODEC(DoubleDelta, ZSTD(1)) COMMENT '成交时间',
+    price       Float64                                       CODEC(Gorilla, ZSTD(1))    COMMENT '成交价',
+    volume      Float64                                       CODEC(Delta, ZSTD(1))      COMMENT '成交量',
+    bid1_price  Float64                                       CODEC(Gorilla, ZSTD(1)),
+    bid1_volume Float64                                       CODEC(Delta, ZSTD(1)),
+    ask1_price  Float64                                       CODEC(Gorilla, ZSTD(1)),
+    ask1_volume Float64                                       CODEC(Delta, ZSTD(1)),
+    bs_flag     Enum8('Unknown'=0, 'Buy'=1, 'Sell'=2)        COMMENT '主动买卖方向',
+    provider    LowCardinality(String) DEFAULT 'UNKNOWN'      COMMENT '数据来源',
+    received_at DateTime64(3, 'Asia/Shanghai') DEFAULT now64(3, 'Asia/Shanghai') COMMENT '入库物理时间，用于延时监控'
 ) ENGINE = ReplicatedMergeTree(
     '/clickhouse/tables/{shard}/market_data/ticks', '{replica}'
 )
 PARTITION BY toYYYYMM(toDate(ts))
 ORDER BY (symbol, ts)
 TTL toDateTime(ts) + INTERVAL 30 DAY DELETE
-SETTINGS ttl_only_drop_parts = 1;
+SETTINGS
+    index_granularity = 8192,
+    ttl_only_drop_parts = 1;
 
 CREATE TABLE IF NOT EXISTS market_data.ticks ON CLUSTER 'quant_cluster'
 AS market_data.ticks_local
