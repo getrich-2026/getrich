@@ -1,0 +1,68 @@
+# =============================================================================
+# gold_miner - AmazingData 抓取系统配置
+# =============================================================================
+# 这里只放 "运行时开关", 不放业务参数.
+# 抓取什么 security_type / period / 起始日期 / 切块大小 等都在对应的
+# fetcher Python 类里硬编码 (见 src/fetchers/*.py).
+#
+# 运行:
+#   conda activate quant
+#   python main.py init                     # 全量初始化
+#   python main.py update                   # 每日增量更新
+#   python main.py update --only kline_day  # 只跑某个 fetcher
+#   python main.py list                     # 列出已注册的 fetcher
+# =============================================================================
+
+amazing_data:
+  username: "228200018953"
+  password: "22820001895320260330"
+  host: "120.86.124.106"
+  port: 8600
+
+storage:
+  # 所有 parquet 写入到这里; 结构:
+  #   <data_dir>/<fetcher_name>/<...>.parquet
+  data_dir: "./data"
+  # init 时是否清空 incremental 类 fetcher 的旧数据
+  # (FullReplace 类 fetcher 无论如何都会清空)
+  wipe_on_init: false
+
+# -----------------------------------------------------------------------------
+# 全局起始日期 (int8, 例 20240101)
+# - 所有 fetcher 都只拉取 >= start_date 的数据
+# - 会覆盖各 fetcher 类里硬编码的 INIT_START_DATE / START_DATE (取两者较大值)
+# - 留空 (null) 则使用类里的默认值 (一般是 20130101, AmazingData 历史起点)
+# -----------------------------------------------------------------------------
+start_date: 20260101
+
+logging:
+  level: "INFO"
+  file: "./logs/gold_miner.log"
+
+# -----------------------------------------------------------------------------
+# 限流 - AmazingData 服务端对连续请求有限速, 切块 + sleep 规避限流
+# -----------------------------------------------------------------------------
+rate_limit:
+  # 每个请求之间强制 sleep (秒)
+  sleep_between_requests_sec: 1.5
+  # 失败重试次数
+  max_retries: 5
+  # 重试指数退避基数 (秒): base * 2^(attempt-1)
+  retry_backoff_base_sec: 3.0
+  # 在两个 fetcher 之间额外的等待 (秒)
+  sleep_between_fetchers_sec: 5
+
+# =============================================================================
+# Fetcher 开关
+#   key       = fetcher 在代码里声明的 NAME (也是 data/ 下的目录名)
+#   enabled   = 是否跑
+# 业务参数 (security_types / period / init_start_date / 切块大小) 全部
+# 硬编码在各自的 fetcher 类里, 见 src/fetchers/*.py.
+# =============================================================================
+fetchers:
+  calendar:          { enabled: true  }
+  hist_code_list:    { enabled: true  }
+  backward_factor:   { enabled: true  }
+  kline_day:         { enabled: true  }
+  kline_min5:        { enabled: false }
+  kline_min1:        { enabled: false }

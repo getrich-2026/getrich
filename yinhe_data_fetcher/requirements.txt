@@ -1,0 +1,7 @@
+pandas>=2.0
+pyarrow>=12.0
+PyYAML>=6.0
+numpy>=1.24
+# AmazingData SDK 需要单独用 wheel 安装 (见 README.md):
+#   pip install tgw
+#   pip install AmazingData-0.0.6-py3-none-any.whl
