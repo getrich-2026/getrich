@@ -1,4 +1,4 @@
-# gold_miner
+# yinhe_data_fetcher
 
 基于 **AmazingData** (中国银河证券量化 SDK) 的本地化行情数据抓取系统。
 落盘格式统一为 **Parquet**, 所有数据写入 `./data/` 目录。
@@ -40,7 +40,7 @@ AmazingData SDK 自带的 `tgw` 运行时 **只提供 Linux x86_64 和 Windows x
 ## 目录结构
 
 ```
-gold_miner/
+yinhe_data_fetcher/
 ├── main.py                 # 主程序入口 (CLI)
 ├── config.yaml             # 运行时开关 (账号/存储/限流/启用项/start_date)
 ├── requirements.txt
@@ -153,7 +153,7 @@ python main.py update
 建议加到定时任务 (每日 18:00 收盘后):
 
 ```cron
-0 18 * * 1-5 cd /path/to/gold_miner && /path/to/miniconda3/envs/quant/bin/python main.py update >> logs/cron.log 2>&1
+0 18 * * 1-5 cd /path/to/yinhe_data_fetcher && /path/to/miniconda3/envs/quant/bin/python main.py update >> logs/cron.log 2>&1
 ```
 
 ### 只跑指定 fetcher
@@ -189,7 +189,7 @@ start_date: 20260101
 
 logging:
   level: "INFO"
-  file:  "./logs/gold_miner.log"
+  file:  "./logs/yinhe_data_fetcher.log"
 
 rate_limit:
   sleep_between_requests_sec: 1.5   # 每次请求后固定 sleep

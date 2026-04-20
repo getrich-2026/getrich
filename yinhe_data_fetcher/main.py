@@ -1,4 +1,4 @@
-"""gold_miner - 主程序入口.
+"""yinhe_data_fetcher - 主程序入口.
 
 用法:
     conda activate quant
@@ -25,7 +25,7 @@ from src.runner import Runner
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="gold_miner",
+        prog="yinhe_data_fetcher",
         description="AmazingData 本地化 parquet 抓取系统",
     )
     p.add_argument("-c", "--config", default="config.yaml", help="配置文件路径")
@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = Config.load(cfg_path)
 
     log = setup_logger(level=cfg.logging.level, file=cfg.logging.file)
-    log.info("gold_miner cmd=%s config=%s", args.cmd, cfg_path)
+    log.info("yinhe_data_fetcher cmd=%s config=%s", args.cmd, cfg_path)
 
     if args.cmd == "list":
         return cmd_list(cfg)

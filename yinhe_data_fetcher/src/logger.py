@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def setup_logger(level: str = "INFO", file: str | None = None) -> logging.Logger:
-    logger = logging.getLogger("gold_miner")
+    logger = logging.getLogger("yinhe_data_fetcher")
     logger.setLevel(level.upper())
     logger.handlers.clear()
 
@@ -32,7 +32,7 @@ def setup_logger(level: str = "INFO", file: str | None = None) -> logging.Logger
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
-    base = logging.getLogger("gold_miner")
+    base = logging.getLogger("yinhe_data_fetcher")
     if name:
         return base.getChild(name)
     return base
