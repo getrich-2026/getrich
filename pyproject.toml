@@ -1,0 +1,147 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "getrich"
+version = "0.1.2"
+description = "量化投研系统 - 模块化设计的多品种投研交易平台"
+readme = "README.md"
+authors = [{ name = "GetRich Team", email = "linnan@nebulastar.com.cn" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+keywords = [
+    "quantitative trading",
+    "futures",
+    "options",
+    "financial",
+    "trading system",
+]
+
+# 项目依赖
+dependencies = [
+    "akshare",
+    "clickhouse-connect",
+    "dotenv",
+    "lntools",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "polars",
+    "py_vollib",
+    "pyyaml",
+    "python-dateutil",
+    "rich",
+    "scikit-learn",
+    "scipy",
+    "seaborn",
+    "statsmodels",
+    "tqdm",
+    "rqdatac",
+]
+
+
+[tool.setuptools]
+zip-safe = false
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["getrich*"]
+exclude = ["tests*", "reference*", "docs*"]
+
+[tool.setuptools.package-data]
+"getrich.config" = ["*.yml"]
+"getrich.apps.data.table" = ["*.sql"]
+
+[tool.ruff]
+# 代码每行最大长度
+line-length = 100
+# 目标 Python 版本
+target-version = "py310"
+
+[tool.ruff.lint]
+# 融合后的规则集：你的原版 + 推荐增强
+# E/F: 标准错误
+# I: 自动导入排序 (Isort)
+# B: 潜在 Bug (Bugbear)
+# SIM: 代码简化 (Simplify) - 帮你写出更优雅的 Pythonic 代码
+# NPY: NumPy 专项规则 - 避免量化计算中的常见坑
+# UP: 语法现代化
+# N: 命名规范 (PEP8)
+select = ["E", "F", "I", "B", "SIM", "NPY", "UP", "N"]
+ignore = ["D203"]
+
+[tool.ruff.format]
+# 类似 Black 的自动格式化
+quote-style = "double"  
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint.isort]
+# 让 Ruff 像 isort 一样自动整理 import
+known-third-party = ["numpy", "pandas", "polars", "clickhouse_connect"]
+combine-as-imports = true
+lines-after-imports = 2
+
+[tool.ruff.lint.per-file-ignores]
+# 在 Notebook 中忽略某些规则 (如未使用的导入)
+"*.ipynb" = ["E402", "F401"]
+# 在 __init__.py 中允许未使用的导入 (通常用于暴露 API)
+"__init__.py" = ["F401"]
+
+[tool.pytest.ini_options]
+# 测试配置
+minversion = "7.0"
+# 自动发现测试文件
+testpaths = ["tests"]
+# 默认参数：
+# -v: 详细输出
+# -ra: 显示跳过/失败的原因
+# --durations=10: 列出最慢的 10 个测试 (用于性能优化)
+addopts = "-v -ra --durations=10"
+# 过滤器：将特定警告视为错误 (严格模式)
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.basedpyright]
+typeCheckingMode = "all"
+# 允许导入没有类型存根 (.pyi) 的第三方库 (如 tushare, CTP 接口)
+# 如果不加这行，导入这些库时 import 语句会报错
+reportMissingTypeStubs = false
+
+# 忽略因为库定义缺失导致的 "Unknown" 类型
+# 解决 Pandas/Polars/Numpy 链式调用产生大量 Unknown 的问题
+# reportUnknownArgumentType = false
+# reportUnknownVariableType = false
+# reportUnknownParameterType = false
+# reportUnknownMemberType = false
+# reportUnknownLambdaType = false
+reportUnusedImport = "warning"         # 让 Ruff 负责删除，但这里显示警告
+reportUnusedVariable = "warning"
+reportDuplicateImport = "error"
+pythonVersion = "3.10"
+
+# 允许我写 "多余" 的 isinstance 检查
+# 在实盘中，我不信任上游数据，即使 Type Hint 说它是 int，我也要 check 它是 int
+reportUnnecessaryIsInstance = false
+
+# 排除目录
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.git",
+    "**/.github",
+    "**/.vscode",
+]

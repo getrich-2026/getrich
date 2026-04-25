@@ -1,0 +1,31 @@
+{
+  "recommendations": [
+    // --- 核心 Python 开发 ---
+    "ms-python.python", // Python 语言支持
+    "ms-python.vscode-pylance", // 高性能语言服务器 (类型检查核心)
+    // "detachhead.basedpyright", // 基于 Pylance 的类型检查, Antigravity 使用
+    "charliermarsh.ruff", // 极速 Linter/Formatter (替代 Black/Isort/Flake8)
+    // --- 量化数据处理 (Parquet/CSV/Polars) ---
+    "mechatroner.rainbow-csv", // CSV 高亮与类 SQL 查询
+    "dvirtz.parquet-viewer", // 直接查看 Parquet 文件 (量化必备)
+    "ms-toolsai.data-wrangler", // 类似 Excel 的 DataFrame 查看器 (支持 Pandas/Polars)
+    "ms-toolsai.jupyter", // Jupyter Notebook 支持
+    // --- 数据库 (ClickHouse) ---
+    "cweijan.vscode-database-client2", // 通用数据库客户端，支持 ClickHouse/MySQL
+    // —— Docker & 远程开发（Ubuntu 虚拟机 / 服务器） ——
+    // "ms-azuretools.vscode-docker",
+    "ms-vscode-remote.remote-ssh",
+    "ms-vscode.remote-explorer",
+    "ms-vscode-remote.remote-containers",
+    // --- AI 辅助 ---
+    "GitHub.copilot-chat",
+    // --- 工程化 ---
+    "tamasfe.even-better-toml", // 处理 pyproject.toml 配置文件
+    "donjayamanne.githistory", // Git 历史追溯
+    "mhutchie.git-graph", // Git 图表
+    "tamasfe.even-better-toml", // 处理 pyproject.toml 配置文件
+    // —— 杂项效率工具 ——
+    "gruntfuggly.todo-tree", // 管理 TODO / FIXME
+    "charliermarsh.ruff", // 极速 Linter/Formatter (替代 Black/Isort/Flake8)
+  ]
+}
