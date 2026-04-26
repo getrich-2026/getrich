@@ -87,6 +87,20 @@ CLICKHOUSE_PROTOCOL = http
 # RICEQUANT_ENABLED = false
 # RICEQUANT_API_KEY = your_api_key_here
 
+# --- PostgreSQL 配置 (前端业务库) ---
+PG_HOST = 100.80.19.6
+PG_PORT = 5432
+PG_USER = quant
+PG_PASSWORD = your_password_here
+PG_DB = goldmine
+# PG_POOL_MIN = 2
+# PG_POOL_MAX = 20
+
+# --- Web 服务配置 (FastAPI) ---
+WEB_HOST = 0.0.0.0
+WEB_PORT = 8000
+WEB_CORS_ORIGINS = http://localhost:5173
+
 # --- 日志配置 (Logging Configuration) ---
 # LOG_LEVEL = INFO
 """
@@ -319,6 +333,77 @@ class InsightConfig:
 
 
 @dataclass(frozen=True)
+class PostgresConfig:
+    """PostgreSQL Database Configuration (前端业务库)"""
+
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str
+    min_size: int = 2
+    max_size: int = 20
+
+    @classmethod
+    def from_env(cls, strict: bool) -> PostgresConfig:
+        host = _get_env("PG_HOST", "100.80.19.6") or "100.80.19.6"
+        port_str = _get_env("PG_PORT", "5432")
+        user = _get_env("PG_USER", "quant") or "quant"
+        password = _get_env("PG_PASSWORD", "") or ""
+        database = _get_env("PG_DB", "goldmine") or "goldmine"
+
+        if not password:
+            _warn("PG_PASSWORD is not set", strict)
+
+        try:
+            port = int(port_str)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            _warn(f"Invalid PG_PORT: {port_str}", strict)
+            port = 5432
+
+        try:
+            min_size = int(_get_env("PG_POOL_MIN", "2") or 2)
+            max_size = int(_get_env("PG_POOL_MAX", "20") or 20)
+        except (TypeError, ValueError):
+            min_size, max_size = 2, 20
+
+        return cls(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database,
+            min_size=min_size,
+            max_size=max_size,
+        )
+
+
+@dataclass(frozen=True)
+class WebConfig:
+    """Web Service Configuration (FastAPI)"""
+
+    host: str
+    port: int
+    cors_origins: tuple[str, ...]
+
+    @classmethod
+    def from_env(cls, strict: bool) -> WebConfig:
+        host = _get_env("WEB_HOST", "0.0.0.0") or "0.0.0.0"
+        port_str = _get_env("WEB_PORT", "8000")
+        origins_str = _get_env("WEB_CORS_ORIGINS", "http://localhost:5173") or ""
+
+        try:
+            port = int(port_str)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            _warn(f"Invalid WEB_PORT: {port_str}", strict)
+            port = 8000
+
+        cors_origins = tuple(o.strip() for o in origins_str.split(",") if o.strip())
+
+        return cls(host=host, port=port, cors_origins=cors_origins)
+
+
+@dataclass(frozen=True)
 class Settings:
     """Global Settings Container"""
 
@@ -330,6 +415,8 @@ class Settings:
     ricequant: RiceQuantConfig
     hdb: HdbConfig
     insight: InsightConfig
+    postgres: PostgresConfig
+    web: WebConfig
 
     @property
     def is_dev(self) -> bool:
@@ -371,6 +458,8 @@ def load_settings(env_file: str | None = None) -> Settings:
     rq_config = RiceQuantConfig.from_env(strict=strict_mode)
     hdb_config = HdbConfig.from_env()
     insight_config = InsightConfig.from_env(strict=strict_mode)
+    pg_config = PostgresConfig.from_env(strict=strict_mode)
+    web_config = WebConfig.from_env(strict=strict_mode)
 
     return Settings(
         root=root,
@@ -381,6 +470,8 @@ def load_settings(env_file: str | None = None) -> Settings:
         ricequant=rq_config,
         hdb=hdb_config,
         insight=insight_config,
+        postgres=pg_config,
+        web=web_config,
     )
 
 

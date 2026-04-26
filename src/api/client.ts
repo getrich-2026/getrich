@@ -5,11 +5,17 @@ const client = axios.create({
   timeout: 10000,
 })
 
-// 请求拦截器：每次请求自动带上 token
+// 请求拦截器：每次请求自动带上 token + 开发期 mock 用户头
 client.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  // 开发期 mock 认证：后端读 X-User-Id 头识别用户
+  // 切到真实 JWT 后可以删掉
+  const demoUserId = import.meta.env.VITE_DEMO_USER_ID
+  if (demoUserId && !config.headers['X-User-Id']) {
+    config.headers['X-User-Id'] = demoUserId
   }
   return config
 })
