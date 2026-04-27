@@ -1,0 +1,26 @@
+# MANIFEST.in - 指定要包含在源码分发包中的额外文件
+
+# 包含文档文件
+include README.md
+include INSTALL.md
+include LICENSE
+
+# 包含配置文件
+include requirements.txt
+include setup_path.pth
+
+# 包含 ClickHouse 配置文件（注意：现在在 getrich/ 目录下）
+recursive-include getrich/config/config *.yml
+recursive-include getrich/config/table *.sql
+
+# 包含文档目录
+recursive-include docs *.md
+
+# 排除不需要的文件
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__
+global-exclude .git*
+global-exclude .DS_Store
+recursive-exclude tests *
+recursive-exclude reference *
