@@ -12,3 +12,6 @@ logs/
 *.whl
 *.parquet
 .DS_Store
+.codex
+.claude/
+.agents/
