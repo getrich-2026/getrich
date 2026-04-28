@@ -11,7 +11,7 @@
 --   5. 策略场景下：存在有效的周期订阅 user_strategy_subscriptions
 -- ============================================================
 
-CREATE OR REPLACE FUNCTION can_access_content(
+CREATE OR REPLACE FUNCTION frontend.can_access_content(
     p_user_id     UUID,
     p_access_tier SMALLINT,
     p_delay_free  INT,
@@ -41,8 +41,8 @@ BEGIN
 
     -- 3. 用户当前最高 tier
     SELECT mp.level INTO v_user_tier
-    FROM user_memberships um
-    JOIN membership_plans mp ON mp.id = um.plan_id
+    FROM frontend.user_memberships um
+    JOIN frontend.membership_plans mp ON mp.id = um.plan_id
     WHERE um.user_id = p_user_id
       AND um.status = 'active'
       AND um.expires_at > NOW()
@@ -55,7 +55,7 @@ BEGIN
 
     -- 4. PayG 授权（仅策略相关内容）
     IF p_strategy_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM strategy_access_grants
+        SELECT 1 FROM frontend.strategy_access_grants
         WHERE user_id = p_user_id
           AND strategy_id = p_strategy_id
           AND (expires_at IS NULL OR expires_at > NOW())
@@ -65,7 +65,7 @@ BEGIN
 
     -- 5. 周期订阅（仅策略相关内容）
     IF p_strategy_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM user_strategy_subscriptions
+        SELECT 1 FROM frontend.user_strategy_subscriptions
         WHERE user_id = p_user_id
           AND strategy_id = p_strategy_id
           AND status = 'active'
@@ -83,24 +83,24 @@ $$ LANGUAGE plpgsql STABLE;
 -- 返回每个 strategy_id 对应的 accessible 布尔值
 -- 用法：
 --   SELECT s.*, a.accessible
---   FROM strategies s
---   JOIN can_access_strategies_bulk($1, ARRAY(SELECT id FROM strategies WHERE ...)) a
+--   FROM frontend.strategies s
+--   JOIN frontend.can_access_strategies_bulk($1, ARRAY(SELECT id FROM frontend.strategies WHERE ...)) a
 --        ON a.strategy_id = s.id
 -- ============================================================
 
-CREATE OR REPLACE FUNCTION can_access_strategies_bulk(
+CREATE OR REPLACE FUNCTION frontend.can_access_strategies_bulk(
     p_user_id      UUID,
     p_strategy_ids UUID[]
 ) RETURNS TABLE (strategy_id UUID, accessible BOOLEAN) AS $$
     SELECT
         s.id,
-        can_access_content(
+        frontend.can_access_content(
             p_user_id,
             s.access_tier,
             NULL::INT,              -- 策略正文不走 delay_free
             s.published_at,
             s.id
         )
-    FROM strategies s
+    FROM frontend.strategies s
     WHERE s.id = ANY(p_strategy_ids);
 $$ LANGUAGE sql STABLE;

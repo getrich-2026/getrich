@@ -2,10 +2,10 @@
 -- 订单 & 支付
 -- ============================================================
 
-CREATE TABLE orders (
+CREATE TABLE frontend.orders (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     order_no        VARCHAR(50)     UNIQUE NOT NULL,        -- ORD-20260415-00001
-    user_id         UUID            NOT NULL REFERENCES users(id),
+    user_id         UUID            NOT NULL REFERENCES frontend.users(id),
 
     subtotal        NUMERIC(10,2)   NOT NULL,
     discount_amount NUMERIC(10,2)   NOT NULL DEFAULT 0,
@@ -29,9 +29,9 @@ CREATE TABLE orders (
 );
 
 -- 订单行项目
-CREATE TABLE order_items (
+CREATE TABLE frontend.order_items (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id        UUID            NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    order_id        UUID            NOT NULL REFERENCES frontend.orders(id) ON DELETE CASCADE,
 
     item_type       VARCHAR(30)     NOT NULL,               -- membership|strategy_payg|strategy_subscription|tool
     item_id         UUID            NOT NULL,               -- 对应 plan_id / strategy_id 等（由 item_type 决定）

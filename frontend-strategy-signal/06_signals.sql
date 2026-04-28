@@ -3,9 +3,9 @@
 -- ============================================================
 
 -- 批次（同一次调仓发出的多条信号共享一个 batch_code）
-CREATE TABLE signal_batches (
+CREATE TABLE frontend.signal_batches (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
-    strategy_id     UUID            NOT NULL REFERENCES strategies(id),
+    strategy_id     UUID            NOT NULL REFERENCES frontend.strategies(id),
     batch_code      VARCHAR(50)     UNIQUE NOT NULL,        -- STR-001-20260415-B01
     note            TEXT,                                   -- 本批调仓说明
     published_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
@@ -13,12 +13,12 @@ CREATE TABLE signal_batches (
 );
 
 -- 信号主表
-CREATE TABLE signals (
+CREATE TABLE frontend.signals (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     signal_code     VARCHAR(40)     UNIQUE NOT NULL,        -- SIG_20260415_001（对外展示）
-    strategy_id     UUID            NOT NULL REFERENCES strategies(id),
-    batch_id        UUID            REFERENCES signal_batches(id),
-    parent_signal_id UUID           REFERENCES signals(id), -- entry/exit 配对关联
+    strategy_id     UUID            NOT NULL REFERENCES frontend.strategies(id),
+    batch_id        UUID            REFERENCES frontend.signal_batches(id),
+    parent_signal_id UUID           REFERENCES frontend.signals(id), -- entry/exit 配对关联
 
     -- 标的信息
     market          VARCHAR(20)     NOT NULL,               -- A股|港股|美股|期货|外汇|加密
@@ -74,8 +74,8 @@ CREATE TABLE signals (
 );
 
 -- 信号触发时刻的行情快照（对应前端 5.2 信号详情页的市场数据区）
-CREATE TABLE signal_market_snapshot (
-    signal_id       UUID            NOT NULL REFERENCES signals(id) ON DELETE CASCADE,
+CREATE TABLE frontend.signal_market_snapshot (
+    signal_id       UUID            NOT NULL REFERENCES frontend.signals(id) ON DELETE CASCADE,
     symbol          VARCHAR(30)     NOT NULL,
     snapshot_time   TIMESTAMPTZ     NOT NULL,
 

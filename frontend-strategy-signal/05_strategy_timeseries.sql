@@ -8,8 +8,8 @@
 -- ============================================================
 
 -- 净值曲线（日度）
-CREATE TABLE strategy_equity_curve (
-    strategy_id         UUID            NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+CREATE TABLE frontend.strategy_equity_curve (
+    strategy_id         UUID            NOT NULL REFERENCES frontend.strategies(id) ON DELETE CASCADE,
     trade_date          DATE            NOT NULL,
     nav                 NUMERIC(12,6)   NOT NULL,           -- 单位净值（基准 1.000000）
     cumulative_return   NUMERIC(10,6),                      -- 累计收益率
@@ -21,8 +21,8 @@ CREATE TABLE strategy_equity_curve (
 );
 
 -- 绩效快照（每日跑一次，取最新一行即为"当前绩效"）
-CREATE TABLE strategy_performance_snapshot (
-    strategy_id             UUID            NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+CREATE TABLE frontend.strategy_performance_snapshot (
+    strategy_id             UUID            NOT NULL REFERENCES frontend.strategies(id) ON DELETE CASCADE,
     snapshot_date           DATE            NOT NULL,
 
     -- 收益指标
@@ -68,8 +68,8 @@ CREATE TABLE strategy_performance_snapshot (
 );
 
 -- 月度收益矩阵（年 x 月热力图数据源）
-CREATE TABLE strategy_monthly_returns (
-    strategy_id     UUID            NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+CREATE TABLE frontend.strategy_monthly_returns (
+    strategy_id     UUID            NOT NULL REFERENCES frontend.strategies(id) ON DELETE CASCADE,
     year            SMALLINT        NOT NULL,
     month           SMALLINT        NOT NULL CHECK (month BETWEEN 1 AND 12),
     monthly_return  NUMERIC(10,6)   NOT NULL,

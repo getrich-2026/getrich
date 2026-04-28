@@ -3,7 +3,7 @@
 -- ============================================================
 
 -- 策略分类（对应前端接口 4.1 GET /strategies/categories）
-CREATE TABLE strategy_categories (
+CREATE TABLE frontend.strategy_categories (
     id              VARCHAR(16)     PRIMARY KEY,            -- CAT_TREND / CAT_MR / CAT_ARB ...
     name            VARCHAR(64)     NOT NULL,
     description     VARCHAR(256),
@@ -13,10 +13,10 @@ CREATE TABLE strategy_categories (
 );
 
 -- 策略主表
-CREATE TABLE strategies (
+CREATE TABLE frontend.strategies (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     strategy_code   VARCHAR(32)     UNIQUE NOT NULL,        -- STR_FUT_001（对外展示 / URL slug）
-    author_id       UUID            NOT NULL REFERENCES users(id),
+    author_id       UUID            NOT NULL REFERENCES frontend.users(id),
 
     -- 基本信息
     name            VARCHAR(200)    NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE strategies (
     cover_image     TEXT,                                   -- 封面图 URL
 
     -- 分类 / 属性
-    category_id     VARCHAR(16)     REFERENCES strategy_categories(id),
+    category_id     VARCHAR(16)     REFERENCES frontend.strategy_categories(id),
     type            VARCHAR(30)     NOT NULL,               -- timing|stock_pick|hedge|arbitrage|macro
     asset_class     VARCHAR(30)     NOT NULL,               -- stock|future|option|equity|fx|crypto|mixed
     market          VARCHAR(16)     NOT NULL DEFAULT 'cn',  -- cn|hk|us
@@ -68,16 +68,16 @@ CREATE TABLE strategies (
 );
 
 -- 策略标签关联（使用 tags 表，适合"按 tag 查策略"）
-CREATE TABLE strategy_tags (
-    strategy_id     UUID            REFERENCES strategies(id) ON DELETE CASCADE,
-    tag_id          SMALLINT        REFERENCES tags(id) ON DELETE CASCADE,
+CREATE TABLE frontend.strategy_tags (
+    strategy_id     UUID            REFERENCES frontend.strategies(id) ON DELETE CASCADE,
+    tag_id          SMALLINT        REFERENCES frontend.tags(id) ON DELETE CASCADE,
     PRIMARY KEY (strategy_id, tag_id)
 );
 
 -- 关注（免费行为，仅用于消息推送目标过滤）
-CREATE TABLE strategy_follows (
-    user_id         UUID            REFERENCES users(id) ON DELETE CASCADE,
-    strategy_id     UUID            REFERENCES strategies(id) ON DELETE CASCADE,
+CREATE TABLE frontend.strategy_follows (
+    user_id         UUID            REFERENCES frontend.users(id) ON DELETE CASCADE,
+    strategy_id     UUID            REFERENCES frontend.strategies(id) ON DELETE CASCADE,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id, strategy_id)
 );

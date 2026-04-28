@@ -3,9 +3,9 @@
 -- ============================================================
 
 -- 信号已读 + 执行记录（对应前端 5.3 POST /signals/{id}/read、5.4 execute）
-CREATE TABLE user_signal_reads (
-    user_id         UUID            NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    signal_id       UUID            NOT NULL REFERENCES signals(id) ON DELETE CASCADE,
+CREATE TABLE frontend.user_signal_reads (
+    user_id         UUID            NOT NULL REFERENCES frontend.users(id) ON DELETE CASCADE,
+    signal_id       UUID            NOT NULL REFERENCES frontend.signals(id) ON DELETE CASCADE,
     read_at         TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
 
     -- 执行反馈
@@ -19,8 +19,8 @@ CREATE TABLE user_signal_reads (
 );
 
 -- 用户全局推送设置（对应前端 5.6/5.7 GET/PUT /user/signal-settings）
-CREATE TABLE user_signal_settings (
-    user_id              UUID           PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+CREATE TABLE frontend.user_signal_settings (
+    user_id              UUID           PRIMARY KEY REFERENCES frontend.users(id) ON DELETE CASCADE,
     push_enabled         BOOLEAN        NOT NULL DEFAULT TRUE,
 
     -- 推送渠道开关：{"app_push":true,"sms":false,"email":true,"wechat_service":true,"websocket":true}
@@ -36,9 +36,9 @@ CREATE TABLE user_signal_settings (
 );
 
 -- 单策略级别的推送覆盖设置
-CREATE TABLE user_strategy_signal_settings (
-    user_id              UUID           NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    strategy_id          UUID           NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+CREATE TABLE frontend.user_strategy_signal_settings (
+    user_id              UUID           NOT NULL REFERENCES frontend.users(id) ON DELETE CASCADE,
+    strategy_id          UUID           NOT NULL REFERENCES frontend.strategies(id) ON DELETE CASCADE,
     push_enabled         BOOLEAN        NOT NULL DEFAULT TRUE,
     confidence_threshold NUMERIC(3,2),                      -- NULL 表示继承全局配置
     notify_entry_only    BOOLEAN        NOT NULL DEFAULT FALSE,

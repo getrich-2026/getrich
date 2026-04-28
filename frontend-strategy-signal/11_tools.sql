@@ -2,7 +2,7 @@
 -- 工具
 -- ============================================================
 
-CREATE TABLE tools (
+CREATE TABLE frontend.tools (
     id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     slug            VARCHAR(100)    UNIQUE NOT NULL,        -- margin-calculator / stock-screener
     name            VARCHAR(100)    NOT NULL,
@@ -15,10 +15,10 @@ CREATE TABLE tools (
 );
 
 -- 使用日志（限流 & 分析）
-CREATE TABLE tool_usage_logs (
+CREATE TABLE frontend.tool_usage_logs (
     id              BIGSERIAL       PRIMARY KEY,
-    tool_id         UUID            NOT NULL REFERENCES tools(id),
-    user_id         UUID            REFERENCES users(id),
+    tool_id         UUID            NOT NULL REFERENCES frontend.tools(id),
+    user_id         UUID            REFERENCES frontend.users(id),
     params          JSONB,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );

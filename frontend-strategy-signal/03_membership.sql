@@ -7,7 +7,7 @@
 -- ============================================================
 
 -- 会员套餐定义
-CREATE TABLE membership_plans (
+CREATE TABLE frontend.membership_plans (
     id              SMALLSERIAL     PRIMARY KEY,
     name            VARCHAR(50)     NOT NULL,
     level           SMALLINT        NOT NULL UNIQUE,        -- 1 | 2 | 3
@@ -18,10 +18,10 @@ CREATE TABLE membership_plans (
 );
 
 -- 用户会员记录（历史记录保留）
-CREATE TABLE user_memberships (
+CREATE TABLE frontend.user_memberships (
     id              BIGSERIAL       PRIMARY KEY,
-    user_id         UUID            NOT NULL REFERENCES users(id),
-    plan_id         SMALLINT        NOT NULL REFERENCES membership_plans(id),
+    user_id         UUID            NOT NULL REFERENCES frontend.users(id),
+    plan_id         SMALLINT        NOT NULL REFERENCES frontend.membership_plans(id),
     started_at      TIMESTAMPTZ     NOT NULL,
     expires_at      TIMESTAMPTZ     NOT NULL,
     auto_renew      BOOLEAN         NOT NULL DEFAULT FALSE,

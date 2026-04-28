@@ -1,6 +1,8 @@
 -- ============================================================
 -- PostgreSQL 扩展
 -- ============================================================
+CREATE SCHEMA IF NOT EXISTS frontend;
+
 -- pgcrypto 提供 gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
