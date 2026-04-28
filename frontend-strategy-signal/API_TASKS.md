@@ -14,7 +14,7 @@
 | **T0.1** 项目骨架 | 目录结构 `app/{routers,services,schemas,deps,core}`；`main.py` 注册路由；`config.py` 读取环境变量（DB_URL、REDIS_URL、SECRET_KEY 等） |
 | **T0.2** 统一响应格式 | Pydantic 封装 `ApiResponse[T]`：`{"code":0,"data":...,"msg":"ok"}`；全局异常 handler 统一返回格式 |
 | **T0.3** Auth 中间件 | JWT 解析 → `current_user: User \| None`；`require_auth` 依赖项；会话从 `user_sessions` 验证，revoked/expired 均 401 |
-| **T0.4** AccessService | 封装 `can_access_content(user_id, tier, delay_free, published_at, strategy_id=None)` → 调用 PG 函数；Redis 缓存键 `access:{user_id}:{strategy_id}`，TTL 300s；批量版 `can_access_strategies_bulk()` 供列表页使用 |
+| **T0.4** AccessService | 封装 `frontend.can_access_content(user_id, tier, delay_free, published_at, strategy_id=None)` → 调用 PG 函数；Redis 缓存键 `access:{user_id}:{strategy_id}`，TTL 300s；批量版 `frontend.can_access_strategies_bulk()` 供列表页使用 |
 | **T0.5** 分页工具 | `PageParams(page, page_size)`；`PagedData[T](items, total, page, page_size)` |
 | **T0.6** 限流中间件 | Redis 滑动窗口；接口默认 60 req/min；支付回调接口 10 req/min |
 | **T0.7** Code↔UUID 解析器 | `resolve_strategy(code_or_uuid)` → `UUID`；`resolve_signal(code_or_uuid)` → `UUID`；结果 Redis 缓存 `str:id:{code}`，TTL 3600s |
@@ -28,8 +28,8 @@
 | 任务 | 接口 | 关键点 |
 |------|------|--------|
 | **T1.1** 分类列表 | `GET /strategies/categories` | 查 `strategy_categories`，按 `sort_order`；结果 Redis 缓存 `str:cats`，TTL 3600s |
-| **T1.2** 策略列表 | `GET /strategies` | 过滤：`category_id, type, asset_class, risk_level, market, keyword`；排序：`order.field`（sharpe/annual_return/follower_count/published_at）+ `order.direction`；调 `can_access_strategies_bulk()`；Redis 缓存摘要 `str:summary:{id}`，TTL 60s |
-| **T1.3** 策略详情 | `GET /strategies/{code_or_id}` | 调 `resolve_strategy()`；`can_access_content()` 控制 `detail_html` 字段是否返回；缓存 `str:detail:{id}`，TTL 30s |
+| **T1.2** 策略列表 | `GET /strategies` | 过滤：`category_id, type, asset_class, risk_level, market, keyword`；排序：`order.field`（sharpe/annual_return/follower_count/published_at）+ `order.direction`；调 `frontend.can_access_strategies_bulk()`；Redis 缓存摘要 `str:summary:{id}`，TTL 60s |
+| **T1.3** 策略详情 | `GET /strategies/{code_or_id}` | 调 `resolve_strategy()`；`frontend.can_access_content()` 控制 `detail_html` 字段是否返回；缓存 `str:detail:{id}`，TTL 30s |
 | **T1.4** 净值曲线 | `GET /strategies/{id}/equity-curve` | 查 `strategy_equity_curve`；支持 `start_date/end_date` 过滤；按 `trade_date ASC` 返回 |
 | **T1.5** 月度收益 | `GET /strategies/{id}/monthly-returns` | 查 `strategy_monthly_returns`；按 `year DESC, month DESC`；返回 `[[year, month, return], ...]` |
 | **T1.6** 绩效快照 | `GET /strategies/{id}/performance` | 取 `strategy_performance_snapshot` 最新一条（`snapshot_date DESC LIMIT 1`）|
@@ -41,7 +41,7 @@
 
 | 任务 | 接口 | 关键点 |
 |------|------|--------|
-| **T2.1** 信号详情 | `GET /signals/{code_or_id}` | `can_access_content()`；返回 `signal_market_snapshot`；附 `is_read/is_executed` |
+| **T2.1** 信号详情 | `GET /signals/{code_or_id}` | `frontend.can_access_content()`；返回 `signal_market_snapshot`；附 `is_read/is_executed` |
 | **T2.2** 标记已读 | `POST /signals/{id}/read` | `INSERT INTO user_signal_reads ... ON CONFLICT DO NOTHING`；失效 Redis `sig:unread:{user_id}` |
 | **T2.3** 标记执行 | `POST /signals/{id}/execute` | `INSERT ... ON CONFLICT DO UPDATE`；更新 `executed_price, executed_qty, executed_at, note` |
 | **T2.4** 未读统计 | `GET /signals/unread-summary` | 按 `strategy_id` 分组统计未读数；结果 Redis 缓存 `sig:unread:{user_id}`，TTL 60s |

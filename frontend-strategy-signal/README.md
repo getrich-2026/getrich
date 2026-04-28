@@ -1,6 +1,6 @@
 # GetRich 前端业务数据库 — 初始化 SQL
 
-面向前端"策略 + 信号"模块的全量 PostgreSQL 初始化脚本。按文件名数字前缀的顺序执行即可。
+面向前端"策略 + 信号"模块的全量 PostgreSQL 初始化脚本。按文件名数字前缀的顺序执行即可，所有业务对象会创建在 `frontend` schema 下。
 
 ## 执行顺序
 
@@ -16,7 +16,7 @@ done
 
 | 顺序 | 文件 | 内容 |
 |------|------|------|
-| 00 | `00_extensions.sql` | `pgcrypto`（UUID）、`pg_trgm`（模糊搜索） |
+| 00 | `00_extensions.sql` | `frontend` schema、`pgcrypto`（UUID）、`pg_trgm`（模糊搜索） |
 | 01 | `01_users.sql` | 用户、认证、微信、会话、验证码 |
 | 02 | `02_tags.sql` | 统一标签表（策略/文章共用） |
 | 03 | `03_membership.sql` | 会员套餐 + 用户会员记录 |
@@ -39,7 +39,7 @@ done
 - API 层可通过 `code` 或 `id` 任一查询，内部关联使用 UUID
 
 ### 2. 访问控制：三条并存路径
-由 `can_access_content()` 函数统一判断，任一成立即可访问：
+由 `frontend.can_access_content()` 函数统一判断，任一成立即可访问：
 
 1. **内容公开**：`access_tier = 0`
 2. **延迟免费到期**：发布 N 小时后对所有人开放
@@ -47,7 +47,7 @@ done
 4. **PayG 一次性授权**：`strategy_access_grants`（由订单触发）
 5. **周期订阅有效**：`user_strategy_subscriptions`（monthly/yearly，对应前端 4.8）
 
-列表场景请用 `can_access_strategies_bulk()` 批量版，避免在循环里一条条调。
+列表场景请用 `frontend.can_access_strategies_bulk()` 批量版，避免在循环里一条条调。
 
 ### 3. 订阅模型
 系统同时支持三种付费形态，互不冲突：
@@ -79,17 +79,20 @@ done
 
 ```sql
 -- 按相反顺序 DROP（注意 CASCADE）
-DROP TABLE IF EXISTS tool_usage_logs, tools,
-  comment_likes, article_comments, article_likes, article_tags, articles,
-  user_strategy_subscriptions, strategy_access_grants,
-  order_items, orders,
-  user_strategy_signal_settings, user_signal_settings, user_signal_reads,
-  signal_market_snapshot, signals, signal_batches,
-  strategy_monthly_returns, strategy_performance_snapshot, strategy_equity_curve,
-  strategy_follows, strategy_tags, strategies, strategy_categories,
-  user_memberships, membership_plans,
-  tags,
-  user_sessions, user_wechat, verification_codes, user_auth, users
+DROP TABLE IF EXISTS frontend.tool_usage_logs, frontend.tools,
+  frontend.comment_likes, frontend.article_comments, frontend.article_likes, frontend.article_tags, frontend.articles,
+  frontend.user_strategy_subscriptions, frontend.strategy_access_grants,
+  frontend.order_items, frontend.orders,
+  frontend.user_strategy_signal_settings, frontend.user_signal_settings, frontend.user_signal_reads,
+  frontend.signal_market_snapshot, frontend.signals, frontend.signal_batches,
+  frontend.strategy_monthly_returns, frontend.strategy_performance_snapshot, frontend.strategy_equity_curve,
+  frontend.strategy_follows, frontend.strategy_tags, frontend.strategies, frontend.strategy_categories,
+  frontend.user_memberships, frontend.membership_plans,
+  frontend.tags,
+  frontend.user_sessions, frontend.user_wechat, frontend.verification_codes, frontend.user_auth, frontend.users
   CASCADE;
-DROP FUNCTION IF EXISTS can_access_content, can_access_strategies_bulk;
+DROP FUNCTION IF EXISTS
+  frontend.can_access_content(UUID, SMALLINT, INT, TIMESTAMPTZ, UUID),
+  frontend.can_access_strategies_bulk(UUID, UUID[]);
+DROP SCHEMA IF EXISTS frontend;
 ```

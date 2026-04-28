@@ -416,7 +416,7 @@ paths:
       description: |
         支持多维过滤 + 排序 + 关键词搜索（pg_trgm 模糊匹配）。
         - 匿名用户可查看列表，但 is_subscribed 字段始终为 false。
-        - 批量调用 can_access_strategies_bulk() 判断访问权限，避免 N+1。
+        - 批量调用 frontend.can_access_strategies_bulk() 判断访问权限，避免 N+1。
       operationId: listStrategies
       security: []
       parameters:
@@ -540,7 +540,7 @@ paths:
       summary: 获取策略详情
       description: |
         策略详情页核心接口。
-        - detail_html 仅在 can_access_content() = true 时返回完整内容，否则返回 null。
+        - detail_html 仅在 frontend.can_access_content() = true 时返回完整内容，否则返回 null。
         - 登录用户附带 is_subscribed 和 subscription_info。
       operationId: getStrategy
       security: []
@@ -607,7 +607,7 @@ paths:
       description: |
         数据源：strategy_equity_curve 表。
         - period 与 start_date/end_date 二选一，自定义日期优先。
-        - 需 can_access_content() 通过才返回完整数据。
+        - 需 frontend.can_access_content() 通过才返回完整数据。
       operationId: getEquityCurve
       parameters:
         - $ref: '#/components/parameters/StrategyId'
@@ -1269,7 +1269,7 @@ paths:
       summary: 获取信号详情
       description: |
         包含信号全量信息、触发时刻行情快照、历史类似信号表现、关联信号、用户状态。
-        访问控制由 can_access_content() 决定。
+        访问控制由 frontend.can_access_content() 决定。
       operationId: getSignal
       parameters:
         - $ref: '#/components/parameters/SignalId'
