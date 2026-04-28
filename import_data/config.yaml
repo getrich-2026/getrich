@@ -1,0 +1,11 @@
+# import_data 运行时配置
+
+# 数据库覆盖 (可选，优先使用 .env)
+# db:
+#   host: "localhost"
+#   port: 5432
+
+# 任务开关
+fetcher_enabled:
+    frontend_signal: true
+    from_insight: true

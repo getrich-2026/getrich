@@ -30,6 +30,7 @@ done
 | 11 | `11_tools.sql` | 工具、工具使用日志 |
 | 12 | `12_functions.sql` | `can_access_content` 访问控制函数 + 批量版 |
 | 13 | `13_indexes.sql` | 全部非主键索引 |
+| 14 | `14_mock_data.sql` | 可选 mock 数据，用于前端联调 |
 
 ## 核心设计点
 
