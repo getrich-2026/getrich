@@ -43,8 +43,9 @@ AmazingData SDK 自带的 `tgw` 运行时 **只提供 Linux x86_64 和 Windows x
 yinhe_data_fetcher/
 ├── main.py                 # 主程序入口 (CLI)
 ├── config.yaml             # 运行时开关 (账号/存储/限流/启用项/start_date)
-├── requirements.txt
-├── environment.yml
+├── pyproject.toml          # uv 环境和依赖配置
+├── .python-version         # Python 版本固定 (3.13)
+├── .venv/                  # uv 虚拟环境 (uv sync 生成)
 ├── data/                   # Parquet 输出 (自动创建)
 ├── logs/                   # 运行日志
 └── src/
@@ -73,36 +74,43 @@ yinhe_data_fetcher/
 
 ## 环境准备
 
-### 1. 创建/激活 conda 环境
+### 1. 使用 uv 创建 Python 3.13 环境
+
+本项目使用 `uv` 管理环境和依赖，Python 版本固定为 **3.13**（由 `.python-version` 控制）。
 
 ```bash
-conda env update -n quant -f environment.yml
-conda activate quant
+cd /path/to/yinhe_data_fetcher
+
+# 首次同步环境
+uv sync
 ```
 
-如果已经有 `quant` 环境, 只需补齐依赖:
+后续如需更新依赖:
 
 ```bash
-conda activate quant
-pip install -r requirements.txt
+uv sync --refresh
 ```
 
-### 2. 安装 AmazingData SDK
+### 2. 安装 AmazingData SDK 和 tgw
 
-根据官方文档, SDK 必须用 wheel 安装 (不能从 PyPI 获取):
+`tgw` 和 `AmazingData` wheel 不在标准 PyPI，需手动安装：
 
 ```bash
-pip install tgw                                # tgw 可以走 PyPI
-pip install AmazingData-0.0.6-py3-none-any.whl # .whl 由营业部提供, 放项目根目录
+# tgw 可以从 PyPI 获取（如果网络配置允许）
+uv run pip install tgw
+
+# AmazingData wheel 由营业部提供，需放在项目根目录，然后：
+uv run pip install AmazingData-0.0.6-py3-none-any.whl
 ```
 
-> **Python 版本提示**: 官方标称 Python 3.8。当前 `quant` 环境是 3.10, 目前实测大部分接口在 3.10 下可用。
-> 若遇到问题, 另建 3.8 环境:
-> ```bash
-> conda create -n quant38 python=3.8
-> conda activate quant38
-> pip install pandas pyarrow pyyaml tgw AmazingData-0.0.6-py3-none-any.whl
-> ```
+如果 `tgw` 安装失败，可能需要从营业部获取本地 wheel 文件，改为：
+
+```bash
+uv run pip install /path/to/tgw-*.whl
+```
+
+> **Python 版本说明**: yinhe_data_fetcher 使用 Python 3.13。
+> 官方标称 3.8 最佳，但 `tgw` 预编译包支持 Python 3.8 ~ 3.13 在 Linux x86_64 和 Windows x86_64 上可用。
 
 ### 3. 账号
 
@@ -119,7 +127,7 @@ pip install AmazingData-0.0.6-py3-none-any.whl # .whl 由营业部提供, 放项
 ### 列出当前启用的 fetcher
 
 ```bash
-python main.py list
+uv run python main.py list
 ```
 
 输出示例:
@@ -153,7 +161,7 @@ python main.py update
 建议加到定时任务 (每日 18:00 收盘后):
 
 ```cron
-0 18 * * 1-5 cd /path/to/yinhe_data_fetcher && /path/to/miniconda3/envs/quant/bin/python main.py update >> logs/cron.log 2>&1
+0 18 * * 1-5 cd /path/to/yinhe_data_fetcher && uv run python main.py update >> logs/cron.log 2>&1
 ```
 
 ### 只跑指定 fetcher

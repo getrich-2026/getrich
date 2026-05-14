@@ -1,15 +1,15 @@
 name: quant
 channels:
-  - conda-forge
-  - defaults
+    - conda-forge
+    - defaults
 dependencies:
-  - python=3.10
-  - pandas>=2.0
-  - pyarrow>=12.0
-  - pyyaml>=6.0
-  - numpy>=1.24
-  - pip
-  - pip:
-      - tgw
-      # AmazingData 需要用 wheel 文件安装, 不能从 pypi 获取:
-      # - ./AmazingData-0.0.6-py3-none-any.whl
+    - python=3.13
+    - pandas>=2.0
+    - pyarrow>=12.0
+    - pyyaml>=6.0
+    - numpy>=1.24
+    - pip
+    - pip:
+          - tgw
+          # AmazingData 需要用 wheel 文件安装, 不能从 pypi 获取:
+          # - ./AmazingData-0.0.6-py3-none-any.whl

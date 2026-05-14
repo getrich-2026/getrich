@@ -1,0 +1,25 @@
+[project]
+name = "yinhe-data-fetcher"
+version = "0.1.0"
+description = "AmazingData (银河证券) market data fetcher"
+requires-python = ">=3.13"
+# tgw 和 AmazingData 不在标准 PyPI，需事后手动安装：
+#   uv run pip install tgw
+#   uv run pip install /path/to/AmazingData-0.0.6-py3-none-any.whl
+dependencies = [
+    "pandas>=2.0",
+    "pyarrow>=12.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24",
+    "tables>=3.11.1",
+    "duckdb>=1.5.2",
+]
+
+[tool.uv]
+managed = true
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

@@ -9,8 +9,9 @@ from __future__ import annotations
 import enum
 import shutil
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, ClassVar, Iterator
+from typing import Any, ClassVar
 
 import pandas as pd
 
@@ -21,7 +22,7 @@ from ...utils import retry_call, sleep_s
 
 
 class FetchMode(str, enum.Enum):
-    INIT = "init"      # 全量初始化
+    INIT = "init"  # 全量初始化
     UPDATE = "update"  # 每日增量
 
 
@@ -29,8 +30,8 @@ class BaseFetcher(ABC):
     """Fetcher 的最顶层抽象父类."""
 
     # ---- 必须被子类覆盖 ----------------------------------------------
-    NAME: ClassVar[str] = ""              # data/ 下的子目录名 & registry key
-    TYPE: ClassVar[str] = "base"          # full_replace | incremental
+    NAME: ClassVar[str] = ""  # data/ 下的子目录名 & registry key
+    TYPE: ClassVar[str] = "base"  # full_replace | incremental
 
     # ---- 可选的默认切块参数 (子类按需覆盖) ---------------------------
     CODE_CHUNK_SIZE: ClassVar[int] = 50
@@ -76,6 +77,9 @@ class BaseFetcher(ABC):
     def _post_run(self, mode: FetchMode) -> None:
         """run 结束时触发."""
 
+    def _post_fetch_hook(self, task: dict[str, Any], result: Any, error: Exception | None = None) -> None:
+        """每次请求完成后触发 (成功则 result 存在, 失败则 error 存在)."""
+
     # ------------------------------------------------------------------
     # 通用逻辑
     # ------------------------------------------------------------------
@@ -120,7 +124,10 @@ class BaseFetcher(ABC):
                 result = self._call_with_retry(task)
             except Exception as e:  # noqa: BLE001
                 n_fail += 1
-                self.log.error("[%s] task failed permanently: %s (%s)", self.NAME, label, e)
+                self.log.error(
+                    "[%s] task failed permanently: %s (%s)", self.NAME, label, e
+                )
+                self._post_fetch_hook(task, None, error=e)
                 sleep_s(self.rate.sleep_between_requests_sec)
                 continue
 
@@ -129,9 +136,13 @@ class BaseFetcher(ABC):
             else:
                 self._save_chunk(task, result)
                 n_done += 1
+            
+            self._post_fetch_hook(task, result)
             sleep_s(self.rate.sleep_between_requests_sec)
 
-        self.log.info("[%s] done: %d chunks written, %d failed", self.NAME, n_done, n_fail)
+        self.log.info(
+            "[%s] done: %d chunks written, %d failed", self.NAME, n_done, n_fail
+        )
 
     @staticmethod
     def _is_empty(result: Any) -> bool:

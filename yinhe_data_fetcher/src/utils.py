@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence, TypeVar
+from typing import TypeVar
 
 import pandas as pd
 
@@ -76,22 +77,137 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
+import logging
+import uuid
+
+_logger = logging.getLogger(__name__)
+
+
+def _has_named_index(df: pd.DataFrame) -> bool:
+    """判断 DataFrame 是否有可用于去重的命名索引."""
+    if isinstance(df.index, pd.MultiIndex):
+        return all(n is not None for n in df.index.names)
+    return df.index.name is not None
+
+
+def _duckdb_merge(
+    old_path: str,
+    new_path: str,
+    idx_names: list[str],
+) -> pd.DataFrame:
+    """用 DuckDB SQL 完成 old + new 的合并去重排序.
+
+    核心逻辑:
+    1. UNION BY NAME 处理 schema drift（新增列自动补 NULL）。
+    2. ROW_NUMBER PARTITION BY index_cols 去重，新数据优先。
+    3. ORDER BY index_cols 排序。
+
+    Time Complexity: O(N log N)  (N = old_rows + new_rows)
+    Space Complexity: DuckDB native memory, 不经过 pandas 中间态。
+    """
+    import duckdb
+
+    idx_cols_sql = ", ".join(f'"{n}"' for n in idx_names)
+
+    sql = f"""
+    WITH merged AS (
+        SELECT *, 1 AS _src_order FROM read_parquet('{old_path}')
+        UNION BY NAME
+        SELECT *, 0 AS _src_order FROM read_parquet('{new_path}')
+    ),
+    deduped AS (
+        SELECT *,
+               ROW_NUMBER() OVER (
+                   PARTITION BY {idx_cols_sql}
+                   ORDER BY _src_order ASC
+               ) AS _rn
+        FROM merged
+    )
+    SELECT * EXCLUDE (_src_order, _rn)
+    FROM deduped
+    WHERE _rn = 1
+    ORDER BY {idx_cols_sql}
+    """
+    result_df: pd.DataFrame = duckdb.sql(sql).df()
+    # DuckDB 输出丢失 pandas index 元信息, 需要重建
+    result_df.set_index(idx_names if len(idx_names) > 1 else idx_names[0], inplace=True)
+    return result_df
+
+
+def _pandas_merge(old_path: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Pandas 全量合并: 用于无命名索引或 DuckDB 不可用的降级路径."""
+    old = pd.read_parquet(old_path)
+    combined = pd.concat([old, df], axis=0)
+    if combined.index.name or isinstance(combined.index, pd.MultiIndex):
+        combined = combined[~combined.index.duplicated(keep="last")]
+    else:
+        combined = combined.drop_duplicates(keep="last")
+    combined.sort_index(inplace=True)
+    return combined
+
+
 def write_parquet(df: pd.DataFrame, path: Path, *, append: bool = False) -> None:
-    """写 parquet; append 时会先读旧文件并按索引/列去重合并."""
+    """写 parquet; append 时会先读旧文件并按索引/列去重合并.
+
+    当 DataFrame 拥有命名索引时, 优先使用 DuckDB 路径完成合并,
+    避免将整个旧文件加载到 pandas 内存中. 无命名索引或 DuckDB
+    不可用时自动降级为纯 pandas 合并.
+    """
     path = Path(path)
     ensure_dir(path.parent)
-    if append and path.exists():
-        old = pd.read_parquet(path)
-        combined = pd.concat([old, df], axis=0)
-        # 优先按索引去重, 否则按全字段
-        if combined.index.name or isinstance(combined.index, pd.MultiIndex):
-            combined = combined[~combined.index.duplicated(keep="last")]
+    tmp_path = path.with_suffix(f".{uuid.uuid4().hex}.tmp.parquet")
+
+    try:
+        if append and path.exists():
+            if _has_named_index(df):
+                merged_df = _write_parquet_duckdb(df, path, tmp_path)
+            else:
+                merged_df = _pandas_merge(str(path), df)
+            merged_df.to_parquet(tmp_path, index=True)
         else:
-            combined = combined.drop_duplicates(keep="last")
-        combined.sort_index(inplace=True)
-        combined.to_parquet(path, index=True)
-    else:
-        df.to_parquet(path, index=True)
+            df.to_parquet(tmp_path, index=True)
+
+        tmp_path.replace(path)
+    except Exception as e:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise e
+
+
+def _write_parquet_duckdb(
+    df: pd.DataFrame, path: Path, tmp_path: Path
+) -> pd.DataFrame:
+    """DuckDB 合并路径: 写新数据到临时文件, 用 SQL 合并旧文件, 返回结果 DataFrame.
+
+    若 DuckDB 导入或执行失败, 自动降级为 pandas 合并并记录日志.
+    """
+    new_tmp = path.with_suffix(f".{uuid.uuid4().hex}.new.tmp.parquet")
+    try:
+        # 将新增数据先落盘为临时 parquet, 供 DuckDB 读取
+        df.to_parquet(new_tmp, index=True)
+
+        idx_names: list[str]
+        if isinstance(df.index, pd.MultiIndex):
+            idx_names = [str(n) for n in df.index.names]
+        else:
+            idx_names = [str(df.index.name)]
+
+        try:
+            return _duckdb_merge(str(path), str(new_tmp), idx_names)
+        except Exception as exc:
+            _logger.warning(
+                "DuckDB merge failed, fallback to pandas: %s", exc
+            )
+            return _pandas_merge(str(path), df)
+    finally:
+        if new_tmp.exists():
+            try:
+                new_tmp.unlink()
+            except OSError:
+                pass
 
 
 def read_parquet_if_exists(path: Path) -> pd.DataFrame | None:
@@ -104,9 +220,19 @@ def read_parquet_if_exists(path: Path) -> pd.DataFrame | None:
         return None
 
 
+def read_parquet_index(path: Path) -> pd.DataFrame | None:
+    """仅读取 parquet 文件的索引，不加载数据列，用于快速检查."""
+    if not path.exists():
+        return None
+    try:
+        return pd.read_parquet(path, columns=[])
+    except Exception:
+        return None
+
+
 def last_index_date(df: pd.DataFrame | None) -> int | None:
     """返回 df.index 的最后一个日期 (int8 date); 若无返回 None."""
-    if df is None or df.empty:
+    if df is None or len(df.index) == 0:
         return None
     idx = df.index
     try:

@@ -6,21 +6,22 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Iterator
+from abc import ABC
+from collections.abc import Iterator
+from typing import Any, ClassVar
 
 import pandas as pd
 
 from ...utils import (
     chunk_date_range,
     chunk_list,
-    last_index_date,
-    read_parquet_if_exists,
+    read_parquet_index,
     to_int_date,
     today_int,
     write_parquet,
 )
-from .incremental import IncrementalFetcher
 
+from .incremental import IncrementalFetcher
 
 # 合法 period 名称 -> AmazingData.Period 枚举成员名
 PERIOD_ATTR: dict[str, str] = {
@@ -40,7 +41,7 @@ PERIOD_ATTR: dict[str, str] = {
 }
 
 
-class KlineFetcher(IncrementalFetcher):
+class KlineFetcher(IncrementalFetcher, ABC):
     """K 线抓取抽象基类.
 
     具体子类需要声明:
@@ -51,14 +52,15 @@ class KlineFetcher(IncrementalFetcher):
         CODE_CHUNK_SIZE  - code 切块大小
         DATE_CHUNK_DAYS  - 日期切块大小
 
-    落盘策略: 每个 code 一个 parquet 文件
-        data/<NAME>/<code>.parquet
+    落盘策略: 按 code + 月分区
+        data/<NAME>/<code>/<yyyy-mm>.parquet
     """
 
     PERIOD: ClassVar[str] = ""
     SECURITY_TYPES: ClassVar[list[str]] = []
 
     def _pre_run(self, mode) -> None:
+        super()._pre_run(mode)
         if not self.PERIOD:
             raise ValueError(f"{type(self).__name__}.PERIOD must be set")
         if self.PERIOD not in PERIOD_ATTR:
@@ -69,7 +71,7 @@ class KlineFetcher(IncrementalFetcher):
             raise ValueError(f"{type(self).__name__}.SECURITY_TYPES must be set")
 
         self._market = self.client.market_data(self.client.calendar)
-        period_enum = self.client.ad.Period
+        period_enum = self.client.ad.constant.Period
         self._period_value = getattr(period_enum, PERIOD_ATTR[self.PERIOD]).value
         self.log.info(
             "[%s] period=%s (value=%s)", self.NAME, self.PERIOD, self._period_value
@@ -95,9 +97,21 @@ class KlineFetcher(IncrementalFetcher):
         return list(self._all_codes)
 
     def _last_local_date(self, key: Any) -> int | None:
-        p = self.data_dir / f"{key}.parquet"
-        df = read_parquet_if_exists(p)
-        return last_index_date(df)
+        """从分区目录中找到最新分区文件, 读取最后 kline_time."""
+        code_dir = self.data_dir / str(key)
+        if not code_dir.exists():
+            return None
+        parts = sorted(code_dir.glob("*.parquet"))
+        if not parts:
+            return None
+        # 从最新分区读取 index (kline_time) 的最大值
+        df = read_parquet_index(parts[-1])
+        if df is None or df.empty:
+            return None
+        try:
+            return to_int_date(df.index.max())
+        except Exception:
+            return None
 
     def _fetch_one(self, task: dict[str, Any]) -> Any:
         return self._market.query_kline(
@@ -108,6 +122,11 @@ class KlineFetcher(IncrementalFetcher):
         )
 
     def _save_chunk(self, task: dict[str, Any], result: Any) -> None:
+        """按 code + 月分区写入 parquet.
+
+        1. 将 kline_time 列设置为真实索引 (替代 SDK 返回的无意义 RangeIndex)。
+        2. 按 kline_time 的年月分组, 写入对应分区文件。
+        """
         if not isinstance(result, dict):
             self.log.error("unexpected kline return type %s", type(result))
             return
@@ -116,11 +135,19 @@ class KlineFetcher(IncrementalFetcher):
             if df is None or not isinstance(df, pd.DataFrame) or df.empty:
                 continue
             df = df.copy()
-            if df.index.name is None:
+            # 用 kline_time 列作为真实索引 (SDK 返回的 RangeIndex 无去重意义)
+            if "kline_time" in df.columns:
+                df = df.set_index("kline_time")
+            elif df.index.name is None:
                 df.index.name = "kline_time"
             df = df[~df.index.duplicated(keep="last")]
-            out = self.data_dir / f"{code}.parquet"
-            write_parquet(df, out, append=True)
+
+            # 按年月分区写入
+            code_dir = self.data_dir / str(code)
+            ym_keys = pd.to_datetime(df.index).strftime("%Y-%m")
+            for ym, group_df in df.groupby(ym_keys):
+                part_path = code_dir / f"{ym}.parquet"
+                write_parquet(group_df, part_path, append=True)
             total += len(df)
         self.log.info(
             "[%s] wrote %d rows across %d codes (task=%s)",

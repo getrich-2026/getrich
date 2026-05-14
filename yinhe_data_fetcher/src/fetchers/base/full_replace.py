@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+from abc import ABC
+
 from .base import BaseFetcher, FetchMode
 
 
-class FullReplaceFetcher(BaseFetcher):
+class FullReplaceFetcher(BaseFetcher, ABC):
     TYPE = "full_replace"
 
     def run(self, mode: FetchMode) -> None:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, ClassVar, Iterator
+from typing import Any, ClassVar
 
 import pandas as pd
 
@@ -47,7 +48,9 @@ class BackwardFactorFetcher(FullReplaceFetcher):
             try:
                 result = pd.DataFrame(result)
             except Exception:
-                self.log.error("unexpected backward_factor return type %s", type(result))
+                self.log.error(
+                    "unexpected backward_factor return type %s", type(result)
+                )
                 return
         df = result.copy()
         if df.index.name is None:

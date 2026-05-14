@@ -11,13 +11,17 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Iterator
+from abc import ABC
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any, ClassVar
 
 from ...utils import chunk_date_range, chunk_list, today_int
 from .base import BaseFetcher, FetchMode
 
 
-class IncrementalFetcher(BaseFetcher):
+
+class IncrementalFetcher(BaseFetcher, ABC):
     TYPE = "incremental"
 
     # 子类覆盖: init 模式下的起点 (int8 date)
@@ -59,6 +63,54 @@ class IncrementalFetcher(BaseFetcher):
     # ------------------------------------------------------------------
     # 主流程
     # ------------------------------------------------------------------
+    @property
+    def _sync_status_path(self) -> Path:
+        return self.data_dir / "_sync_status.json"
+
+    def _pre_run(self, mode: FetchMode) -> None:
+        super()._pre_run(mode)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        if mode == FetchMode.INIT and self.cfg.storage.wipe_on_init:
+            self._wipe()
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            
+        self._sync_status: dict[str, dict[str, Any]] = {}
+        if self._sync_status_path.exists():
+            import json
+            try:
+                with open(self._sync_status_path, "r", encoding="utf-8") as f:
+                    self._sync_status = json.load(f)
+            except Exception as e:
+                self.log.warning("Failed to load %s: %s", self._sync_status_path, e)
+
+    def _post_run(self, mode: FetchMode) -> None:
+        import json
+        try:
+            with open(self._sync_status_path, "w", encoding="utf-8") as f:
+                json.dump(self._sync_status, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.log.error("Failed to save %s: %s", self._sync_status_path, e)
+        super()._post_run(mode)
+
+    def _post_fetch_hook(self, task: dict[str, Any], result: Any, error: Exception | None = None) -> None:
+        import datetime
+        now_str = datetime.datetime.now().isoformat()
+        end_date = task.get("end_date")
+        
+        for code in task.get("code_chunk", []):
+            k = str(code)
+            st = self._sync_status.setdefault(k, {})
+            
+            if error:
+                st["last_error"] = str(error)
+                st["updated_at"] = now_str
+            else:
+                if end_date:
+                    st["last_checked_date"] = max(st.get("last_checked_date") or 0, end_date)
+                st["last_success_date"] = today_int()
+                st["last_error"] = None
+                st["updated_at"] = now_str
+
     def _iter_tasks(self, mode: FetchMode) -> Iterator[dict[str, Any]]:
         end = self._end_date()
         # 应用全局 start_date 下限
@@ -76,8 +128,21 @@ class IncrementalFetcher(BaseFetcher):
         all_keys = self._iter_update_keys()
         groups: dict[int, list[Any]] = {}
         for k in all_keys:
-            last = self._last_local_date(k)
-            start = floor if last is None else max(int(last) + 1, floor)
+            last_data = self._last_local_date(k)
+            st = self._sync_status.get(str(k), {})
+            last_checked = st.get("last_checked_date")
+            
+            val_data = int(last_data) if last_data else 0
+            val_checked = int(last_checked) if last_checked else 0
+            
+            # start = max(last_data_date, last_checked_date, floor - 1) + 1
+            max_dt = max(val_data, val_checked, floor - 1)
+            start = max_dt + 1
+            
+            # 同时把 last_data_date 记录进去，方便查阅
+            if val_data:
+                st["last_data_date"] = val_data
+                
             if start > end:
                 continue
             groups.setdefault(start, []).append(k)
@@ -103,10 +168,7 @@ class IncrementalFetcher(BaseFetcher):
             self.data_dir,
         )
         self._pre_run(mode)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        if mode == FetchMode.INIT and self.cfg.storage.wipe_on_init:
-            self._wipe()
-            self.data_dir.mkdir(parents=True, exist_ok=True)
         self._loop_tasks(mode)
         self._post_run(mode)
         self.log.info("=== [%s] IncrementalFetcher done ===", self.NAME)
+
