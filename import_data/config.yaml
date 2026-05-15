@@ -7,5 +7,5 @@
 
 # 任务开关
 fetcher_enabled:
-    frontend_signal: true
+    frontend_signal: false
     from_insight: true
