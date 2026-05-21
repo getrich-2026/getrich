@@ -32,10 +32,11 @@ keywords = [
 
 # 项目依赖
 dependencies = [
+    "duckdb",
     "akshare",
     "clickhouse-connect",
-    "dotenv",
-    "lntools",
+    "python-dotenv",
+    "lntools",  # requires --find-links ./local_packages
     "matplotlib",
     "numpy",
     "pandas",
@@ -57,6 +58,12 @@ dependencies = [
     "orjson>=3.10",
 ]
 
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pandas-stubs",
+]
 
 [tool.setuptools]
 zip-safe = false

@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getStrategyList, type Strategy } from '../api/strategies'
+import { getStrategyList } from '../api/strategies'
+import type { Strategy } from '@/types/strategy'
 
 /* ---------- MyStrategyItem 暂时保留 mock，等信号接口再换 ---------- */
 interface MyStrategyItem {
@@ -40,7 +41,7 @@ export default function StrategiesPage() {
     queryFn: () => getStrategyList({ page: 1, page_size: 20 }),
   })
 
-  const strategies = data?.data.list ?? []
+  const strategies = (data as any)?.data?.list ?? []
 
   return (
     <div className="max-w-[1100px] mx-auto px-6 py-6">
@@ -64,7 +65,7 @@ export default function StrategiesPage() {
           </div>
         ) : (
           <div className="flex gap-4 overflow-x-auto pb-2 hide-scrollbar">
-            {strategies.map((s, i) => (
+            {strategies.map((s: Strategy, i: number) => (
               <StrategyCard key={s.id} strategy={s} delay={i * 100} />
             ))}
           </div>
@@ -77,7 +78,7 @@ export default function StrategiesPage() {
           我的策略
         </h2>
         <div className="space-y-3">
-          {mockMyStrategies.map((s, i) => (
+          {mockMyStrategies.map((s: MyStrategyItem, i: number) => (
             <MyStrategyCard key={s.id} item={s} delay={i * 80} />
           ))}
         </div>
@@ -188,16 +189,6 @@ function MyStrategyCard({ item, delay }: { item: MyStrategyItem; delay: number }
       <p className="text-xs leading-relaxed" style={{ color: 'var(--gr-text-secondary)' }}>
         {item.description}
       </p>
-    </div>
-  )
-}
-
-function MyStrategySkeleton() {
-  return (
-    <div className="rounded-xl p-4 card-shadow" style={{ background: 'var(--gr-card)' }}>
-      <div className="h-4 skeleton w-40 mb-2" />
-      <div className="h-3 skeleton w-full" />
-      <div className="h-3 skeleton w-[80%] mt-1" />
     </div>
   )
 }

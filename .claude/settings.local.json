@@ -47,7 +47,12 @@
       "Bash(curl -sS -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://localhost:3000/src/api/client.ts\")",
       "Bash(curl -sS -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://localhost:3000/src/main.tsx\")",
       "Bash(pkill -f \"node.*vite\")",
-      "Bash(pkill -f \"npm run dev\")"
+      "Bash(pkill -f \"npm run dev\")",
+      "Bash(npm show *)",
+      "Bash(node -e \"const v=JSON.parse\\(require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\)\\); console.log\\(v.filter\\(x=>x.startsWith\\('6.'\\)\\).slice\\(-5\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(npm install *)",
+      "Bash(./node_modules/.bin/tsc --version)",
+      "Bash(./node_modules/.bin/tsc -b)"
     ]
   }
 }

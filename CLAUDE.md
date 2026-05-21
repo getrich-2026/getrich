@@ -1,268 +1,77 @@
-# GetRich — AI 开发指令
+# GetRich — AI 本地开发指令集
 
-## 1. 角色定义
+本文档仅定义针对 `GetRich` 平台的本地化/项目级开发约束。全局通用原则及智能体调度详见全局 `~/.claude/CLAUDE.md`。
 
-**角色**：全栈量化信号平台开发者（后端 Python / 前端 React TypeScript）。
-**原则**：正确性优先，性能次之。在不影响业务关键路径的前提下，可接受轻微的性能欠缺，但不可接受逻辑错误或数据错误。
+## 1. 运行环境与特定约束
+- **Node.js 依赖**：前端基于 Vite 7 + React 19。统一使用 `npm run dev` 启动开发服务器，使用 `npm run build` 执行生产打包。
 
----
+## 2. 数据库职责划分（GetRich 铁律）
+项目采用多数据库协同架构，各数据库职责边界清晰，**绝对禁止越权使用**：
 
-## 2. 技术栈
+1. **PostgreSQL (`getrich` 库) — 业务与事务的唯一主库**
+   - 存储实体：策略元数据、实盘信号记录、用户订阅、账户资产快照、支付账单、交易订单及系统配置。
+   - 约束：任何需要事务安全性、主外键约束、或者依赖 `ON CONFLICT` 进行原子 UPSERT 的高频业务数据，必须且仅能写入 PostgreSQL。使用 `psycopg3` + 异步连接池，手写原生 SQL，禁止引入 heavy ORM。
+2. **ClickHouse — 行情与因子的海量时序存储**
+   - 存储实体：分钟线/日线 OHLCV bars、Tick 逐笔数据、海量因子计算的时序输出。
+   - 约束：只允许做大批量写入 (Batch Write) 和基于 Symbol/Time 范围的快速分析查询。**绝对禁止**将 ClickHouse 用于需要事务更新、状态修改的业务流程。持久化表必须使用 `MergeTree` 系列引擎，并强制配置 `PARTITION BY`、`ORDER BY` 和 `TTL`。
+3. **DuckDB — 高效临时内存计算**
+   - 职责：用于 ad-hoc 一次性分析、回测时的中间数据交互及高速本地 Parquet 报表分析。
+   - 约束：不进行物理持久化，只用作内存临时计算层，不可作为任何业务的终态存储。
 
-### 后端（Python）
+## 3. 量化与时序规范
 
-| 层 | 技术 |
-|---|---|
-| Web 框架 | FastAPI >= 0.115 + Uvicorn + Pydantic >= 2.7 + orjson |
-| 主业务库 | **PostgreSQL**（策略/信号/订阅/用户/订单）via psycopg3 + AsyncConnectionPool |
-| 行情时序库 | **ClickHouse**（bars/ticks/因子序列）via clickhouse-connect |
-| 内存计算 | DuckDB（临时分析，不持久化） |
-| 数据处理 | polars > numpy 向量化 > pandas（仅兼容场景） |
-| 静态检查 | ruff + basedpyright |
+### 3.1 严格的时区对齐
+- **主时区**：平台统一采用 `Asia/Shanghai (UTC+8)`。
+- **PostgreSQL**：在 `pool.py` 初始化时已强制设置 `SET timezone='Asia/Shanghai'`。所有写入的 timestamp 必须显式处理时区。
+- **ClickHouse**：行情表及因子表中的时间字段必须采用 `DateTime64(3, 'Asia/Shanghai')` 类型。写入 `Date`/`Date32` 等 naive 日期时，必须在 Python 端提前转换为 aware datetime 并用 `.astimezone(tz).date()` 提取，防止因 UTC 偏移导致日期提早或延后一天。
+- **夜盘处理**：包含跨日夜盘（如 21:00 至次日 02:30）的时序数据必须统一使用 `DateTime64`，绝对禁止使用 `Date` 进行区分。
 
-### 前端（TypeScript）
+### 3.2 统一的列名与字段
+- 统一使用标准 OHLCV 字段名，禁止使用任何缩写或变体：
+  `open, high, low, close, volume, vwap, oi, symbol, dt`
+- 涉及财务金额、PnL、可用资金计算时，标量一律强制使用高精度的 `decimal.Decimal`，禁止使用 `float` 以免产生累积舍入误差。
+- 收益率计算必须显式区分单利收益率 (`simple_return`) 与对数收益率 (`log_return`)，且必须在函数签名及 Docstring 中清晰注明。
 
-| 层 | 技术 |
-|---|---|
-| 框架 | React 19 + TypeScript 5.9 + Vite 7 |
-| 路由 | react-router-dom 7（HashRouter） |
-| 异步状态 | @tanstack/react-query 5 |
-| HTTP | axios 1（`src/api/client.ts` 单例） |
-| UI | Tailwind CSS 3 + shadcn/ui（基于 radix-ui） |
-| 图表 | recharts 2 + echarts 6 |
-| 表单 | react-hook-form 7 + @hookform/resolvers + zod 4 |
+## 4. 前后端编码规范
 
----
+### 4.1 后端特定规范
+- **SQL 编写**：直接使用原生 SQL，大批量写入时优先使用 `psycopg` 的 COPY 协议或 multi-values UPSERT (`ON CONFLICT DO UPDATE`)。
 
-## 3. 数据库职责划分（关键约定）
+### 4.2 前端特定规范 (React 19 + TypeScript 5.9)
+- **禁止 any**：严格推导类型，除非对接无类型的外部遗留包且附加详细说明，否则禁止使用 `any`。
+- **数据请求**：统一在 `src/api/` 下编写模块化接口函数（如 `strategies.ts`），前端组件一律通过 `@tanstack/react-query`（`useQuery`/`useMutation`）管理异步数据与加载态，**禁止**在组件内部使用 `useEffect` + `useState` 手写 API 轮询。
+- **表单校验**：表单组件必须使用 `react-hook-form` 结合 `zod` 校验器进行严格前端输入验证。
+- **UI 与图表**：优先选用 `src/components/ui/`（基于 shadcn/ui + Radix UI）的无样式基础组件，由 CLI 统一管理，不手动更改 UI 源码。时序/权益曲线图表优先选择 `echarts` 绘制；其余常规图表可采用 `recharts`。
 
-**严格遵守，不得混用职责：**
+## 5. 常用开发命令
 
-- **PostgreSQL (`goldmine` 库)** — 唯一的业务主库：
-  - 策略元数据、绩效快照、回测报告
-  - 信号、订单、订阅、用户、支付
-  - 任何需要事务、外键约束、UPSERT 的业务数据
-
-- **ClickHouse** — 仅用于时间序列行情数据：
-  - 分钟/日线 OHLCV bars、tick 数据
-  - 因子序列（大批量写入、范围扫描场景）
-  - **禁止**在 ClickHouse 存储业务状态或做事务操作
-
-- **DuckDB** — 临时内存分析：
-  - 一次性 ad-hoc 计算、回测中间结果
-  - 不持久化，不作为生产存储
-
----
-
-## 4. 量化领域规范
-
-### 4.1 时区
-
-- **统一时区**：`Asia/Shanghai (UTC+8)`，通过 `zoneinfo` 或 `pytz` 处理。
-- PG 连接级设置 `SET timezone='Asia/Shanghai'`（已在 `pool.py` 的 `options` 中配置，所有连接自动继承）。
-- ClickHouse：`DateTime64(3, 'Asia/Shanghai')` 对应 aware datetime，直接使用；`Date`/`Date32` 为 naive date，写入前必须 `.astimezone(tz).date()` 以避免 UTC 偏移。
-- 夜盘数据（23:00–02:30）必须用 `DateTime64`，禁止用 `Date`。
-
-### 4.2 字段命名
-
-标准 OHLCV 列名：`open, high, low, close, volume, vwap, oi, symbol, dt`。全项目统一，不得使用缩写变体。
-
-### 4.3 财务计算
-
-- 标量 PnL / 金额：使用 `decimal.Decimal`。
-- 收益率：明确区分 `log_return` 与 `simple_return`，函数名和 docstring 中显式标注。
-
-### 4.4 回测原则
-
-- 滑点、手续费、资金约束必须纳入回测，不可假设零成本。
-- 绩效指标命名保持一致：`sharpe_ratio`, `max_drawdown`, `annualized_return`, `win_rate`。
-
-### 4.5 执行前置检查
-
-交易执行逻辑**必须**包含：价格区间验证、最大下单量限制、流动性约束。
-
----
-
-## 5. ClickHouse Schema 规范（行情表）
-
-```sql
--- 时间序列表（bars / ticks）
-CREATE TABLE {table_name} (
-    dt     DateTime64(3, 'Asia/Shanghai') CODEC(Delta, ZSTD(1)),
-    symbol LowCardinality(String),
-    open   Float64 CODEC(ZSTD(1)),
-    high   Float64 CODEC(ZSTD(1)),
-    low    Float64 CODEC(ZSTD(1)),
-    close  Float64 CODEC(ZSTD(1)),
-    volume Float64 CODEC(ZSTD(1))
-) ENGINE = MergeTree()
-PARTITION BY toYYYYMM(dt)
-ORDER BY (symbol, dt)
-TTL dt + INTERVAL 5 YEAR;
-```
-
-**强制规则**：
-- 持久化表只用 `MergeTree` 家族引擎。
-- 每张表必须有 `PARTITION BY`、`ORDER BY`、`TTL`。
-- Symbol 类字段用 `LowCardinality(String)`。
-- Tick 时间戳用 `CODEC(DoubleDelta, ZSTD(1))`；`LowCardinality` / `Enum8` / `UInt8` 不加 CODEC。
-
----
-
-## 6. 项目结构
-
-```text
-getrich/
-├── src/                               # 前端 React TypeScript
-│   ├── main.tsx                       # React 入口
-│   ├── App.tsx                        # HashRouter + 路由配置
-│   ├── api/                           # Axios 客户端
-│   │   ├── client.ts                  # Axios 单例（拦截器、基 URL）
-│   │   ├── strategies.ts
-│   │   ├── signal.ts
-│   │   └── subscription.ts
-│   ├── components/
-│   │   ├── ui/                        # shadcn/ui 组件（通过 CLI 管理，不手改）
-│   │   └── (业务组件: StrategyCard, SignalCard, EquityChart …)
-│   ├── pages/                         # 5 个页面
-│   │   ├── MarketPage.tsx
-│   │   ├── StrategiesPage.tsx
-│   │   ├── StrategyDetail.tsx
-│   │   ├── SignalDetail.tsx
-│   │   └── KnowledgePage.tsx
-│   ├── hooks/
-│   ├── types/                         # TypeScript 类型定义
-│   └── lib/
-│
-├── src/getrich/                       # 后端 Python 包
-│   ├── apps/
-│   │   ├── web/                       # FastAPI 应用
-│   │   │   ├── main.py                # 应用工厂 + lifespan（PG 连接池）
-│   │   │   ├── deps.py                # get_db / get_current_user / page_dep
-│   │   │   ├── response.py            # ApiResponse 包装 + 异常 handler
-│   │   │   ├── pagination.py
-│   │   │   ├── errors.py
-│   │   │   ├── routers/               # 6 个路由（strategies/signals/subscriptions/
-│   │   │   │                          #   signal_settings/user/payments）
-│   │   │   ├── services/              # 业务逻辑层（原生 SQL，不用 ORM）
-│   │   │   └── schemas/               # Pydantic 请求体
-│   │   ├── gateway/                   # 交易网关（经纪商适配器）
-│   │   └── strategy/                  # 策略引擎（纯逻辑，参数由 config 注入）
-│   ├── config/
-│   │   └── settings.py                # 三库配置 + WebConfig（单例 `settings`）
-│   ├── libs/
-│   │   ├── clickhouse/                # CH 连接池（行情查询）
-│   │   ├── postgres/pool.py           # PG 异步连接池（psycopg3）
-│   │   └── quant_duckdb.py            # DuckDB 内存计算工具
-│   └── optionLib/                     # 期权定价与 Greeks
-│
-├── tests/
-├── pyproject.toml
-├── package.json
-├── vite.config.ts
-├── tailwind.config.js
-├── NOTES.md                           # 开发进度快照（AI 每次会话后更新）
-└── TODO.md                            # 待办（详细设计文档）
-```
-
-**模块边界**：
-- `apps/gateway/` — 经纪商适配器，对外暴露统一交易接口。
-- `apps/strategy/` — 纯策略逻辑，参数通过 config 注入，不直接调用外部 API。
-- `libs/` — 跨模块复用的连接池与工具，不含业务逻辑。
-
----
-
-## 7. 后端编码规范
-
-```python
-from __future__ import annotations  # 所有 Python 文件顶部必须有
-```
-
-- Python 3.10+，强制类型注解（basedpyright `typeCheckingMode = "all"`）。
-- 工具脚本 / 独立模块需包含 `if __name__ == "__main__":` 块，内含可直接运行的最小示例（MRE）。
-- 错误处理：主动处理 `NaN`、`Inf`、除零、空 DataFrame。
-- 注释语言：复杂逻辑用简体中文注释；变量/函数名用英文；日志消息用英文（便于 grep）。
-- 不用 ORM，手写 SQL（与 PG 函数、UPSERT、JSONB 直接配合）。
-- UPSERT：优先 `ON CONFLICT ... DO UPDATE`，减少应用层去重。
-
----
-
-## 8. 前端编码规范
-
-- 严格 TypeScript，禁止 `any`（除非对接无类型外部库时明确注释原因）。
-- 所有接口类型定义放 `src/types/`，与后端 Pydantic schema 保持字段对齐。
-- API 调用只通过 `src/api/` 下的模块，不在组件内直接 `axios.get(...)`。
-- 异步数据请求用 `@tanstack/react-query`（`useQuery` / `useMutation`），不手写 `useEffect + useState` 管理加载状态。
-- 表单用 `react-hook-form` + `zod` schema 校验。
-- UI 组件优先使用 `src/components/ui/`（shadcn/ui），`ui/` 下的文件通过 shadcn CLI 管理。
-- 图表：时序/权益曲线用 echarts；其余统计图表用 recharts。
-- 环境变量：前端变量名前缀 `VITE_`，敏感值不提交到版本控制。
-
----
-
-## 9. 常用命令
-
+### 后端常用命令 (使用 `uv` 驱动)
 ```bash
-# 后端
+# 本地启动 FastAPI 开发服务器
 uvicorn getrich.apps.web.main:app --reload --host 0.0.0.0 --port 8000
-pytest tests/ -v
-ruff format src/getrich/
-ruff check src/getrich/ --fix
-pip install -e .
-
-# 前端
-npm run dev       # Vite 开发服务器（默认 :5173）
-npm run build     # tsc -b && vite build
-npm run lint      # eslint
 ```
 
----
+### 前端常用命令
+```bash
+# 本地启动 Vite 开发服务 (默认 5173 端口)
+npm run dev
 
-## 10. NOTES.md 规范
+# 静态类型检查与生产环境构建打包
+npm run build
 
-项目根目录维护一个 `NOTES.md`，用于跨会话快速同步开发状态。
-
-**AI 会话规则**：
-1. 每次新会话开始时，先读 `NOTES.md` 以恢复上下文；需要查 API 端点设计、启动命令或设计取舍时再读 `TODO.md`。
-2. 本次会话有实质性变更（新增/修改功能、关键决策、schema 变更、重要 bug 修复）时，在会话结束前更新 `NOTES.md`。
-3. **所有 TODO 只写 `NOTES.md`**，不在 `TODO.md` 维护待办。`TODO.md` 是 Web API 技术参考（端点表 / 设计取舍 / 启动命令），内容相对稳定。
-
-**`NOTES.md` 结构模板**：
-
-```markdown
-# NOTES — GetRich 开发进度
-
-## 当前状态
-<一句话描述整体进度>
-
-## 最近变更
-- YYYY-MM-DD: <变更描述>（影响：<文件或模块>）
-
-## TODO
-- [ ] <P0 项>
-- [ ] <P1 项>
-
-## 关键决策
-- <决策内容> — <原因> — <日期>
-
-## 已知问题 / 技术债
-- <问题描述>（影响：<范围>）
+# 执行前端 ESLint 静态代码检查
+npm run lint
 ```
 
-**与 `.agent/brain/` 的区别**：
-- `NOTES.md` — 技术状态快照，供人和 AI 快速阅读。
-- `.agent/brain/active_tasks.md` — 当前会话任务调度。
-- `.agent/brain/work_log.md` — 工作流水日志。
+## 6. NOTES.md 规范与自改进
+为了在多个 AI 会话间无缝继承开发进度，必须严格维护根目录下的 `NOTES.md` 文件：
+1. **读取规范**：每次新会话开始时，首要任务是读取 `NOTES.md` 以恢复状态与获取待办，其次阅读 `TODO.md` 查看 Web API 等持久技术参考。
+2. **会话结束更新**：只要本次会话中发生了实质性的代码变更、数据库表结构调整或技术方案抉择，必须在结束 turn 前更新 `NOTES.md`，将当前进度、最近变更、接下来的 P0/P1 TODO 事项及已知技术债落盘。
+3. **自改进记录 (Self-Improvement)**：若开发过程中出现了由于 AI 误判导致的用户纠错或测试失败，必须将错误模式、根本原因及防范策略以“技术债/踩坑记录”的形式记录于 `NOTES.md` 或本指令集中，防止在下个会话中犯同样的错误。
 
----
-
-## 11. 关键配置参考
-
-| 配置项 | 位置 |
-|---|---|
-| 三库配置（连接参数） | `src/getrich/config/settings.py` + `.env` |
-| PG 连接池 | `src/getrich/libs/postgres/pool.py` |
-| API 基础 URL | `.env` → `VITE_API_BASE_URL` |
-| Ruff / basedpyright | `pyproject.toml` |
-| Tailwind 主题 | `tailwind.config.js` + `src/index.css` |
-| shadcn 组件配置 | `components.json` |
+## 7. 禁止事项 (Don'ts 铁律)
+- **绝对禁止**在 ClickHouse 中执行事务更新或行级频繁删除操作。
+- **绝对禁止**在没有对齐时间轴（`shift`）的情况下使用行情或因子数据，防止 look-ahead bias。
+- 对于超过 100,000 行的大规模数据集，**绝对禁止**保存为普通 CSV 格式，必须统一采用高性能、高压缩率的 `Parquet` 格式（选用 `zstd` 压缩）。
+- **绝对禁止**在没有异常捕获 (`try-except`) 隔离的情况下在主线程中启动外部 API调用或网络请求。
+- **绝对禁止**使用 destructive 命令如 `git reset --hard` 修改用户的工作区未提交代码。

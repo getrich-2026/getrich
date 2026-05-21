@@ -105,3 +105,26 @@ curl -X POST $BASE/strategies/STR_FUT_001/subscribe -H "$UID" \
 | `src/getrich/libs/postgres/pool.py` | PG 异步连接池（psycopg3） |
 | `src/getrich/config/settings.py` | PostgresConfig + WebConfig |
 | `src/api/client.ts` | Axios 单例 + VITE_DEMO_USER_ID 拦截器 |
+
+---
+
+## shadcn/ui 组件清单
+
+> 以下为 shadcn/ui CLI 初始化时的记录，用于参考组件清单和导入路径。
+
+**环境：** Node.js 20, Tailwind CSS v3.4.19, Vite v7.2.4
+
+**组件（40+）：**
+accordion, alert-dialog, alert, aspect-ratio, avatar, badge, breadcrumb,
+button-group, button, calendar, card, carousel, chart, checkbox, collapsible,
+command, context-menu, dialog, drawer, dropdown-menu, empty, field, form,
+hover-card, input-group, input-otp, input, item, kbd, label, menubar,
+navigation-menu, pagination, popover, progress, radio-group, resizable,
+scroll-area, select, separator, sheet, sidebar, skeleton, slider, sonner,
+spinner, switch, table, tabs, textarea, toggle-group, toggle, tooltip
+
+**导入示例：**
+```ts
+import { Button } from '@/components/ui/button'
+import { Card, CardHeader, CardTitle } from '@/components/ui/card'
+```
