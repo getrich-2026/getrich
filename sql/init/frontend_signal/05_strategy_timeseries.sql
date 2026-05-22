@@ -17,7 +17,13 @@ CREATE TABLE frontend.strategy_equity_curve (
     drawdown            NUMERIC(10,6),                      -- 当前回撤（负值）
     benchmark_nav       NUMERIC(12,6),                      -- 基准净值（沪深300 等）
     position_ratio      NUMERIC(5,4),                       -- 当日仓位比例
-    PRIMARY KEY (strategy_id, trade_date)
+    PRIMARY KEY (strategy_id, trade_date),
+    CONSTRAINT chk_equity_curve_nav_positive CHECK (nav > 0),
+    CONSTRAINT chk_equity_curve_benchmark_nav_positive
+        CHECK (benchmark_nav IS NULL OR benchmark_nav > 0),
+    CONSTRAINT chk_equity_curve_drawdown_non_positive CHECK (drawdown IS NULL OR drawdown <= 0),
+    CONSTRAINT chk_equity_curve_position_ratio_range
+        CHECK (position_ratio IS NULL OR position_ratio BETWEEN 0 AND 1)
 );
 
 -- 绩效快照（每日跑一次，取最新一行即为"当前绩效"）
@@ -64,7 +70,31 @@ CREATE TABLE frontend.strategy_performance_snapshot (
     beta                    NUMERIC(8,4),
     alpha                   NUMERIC(10,6),
 
-    PRIMARY KEY (strategy_id, snapshot_date)
+    PRIMARY KEY (strategy_id, snapshot_date),
+    CONSTRAINT chk_perf_snapshot_max_drawdown_non_positive
+        CHECK (max_drawdown IS NULL OR max_drawdown <= 0),
+    CONSTRAINT chk_perf_snapshot_drawdown_window
+        CHECK (
+            max_drawdown_start IS NULL
+            OR max_drawdown_end IS NULL
+            OR max_drawdown_start <= max_drawdown_end
+        ),
+    CONSTRAINT chk_perf_snapshot_volatility_non_negative
+        CHECK (annualized_volatility IS NULL OR annualized_volatility >= 0),
+    CONSTRAINT chk_perf_snapshot_downside_non_negative
+        CHECK (downside_deviation IS NULL OR downside_deviation >= 0),
+    CONSTRAINT chk_perf_snapshot_total_trades_non_negative
+        CHECK (total_trades IS NULL OR total_trades >= 0),
+    CONSTRAINT chk_perf_snapshot_win_rate_range CHECK (win_rate IS NULL OR win_rate BETWEEN 0 AND 1),
+    CONSTRAINT chk_perf_snapshot_profit_factor_non_negative
+        CHECK (profit_factor IS NULL OR profit_factor >= 0),
+    CONSTRAINT chk_perf_snapshot_streaks_non_negative
+        CHECK (
+            (max_consecutive_wins IS NULL OR max_consecutive_wins >= 0)
+            AND (max_consecutive_losses IS NULL OR max_consecutive_losses >= 0)
+        ),
+    CONSTRAINT chk_perf_snapshot_avg_holding_days_non_negative
+        CHECK (avg_holding_days IS NULL OR avg_holding_days >= 0)
 );
 
 -- 月度收益矩阵（年 x 月热力图数据源）

@@ -34,7 +34,11 @@ CREATE TABLE frontend.user_strategy_subscriptions (
     cancel_reason   TEXT,
 
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_strategy_subs_plan_type_valid CHECK (plan_type IN ('monthly', 'yearly', 'lifetime')),
+    CONSTRAINT chk_strategy_subs_status_valid
+        CHECK (status IN ('pending_payment', 'active', 'expired', 'cancelled')),
+    CONSTRAINT chk_strategy_subs_date_window CHECK (start_date <= expire_date)
 );
 -- 注：同一 (user_id, strategy_id) 可以存在多条历史订阅，靠 status + expire_date 判断当前是否有效
 -- 避免 UNIQUE 约束把续费新订阅挡掉

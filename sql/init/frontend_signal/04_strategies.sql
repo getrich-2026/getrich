@@ -9,7 +9,9 @@ CREATE TABLE frontend.strategy_categories (
     description     VARCHAR(256),
     icon_url        TEXT,
     sort_order      INT             NOT NULL DEFAULT 0,
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_strategy_categories_id_not_blank CHECK (btrim(id) <> ''),
+    CONSTRAINT chk_strategy_categories_name_not_blank CHECK (btrim(name) <> '')
 );
 
 -- 策略主表
@@ -64,7 +66,31 @@ CREATE TABLE frontend.strategies (
 
     published_at    TIMESTAMPTZ,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_strategies_code_not_blank CHECK (btrim(strategy_code) <> ''),
+    CONSTRAINT chk_strategies_name_not_blank CHECK (btrim(name) <> ''),
+    CONSTRAINT chk_strategies_type_valid CHECK (type IN ('timing', 'stock_pick', 'hedge', 'arbitrage', 'macro')),
+    CONSTRAINT chk_strategies_asset_class_valid
+        CHECK (asset_class IN ('stock', 'future', 'option', 'equity', 'fx', 'crypto', 'mixed')),
+    CONSTRAINT chk_strategies_market_valid CHECK (market IN ('cn', 'hk', 'us')),
+    CONSTRAINT chk_strategies_target_horizon_valid
+        CHECK (target_horizon IS NULL OR target_horizon IN ('intraday', 'swing', 'position', 'long_term')),
+    CONSTRAINT chk_strategies_risk_level_valid CHECK (risk_level IN ('low', 'medium', 'high')),
+    CONSTRAINT chk_strategies_access_tier_non_negative CHECK (access_tier >= 0),
+    CONSTRAINT chk_strategies_payg_price_non_negative CHECK (payg_price IS NULL OR payg_price >= 0),
+    CONSTRAINT chk_strategies_payg_duration_positive
+        CHECK (payg_duration_days IS NULL OR payg_duration_days > 0),
+    CONSTRAINT chk_strategies_subscription_monthly_non_negative
+        CHECK (subscription_monthly IS NULL OR subscription_monthly >= 0),
+    CONSTRAINT chk_strategies_subscription_yearly_non_negative
+        CHECK (subscription_yearly IS NULL OR subscription_yearly >= 0),
+    CONSTRAINT chk_strategies_backtest_window
+        CHECK (backtest_start IS NULL OR backtest_end IS NULL OR backtest_start <= backtest_end),
+    CONSTRAINT chk_strategies_pub_status_valid CHECK (pub_status IN ('draft', 'published', 'archived')),
+    CONSTRAINT chk_strategies_run_status_valid
+        CHECK (run_status IS NULL OR run_status IN ('backtest', 'paper', 'live', 'paused', 'retired')),
+    CONSTRAINT chk_strategies_counts_non_negative
+        CHECK (follower_count >= 0 AND subscriber_count >= 0 AND signal_count >= 0)
 );
 
 -- 策略标签关联（使用 tags 表，适合"按 tag 查策略"）

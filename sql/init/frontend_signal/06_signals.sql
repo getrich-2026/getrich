@@ -9,7 +9,8 @@ CREATE TABLE frontend.signal_batches (
     batch_code      VARCHAR(50)     UNIQUE NOT NULL,        -- STR-001-20260415-B01
     note            TEXT,                                   -- 本批调仓说明
     published_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_signal_batches_code_not_blank CHECK (btrim(batch_code) <> '')
 );
 
 -- 信号主表
@@ -70,7 +71,39 @@ CREATE TABLE frontend.signals (
     pnl_pct         NUMERIC(8,4),
     resolved_at     TIMESTAMPTZ,
 
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_signals_code_not_blank CHECK (btrim(signal_code) <> ''),
+    CONSTRAINT chk_signals_market_not_blank CHECK (btrim(market) <> ''),
+    CONSTRAINT chk_signals_symbol_not_blank CHECK (btrim(symbol) <> ''),
+    CONSTRAINT chk_signals_type_valid CHECK (type IN ('entry', 'exit', 'adjust', 'alert')),
+    CONSTRAINT chk_signals_action_valid
+        CHECK (action IN ('buy', 'sell', 'hold', 'close', 'open', 'add', 'reduce')),
+    CONSTRAINT chk_signals_direction_valid
+        CHECK (direction IS NULL OR direction IN ('long', 'short', 'neutral')),
+    CONSTRAINT chk_signals_prices_non_negative
+        CHECK (
+            (entry_low IS NULL OR entry_low >= 0)
+            AND (entry_high IS NULL OR entry_high >= 0)
+            AND (trigger_price IS NULL OR trigger_price >= 0)
+            AND (target_price IS NULL OR target_price >= 0)
+            AND (stop_loss_price IS NULL OR stop_loss_price >= 0)
+            AND (strike_price IS NULL OR strike_price >= 0)
+            AND (exit_price IS NULL OR exit_price >= 0)
+        ),
+    CONSTRAINT chk_signals_entry_range
+        CHECK (entry_low IS NULL OR entry_high IS NULL OR entry_low <= entry_high),
+    CONSTRAINT chk_signals_suggested_quantity_positive
+        CHECK (suggested_quantity IS NULL OR suggested_quantity > 0),
+    CONSTRAINT chk_signals_position_pct_range CHECK (position_pct IS NULL OR position_pct BETWEEN 0 AND 1),
+    CONSTRAINT chk_signals_confidence_range CHECK (confidence BETWEEN 0 AND 1),
+    CONSTRAINT chk_signals_urgency_valid CHECK (urgency IN ('low', 'normal', 'high', 'critical')),
+    CONSTRAINT chk_signals_option_type_valid CHECK (option_type IS NULL OR option_type IN ('call', 'put')),
+    CONSTRAINT chk_signals_access_tier_non_negative CHECK (access_tier >= 0),
+    CONSTRAINT chk_signals_delay_free_hours_non_negative
+        CHECK (delay_free_hours IS NULL OR delay_free_hours >= 0),
+    CONSTRAINT chk_signals_status_valid CHECK (status IN ('active', 'expired', 'cancelled')),
+    CONSTRAINT chk_signals_result_valid
+        CHECK (result IS NULL OR result IN ('win', 'loss', 'neutral', 'cancelled'))
 );
 
 -- 信号触发时刻的行情快照（对应前端 5.2 信号详情页的市场数据区）
@@ -98,5 +131,21 @@ CREATE TABLE frontend.signal_market_snapshot (
     implied_vol     NUMERIC(10,6),
     greeks_snapshot JSONB,                                  -- 行情快照时的 greeks
 
-    PRIMARY KEY (signal_id, symbol, snapshot_time)
+    PRIMARY KEY (signal_id, symbol, snapshot_time),
+    CONSTRAINT chk_signal_market_snapshot_symbol_not_blank CHECK (btrim(symbol) <> ''),
+    CONSTRAINT chk_signal_market_snapshot_prices_non_negative
+        CHECK (
+            (open IS NULL OR open >= 0)
+            AND (high IS NULL OR high >= 0)
+            AND (low IS NULL OR low >= 0)
+            AND (close IS NULL OR close >= 0)
+        ),
+    CONSTRAINT chk_signal_market_snapshot_high_low
+        CHECK (high IS NULL OR low IS NULL OR high >= low),
+    CONSTRAINT chk_signal_market_snapshot_volume_non_negative CHECK (volume IS NULL OR volume >= 0),
+    CONSTRAINT chk_signal_market_snapshot_turnover_non_negative CHECK (turnover IS NULL OR turnover >= 0),
+    CONSTRAINT chk_signal_market_snapshot_open_interest_non_negative
+        CHECK (open_interest IS NULL OR open_interest >= 0),
+    CONSTRAINT chk_signal_market_snapshot_implied_vol_non_negative
+        CHECK (implied_vol IS NULL OR implied_vol >= 0)
 );
