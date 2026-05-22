@@ -52,7 +52,9 @@
       "Bash(node -e \"const v=JSON.parse\\(require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\)\\); console.log\\(v.filter\\(x=>x.startsWith\\('6.'\\)\\).slice\\(-5\\).join\\('\\\\n'\\)\\)\")",
       "Bash(npm install *)",
       "Bash(./node_modules/.bin/tsc --version)",
-      "Bash(./node_modules/.bin/tsc -b)"
+      "Bash(./node_modules/.bin/tsc -b)",
+      "Bash(mv NOTES.md .agent/brain/NOTES.md)",
+      "Bash(mv TODO.md .agent/brain/TODO.md)"
     ]
   }
 }

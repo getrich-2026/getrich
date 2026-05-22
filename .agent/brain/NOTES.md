@@ -1,6 +1,17 @@
 # GetRich — 开发笔记
 
+## 最近变更
+- 2026-05-22: `reference/getrich_strategy_signal_design.md` v1.2 — 以 `reference/getrich.openapi.json` 为准，同步修复以下差异：
+  - 数据流图 CH+PG → PG only（对齐"CH 只存行情"铁律）
+  - 新增 6 个缺失端点（策略级信号列表、订阅状态查询、策略级推送设置 CRUD、用户订单、支付回调）
+  - 修复章节编号：5.4 缺口、WebSocket 子节 6.x→7.x、前端页面 7.x→8.x
+  - 更新技术栈：React 18→19、Zustand→移除、Redis 标记为 P1
+  - 补充认证状态说明（JWT 定义但未强制）
+  - 修剪超配响应字段（spread_std、basis、related_signals 等）
+  - 附录 K 扩展为 22 个端点
+
 ## 关键决策
+- 数据库 ETL（导入、清洗、网关接口等）部分彻底迁移至 `getrich-database/import_data` 项目，getrich 项目中完全删除 `apps/data` 目录及相关测试 `tests/test_export.py`, `tests/test_import.py`, `tests/test_rq.py`，使主业务与数据处理彻底解耦 — 2026-05
 - 主业务库改为 PostgreSQL（goldmine），ClickHouse 仅保留时间序列行情数据 — 2026-04
 - 不用 ORM，手写 SQL（直接调 PG 函数 / UPSERT / JSONB，少一层抽象）— 2026-04
 - 响应包装用全局 dict + register_exception_handlers，不用 Pydantic response_model（字段量大且 schema 跟 SQL 紧耦合）— 2026-04

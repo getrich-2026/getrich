@@ -1,7 +1,7 @@
 # GetRich 策略与信号模块 — 前端展示与接口设计文档
 
-> 文档版本：v1.1  
-> 更新日期：2026-04-22  
+> 文档版本：v1.2  
+> 更新日期：2026-05-22  
 > 项目代号：GetRich  
 > 协议规范：RESTful API + WebSocket（实时信号推送）  
 > 后端存储：PostgreSQL（全量业务数据）
@@ -15,9 +15,10 @@
 3. [数据模型与表结构](#三数据模型与表结构)
 4. [策略模块接口](#四策略模块接口)
 5. [信号模块接口](#五信号模块接口)
-6. [WebSocket 实时推送](#六websocket-实时推送)
-7. [前端页面设计](#七前端页面设计)
-8. [附录：数据字典与枚举](#八附录数据字典与枚举)
+6. [支付回调接口](#六、支付回调接口)
+7. [WebSocket 实时推送](#七websocket-实时推送)
+8. [前端页面设计](#八前端页面设计)
+9. [附录：数据字典与枚举](#九附录数据字典与枚举)
 
 ---
 
@@ -35,20 +36,20 @@ GetRich 平台聚焦 **A 股、期货、期权** 三大资产类别的量化策�
 
 | 层级 | 技术选择 | 选型理由 |
 |------|----------|----------|
-| 前端框架 | React 18 + TypeScript | 类型安全，生态成熟 |
-| 状态管理 | Zustand + React Query | 轻量 + 缓存自动失效 |
+| 前端框架 | React 19 + TypeScript 5.9 | 类型安全，生态成熟 |
+| 状态管理 | @tanstack/react-query 5 | 异步状态管理 + 缓存自动失效 |
 | 图表库 | ECharts 5 | 金融图表支持最完善（K线、资金曲线、热力图） |
 | HTTP 客户端 | Axios | 拦截器 + 重试机制 |
 | 实时通信 | WebSocket（原生） | 信号推送延迟 <100ms |
 | 后端框架 | FastAPI (Python 3.10+) | 异步高性能，类型提示原生支持 |
-| 数据库 | PostgreSQL 16 | 策略元数据、用户关系、订阅状态、时序净值曲线、历史信号、行情快照 |
-| 缓存 | Redis 7 | 热点策略排行、信号未读计数、WebSocket 会话管理 |
-| 消息队列 | Redis Streams | 信号广播、异步通知 |
+| 数据库 | PostgreSQL 16 | 全量业务数据：策略元数据、用户关系、订阅状态、时序净值曲线、历史信号、交易记录 |
+| 缓存 | Redis 7（P1 待实现） | 热点策略排行、信号未读计数、WebSocket 会话管理 |
+| 消息队列 | Redis Streams（P1 待实现） | 信号广播、异步通知 |
 
 ### 1.3 核心设计原则
 
-1. **读写分离**：Redis 承载高频热点读（排行榜、未读计数），PostgreSQL 承载所有持久化数据（净值曲线、信号历史、订阅、元数据）  
-2. **分层缓存**：Redis 缓存策略摘要（TTL 5min）、排行榜（TTL 1min）；前端 React Query 缓存列表（staleTime 30s）  
+1. **读写分离**：PostgreSQL 承载所有持久化数据（净值曲线、信号历史、订阅、元数据）；Redis 缓存层（P1 待实现）后续承载高频热点读（排行榜、未读计数）  
+2. **分层缓存**：当前由前端 React Query 缓存列表（staleTime 30s）；Redis 缓存层（P1 待实现）后续补充策略摘要（TTL 5min）、排行榜（TTL 1min）  
 3. **渐进加载**：策略详情页分 3 次请求——基础信息（<100ms）→ 绩效指标（<200ms）→ 净值曲线（<500ms）  
 4. **信号实时性**：信号产生 → Redis Streams 广播 → WebSocket 推送，端到端延迟目标 <500ms  
 
@@ -57,7 +58,7 @@ GetRich 平台聚焦 **A 股、期货、期权** 三大资产类别的量化策�
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          数据生产层                                      │
-│  策略引擎 ──→ 信号产生 ──→ Redis Streams ──→ 信号持久化(CH + PG)         │
+│  策略引擎 ──→ 信号产生 ──→ 信号持久化(PG)                            │
 └──────────────────────────┬──────────────────────────────────────────────┘
                            │ publish
 ┌──────────────────────────▼──────────────────────────────────────────────┐
@@ -100,11 +101,13 @@ GetRich 平台聚焦 **A 股、期货、期权** 三大资产类别的量化策�
 
 ```http
 Content-Type: application/json
-Authorization: Bearer {access_token}
+Authorization: Bearer {access_token}       # 预留：当前暂未强制校验（使用 X-User-Id mock）
 X-Request-ID: {uuid}
 X-Client-Version: 1.0.0
 X-Device-Type: web|ios|android
 ```
+
+> **当前认证状态**：JWT Bearer Token 方案已定义但尚未落地。开发/测试环境目前通过 `X-User-Id` 请求头 mock 用户身份。前端 `client.ts` 在 `VITE_DEMO_USER_ID` 模式下自动注入该头。
 
 ### 2.3 统一响应结构
 
@@ -456,7 +459,9 @@ CREATE TABLE signal_market_snapshot (
 CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 ```
 
-### 3.3 Redis 缓存结构
+### 3.3 Redis 缓存结构（P1 待实现）
+
+> 当前尚未接入 Redis，以下为规划中的缓存方案。上线后根据 PostgreSQL 负载观察结果决定是否实施。
 
 | Key 模式 | 数据类型 | TTL | 说明 |
 |----------|----------|-----|------|
@@ -842,22 +847,15 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
       "cvar_95": -0.0320,
       "beta": 0.15,
       "alpha": 0.1450,
-      "tracking_error": 0.0821,
       "max_single_day_loss": -0.0385,
       "max_single_day_gain": 0.0420
     },
     "trade_analysis": {
       "total_trades": 156,
-      "long_trades": 82,
-      "short_trades": 74,
       "win_rate": 0.6250,
-      "long_win_rate": 0.6585,
-      "short_win_rate": 0.5946,
       "avg_trade_return": 0.0036,
       "avg_holding_days": 3.2,
-      "avg_trades_per_month": 2.1,
-      "profit_factor": 1.78,
-      "kelly_fraction": 0.21
+      "profit_factor": 1.78
     },
     "annual_performance": [
       {"year": 2020, "return": 0.142, "max_drawdown": -0.089, "sharpe": 1.62, "trades": 24},
@@ -909,9 +907,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
         "pnl": 18000.00,
         "return_pct": 0.0166,
         "holding_days": 2,
-        "max_favorable_excursion": 0.0220,
-        "max_adverse_excursion": -0.0055
-      }
+              }
     ],
     "pagination": {
       "page": 1,
@@ -970,6 +966,138 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | reason | string | 否 | 取消原因 |
+
+---
+### 4.10 获取策略历史信号列表
+
+**GET** `/strategies/{strategy_id}/signals`
+
+> 返回指定策略的历史信号，登录用户附带 is_read/is_executed。
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| type | string | 否 | 信号类型：`entry`/`exit`/`adjust`/`alert`/`all` |
+| action | string | 否 | 操作方向：`buy`/`sell`/`hold`/`close`/`all` |
+| status | string | 否 | 状态：`active`/`expired`/`cancelled`/`all` |
+| page | int | 否 | 页码 |
+| page_size | int | 否 | 每页数量 |
+
+**响应数据：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "list": [
+      {
+        "id": "SIG_20260415_001",
+        "signal_type": "entry",
+        "action": "buy",
+        "symbol": "IF2506",
+        "trigger_price": 3650.00,
+        "confidence": 0.85,
+        "urgency": "high",
+        "trigger_time": "2026-04-15T09:31:00+08:00",
+        "is_read": false,
+        "is_executed": false,
+        "status": "active"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 20,
+      "total": 89,
+      "total_pages": 5,
+      "has_more": true
+    }
+  }
+}
+```
+
+---
+### 4.11 查询策略订阅状态
+
+**GET** `/strategies/{strategy_id}/subscription`
+
+> 返回当前用户对该策略的最新有效订阅信息。
+
+**响应数据：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "is_subscribed": true,
+    "subscription_id": "SUB_001",
+    "status": "active",
+    "plan_type": "yearly",
+    "start_date": "2026-01-01",
+    "expire_date": "2026-12-31",
+    "auto_renew": true,
+    "subscription_price": {
+      "monthly": 99.00,
+      "yearly": 899.00
+    }
+  }
+}
+```
+
+---
+### 4.12 获取策略维度推送配置
+
+**GET** `/strategies/{strategy_id}/signal-settings`
+
+> 返回策略维度的推送设置，未配置时继承全局配置。
+
+**响应数据：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "strategy_id": "STR_FUT_001",
+    "enabled": true,
+    "channels": {
+      "app_push": true,
+      "wechat_service": true
+    },
+    "urgency_filter": ["normal", "high", "critical"],
+    "confidence_threshold": 0.5,
+    "notify_entry_only": false
+  }
+}
+```
+
+---
+### 4.13 更新策略维度推送配置
+
+**PUT** `/strategies/{strategy_id}/signal-settings`
+
+> 支持部分更新，仅传需修改的字段。未传入字段保持原值。
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| enabled | boolean | 否 | 是否启用推送 |
+| channels | object | 否 | 推送渠道开关 |
+| urgency_filter | string[] | 否 | 紧急度过滤 |
+| confidence_threshold | float | 否 | 置信度阈值（0~1） |
+| notify_entry_only | boolean | 否 | 仅入场通知 |
+
+**响应数据：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "strategy_id": "STR_FUT_001",
+    "updated": true
+  }
+}
+```
 
 ---
 
@@ -1111,7 +1239,6 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
     "reason_detail": {
       "spread_current": 12.4,
       "spread_mean": 5.2,
-      "spread_std": 3.6,
       "z_score": 2.0,
       "trigger_rule": "z_score > 2.0 且持仓量放大"
     },
@@ -1133,8 +1260,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
         "ma5": 3642.00,
         "ma20": 3618.00,
         "rsi_14": 62.3,
-        "atr_14": 35.6,
-        "basis": -8.2
+        "atr_14": 35.6
       }
     },
 
@@ -1142,28 +1268,10 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
       "similar_signals_count": 23,
       "win_rate": 0.7391,
       "avg_return": 0.0185,
-      "avg_holding_days": 2.8,
-      "best_return": 0.0420,
-      "worst_return": -0.0180
+      "avg_holding_days": 2.8
     },
 
-    "related_signals": [
-      {
-        "id": "SIG_20260410_001",
-        "action": "buy",
-        "symbol": "IF2506",
-        "trigger_price": 3620.00,
-        "trigger_time": "2026-04-10T09:35:00+08:00",
-        "result": {
-          "exit_price": 3680.00,
-          "return_pct": 0.0166,
-          "status": "closed_profit"
-        }
-      }
-    ],
-
-    "parent_signal": null,
-
+    
     "user_state": {
       "is_read": true,
       "read_at": "2026-04-15T09:32:00+08:00",
@@ -1198,7 +1306,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-### 5.5 记录信号执行反馈
+### 5.4 记录信号执行反馈
 
 **POST** `/signals/{signal_id}/execute`
 
@@ -1229,7 +1337,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-### 5.6 获取未读信号统计
+### 5.5 获取未读信号统计
 
 **GET** `/signals/unread-summary`
 
@@ -1272,7 +1380,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-### 5.7 获取信号推送配置
+### 5.6 获取信号推送配置
 
 **GET** `/user/signal-settings`
 
@@ -1314,17 +1422,110 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-### 5.8 更新信号推送配置
+### 5.7 更新信号推送配置
 
 **PUT** `/user/signal-settings`
 
 **请求参数：** 与 5.7 响应 `data` 结构一致，支持部分更新（仅传需修改的字段）。
 
 ---
+### 5.8 获取用户订单列表
 
-## 六、WebSocket 实时推送
+**GET** `/user/orders`
 
-### 6.1 连接规范
+> 分页返回当前用户的全部订单，含订单行项目。
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| status | string | 否 | 订单状态：`pending`/`paid`/`cancelled`/`refunded`/`all` |
+| page | int | 否 | 页码 |
+| page_size | int | 否 | 每页数量 |
+
+**响应数据：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "list": [
+      {
+        "order_id": "ORD_20260415_001",
+        "status": "paid",
+        "total_amount": 899.00,
+        "payment_source": "wechat",
+        "created_at": "2026-04-15T10:00:00+08:00",
+        "paid_at": "2026-04-15T10:02:30+08:00",
+        "items": [
+          {
+            "item_type": "strategy_subscription",
+            "item_id": "STR_FUT_001",
+            "item_name": "股指期货跨期套利（年订阅）",
+            "plan_type": "yearly",
+            "amount": 899.00
+          }
+        ]
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 20,
+      "total": 5,
+      "total_pages": 1,
+      "has_more": false
+    }
+  }
+}
+```
+
+---
+
+## 六、支付回调接口
+
+### 6.1 支付结果回调
+
+**POST** `/webhooks/payment`
+
+> 由支付平台（微信/支付宝/银行）异步回调。
+> - 以 `payment_ref` 去重（幂等），重复回调直接返回 200。
+> - 验签：HMAC-SHA256（Header: `X-Webhook-Signature`）。
+> - 成功后：orders.status=paid，user_strategy_subscriptions.status=active。
+
+**请求头：**
+
+| 头 | 必填 | 说明 |
+|----|------|------|
+| X-Webhook-Signature | 是 | HMAC-SHA256 签名（Hex 编码） |
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| order_id | string | 是 | 系统订单 ID |
+| payment_ref | string | 是 | 第三方支付流水号（幂等键） |
+| status | string | 是 | `success`/`failed`/`refunded` |
+| amount | float | 是 | 实际支付金额 |
+| payment_source | string | 是 | `wechat`/`alipay`/`bank`/`apple_pay`/`stripe` |
+| paid_at | string | 否 | 支付完成时间 |
+
+**响应数据：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "order_id": "ORD_20260415_001",
+    "processed": true
+  }
+}
+```
+
+---
+
+## 七、WebSocket 实时推送
+
+### 7.1 连接规范
 
 | 项目 | 说明 |
 |------|------|
@@ -1334,7 +1535,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 | 重连策略 | 指数退避：1s → 2s → 4s → 8s → 16s → 30s（上限） |
 | 消息压缩 | 支持 `permessage-deflate` |
 
-### 6.2 消息格式
+### 7.2 消息格式
 
 ```json
 {
@@ -1345,7 +1546,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 }
 ```
 
-### 6.3 消息类型
+### 7.3 消息类型
 
 | type | 方向 | 说明 |
 |------|------|------|
@@ -1358,7 +1559,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 | `strategy_status` | S → C | 策略状态变更（暂停/恢复） |
 | `error` | S → C | 错误消息 |
 
-### 6.4 订阅信号频道
+### 7.4 订阅信号频道
 
 **客户端发送：**
 
@@ -1390,7 +1591,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 }
 ```
 
-### 6.5 信号推送消息
+### 7.5 信号推送消息
 
 **服务端推送：**
 
@@ -1419,7 +1620,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 }
 ```
 
-### 6.6 信号状态更新
+### 7.6 信号状态更新
 
 ```json
 {
@@ -1436,9 +1637,9 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-## 七、前端页面设计
+## 八、前端页面设计
 
-### 7.1 策略列表页
+### 8.1 策略列表页
 
 **页面路由：** `/strategies`
 
@@ -1471,7 +1672,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-### 7.2 策略详情页
+### 8.2 策略详情页
 
 **页面路由：** `/strategies/{strategy_id}`
 
@@ -1539,7 +1740,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-### 7.3 信号列表页
+### 8.3 信号列表页
 
 **页面路由：** `/signals`
 
@@ -1577,7 +1778,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-### 7.4 信号详情页
+### 8.4 信号详情页
 
 **页面路由：** `/signals/{signal_id}`
 
@@ -1650,7 +1851,7 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 
 ---
 
-## 八、附录：数据字典与枚举
+## 九、附录：数据字典与枚举
 
 ### A. 资产类别（asset_class）
 
@@ -1755,8 +1956,12 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 | 4.5 | GET | `/strategies/{id}/monthly-returns` | 月度收益矩阵 |
 | 4.6 | GET | `/strategies/{id}/backtest-report` | 回测报告 |
 | 4.7 | GET | `/strategies/{id}/trades` | 历史交易记录 |
-| 4.8 | POST | `/strategies/{id}/subscribe` | 订阅策略 |
-| 4.9 | POST | `/strategies/{id}/unsubscribe` | 取消订阅 |
+| 4.8 | GET | `/strategies/{id}/signals` | 策略历史信号列表 |
+| 4.9 | POST | `/strategies/{id}/subscribe` | 订阅策略 |
+| 4.10 | POST | `/strategies/{id}/unsubscribe` | 取消订阅 |
+| 4.11 | GET | `/strategies/{id}/subscription` | 查询订阅状态 |
+| 4.12 | GET | `/strategies/{id}/signal-settings` | 策略级推送配置（读） |
+| 4.13 | PUT | `/strategies/{id}/signal-settings` | 策略级推送配置（写） |
 | 5.1 | GET | `/signals` | 用户信号流 |
 | 5.2 | GET | `/signals/{id}` | 信号详情 |
 | 5.3 | POST | `/signals/{id}/read` | 标记已读 |
@@ -1764,6 +1969,8 @@ CREATE INDEX idx_market_snapshot_signal ON signal_market_snapshot(signal_id);
 | 5.5 | GET | `/signals/unread-summary` | 未读统计 |
 | 5.6 | GET | `/user/signal-settings` | 推送配置查询 |
 | 5.7 | PUT | `/user/signal-settings` | 推送配置更新 |
+| 5.8 | GET | `/user/orders` | 用户订单列表 |
+| 6.1 | POST | `/webhooks/payment` | 支付结果回调 |
 
 ---
 

@@ -53,11 +53,11 @@ npm run lint
 npm run build
 ```
 
-## 8. NOTES.md Convention
+## 8. 开发进度文档 (.agent/brain/)
 
-- **Session start**: Read `NOTES.md` to restore state and TODO items.
-- **Session end**: Update `NOTES.md` with progress, changes, P0/P1 TODOs, and known tech debt if substantive code changes, schema changes, or technical decisions were made.
-- **Self-improvement**: Record error patterns and prevention strategies when AI errors cause user corrections or test failures.
+- **Session start**: Read `.agent/brain/NOTES.md` to restore state and TODO items. Then check `.agent/brain/TODO.md` for Web API reference.
+- **Session end**: Update `.agent/brain/NOTES.md` with progress, changes, P0/P1 TODOs, and known tech debt if substantive code changes, schema changes, or technical decisions were made.
+- **Self-improvement**: Record error patterns and prevention strategies in `.agent/brain/NOTES.md` when AI errors cause user corrections or test failures.
 
 ## 9. Don'ts
 
