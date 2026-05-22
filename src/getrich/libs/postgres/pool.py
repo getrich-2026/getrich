@@ -45,7 +45,7 @@ class PgConnectionPool:
             max_size=cfg.max_size,
             kwargs={
                 "row_factory": dict_row,
-                "options": "-c timezone=Asia/Shanghai",
+                "options": "-c timezone=Asia/Shanghai -c search_path=frontend",
             },
             open=False,
         )
