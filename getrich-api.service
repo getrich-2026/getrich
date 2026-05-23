@@ -1,0 +1,15 @@
+[Unit]
+Description=GetRich FastAPI Backend
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=neo
+WorkingDirectory=/home/neo/project/getrich
+ExecStart=/home/neo/.local/bin/uv run --find-links ./local_packages uvicorn getrich.apps.web.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

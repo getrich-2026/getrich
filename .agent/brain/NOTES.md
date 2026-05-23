@@ -62,8 +62,33 @@
 ### 后端
 
 ```bash
-.venv/bin/python -m uvicorn getrich.apps.web.main:app --host 0.0.0.0 --port 8000
+# 开发模式（热重载）
+uv run --find-links ./local_packages uvicorn getrich.apps.web.main:app --reload --host 0.0.0.0 --port 8000
 # Swagger: http://localhost:8000/docs
+```
+
+**Python 版本**：项目固定 Python 3.12（`.python-version` 文件），`requires-python = ">=3.12"`，使用 `uv` 管理依赖，不依赖 conda。
+
+### systemd 托管（生产）
+
+服务文件：`getrich-api.service`（项目根目录）
+
+```bash
+# 首次安装
+sudo cp getrich-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable getrich-api
+sudo systemctl start getrich-api
+
+# 代码更新后重启
+git pull && sudo systemctl restart getrich-api
+
+# 若 .service 文件本身有改动，需重新 cp + daemon-reload
+sudo cp getrich-api.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl restart getrich-api
+
+# 查看日志
+journalctl -u getrich-api -f
 ```
 
 关键 `.env` 键：`PG_HOST=45.142.166.254` / `PG_USER=quant` / `PG_PASSWORD=zedbi4-revSat-nepqik` / `PG_DB=getrich` / `WEB_CORS_ORIGINS=http://localhost:3000`

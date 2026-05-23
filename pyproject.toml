@@ -9,14 +9,12 @@ description = "量化投研系统 - 模块化设计的多品种投研交易平�
 readme = "README.md"
 authors = [{ name = "GetRich Team", email = "linnan@nebulastar.com.cn" }]
 license = { text = "MIT" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Financial and Insurance Industry",
     "Topic :: Office/Business :: Financial :: Investment",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
@@ -82,7 +80,7 @@ exclude = ["tests*", "reference*", "docs*"]
 # 代码每行最大长度
 line-length = 100
 # 目标 Python 版本
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 # 融合后的规则集：你的原版 + 推荐增强
@@ -143,7 +141,7 @@ reportMissingTypeStubs = false
 reportUnusedImport = "warning"         # 让 Ruff 负责删除，但这里显示警告
 reportUnusedVariable = "warning"
 reportDuplicateImport = "error"
-pythonVersion = "3.10"
+pythonVersion = "3.12"
 
 # 允许我写 "多余" 的 isinstance 检查
 # 在实盘中，我不信任上游数据，即使 Type Hint 说它是 int，我也要 check 它是 int
