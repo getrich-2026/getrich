@@ -177,9 +177,7 @@ def write_parquet(df: pd.DataFrame, path: Path, *, append: bool = False) -> None
         raise e
 
 
-def _write_parquet_duckdb(
-    df: pd.DataFrame, path: Path, tmp_path: Path
-) -> pd.DataFrame:
+def _write_parquet_duckdb(df: pd.DataFrame, path: Path, tmp_path: Path) -> pd.DataFrame:
     """DuckDB 合并路径: 写新数据到临时文件, 用 SQL 合并旧文件, 返回结果 DataFrame.
 
     若 DuckDB 导入或执行失败, 自动降级为 pandas 合并并记录日志.
@@ -198,9 +196,7 @@ def _write_parquet_duckdb(
         try:
             return _duckdb_merge(str(path), str(new_tmp), idx_names)
         except Exception as exc:
-            _logger.warning(
-                "DuckDB merge failed, fallback to pandas: %s", exc
-            )
+            _logger.warning("DuckDB merge failed, fallback to pandas: %s", exc)
             return _pandas_merge(str(path), df)
     finally:
         if new_tmp.exists():

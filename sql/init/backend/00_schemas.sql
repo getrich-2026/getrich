@@ -4,5 +4,6 @@
 -- 时区约定: TIMESTAMPTZ 以 UTC 存储，应用层 SET timezone = 'Asia/Shanghai'
 -- ============================================================
 
-CREATE SCHEMA IF NOT EXISTS ref;
-CREATE SCHEMA IF NOT EXISTS rq;
+CREATE SCHEMA IF NOT EXISTS re;  -- re -> ref
+CREATE SCHEMA IF NOT EXISTS rq;  -- rq -> rice quant
+CREATE SCHEMA IF NOT EXISTS md;  -- md -> market_date

@@ -20,7 +20,6 @@ from ...utils import (
     today_int,
     write_parquet,
 )
-
 from .incremental import IncrementalFetcher
 
 # 合法 period 名称 -> AmazingData.Period 枚举成员名

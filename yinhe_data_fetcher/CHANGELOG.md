@@ -15,7 +15,6 @@
 
 - **K 线去重逻辑修复**: 弃用 SDK 返回的无意义 `RangeIndex`，强制使用 `kline_time` (DatetimeIndex) 作为唯一索引。彻底解决了多次追加任务可能导致的数据误删或索引混乱问题。
 - **轻量索引读取**: 优化 `read_parquet_index`，仅加载元数据或空列，极大降低了在检查“最后同步日期”时的磁盘 I/O。
-- **自动化测试**: 新增 `tests/test_utils.py` 测试套件，覆盖 DuckDB 合并逻辑、Schema 漂移处理、并发写入冲突等边界场景。
 
 ### 运维建议 (Operational Notes)
 

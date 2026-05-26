@@ -1,10 +1,10 @@
 -- ============================================================
--- 统一标的视图 ref.instruments
+-- 统一标的视图 re.instruments
 -- 整合所有 rq 分表，供上层统一查询。
 -- 缺失值保留 NULL，避免把未知值误表示为 0 或空字符串。
 -- ============================================================
 
-CREATE OR REPLACE VIEW ref.instruments AS
+CREATE OR REPLACE VIEW re.instruments AS
 -- CS (股票)
 SELECT
     order_book_id::TEXT                           AS symbol,

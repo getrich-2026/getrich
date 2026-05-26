@@ -1,9 +1,9 @@
 -- ============================================================
--- 参考数据 (ref)
+-- 参考数据 (re)
 -- ============================================================
 
 -- 交易日历
-CREATE TABLE IF NOT EXISTS ref.calendar (
+CREATE TABLE IF NOT EXISTS re.calendar (
     exchange         VARCHAR(20)  NOT NULL,
     dt               DATE         NOT NULL,
     is_trading       BOOLEAN      NOT NULL DEFAULT FALSE,
@@ -20,10 +20,10 @@ CREATE TABLE IF NOT EXISTS ref.calendar (
 );
 
 CREATE INDEX IF NOT EXISTS idx_calendar_trading
-    ON ref.calendar (exchange, is_trading, dt);
+    ON re.calendar (exchange, is_trading, dt);
 
 -- 标的代码映射 (多数据源)
-CREATE TABLE IF NOT EXISTS ref.symbol_mapping (
+CREATE TABLE IF NOT EXISTS re.symbol_mapping (
     symbol        TEXT        NOT NULL,
     provider      VARCHAR(20) NOT NULL,
     mapped_symbol TEXT        NOT NULL,
@@ -39,4 +39,4 @@ CREATE TABLE IF NOT EXISTS ref.symbol_mapping (
 );
 
 CREATE INDEX IF NOT EXISTS idx_symbol_mapping_symbol
-    ON ref.symbol_mapping (symbol);
+    ON re.symbol_mapping (symbol);

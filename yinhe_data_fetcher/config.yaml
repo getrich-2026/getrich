@@ -22,7 +22,7 @@ amazing_data:
 storage:
     # 所有 parquet 写入到这里; 结构:
     #   <data_dir>/<fetcher_name>/<...>.parquet
-    data_dir: "./data"
+    data_dir: "~/data"
     # init 时是否清空 incremental 类 fetcher 的旧数据
     # (FullReplace 类 fetcher 无论如何都会清空)
     wipe_on_init: false
@@ -33,7 +33,7 @@ storage:
 # - 会覆盖各 fetcher 类里硬编码的 INIT_START_DATE / START_DATE (取两者较大值)
 # - 留空 (null) 则使用类里的默认值 (一般是 20130101, AmazingData 历史起点)
 # -----------------------------------------------------------------------------
-start_date: 20260512
+start_date: 20100101
 
 logging:
     level: "INFO"
