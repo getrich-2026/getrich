@@ -1,0 +1,3 @@
+user_code,strategy_code,push_scope,push_enabled,channels,confidence_threshold,urgency_filter,quiet_hours,trading_hours_only,notify_entry_only
+DEMO_USER_001,,global,true,"{""app_push"":true,""email"":false,""wechat_service"":false,""websocket"":true}",0.50,"{normal,high,critical}","{""enabled"":false,""start"":""22:00"",""end"":""08:30""}",false,
+DEMO_USER_001,STR_IF_001,strategy,true,,0.50,,,"",false

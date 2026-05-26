@@ -1,0 +1,6 @@
+tag_code,name,category
+trend,趋势跟踪,strategy_type
+momentum,动量,strategy_type
+futures,期货,asset
+stock,A股,asset
+arbitrage,套利,strategy_type

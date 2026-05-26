@@ -1,0 +1,4 @@
+category_id,name,description,icon_url,sort_order
+CAT_TREND,趋势跟踪,基于价格趋势与动量的策略,https://example.com/icons/trend.svg,10
+CAT_MR,均值回归,利用价格偏离均值后的回归特性,https://example.com/icons/mean-reversion.svg,20
+CAT_ARB,套利策略,跨期、跨品种、期现套利,https://example.com/icons/arbitrage.svg,30
