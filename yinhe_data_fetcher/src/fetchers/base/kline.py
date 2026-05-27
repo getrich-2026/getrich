@@ -69,7 +69,9 @@ class KlineFetcher(IncrementalFetcher):
             raise ValueError(f"{type(self).__name__}.SECURITY_TYPES must be set")
 
         self._market = self.client.market_data(self.client.calendar)
-        period_enum = self.client.ad.Period
+        # AmazingData SDK exposes period enum under `AmazingData.constant.Period`
+        # (some versions do not provide `AmazingData.Period`).
+        period_enum = self.client.ad.constant.Period
         self._period_value = getattr(period_enum, PERIOD_ATTR[self.PERIOD]).value
         self.log.info(
             "[%s] period=%s (value=%s)", self.NAME, self.PERIOD, self._period_value
