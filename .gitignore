@@ -1,17 +1,60 @@
+# --- OS / Editor ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- Python ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
 .venv/
-.env
-.idea/
-.vscode/
+venv/
 
-data/
+# --- Secrets / local env ---
+.env
+.env.*
+
+# --- Logs ---
 logs/
-*.whl
+*.log
+
+# --- Data (do not commit) ---
+data/
+**/data/
+datasets/
+**/datasets/
+downloads/
+**/downloads/
+output/
+outputs/
+result/
+results/
+tmp/
+temp/
+cache/
+.cache/
+
+# --- Common data / artifact formats ---
+*.csv
+*.tsv
+*.jsonl
 *.parquet
-.DS_Store
-.codex
-.claude/
-.agents/
+*.arrow
+*.feather
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.db
+*.sqlite
+*.sqlite3
+*.xlsx
+*.xls
+*.zip
+*.7z
+*.tar
+*.tar.gz
+
+# --- Build / dependency artifacts ---
+*.whl

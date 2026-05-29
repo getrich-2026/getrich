@@ -1,0 +1,20 @@
+# PostgreSQL SQLAlchemy URL.
+# You can also set DATABASE_URL or GETRICH_DATABASE_URL instead.
+database_url: "postgresql+psycopg://getrich:password@127.0.0.1:5432/getrich"
+
+# yinhe_data_fetcher parquet output directory.
+data_dir: "../yinhe_data_fetcher/data"
+
+# SQL DDL directory and execution order.
+sql_dir: "./sql_script_sample"
+schema_files:
+  - "00_schemas.sql"
+  - "01_ref_tables.sql"
+  - "02_rq_instruments.sql"
+  - "03_ref_instruments_view.sql"
+  - "04_md_tables.sql"
+
+provider: "YINHE"
+timezone: "Asia/Shanghai"
+batch_rows: 50000
+

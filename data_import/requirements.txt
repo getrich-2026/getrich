@@ -1,0 +1,6 @@
+pandas
+pyarrow
+PyYAML
+SQLAlchemy>=2.0
+psycopg[binary]>=3.1
+
