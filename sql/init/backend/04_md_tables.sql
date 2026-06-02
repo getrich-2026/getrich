@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS md.bars_1m (
     pre_close       DOUBLE PRECISION    NOT NULL DEFAULT 0,            -- 前收盘价
     settle          DOUBLE PRECISION    NOT NULL DEFAULT 0,            -- 结算价
     pre_settle      DOUBLE PRECISION    NOT NULL DEFAULT 0,            -- 前结算价
+    adj_factor      DOUBLE PRECISION    NOT NULL DEFAULT 1,            -- 后复权因子
     provider        TEXT                NOT NULL DEFAULT 'UNKNOWN',    -- 数据来源
     updated_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW(),        -- 入库时间
     PRIMARY KEY (symbol, dt, bar_time),
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS md.bars_1m (
         CHECK (high >= low),
     CONSTRAINT chk_bars_1m_volume_non_negative
         CHECK (volume >= 0),
+    CONSTRAINT chk_bars_1m_adj_factor_positive
+        CHECK (adj_factor > 0),
     CONSTRAINT chk_bars_1m_bar_time_matches_dt
         CHECK (DATE(bar_time AT TIME ZONE 'Asia/Shanghai') = dt
                OR DATE((bar_time AT TIME ZONE 'Asia/Shanghai') - INTERVAL '1 day') = dt)

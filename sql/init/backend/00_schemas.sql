@@ -5,5 +5,4 @@
 -- ============================================================
 
 CREATE SCHEMA IF NOT EXISTS re;  -- re -> ref
-CREATE SCHEMA IF NOT EXISTS rq;  -- rq -> rice quant
 CREATE SCHEMA IF NOT EXISTS md;  -- md -> market_date
