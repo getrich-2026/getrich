@@ -18,6 +18,19 @@ CREATE TABLE IF NOT EXISTS realtime.tick_buffer (
 );
 
 SELECT create_hypertable('realtime.tick_buffer', 'dt', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
+
+DO $$
+BEGIN
+    ALTER TABLE realtime.tick_buffer SET (
+        timescaledb.compress,
+        timescaledb.compress_segmentby = 'instrument_id',
+        timescaledb.compress_orderby = 'dt DESC'
+    );
+    PERFORM add_compression_policy('realtime.tick_buffer', INTERVAL '2 days', if_not_exists => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Skipping compression for realtime.tick_buffer: %%', SQLERRM;
+END $$;
+
 DO $$
 BEGIN
     PERFORM add_retention_policy('realtime.tick_buffer', INTERVAL '7 days', if_not_exists => TRUE);

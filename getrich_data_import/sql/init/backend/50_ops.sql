@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS ops.users (
 
 CREATE TABLE IF NOT EXISTS ops.api_keys (
     key_id       BIGSERIAL PRIMARY KEY,
-    user_id      BIGINT REFERENCES ops.users(user_id),
-    api_key_hash VARCHAR(128) NOT NULL,
+    user_id      BIGINT REFERENCES ops.users(user_id) ON DELETE CASCADE,
+    api_key_hash VARCHAR(128) UNIQUE NOT NULL,
     scopes       TEXT[],
     rate_limit   INT NOT NULL DEFAULT 600,
     expires_at   TIMESTAMPTZ,
@@ -30,8 +30,13 @@ CREATE TABLE IF NOT EXISTS ops.etl_job_run (
     started_at   TIMESTAMPTZ,
     finished_at  TIMESTAMPTZ,
     error        TEXT,
-    CONSTRAINT chk_etl_job_status CHECK (status IN ('running', 'success', 'failed', 'partial'))
+    CONSTRAINT chk_etl_job_status CHECK (status IN ('running', 'success', 'failed', 'partial')),
+    CONSTRAINT chk_etl_job_run_timestamps
+        CHECK (finished_at IS NULL OR started_at IS NULL OR finished_at >= started_at)
 );
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_user_id
+    ON ops.api_keys (user_id);
 
 CREATE INDEX IF NOT EXISTS idx_etl_job_run_lookup
     ON ops.etl_job_run (job_name, trading_day, status);
@@ -48,6 +53,9 @@ CREATE TABLE IF NOT EXISTS ops.data_quality_check (
 
 CREATE INDEX IF NOT EXISTS idx_quality_run_severity
     ON ops.data_quality_check (run_id, severity);
+
+CREATE INDEX IF NOT EXISTS idx_quality_check_detail
+    ON ops.data_quality_check USING gin (detail);
 
 CREATE TABLE IF NOT EXISTS ops.schema_migrations (
     file_name  TEXT PRIMARY KEY,

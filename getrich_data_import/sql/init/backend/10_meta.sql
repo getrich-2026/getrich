@@ -36,9 +36,6 @@ CREATE TABLE IF NOT EXISTS meta.symbol_map (
         CHECK (btrim(source_symbol) <> '')
 );
 
-CREATE INDEX IF NOT EXISTS idx_symbol_map_instrument
-    ON meta.symbol_map (instrument_id);
-
 CREATE TABLE IF NOT EXISTS meta.trading_calendar (
     exchange          VARCHAR(16) NOT NULL,
     trading_day       DATE NOT NULL,
@@ -48,6 +45,8 @@ CREATE TABLE IF NOT EXISTS meta.trading_calendar (
     next_trading_day  DATE,
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (exchange, trading_day),
+    CONSTRAINT chk_calendar_exchange_not_blank
+        CHECK (btrim(exchange) <> ''),
     CONSTRAINT chk_calendar_prev_before
         CHECK (prev_trading_day IS NULL OR prev_trading_day < trading_day),
     CONSTRAINT chk_calendar_next_after
@@ -80,3 +79,5 @@ CREATE TABLE IF NOT EXISTS meta.option_contracts (
     CONSTRAINT chk_option_type CHECK (option_type IN ('C', 'P'))
 );
 
+CREATE INDEX IF NOT EXISTS idx_option_contracts_underlying
+    ON meta.option_contracts (underlying_id);
