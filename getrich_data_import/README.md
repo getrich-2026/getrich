@@ -4,7 +4,7 @@
 
 当前上游适配器：
 
-- `yinhe`：读取 `yinhe_data_fetcher` 生成的 Parquet。`yinhe_data_fetcher` 继续作为独立下载项目存在，本工程通过目录和字段约定消费其输出。默认数据目录为 `~/data`。
+- `yinhe`：读取 `yinhe_data_fetcher` 生成的 Parquet。`yinhe_data_fetcher` 继续作为独立下载项目存在，本工程通过目录和字段约定消费其输出。默认数据目录为 `/data`。
 - `insight`：可选直接调用当前环境里的 Insight SDK，使用 `get_all_basic_info`、`get_trading_days`、`get_kline`。未选择该 provider 时不会加载 Insight SDK。
 
 ## 已实现范围
@@ -22,16 +22,16 @@
 cd getrich_data_import
 uv sync
 
-cp config/defaults.toml /etc/getrich/getrich-data-import.toml
-# 编辑 database_url；yinhe 默认读取 ~/data
+cp config/defaults.example.toml /etc/getrich/getrich-data-import.toml
+# 编辑 database_url；yinhe 默认读取 /data
 
-uv run getrich-import init-schema --config /etc/getrich/getrich-data-import.toml
-uv run getrich-import migrate-schema --config /etc/getrich/getrich-data-import.toml
-uv run getrich-import check-db --config /etc/getrich/getrich-data-import.toml
-uv run getrich-import --provider yinhe scan --config /etc/getrich/getrich-data-import.toml
-uv run getrich-import --provider yinhe load-metadata --config /etc/getrich/getrich-data-import.toml
-uv run getrich-import --provider yinhe import-bars --asset index --freq 1d --config /etc/getrich/getrich-data-import.toml
-uv run getrich-import --provider yinhe import-bars --asset index --freq 1m --config /etc/getrich/getrich-data-import.toml
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml init-schema
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml migrate-schema
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml check-db
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml --provider yinhe scan
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml --provider yinhe load-metadata
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml --provider yinhe import-bars --asset index --freq 1d
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml --provider yinhe import-bars --asset index --freq 1m
 ```
 
 环境变量 `GETRICH_IMPORT__DATABASE_URL`、`GETRICH_IMPORT__YINHE_DATA_DIR`、`GETRICH_IMPORT__INSIGHT_RUNTIME_PATH`、`GETRICH_IMPORT__INSIGHT_SYMBOLS`、`GETRICH_IMPORT__PARQUET_EXPORT_DIR` 可覆盖配置文件。
@@ -39,14 +39,14 @@ uv run getrich-import --provider yinhe import-bars --asset index --freq 1m --con
 Insight 示例：
 
 ```bash
-uv run getrich-import --provider insight load-metadata \
-  --config /etc/getrich/getrich-data-import.toml
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml \
+  --provider insight load-metadata
 
-uv run getrich-import --provider insight import-bars \
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml \
+  --provider insight import-bars \
   --asset future --freq 1m \
   --start-date 2026-05-19 --end-date 2026-05-19 \
-  --symbol IF2406.CCFX \
-  --config /etc/getrich/getrich-data-import.toml
+  --symbol IF2406.CCFX
 ```
 
 Insight 需要配置：

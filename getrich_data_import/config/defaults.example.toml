@@ -1,0 +1,26 @@
+database_url = "postgresql+psycopg://quant:change-me@127.0.0.1:5432/getrich"
+provider = "yinhe"
+timezone = "Asia/Shanghai"
+batch_rows = 50000
+
+[yinhe]
+data_dir = "/data"
+
+[insight]
+runtime_paths = []
+env_file = ""
+username_env = "INSIGHT_USER"
+password_env = "INSIGHT_PASSWORD"
+login_required = true
+batch_size = 300
+default_start_date = ""
+default_end_date = ""
+symbols = []
+
+[parquet]
+export_dir = "/data/parquet/getrich"
+
+[quality]
+fail_on_error = true
+price_jump_warn_pct = 0.2
+expected_minutes_per_day = ""

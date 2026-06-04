@@ -25,26 +25,26 @@ def test_request_normalizes_import_bars_args() -> None:
     assert request.symbols == ("000300.XSHG", "IF2406.CCFX")
     assert request.table_name == "index_bar_1d"
     assert request.job_name == "import_index_1d"
-    assert request.uses_watermark is True
+    assert request.uses_watermark is False
 
 
-def test_plan_builds_adapter_kwargs_with_watermark() -> None:
+def test_plan_ignores_global_watermark_for_correctness() -> None:
     plan = BarsExtractionPlan.from_import_bars_args(
         asset="future",
         freq="1m",
         start_date="2026-05-01",
         end_date="2026-05-02",
         symbols=["IF2406.CCFX"],
-        mode="incremental",
+        mode="auto",
     )
 
     assert plan.table_name == "future_bar_1m"
     assert plan.job_name == "import_future_1m"
-    assert plan.uses_watermark is True
+    assert plan.uses_watermark is False
     assert plan.source_kwargs(watermark="2026-04-30") == {
         "asset": "future",
         "freq": "1m",
-        "since": date(2026, 4, 30),
+        "since": None,
         "start_date": date(2026, 5, 1),
         "end_date": date(2026, 5, 2),
         "symbols": ["IF2406.CCFX"],
@@ -86,7 +86,7 @@ def test_plan_supports_stock_and_etf(asset: str, freq: str, table: str) -> None:
     [
         ({"asset": "bond", "freq": "1d"}, "unsupported asset"),
         ({"asset": "index", "freq": "5m"}, "unsupported freq"),
-        ({"asset": "index", "freq": "1d", "mode": "latest"}, "unsupported mode"),
+        ({"asset": "index", "freq": "1d", "mode": "incremental"}, "unsupported mode"),
         (
             {"asset": "index", "freq": "1d", "start_date": "2026-06-01", "end_date": "2026-05-01"},
             "start_date 2026-06-01 is after end_date 2026-05-01",

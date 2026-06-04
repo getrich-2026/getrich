@@ -12,7 +12,9 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
     import tomli as tomllib
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "defaults.toml"
+CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "defaults.toml"
+DEFAULT_EXAMPLE_CONFIG_PATH = CONFIG_DIR / "defaults.example.toml"
 
 
 @dataclass(frozen=True)
@@ -59,7 +61,7 @@ class Settings:
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> "Settings":
-        paths = [DEFAULT_CONFIG_PATH]
+        paths = [_default_config_path()]
         if config_path:
             paths.append(Path(config_path).expanduser())
 
@@ -127,6 +129,12 @@ def _resolve_path(value: str | Path, base_dir: Path) -> Path:
     if path.is_absolute():
         return path
     return (base_dir / path).resolve()
+
+
+def _default_config_path() -> Path:
+    if DEFAULT_CONFIG_PATH.exists():
+        return DEFAULT_CONFIG_PATH
+    return DEFAULT_EXAMPLE_CONFIG_PATH
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

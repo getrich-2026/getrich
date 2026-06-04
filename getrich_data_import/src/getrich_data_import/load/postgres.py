@@ -25,6 +25,7 @@ def upsert_dataframe(
         return 0
 
     target_cols = table_columns(conn, schema, table)
+    target_types = table_column_types(conn, schema, table)
     cols = [col for col in df.columns if col in target_cols]
     missing_keys = [key for key in primary_keys if key not in cols]
     if missing_keys:
@@ -43,6 +44,7 @@ def upsert_dataframe(
     )
 
     col_sql = ", ".join(qident(col) for col in cols)
+    select_sql = ", ".join(_select_with_cast(col, target_types.get(col)) for col in cols)
     pk_sql = ", ".join(qident(col) for col in primary_keys)
     update_cols = [col for col in cols if col not in primary_keys]
     if update_cols:
@@ -57,13 +59,41 @@ def upsert_dataframe(
         text(
             f"""
             INSERT INTO {qualified(schema, table)} ({col_sql})
-            SELECT {col_sql}
+            SELECT {select_sql}
             FROM pg_temp.{qident(tmp_name)}
             ON CONFLICT ({pk_sql}) {conflict_sql}
             """
         )
     )
     return int(result.rowcount or 0)
+
+
+def table_column_types(conn: Connection, schema: str, table: str) -> dict[str, str]:
+    rows = conn.execute(
+        text(
+            """
+            SELECT a.attname AS column_name,
+                   pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type
+            FROM pg_catalog.pg_attribute a
+            JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = :schema
+              AND c.relname = :table
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            ORDER BY a.attnum
+            """
+        ),
+        {"schema": schema, "table": table},
+    ).mappings()
+    return {str(row["column_name"]): str(row["data_type"]) for row in rows}
+
+
+def _select_with_cast(column: str, data_type: str | None) -> str:
+    ident = qident(column)
+    if not data_type:
+        return ident
+    return f"{ident}::{data_type}"
 
 
 def attach_instrument_ids(conn: Connection, df: pd.DataFrame, *, source: str) -> pd.DataFrame:
@@ -75,6 +105,9 @@ def attach_instrument_ids(conn: Connection, df: pd.DataFrame, *, source: str) ->
     out["instrument_id"] = out["source_symbol"].map(
         lambda source_symbol: mapping[str(source_symbol)].instrument_id
     )
+    out["asset"] = out["source_symbol"].map(lambda source_symbol: mapping[str(source_symbol)].asset)
+    out["exchange"] = out["source_symbol"].map(lambda source_symbol: mapping[str(source_symbol)].exchange)
+    out["symbol"] = out["source_symbol"].map(lambda source_symbol: mapping[str(source_symbol)].symbol)
     return out
 
 

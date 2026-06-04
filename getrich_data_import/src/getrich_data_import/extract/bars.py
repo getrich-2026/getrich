@@ -8,7 +8,7 @@ from typing import Iterable
 
 BAR_ASSETS = ("index", "future", "option", "stock", "etf")
 BAR_FREQUENCIES = ("1d", "1m")
-BAR_MODES = ("auto", "full", "incremental")
+BAR_MODES = ("auto", "full")
 BAR_TABLES = {
     ("index", "1d"): "index_bar_1d",
     ("future", "1d"): "future_bar_1d",
@@ -86,7 +86,7 @@ class BarsExtractionRequest:
 
     @property
     def uses_watermark(self) -> bool:
-        return self.mode in {"auto", "incremental"}
+        return False
 
 
 @dataclass(frozen=True)

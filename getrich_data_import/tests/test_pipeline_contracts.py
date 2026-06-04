@@ -23,7 +23,11 @@ class _Rows:
 
 
 class _Conn:
+    def __init__(self) -> None:
+        self.executed = []
+
     def execute(self, _sql, _params):
+        self.executed.append((_sql, _params))
         return _Rows()
 
 
@@ -67,3 +71,26 @@ def test_future_contracts_attach_instrument_id_before_upsert(monkeypatch) -> Non
     assert captured["kwargs"]["table"] == "future_contracts"
     assert captured["frame"].loc[0, "instrument_id"] == 10
     assert captured["frame"].loc[0, "multiplier"] == 300
+
+
+def test_symbol_map_upsert_uses_provided_instruments(monkeypatch) -> None:
+    class _Result:
+        rowcount = 1
+
+    class _SymbolConn(_Conn):
+        def execute(self, _sql):
+            return _Result()
+
+    monkeypatch.setattr(pd.DataFrame, "to_sql", lambda self, *args, **kwargs: None)
+    pipeline = ImportPipeline(
+        settings=SimpleNamespace(batch_rows=1000),
+        engine=object(),  # type: ignore[arg-type]
+        source=_Source(),  # type: ignore[arg-type]
+    )
+    instruments = pd.DataFrame(
+        [{"asset": "stock", "exchange": "SH", "symbol": "600000.SH"}]
+    )
+
+    rows = pipeline._upsert_symbol_map(_SymbolConn(), instruments)  # type: ignore[arg-type]
+
+    assert rows == 1

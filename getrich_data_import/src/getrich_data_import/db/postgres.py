@@ -14,7 +14,6 @@ SCHEMA_FILES = [
     "30_compress_ca.sql",
     "40_realtime.sql",
     "50_ops.sql",
-    "60_review_appendix_a.sql",
 ]
 
 

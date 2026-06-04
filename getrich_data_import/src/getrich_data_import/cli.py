@@ -11,7 +11,7 @@ from getrich_data_import.db.health import check_database
 from getrich_data_import.db.migrations import apply_migrations
 from getrich_data_import.db.postgres import execute_schema, make_engine
 from getrich_data_import.db.schema_check import check_schema
-from getrich_data_import.extract import BAR_ASSETS, BAR_FREQUENCIES
+from getrich_data_import.extract import BAR_ASSETS, BAR_FREQUENCIES, BAR_MODES
 from getrich_data_import.export import export_bars_to_parquet
 from getrich_data_import.orchestration.pipeline import ImportPipeline
 
@@ -52,9 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_import.add_argument(
         "--mode",
-        choices=["auto", "full", "incremental"],
+        choices=BAR_MODES,
         default="auto",
-        help="full imports all source rows; auto/incremental use trading_day watermark",
+        help="auto/full currently read the requested source range and rely on idempotent upsert",
     )
 
     p_export = sub.add_parser("export-bars", help="export historical bars from PostgreSQL to parquet")

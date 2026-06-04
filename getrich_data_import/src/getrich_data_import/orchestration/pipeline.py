@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import date
+from datetime import time
 
 import pandas as pd
 from sqlalchemy import text
@@ -21,10 +22,12 @@ from getrich_data_import.load.postgres import (
     upsert_dataframe,
 )
 from getrich_data_import.quality.rules import QualityIssue, has_error, validate_bars, write_quality_issues
+from getrich_data_import.services import TradingCalendarService
 from getrich_data_import.transform.bars import to_market_frame
 
 
 logger = get_logger(__name__)
+NIGHT_SESSION_CUTOFF = time(21, 0)
 
 
 @dataclass(frozen=True)
@@ -72,7 +75,7 @@ class ImportPipeline:
                     primary_keys=("asset", "exchange", "symbol"),
                     batch_rows=self.settings.batch_rows,
                 )
-                rows += self._upsert_symbol_map(conn)
+                rows += self._upsert_symbol_map(conn, instruments)
                 rows += self._upsert_future_contracts(conn)
                 rows += self._upsert_option_contracts(conn)
             with self.engine.begin() as conn:
@@ -137,12 +140,21 @@ class ImportPipeline:
                         source_frame,
                         source=self.source_name,
                     )
+                    if plan.request.freq == "1m":
+                        frame = self._assign_minute_trading_days(conn, frame)
+                    expected_trading_days = self._expected_trading_days(
+                        conn,
+                        frame,
+                        start_date=plan.request.start_date,
+                        end_date=plan.request.end_date,
+                    )
                     frame = to_market_frame(frame, freq=plan.request.freq)
                     issues = validate_bars(
                         frame,
                         freq=plan.request.freq,
                         price_jump_warn_pct=self.settings.quality.price_jump_warn_pct,
                         expected_minutes_per_day=self.settings.quality.expected_minutes_per_day,
+                        expected_trading_days=expected_trading_days,
                     )
                     self._write_quality_issues(run_id=run_id, issues=issues)
                     if self.settings.quality.fail_on_error and has_error(issues):
@@ -177,8 +189,12 @@ class ImportPipeline:
         with self.engine.begin() as conn:
             write_quality_issues(conn, run_id=run_id, issues=issues)
 
-    def _upsert_symbol_map(self, conn: Connection) -> int:
-        symbol_map = self.source.symbol_map_frame()
+    def _upsert_symbol_map(self, conn: Connection, instruments: pd.DataFrame) -> int:
+        if instruments.empty:
+            return 0
+        symbol_map = instruments.loc[:, ["asset", "exchange", "symbol"]].copy()
+        symbol_map["source"] = self.source_name
+        symbol_map["source_symbol"] = symbol_map["symbol"]
         if symbol_map.empty:
             return 0
         tmp_name = f"getrich_symbol_map_stage_{uuid.uuid4().hex[:12]}"
@@ -190,7 +206,7 @@ class ImportPipeline:
             index=False,
             method="multi",
         )
-        conn.execute(
+        result = conn.execute(
             text(
                 f"""
                 INSERT INTO meta.symbol_map (instrument_id, source, source_symbol)
@@ -209,7 +225,50 @@ class ImportPipeline:
                 """
             )
         )
-        return len(symbol_map)
+        return int(result.rowcount or 0)
+
+    def _assign_minute_trading_days(self, conn: Connection, frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty or not {"exchange", "dt"}.issubset(frame.columns):
+            return frame
+        service = TradingCalendarService(conn)
+        out = frame.copy()
+        out["trading_day"] = [
+            service.assign_trading_day(str(exchange), timestamp, NIGHT_SESSION_CUTOFF)
+            for exchange, timestamp in zip(out["exchange"], pd.to_datetime(out["dt"]), strict=False)
+        ]
+        return out
+
+    def _expected_trading_days(
+        self,
+        conn: Connection,
+        frame: pd.DataFrame,
+        *,
+        start_date: date | None,
+        end_date: date | None,
+    ) -> list[date] | None:
+        if frame.empty or "exchange" not in frame.columns or "trading_day" not in frame.columns:
+            return None
+        exchanges = sorted({str(exchange) for exchange in frame["exchange"].dropna().unique()})
+        if len(exchanges) != 1:
+            return None
+        start = start_date or min(frame["trading_day"])
+        end = end_date or max(frame["trading_day"])
+        rows = conn.execute(
+            text(
+                """
+                SELECT trading_day
+                FROM meta.trading_calendar
+                WHERE exchange = :exchange
+                  AND is_open = true
+                  AND trading_day >= :start_date
+                  AND trading_day <= :end_date
+                ORDER BY trading_day
+                """
+            ),
+            {"exchange": exchanges[0], "start_date": start, "end_date": end},
+        ).scalars()
+        days = [day for day in rows]
+        return days or None
 
     def _upsert_future_contracts(self, conn: Connection) -> int:
         frame = self.source.future_contract_frame()
