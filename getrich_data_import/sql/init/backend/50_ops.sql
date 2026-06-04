@@ -1,0 +1,56 @@
+-- Operations, audit, and quality metadata.
+
+CREATE TABLE IF NOT EXISTS ops.users (
+    user_id    BIGSERIAL PRIMARY KEY,
+    username   VARCHAR(64) UNIQUE NOT NULL,
+    role       VARCHAR(16) NOT NULL DEFAULT 'reader',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_users_role CHECK (role IN ('reader', 'writer', 'admin'))
+);
+
+CREATE TABLE IF NOT EXISTS ops.api_keys (
+    key_id       BIGSERIAL PRIMARY KEY,
+    user_id      BIGINT REFERENCES ops.users(user_id),
+    api_key_hash VARCHAR(128) NOT NULL,
+    scopes       TEXT[],
+    rate_limit   INT NOT NULL DEFAULT 600,
+    expires_at   TIMESTAMPTZ,
+    revoked      BOOLEAN NOT NULL DEFAULT false,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ops.etl_job_run (
+    run_id       BIGSERIAL PRIMARY KEY,
+    job_name     VARCHAR(64) NOT NULL,
+    trading_day  DATE,
+    asset        VARCHAR(16),
+    freq         VARCHAR(8),
+    status       VARCHAR(16) NOT NULL,
+    rows_written BIGINT NOT NULL DEFAULT 0,
+    started_at   TIMESTAMPTZ,
+    finished_at  TIMESTAMPTZ,
+    error        TEXT,
+    CONSTRAINT chk_etl_job_status CHECK (status IN ('running', 'success', 'failed', 'partial'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_etl_job_run_lookup
+    ON ops.etl_job_run (job_name, trading_day, status);
+
+CREATE TABLE IF NOT EXISTS ops.data_quality_check (
+    check_id   BIGSERIAL PRIMARY KEY,
+    run_id     BIGINT REFERENCES ops.etl_job_run(run_id),
+    rule       VARCHAR(64) NOT NULL,
+    severity   VARCHAR(8) NOT NULL,
+    detail     JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_quality_severity CHECK (severity IN ('info', 'warn', 'error'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_quality_run_severity
+    ON ops.data_quality_check (run_id, severity);
+
+CREATE TABLE IF NOT EXISTS ops.schema_migrations (
+    file_name  TEXT PRIMARY KEY,
+    checksum   TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

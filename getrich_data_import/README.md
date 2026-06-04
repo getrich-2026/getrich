@@ -1,0 +1,69 @@
+# getrich-data-import
+
+设计版 GetRich 数据导入工程。它只负责把上游数据源归一化并写入 PostgreSQL/TimescaleDB 权威库，不依赖旧 `data_import` 或 `import_data`。
+
+当前上游适配器：
+
+- `yinhe`：读取 `yinhe_data_fetcher` 生成的 Parquet。`yinhe_data_fetcher` 继续作为独立下载项目存在，本工程通过目录和字段约定消费其输出。默认数据目录为 `~/data`。
+- `insight`：可选直接调用当前环境里的 Insight SDK，使用 `get_all_basic_info`、`get_trading_days`、`get_kline`。未选择该 provider 时不会加载 Insight SDK。
+
+## 已实现范围
+
+- 设计版 backend DDL：`meta`、`market`、`realtime`、`ops` schema。
+- 元数据导入：交易日历、标的、数据源代码映射。
+- 行情导入：`kline_day` -> `market.{asset}_bar_1d`，`kline_min1` -> `market.{asset}_bar_1m`。
+- 写入留痕：`ops.etl_job_run`。
+- 质量校验：OHLC 关系、非负数、复权因子正数；`error` 级阻断并写 `ops.data_quality_check`。
+- 幂等写入：基于目标表主键 `ON CONFLICT DO UPDATE`。
+
+## 使用
+
+```bash
+cd getrich_data_import
+uv sync
+
+cp config/defaults.toml /etc/getrich/getrich-data-import.toml
+# 编辑 database_url；yinhe 默认读取 ~/data
+
+uv run getrich-import init-schema --config /etc/getrich/getrich-data-import.toml
+uv run getrich-import migrate-schema --config /etc/getrich/getrich-data-import.toml
+uv run getrich-import check-db --config /etc/getrich/getrich-data-import.toml
+uv run getrich-import --provider yinhe scan --config /etc/getrich/getrich-data-import.toml
+uv run getrich-import --provider yinhe load-metadata --config /etc/getrich/getrich-data-import.toml
+uv run getrich-import --provider yinhe import-bars --asset index --freq 1d --config /etc/getrich/getrich-data-import.toml
+uv run getrich-import --provider yinhe import-bars --asset index --freq 1m --config /etc/getrich/getrich-data-import.toml
+```
+
+环境变量 `GETRICH_IMPORT__DATABASE_URL`、`GETRICH_IMPORT__YINHE_DATA_DIR`、`GETRICH_IMPORT__INSIGHT_RUNTIME_PATH`、`GETRICH_IMPORT__INSIGHT_SYMBOLS`、`GETRICH_IMPORT__PARQUET_EXPORT_DIR` 可覆盖配置文件。
+
+Insight 示例：
+
+```bash
+uv run getrich-import --provider insight load-metadata \
+  --config /etc/getrich/getrich-data-import.toml
+
+uv run getrich-import --provider insight import-bars \
+  --asset future --freq 1m \
+  --start-date 2026-05-19 --end-date 2026-05-19 \
+  --symbol IF2406.CCFX \
+  --config /etc/getrich/getrich-data-import.toml
+```
+
+Insight 需要配置：
+
+```toml
+[insight]
+runtime_paths = []
+env_file = ""
+username_env = "INSIGHT_USER"
+password_env = "INSIGHT_PASSWORD"
+login_required = true
+batch_size = 300
+default_start_date = "2026-05-19"
+default_end_date = "2026-05-19"
+symbols = ["IF2406.CCFX", "000300.XSHG"]
+```
+
+## 边界
+
+`yinhe_data_fetcher` 只负责下载 Parquet；本工程只负责导入数据库。旧 `data_import` 和 `import_data` 保持不动，不作为运行依赖。

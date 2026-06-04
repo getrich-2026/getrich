@@ -1,0 +1,8 @@
+-- Extensions and schema bootstrap.
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+CREATE SCHEMA IF NOT EXISTS meta;
+CREATE SCHEMA IF NOT EXISTS market;
+CREATE SCHEMA IF NOT EXISTS realtime;
+CREATE SCHEMA IF NOT EXISTS ops;
+
