@@ -14,5 +14,5 @@ class KlineDayFetcher(KlineFetcher):
         "EXTRA_IDNEX_A_SH_SZ",
     ]
     INIT_START_DATE = 20130101
-    CODE_CHUNK_SIZE = 30
+    CODE_CHUNK_SIZE = 200
     DATE_CHUNK_DAYS = 120

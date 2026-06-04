@@ -16,14 +16,22 @@ class BackwardFactorFetcher(FullReplaceFetcher):
     NAME = "backward_factor"
 
     SECURITY_TYPES: ClassVar[list[str]] = ["EXTRA_STOCK_A", "EXTRA_ETF"]
-    CODE_CHUNK_SIZE = 50
+    CODE_CHUNK_SIZE = 100
+
+    def _wipe(self) -> None:
+        # Do not wipe during resumption to preserve already downloaded chunks.
+        pass
 
     def _iter_tasks(self, mode) -> Iterator[dict[str, Any]]:
         for st in self.SECURITY_TYPES:
             self.log.info("[%s] list codes for %s", self.NAME, st)
             code_list = self.client.base_data.get_code_list(security_type=st)
-            code_list = [str(c) for c in list(code_list)]
+            code_list = sorted([str(c) for c in list(code_list)])
             for i, chunk in enumerate(chunk_list(code_list, self.CODE_CHUNK_SIZE)):
+                out = self.data_dir / f"backward_factor_{st}_chunk{i:04d}.parquet"
+                if out.exists():
+                    self.log.info("[%s] skip existing chunk#%d for %s", self.NAME, i, st)
+                    continue
                 yield {
                     "security_type": st,
                     "chunk_idx": i,

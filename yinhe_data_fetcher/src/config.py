@@ -100,7 +100,7 @@ class Config:
                 port=int(ad["port"]),
             ),
             storage=StorageCfg(
-                data_dir=Path(st.get("data_dir", "./data")).resolve(),
+                data_dir=Path(st.get("data_dir", "./data")).expanduser().resolve(),
                 wipe_on_init=bool(st.get("wipe_on_init", False)),
             ),
             logging=LoggingCfg(

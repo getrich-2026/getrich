@@ -33,7 +33,7 @@ storage:
 # - 会覆盖各 fetcher 类里硬编码的 INIT_START_DATE / START_DATE (取两者较大值)
 # - 留空 (null) 则使用类里的默认值 (一般是 20130101, AmazingData 历史起点)
 # -----------------------------------------------------------------------------
-start_date: 20100101
+start_date: 20250101
 
 logging:
     level: "INFO"
@@ -65,4 +65,4 @@ fetchers:
     backward_factor: { enabled: true }
     kline_day: { enabled: true }
     kline_min5: { enabled: false }
-    kline_min1: { enabled: true }
+    kline_min1: { enabled: false }

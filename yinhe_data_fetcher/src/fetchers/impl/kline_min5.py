@@ -9,6 +9,6 @@ class KlineMin5Fetcher(KlineFetcher):
     NAME = "kline_min5"
     PERIOD = "min5"
     SECURITY_TYPES = ["EXTRA_STOCK_A_SH_SZ"]
-    INIT_START_DATE = 20230101
+    INIT_START_DATE = 20130101
     CODE_CHUNK_SIZE = 10
     DATE_CHUNK_DAYS = 20
