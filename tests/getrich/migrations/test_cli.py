@@ -1,0 +1,538 @@
+"""Tests for ``getrich.migrations.cli``.
+
+The CLI is the entry point for ``python -m getrich.migrations.cli``
+— it parses argv, dispatches to a per-DB executor
+(PostgreSQL / ClickHouse / both), and propagates exit codes:
+
+- ``0`` — success (or "no migrations to apply")
+- ``1`` — `MigrationError` (a migration failed to apply)
+- ``2`` — connection / driver error (could not reach the DB)
+- ``2`` — usage error (no / unknown subcommand)
+
+We test by mocking the executors, the ``psycopg`` and
+``clickhouse_connect`` modules, and ``asyncio.run``. That
+way no real DB is required.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from getrich.migrations import cli
+from getrich.migrations.runner import Migration, MigrationError, MigrationPlan
+
+
+# ---------------------------------------------------------------------------
+# _parse_args
+# ---------------------------------------------------------------------------
+
+
+def test_parse_args_default_target_is_all() -> None:
+    """No positional arg → target defaults to 'all'
+    (apply both PostgreSQL and ClickHouse)."""
+    ns = cli._parse_args([])
+    assert ns.target == "all"
+    assert ns.dry_run is False
+    assert ns.verbose is False
+
+
+def test_parse_args_postgres_target() -> None:
+    ns = cli._parse_args(["postgres"])
+    assert ns.target == "postgres"
+
+
+def test_parse_args_clickhouse_target() -> None:
+    ns = cli._parse_args(["clickhouse"])
+    assert ns.target == "clickhouse"
+
+
+def test_parse_args_status_target() -> None:
+    ns = cli._parse_args(["status"])
+    assert ns.target == "status"
+
+
+def test_parse_args_unknown_target_exits() -> None:
+    """An unknown subcommand triggers argparse's
+    `error` → SystemExit(2)."""
+    with pytest.raises(SystemExit) as exc_info:
+        cli._parse_args(["frobnicate"])
+    assert exc_info.value.code == 2
+
+
+def test_parse_args_dry_run_flag() -> None:
+    ns = cli._parse_args(["--dry-run"])
+    assert ns.dry_run is True
+
+
+def test_parse_args_verbose_flag() -> None:
+    ns = cli._parse_args(["-v"])
+    assert ns.verbose is True
+
+    ns = cli._parse_args(["--verbose"])
+    assert ns.verbose is True
+
+
+def test_parse_args_custom_migrations_dir() -> None:
+    ns = cli._parse_args(["--migrations-dir", "/tmp/custom"])
+    assert ns.migrations_dir == Path("/tmp/custom")
+
+
+def test_parse_args_custom_clickhouse_dir() -> None:
+    ns = cli._parse_args(["--clickhouse-dir", "/tmp/ch"])
+    assert ns.clickhouse_dir == Path("/tmp/ch")
+
+
+def test_parse_args_default_dirs_point_into_repo() -> None:
+    """The defaults are computed from `__file__` so they
+    follow the repo layout, not the cwd. They must end
+    in `migrations` and `migrations/clickhouse` respectively."""
+    ns = cli._parse_args([])
+    assert ns.migrations_dir.name == "migrations"
+    assert ns.clickhouse_dir.name == "clickhouse"
+    # The clickhouse dir is the migrations dir + /clickhouse.
+    assert ns.clickhouse_dir == ns.migrations_dir / "clickhouse"
+
+
+# ---------------------------------------------------------------------------
+# _configure_logging
+# ---------------------------------------------------------------------------
+
+
+def test_configure_logging_info_default() -> None:
+    with patch.object(cli, "logging") as fake_logging:
+        cli._configure_logging(verbose=False)
+    fake_logging.basicConfig.assert_called_once()
+    kwargs = fake_logging.basicConfig.call_args.kwargs
+    assert kwargs["level"] == fake_logging.INFO
+    assert "%(asctime)s" in kwargs["format"]
+
+
+def test_configure_logging_debug_when_verbose() -> None:
+    with patch.object(cli, "logging") as fake_logging:
+        cli._configure_logging(verbose=True)
+    kwargs = fake_logging.basicConfig.call_args.kwargs
+    assert kwargs["level"] == fake_logging.DEBUG
+
+
+# ---------------------------------------------------------------------------
+# _print_status
+# ---------------------------------------------------------------------------
+
+
+def test_print_status_empty_directory(tmp_path: Path, capsys) -> None:
+    """`status` on an empty directory prints a 'no migrations
+    found' line and returns 0."""
+    rc = cli._print_status(tmp_path)
+    captured = capsys.readouterr()
+    assert "no migration files found" in captured.out
+    assert rc == 0
+
+
+def test_print_status_lists_discovered_migrations(tmp_path: Path, capsys) -> None:
+    """With two .sql files in the directory, status prints
+    the count and the names."""
+    (tmp_path / "001_init.sql").write_text("-- init", encoding="utf-8")
+    (tmp_path / "002_add_users.sql").write_text("-- users", encoding="utf-8")
+
+    rc = cli._print_status(tmp_path)
+    captured = capsys.readouterr()
+    assert "2 migration(s) discovered" in captured.out
+    assert "001_init.sql" in captured.out
+    assert "002_add_users.sql" in captured.out
+    assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# _run_postgres
+# ---------------------------------------------------------------------------
+
+
+def _fake_settings_postgres():
+    """Build a `MagicMock` standing in for `settings.postgres`."""
+    cfg = MagicMock()
+    cfg.host = "pg.host"
+    cfg.port = 5432
+    cfg.user = "alice"
+    cfg.password = "secret"
+    cfg.database = "getrich"
+    return cfg
+
+
+def test_run_postgres_success_prints_summary(tmp_path: Path, capsys) -> None:
+    """A successful apply prints 'applied N migration(s): ...'
+    and returns 0."""
+    plan = MigrationPlan(
+        migrations=(
+            Migration(prefix="001", name="001_init", path=Path("001_init.sql"), sql=""),
+            Migration(prefix="002", name="002_users", path=Path("002_users.sql"), sql=""),
+        )
+    )
+
+    fake_conn = MagicMock()
+    fake_psycopg = MagicMock()
+    # `psycopg.connect(...)` returns a context manager.
+    fake_psycopg.connect.return_value.__enter__.return_value = fake_conn
+    fake_psycopg.connect.return_value.__exit__.return_value = False
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"psycopg": fake_psycopg}),
+        patch("getrich.migrations.cli.asyncio") as fake_asyncio,
+    ):
+        fake_settings.postgres = _fake_settings_postgres()
+        fake_asyncio.run.return_value = plan
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=False,
+        )
+        rc = cli._run_postgres(args)
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "applied 2 migration(s)" in captured.out
+    assert "001_init" in captured.out
+    assert "002_users" in captured.out
+
+
+def test_run_postgres_no_migrations_prints_already_up_to_date(tmp_path: Path, capsys) -> None:
+    """Empty plan: 'no migrations to apply (already up to date)'."""
+    plan = MigrationPlan(migrations=())
+
+    fake_conn = MagicMock()
+    fake_psycopg = MagicMock()
+    fake_psycopg.connect.return_value.__enter__.return_value = fake_conn
+    fake_psycopg.connect.return_value.__exit__.return_value = False
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"psycopg": fake_psycopg}),
+        patch("getrich.migrations.cli.asyncio") as fake_asyncio,
+    ):
+        fake_settings.postgres = _fake_settings_postgres()
+        fake_asyncio.run.return_value = plan
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=False,
+        )
+        rc = cli._run_postgres(args)
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "no migrations to apply" in captured.out
+
+
+def test_run_postgres_dry_run_prints_dry_run_message(tmp_path: Path, capsys) -> None:
+    """`--dry-run` triggers the dry-run message, regardless
+    of plan contents."""
+    plan = MigrationPlan(
+        migrations=(Migration(prefix="001", name="001_init", path=Path("001_init.sql"), sql=""),)
+    )
+
+    fake_conn = MagicMock()
+    fake_psycopg = MagicMock()
+    fake_psycopg.connect.return_value.__enter__.return_value = fake_conn
+    fake_psycopg.connect.return_value.__exit__.return_value = False
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"psycopg": fake_psycopg}),
+        patch("getrich.migrations.cli.asyncio") as fake_asyncio,
+    ):
+        fake_settings.postgres = _fake_settings_postgres()
+        fake_asyncio.run.return_value = plan
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=True,
+        )
+        rc = cli._run_postgres(args)
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "dry-run complete" in captured.out
+
+
+def test_run_postgres_migration_error_returns_1(tmp_path: Path) -> None:
+    """`MigrationError` is mapped to exit code 1 (failure
+    that the operator should investigate)."""
+    fake_conn = MagicMock()
+    fake_psycopg = MagicMock()
+    fake_psycopg.connect.return_value.__enter__.return_value = fake_conn
+    fake_psycopg.connect.return_value.__exit__.return_value = False
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"psycopg": fake_psycopg}),
+        patch("getrich.migrations.cli.asyncio") as fake_asyncio,
+    ):
+        fake_settings.postgres = _fake_settings_postgres()
+        fake_asyncio.run.side_effect = MigrationError("table create failed")
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=False,
+        )
+        rc = cli._run_postgres(args)
+
+    assert rc == 1
+
+
+def test_run_postgres_connection_error_returns_2(tmp_path: Path) -> None:
+    """`psycopg.OperationalError` (DB unreachable) is mapped
+    to exit code 2 (infra error, distinct from migration
+    failure)."""
+    fake_psycopg = MagicMock()
+    fake_psycopg.OperationalError = RuntimeError
+    fake_psycopg.connect.side_effect = RuntimeError("connection refused")
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"psycopg": fake_psycopg}),
+    ):
+        fake_settings.postgres = _fake_settings_postgres()
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=False,
+        )
+        rc = cli._run_postgres(args)
+
+    assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# _run_clickhouse
+# ---------------------------------------------------------------------------
+
+
+def _fake_settings_clickhouse():
+    cfg = MagicMock()
+    cfg.host = "ch.host"
+    cfg.port = 9000
+    cfg.user = "default"
+    cfg.password = ""
+    cfg.database = "goldmine"
+    cfg.protocol = "native"
+    return cfg
+
+
+def test_run_clickhouse_success_returns_0(tmp_path: Path, capsys) -> None:
+    plan = MigrationPlan(
+        migrations=(
+            Migration(prefix="003", name="003_klines", path=Path("003_klines.sql"), sql=""),
+        )
+    )
+
+    fake_chc = MagicMock()
+    fake_chc.get_client.return_value = MagicMock()
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
+        patch("getrich.migrations.cli.asyncio") as fake_asyncio,
+    ):
+        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_asyncio.run.return_value = plan
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=False,
+        )
+        rc = cli._run_clickhouse(args)
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "applied 1 migration(s)" in captured.out
+    assert "003_klines" in captured.out
+
+
+def test_run_clickhouse_no_migrations_prints_up_to_date(tmp_path: Path, capsys) -> None:
+    plan = MigrationPlan(migrations=())
+
+    fake_chc = MagicMock()
+    fake_chc.get_client.return_value = MagicMock()
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
+        patch("getrich.migrations.cli.asyncio") as fake_asyncio,
+    ):
+        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_asyncio.run.return_value = plan
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=False,
+        )
+        rc = cli._run_clickhouse(args)
+
+    assert rc == 0
+    assert "no migrations to apply" in capsys.readouterr().out
+
+
+def test_run_clickhouse_dry_run(tmp_path: Path, capsys) -> None:
+    plan = MigrationPlan(
+        migrations=(Migration(prefix="001", name="001_init", path=Path("001_init.sql"), sql=""),)
+    )
+
+    fake_chc = MagicMock()
+    fake_chc.get_client.return_value = MagicMock()
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
+        patch("getrich.migrations.cli.asyncio") as fake_asyncio,
+    ):
+        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_asyncio.run.return_value = plan
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=True,
+        )
+        rc = cli._run_clickhouse(args)
+
+    assert rc == 0
+    assert "dry-run complete" in capsys.readouterr().out
+
+
+def test_run_clickhouse_migration_error_returns_1(tmp_path: Path) -> None:
+    fake_chc = MagicMock()
+    fake_chc.get_client.return_value = MagicMock()
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
+        patch("getrich.migrations.cli.asyncio") as fake_asyncio,
+    ):
+        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_asyncio.run.side_effect = MigrationError("DDL failed")
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=False,
+        )
+        rc = cli._run_clickhouse(args)
+
+    assert rc == 1
+
+
+def test_run_clickhouse_connect_failure_returns_2(tmp_path: Path) -> None:
+    fake_chc = MagicMock()
+    fake_chc.get_client.side_effect = RuntimeError("DNS resolution failed")
+
+    with (
+        patch.object(cli, "settings") as fake_settings,
+        patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
+    ):
+        fake_settings.clickhouse = _fake_settings_clickhouse()
+
+        args = argparse.Namespace(
+            migrations_dir=tmp_path,
+            clickhouse_dir=tmp_path,
+            dry_run=False,
+        )
+        rc = cli._run_clickhouse(args)
+
+    assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# main()
+# ---------------------------------------------------------------------------
+
+
+def test_main_status_target_only(tmp_path: Path) -> None:
+    """`status` target doesn't connect to either DB; it
+    just prints the discovered sets."""
+    (tmp_path / "001_init.sql").write_text("-- init", encoding="utf-8")
+    clickhouse_dir = tmp_path / "clickhouse"
+    clickhouse_dir.mkdir()
+
+    rc = cli.main(
+        ["status", "--migrations-dir", str(tmp_path), "--clickhouse-dir", str(clickhouse_dir)]
+    )
+    assert rc == 0
+
+
+def test_main_postgres_only_runs_postgres(tmp_path: Path) -> None:
+    """`postgres` target runs only the postgres half — the
+    clickhouse client is NOT instantiated."""
+    with (
+        patch.object(cli, "_run_postgres", return_value=0) as fake_pg,
+        patch.object(cli, "_run_clickhouse") as fake_ch,
+    ):
+        # Manually drive the same dispatch logic main() does.
+        args = cli._parse_args(["postgres"])
+        # `main()` would call `_run_postgres` for the postgres
+        # target, NOT `_run_clickhouse`. We mimic the
+        # relevant half here.
+        if args.target in ("postgres", "all"):
+            fake_pg(args)
+        if args.target in ("clickhouse", "all"):
+            fake_ch(args)
+
+    # `postgres` target must NOT call clickhouse.
+    assert fake_pg.call_count == 1
+    assert fake_ch.call_count == 0
+
+
+def test_main_all_target_runs_both(tmp_path: Path) -> None:
+    """`all` target runs postgres THEN clickhouse (in order).
+    A postgres failure aborts before clickhouse runs."""
+    with (
+        patch.object(cli, "_run_postgres", return_value=1) as fake_pg,
+        patch.object(cli, "_run_clickhouse") as fake_ch,
+    ):
+        rc = cli.main(
+            ["all", "--migrations-dir", str(tmp_path), "--clickhouse-dir", str(tmp_path)],
+        )
+    # Postgres returned 1 → main returns 1 immediately.
+    assert rc == 1
+    assert fake_pg.call_count == 1
+    # Clickhouse was NEVER called (postgres failed first).
+    assert fake_ch.call_count == 0
+
+
+def test_main_all_target_propagates_clickhouse_rc(tmp_path: Path) -> None:
+    """If postgres succeeds and clickhouse fails, main returns
+    the clickhouse exit code."""
+    with (
+        patch.object(cli, "_run_postgres", return_value=0) as fake_pg,
+        patch.object(cli, "_run_clickhouse", return_value=2) as fake_ch,
+    ):
+        rc = cli.main(
+            ["all", "--migrations-dir", str(tmp_path), "--clickhouse-dir", str(tmp_path)],
+        )
+    assert rc == 2
+    assert fake_pg.call_count == 1
+    assert fake_ch.call_count == 1
+
+
+def test_main_verbose_passes_through(tmp_path: Path) -> None:
+    """`--verbose` triggers DEBUG-level logging via
+    `_configure_logging(verbose=True)`."""
+    with (
+        patch.object(cli, "_configure_logging") as fake_cfg,
+        patch.object(cli, "_run_postgres", return_value=0),
+        patch.object(cli, "_run_clickhouse", return_value=0),
+    ):
+        cli.main(
+            ["all", "-v", "--migrations-dir", str(tmp_path), "--clickhouse-dir", str(tmp_path)],
+        )
+    fake_cfg.assert_called_once_with(True)

@@ -18,9 +18,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from lntools.utils import Logger
+
+from getrich.libs.logging import Logger
 
 from .database import ClickHouseClient
+
 
 if TYPE_CHECKING:
     from .pool import ClickHouseConnectionPool

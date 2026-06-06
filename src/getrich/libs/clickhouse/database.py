@@ -5,9 +5,9 @@ from typing import Any, cast
 import clickhouse_connect
 import pandas as pd
 from clickhouse_connect.driver.client import Client
-from lntools.utils import Logger
 
 from getrich.config.settings import settings
+from getrich.libs.logging import Logger
 
 
 log = Logger(module_name="ClickhouseClient")
@@ -111,10 +111,20 @@ class ClickHouseClient:
     def close(self) -> None:
         """关闭数据库连接。"""
         if self._connection:
+            conn = self._connection
+            # Clear the slot FIRST so a later connect() never sees a
+            # half-closed connection. If close() raises we still want
+            # the wrapper to behave as "no connection" from this point
+            # on, otherwise the next connect() will ping() a known-dead
+            # object and waste a round-trip.
+            self._connection = None
             try:
-                self._connection.close()
-                self._connection = None
+                conn.close()
                 log.info("ClickHouse connection closed")
+            # silent-fail-ok: close-time errors are best-effort.
+            # ``_connection`` is already None, so the next
+            # ``connect()`` builds a fresh client instead of reusing
+            # a half-closed handle. (Round #1056 fix.)
             except Exception as e:
                 log.error(f"Error closing ClickHouse connection: {e}")
 
@@ -638,7 +648,19 @@ class ClickHouseClient:
                     where_clause = " OR ".join(conditions)
 
                 delete_query = f"ALTER TABLE {table_name} DELETE WHERE {where_clause}"
-                self.execute(delete_query)
+                # NOTE: short-circuit on first failed DELETE. Previously the
+                # return value was discarded, so a single failing batch
+                # (e.g. ALTER TABLE on a missing partition) silently left
+                # the upsert pipeline to insert NEW rows on top of the
+                # un-deleted OLD rows. The caller (`_upsert_with_delete_insert`)
+                # DOES check the return value, so propagating False here
+                # gives the caller a chance to abort.
+                if not self.execute(delete_query):
+                    log.error(
+                        f"DELETE batch failed for {table_name} "
+                        f"(batch starting at index {i}/{len(keys_df)})"
+                    )
+                    return False
 
             return True
 

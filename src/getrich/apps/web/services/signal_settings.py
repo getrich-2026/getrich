@@ -30,6 +30,7 @@ _DEFAULT_URGENCY = ["normal", "high", "critical"]
 
 # ---------------------------------------------------------------- 用户全局
 
+
 async def get_global_settings(
     db: AsyncConnection,
     *,
@@ -92,7 +93,8 @@ async def get_global_settings(
                 "strategy_id": r["strategy_code"],
                 "push_enabled": r["push_enabled"],
                 "confidence_threshold": float(r["confidence_threshold"])
-                    if r["confidence_threshold"] is not None else None,
+                if r["confidence_threshold"] is not None
+                else None,
                 "notify_entry_only": r["notify_entry_only"],
             }
             for r in overrides
@@ -152,8 +154,12 @@ async def update_global_settings(
                 updated_at = NOW()
             """,
             (
-                user_id, push_enabled, json.dumps(new_channels),
-                new_threshold, new_urgency, json.dumps(new_quiet),
+                user_id,
+                push_enabled,
+                json.dumps(new_channels),
+                new_threshold,
+                new_urgency,
+                json.dumps(new_quiet),
                 new_trading_only,
             ),
         )
@@ -163,6 +169,7 @@ async def update_global_settings(
 
 
 # ---------------------------------------------------------------- 策略覆盖
+
 
 async def get_strategy_settings(
     db: AsyncConnection,
@@ -293,9 +300,10 @@ async def update_strategy_settings(
 
 # ---------------------------------------------------------------- helpers
 
+
 def _merge_channels(default: dict[str, bool], stored: dict[str, Any]) -> dict[str, bool]:
     out = dict(default)
-    for k in default.keys():
+    for k in default:
         if k in stored:
             out[k] = bool(stored[k])
     return out

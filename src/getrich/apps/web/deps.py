@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from fastapi import Depends, Header, Query
+from fastapi import Depends, Header, Query, Request
 
 from getrich.apps.web.pagination import (
     DEFAULT_PAGE_SIZE,
@@ -26,25 +27,53 @@ async def get_db() -> AsyncIterator[AsyncConnection]:
         yield conn
 
 
-async def get_current_user(
-    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
-) -> str | None:
-    """开发期 mock 认证：从 X-User-Id 头读取当前用户的 UUID 字符串。
+# ---------------------------------------------------------------------------
+# JWT auth helpers
+# ---------------------------------------------------------------------------
 
-    - 未传头：返回 None（公共接口、列表浏览等仍可访问）
-    - 传了头：返回字符串形式的 UUID，下游服务用它写库
-    后续接入 JWT 时把这里换成 token 解析即可，路由签名不变。
+
+def _extract_bearer_token(request: Request) -> str | None:
+    """Extract Bearer token from the Authorization header, if present."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:]
+    return None
+
+
+async def get_current_user(request: Request) -> str | None:
+    """Try JWT Bearer token first, then fall back to X-User-Id header.
+
+    Returns the user UUID string, or None if unauthenticated.
     """
-    return x_user_id
+    # 1) Try JWT Bearer token
+    token = _extract_bearer_token(request)
+    if token:
+        from getrich.apps.web.auth import verify_token
+        from getrich.config import settings
+
+        try:
+            payload = verify_token(token, settings.web.jwt_secret)
+            return payload["sub"]
+        # silent-fail-ok: token invalid/expired — fall through to the
+        # legacy X-User-Id header so dev mock auth still works.
+        # Real auth failures surface as 401 from require_user
+        # when no header is present either.
+        except ValueError:
+            # Token invalid/expired — fall through to legacy header
+            pass
+
+    # 2) Fallback: legacy X-User-Id header (dev mock auth)
+    x_user_id = request.headers.get("X-User-Id")
+    return x_user_id or None
 
 
-async def require_user(
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-) -> str:
-    """要求传 X-User-Id；未传则视为未登录返回 401。"""
+async def require_user(request: Request) -> str:
+    """Require valid JWT (or legacy X-User-Id header). Returns user UUID string."""
+    user_id = await get_current_user(request)
     if not user_id:
         from getrich.apps.web.errors import Unauthorized
-        raise Unauthorized("auth required: please pass X-User-Id header")
+
+        raise Unauthorized("auth required: please log in")
     return user_id
 
 
@@ -56,8 +85,16 @@ async def request_id(x_request_id: str | None = Header(default=None)) -> str:
 def page_dep(
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    limit: int | None = Query(None, alias="limit", ge=1, le=MAX_PAGE_SIZE),
 ) -> PageParams:
-    return make_page_params(page=page, page_size=page_size)
+    """Pagination dependency.
+
+    Accepts both ``page_size`` (canonical) and ``limit`` (frontend alias used
+    by ``frontend/src/api/orders.ts`` and similar modules). When ``limit`` is
+    provided, it overrides ``page_size``.
+    """
+    effective_size = limit if limit is not None else page_size
+    return make_page_params(page=page, page_size=effective_size)
 
 
 __all__ = [

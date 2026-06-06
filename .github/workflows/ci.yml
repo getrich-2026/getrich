@@ -1,0 +1,287 @@
+# GitHub Actions CI workflow for the GetRich platform.
+#
+# Triggers:
+#   - Pull request to dev / main
+#   - Push to dev / main
+#
+# Jobs:
+#   - lint:        ruff check + format
+#   - silent-fails: scripts/find_silent_fails.py --strict (Round #1059)
+#   - frontend:   npm ci + ESLint + vitest + tsc/vite build
+#   - test:       uv sync + run migration runner + pytest (PostgreSQL + ClickHouse)
+
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+# Cancel in-progress runs for the same branch on a new push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Default Python version for non-matrixed jobs (lint). The `test` job
+  # overrides this via a `matrix.python-version` strategy.
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.5"
+  # Node 20.19+ is the oldest LTS line that Vite 8 still supports
+  # (Vite 8 also supports 22.12+); pin the major so the cache key stays
+  # stable across patch releases and renovate PRs don't churn it.
+  NODE_VERSION: "20"
+
+jobs:
+  # ---------------------------------------------------------------- lint
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: ruff check
+        run: uv run --frozen ruff check src tests
+
+      - name: ruff format --check
+        run: uv run --frozen ruff format --check src tests
+
+  # ---------------------------------------------------------------- silent-fails
+  # Static-analysis gate for try/except blocks that ONLY log. The scanner
+  # walks src/getrich looking for handlers with no `return` / `raise` /
+  # state mutation. Triaged findings are accepted as LIKELY_OK (handler
+  # has observable side-effects) or P0_SUPPRESSED (annotated with a
+  # `# silent-fail-ok: <reason>` comment). A new un-triaged finding lands
+  # in P0_REVIEW and fails the build under --strict — this is the
+  # cheapest way to keep silent-fail regressions out of dev.
+  silent-fails:
+    name: Silent-fail scan (--strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      # The scanner is pure stdlib (no third-party deps), but we still
+      # run it through `uv run` so the Python interpreter is the
+      # project's pinned 3.12 — same as local dev. --strict exits 1
+      # on any un-suppressed P0_REVIEW finding.
+      - name: Scan for silent failures
+        run: uv run --frozen python scripts/find_silent_fails.py --strict
+
+  # ---------------------------------------------------------------- frontend
+  # Runs in parallel with `lint` and `test`. The frontend test suite is
+  # self-contained (vitest + jsdom, no DBs / network), and the production
+  # build is a pure `tsc -b && vite build` — no env vars are required.
+  frontend:
+    name: Frontend (npm ci + lint + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json', 'frontend/package.json') }}
+          restore-keys: |
+            npm-${{ runner.os }}-
+
+      - name: Install dependencies
+        # `npm ci` is the deterministic install (uses lockfile exactly,
+        # fails on lockfile drift, deletes node_modules first). The cache
+        # above short-circuits the network round-trip when the lockfile
+        # hasn't changed since the last successful run.
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Vitest
+        # `-- --run` ensures we exit after one pass; the default `npm test`
+        # uses `vitest run` already, but be explicit so a future package.json
+        # change to watch mode can't hang CI.
+        run: npm run test -- --run
+
+      - name: Build (tsc -b && vite build)
+        # `tsc -b` enforces the strict TS config (noUnusedLocals,
+        # noUnusedParameters, erasableSyntaxOnly); vite build then emits
+        # the production bundle to dist/. Both steps must succeed.
+        run: npm run build
+
+  # ---------------------------------------------------------------- test
+  test:
+    name: Test (pytest, py ${{ matrix.python-version }} + migration runner)
+    runs-on: ubuntu-latest
+
+    # Pin to the support window declared in pyproject.toml
+    # (`requires-python = ">=3.10"`). 3.12 is the project's primary dev
+    # version; 3.10/3.11 catch deprecation and `typing` changes early.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: quant
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: getrich
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.3
+        ports:
+          - 8123:8123
+          - 9000:9000
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      # Redis broker for the Celery worker pool (P3 #993). The default
+      # GETRICH_BROKER_URL is redis://localhost:6379/0 which matches
+      # this service. We do NOT spawn a celery worker in CI; the test
+      # suite only asserts task registration + _enqueue dispatch logic
+      # (see tests/getrich/apps/worker/test_celery_app.py and
+      # tests/getrich/apps/web/test_backtest_jobs_router.py).
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Postgres — matches the dev defaults in ``getrich.config.settings``.
+      PG_HOST: localhost
+      PG_PORT: "5432"
+      PG_USER: quant
+      PG_PASSWORD: testpass
+      PG_DB: getrich
+      # ClickHouse
+      CLICKHOUSE_HOST: localhost
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_PROTOCOL: http
+      # Worker pool — flip the backend so the router test exercises the
+      # Celery dispatch path. Both ``test_celery_app`` and
+      # ``test_backtest_jobs_router`` monkeypatch the app and store, so
+      # no real broker connection is made at test time.
+      GETRICH_WORKER_BACKEND: celery
+      GETRICH_BROKER_URL: redis://localhost:6379/0
+      GETRICH_RESULT_BACKEND: redis://localhost:6379/1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ~/.cache/uv
+          # Cache key includes the Python version so 3.10/3.11/3.12 each
+          # get a separate .venv (uv resolves different wheels per
+          # interpreter). The lockfile + pyproject stay primary inputs.
+          key: uv-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-py${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            pg_isready -h localhost -p 5432 && break
+            echo "waiting for postgres..."
+            sleep 1
+          done
+
+      - name: Wait for ClickHouse
+        run: |
+          for i in {1..30}; do
+            wget -q --spider http://localhost:8123/ping && break
+            echo "waiting for clickhouse..."
+            sleep 1
+          done
+
+      - name: Run migration runner (PostgreSQL)
+        run: uv run --frozen python -m getrich.migrations.cli postgres
+
+      - name: Run migration runner (ClickHouse)
+        run: uv run --frozen python -m getrich.migrations.cli clickhouse
+
+      - name: Run tests
+        # Excludes tests that require a real ClickHouse / live data feed.
+        # The full backtest + apps suites run against the in-process
+        # fakes; only a handful of legacy integration tests need a real
+        # network and are skipped here.
+        run: |
+          uv run --frozen pytest tests/getrich_backtest tests/getrich/apps -x --timeout=60

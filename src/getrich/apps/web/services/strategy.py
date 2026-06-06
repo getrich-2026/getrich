@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from getrich.apps.web.errors import BadRequest
+from getrich.apps.web.services.sanitize import normalize_detail_html
 
 
 if TYPE_CHECKING:
@@ -29,6 +30,7 @@ _SORT_FIELD_MAP: dict[str, tuple[str, str]] = {
 
 
 # ---------------------------------------------------------------- categories
+
 
 async def list_categories(db: AsyncConnection) -> list[dict[str, Any]]:
     """GET /strategies/categories"""
@@ -51,6 +53,7 @@ async def list_categories(db: AsyncConnection) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------- list
+
 
 async def list_strategies(
     db: AsyncConnection,
@@ -159,31 +162,34 @@ async def list_strategies(
 
     items: list[dict[str, Any]] = []
     for r in rows:
-        items.append({
-            "id": r["id"],
-            "name": r["name"],
-            "description": r["description"],
-            "asset_class": r["asset_class"],
-            "market": r["market"],
-            "risk_level": r["risk_level"],
-            "cover_image": r["cover_image"],
-            "subscriber_count": r["subscriber_count"],
-            "is_subscribed": bool(r["is_subscribed"]),
-            "subscription_price": {
-                "monthly": float(r["subscription_monthly"] or 0),
-                "yearly": float(r["subscription_yearly"] or 0),
-            },
-            "performance": {
-                "annualized_return": _f(r["annualized_return"]),
-                "max_drawdown": _f(r["max_drawdown"]),
-                "sharpe_ratio": _f(r["sharpe_ratio"]),
-                "win_rate": _f(r["win_rate"]),
-            },
-        })
+        items.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "description": r["description"],
+                "asset_class": r["asset_class"],
+                "market": r["market"],
+                "risk_level": r["risk_level"],
+                "cover_image": r["cover_image"],
+                "subscriber_count": r["subscriber_count"],
+                "is_subscribed": bool(r["is_subscribed"]),
+                "subscription_price": {
+                    "monthly": float(r["subscription_monthly"] or 0),
+                    "yearly": float(r["subscription_yearly"] or 0),
+                },
+                "performance": {
+                    "annualized_return": _f(r["annualized_return"]),
+                    "max_drawdown": _f(r["max_drawdown"]),
+                    "sharpe_ratio": _f(r["sharpe_ratio"]),
+                    "win_rate": _f(r["win_rate"]),
+                },
+            }
+        )
     return items, total
 
 
 # ---------------------------------------------------------------- detail
+
 
 async def get_strategy_detail(
     db: AsyncConnection,
@@ -263,6 +269,7 @@ async def get_strategy_detail(
 
     if row is None:
         from getrich.apps.web.errors import NotFound
+
         raise NotFound(f"strategy not found: {strategy_id}")
 
     # 订阅信息
@@ -341,6 +348,120 @@ async def get_strategy_detail(
     }
 
 
+# ---------------------------------------------------------------- update strategy
+
+
+async def assert_strategy_owner(
+    db: AsyncConnection,
+    *,
+    strategy_id: str,
+    user_id: str,
+) -> None:
+    """Verify the requesting user owns this strategy.
+
+    Defense against IDOR: any logged-in user can currently call
+    `PUT /strategies/{code}` and edit any strategy. This guard is
+    called at the top of `update_strategy` so it applies to every
+    caller, not just the router.
+
+    Raises:
+        NotFound  : strategy_id does not exist
+        Forbidden : user_id is not the strategy's author
+    """
+    async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT author_id FROM strategies WHERE id = %s",
+            (strategy_id,),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        from getrich.apps.web.errors import NotFound
+
+        raise NotFound(f"strategy not found: {strategy_id}")
+    if row["author_id"] != user_id:
+        from getrich.apps.web.errors import Forbidden
+
+        raise Forbidden(
+            f"user {user_id} is not the author of strategy {strategy_id}"
+        )
+
+
+async def update_strategy(
+    db: AsyncConnection,
+    *,
+    strategy_id: str,
+    user_id: str,
+    **fields: Any,
+) -> dict[str, Any]:
+    """PUT /strategies/{strategy_code} — 更新策略元数据。
+
+    仅更新传入的非 None 字段。返回更新后的 strategy detail。
+
+    Authorization: ``user_id`` MUST equal the strategy's ``author_id``
+    (see :func:`assert_strategy_owner`). 任何登录用户能改任何策略的
+    IDOR 在这一层被 403 拒绝。
+    """
+    # 1. IDOR guard. Raises NotFound or Forbidden before touching the
+    #    UPDATE so non-owners can't even probe field names.
+    await assert_strategy_owner(
+        db, strategy_id=strategy_id, user_id=user_id
+    )
+
+    allowed = {
+        "name",
+        "description",
+        "detail_html",
+        "category_id",
+        "asset_class",
+        "market",
+        "risk_level",
+        "run_status",
+        "subscription_monthly",
+        "subscription_yearly",
+        "backtest_start",
+        "backtest_end",
+    }
+    set_clauses: list[str] = []
+    params: dict[str, Any] = {"sid": strategy_id}
+
+    for key in allowed:
+        if key in fields and fields[key] is not None:
+            # Defense in depth: any user-supplied rich text is normalized
+            # through `services/sanitize.py` BEFORE the value lands in
+            # the database. The render-side sanitizer (DOMPurify in
+            # `frontend/src/lib/sanitize.ts`) is the last line of defense
+            # if the form and the schema are both bypassed.
+            if key == "detail_html":
+                fields[key] = normalize_detail_html(fields[key])
+            set_clauses.append(f"{key} = %({key})s")
+            params[key] = fields[key]
+
+    if not set_clauses:
+        from getrich.apps.web.errors import BadRequest
+
+        raise BadRequest("no fields to update")
+
+    set_clauses.append("updated_at = NOW()")
+
+    sql = f"""
+        UPDATE strategies
+        SET {", ".join(set_clauses)}
+        WHERE id = %(sid)s
+        RETURNING strategy_code
+    """
+    async with db.cursor() as cur:
+        await cur.execute(sql, params)
+        row = await cur.fetchone()
+
+    if row is None:
+        from getrich.apps.web.errors import NotFound
+
+        raise NotFound(f"strategy not found: {strategy_id}")
+
+    # Return updated detail
+    return await get_strategy_detail(db, strategy_id)
+
+
 # ---------------------------------------------------------------- equity curve
 
 _PERIOD_DAYS: dict[str, int | None] = {
@@ -406,14 +527,22 @@ async def get_equity_curve(
         for r in rows
     ]
     benchmark_curve = (
-        [{"date": _d(r["trade_date"]), "nav": _f(r["benchmark_nav"])}
-         for r in rows if r["benchmark_nav"] is not None]
-        if include_benchmark else []
+        [
+            {"date": _d(r["trade_date"]), "nav": _f(r["benchmark_nav"])}
+            for r in rows
+            if r["benchmark_nav"] is not None
+        ]
+        if include_benchmark
+        else []
     )
     drawdown_curve = (
-        [{"date": _d(r["trade_date"]), "drawdown": _f(r["drawdown"])}
-         for r in rows if r["drawdown"] is not None]
-        if include_drawdown else []
+        [
+            {"date": _d(r["trade_date"]), "drawdown": _f(r["drawdown"])}
+            for r in rows
+            if r["drawdown"] is not None
+        ]
+        if include_drawdown
+        else []
     )
 
     return {
@@ -430,6 +559,7 @@ async def get_equity_curve(
 
 
 # ---------------------------------------------------------------- monthly returns
+
 
 async def get_monthly_returns(
     db: AsyncConnection,
@@ -474,6 +604,7 @@ async def get_monthly_returns(
 
 
 # ---------------------------------------------------------------- backtest report
+
 
 async def get_backtest_report(
     db: AsyncConnection,
@@ -534,6 +665,7 @@ async def get_backtest_report(
 
     if row is None:
         from getrich.apps.web.errors import NotFound
+
         raise NotFound(f"strategy not found: {strategy_code}")
 
     annual_performance = [
@@ -584,6 +716,7 @@ async def get_backtest_report(
 
 # ---------------------------------------------------------------- trades
 
+
 async def list_trades(
     db: AsyncConnection,
     *,
@@ -595,17 +728,69 @@ async def list_trades(
     result: Literal["all", "win", "loss"] | None,
     page: PageParams,
 ) -> tuple[list[dict[str, Any]], int]:
-    """GET /strategies/{strategy_id}/trades
+    """GET /strategies/{strategy_id}/trades"""
+    conds: list[str] = ["strategy_id = %(sid)s"]
+    params: dict[str, Any] = {"sid": strategy_id, "limit": page.limit, "offset": page.offset}
 
-    注：strategy_trades 表在当前 PG schema 中尚未建表。
-    本期返回空列表，待 schema 补齐后再实现。
+    if start_date:
+        conds.append("executed_at >= %(start)s")
+        params["start"] = start_date
+    if end_date:
+        conds.append("executed_at < (%(end)s::date + INTERVAL '1 day')")
+        params["end"] = end_date
+    if action and action != "all":
+        conds.append("action = %(action)s")
+        params["action"] = action
+    if result and result != "all":
+        if result == "win":
+            conds.append("realized_pnl > 0")
+        elif result == "loss":
+            conds.append("realized_pnl < 0")
+
+    where_sql = " AND ".join(conds)
+
+    sql = f"""
+        SELECT id, strategy_id, signal_id, symbol, action, quantity, price, notional,
+               fee, slippage, avg_cost, realized_pnl, cumulative_pnl,
+               executed_at, bar_dt, tag,
+               COUNT(*) OVER() AS _total
+        FROM strategy_trades
+        WHERE {where_sql}
+        ORDER BY executed_at DESC
+        LIMIT %(limit)s OFFSET %(offset)s
     """
-    _ = (db, strategy_id, start_date, end_date, action, result, page)
-    # TODO: 待 strategy_trades 表上线后实现
-    return [], 0
+
+    async with db.cursor() as cur:
+        await cur.execute(sql, params)
+        rows = await cur.fetchall()
+
+    total = int(rows[0]["_total"]) if rows else 0
+    items = [
+        {
+            "id": r["id"],
+            "strategy_id": str(r["strategy_id"]),
+            "signal_id": str(r["signal_id"]) if r["signal_id"] is not None else None,
+            "symbol": r["symbol"],
+            "action": r["action"],
+            "quantity": _f(r["quantity"]),
+            "price": _f(r["price"]),
+            "notional": _f(r["notional"]),
+            "fee": _f(r["fee"]),
+            "slippage": _f(r["slippage"]),
+            "avg_cost": _f_nullable(r["avg_cost"]),
+            "realized_pnl": _f(r["realized_pnl"]),
+            "cumulative_pnl": _f_nullable(r["cumulative_pnl"]),
+            "executed_at": _dt(r["executed_at"]),
+            "bar_dt": _dt(r["bar_dt"]) if r["bar_dt"] is not None else None,
+            "tag": r["tag"] or "",
+        }
+        for r in rows
+    ]
+    return items, total
 
 
 # ---------------------------------------------------------------- signals of strategy
+
 
 async def list_signals_of_strategy(
     db: AsyncConnection,
@@ -667,10 +852,18 @@ async def list_signals_of_strategy(
 
 # ---------------------------------------------------------------- helpers
 
+
 def _f(v: Any) -> float:
     """Decimal/float/None → float（None 视为 0.0，避免前端 NaN）。"""
     if v is None:
         return 0.0
+    return float(v)
+
+
+def _f_nullable(v: Any) -> float | None:
+    """Decimal/float/None → nullable float for fields where NULL is meaningful."""
+    if v is None:
+        return None
     return float(v)
 
 

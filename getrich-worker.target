@@ -1,0 +1,16 @@
+[Unit]
+Description=GetRich Backtest Worker Pool
+Documentation=file:/home/neo/project/getrich/.agent/brain/NOTES.md
+After=network.target postgresql.service getrich-broker.service
+Wants=postgresql.service getrich-broker.service
+# ``Wants=`` (not ``Requires=``) so a single dead worker does not
+# tear down the entire target. Restart the dead one with
+# ``systemctl restart getrich-worker@N``.
+Wants=getrich-worker@1.service getrich-worker@2.service getrich-worker@3.service getrich-worker@4.service
+# Stop the workers first when the target goes down, so in-flight
+# backtests are released gracefully and a fresh claim picks them up
+# after stale_recovery_seconds (300s) on the next start.
+Before=shutdown.target reboot.target halt.target
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+[Unit]
+Description=GetRich Backtest Worker %i
+Documentation=file:/home/neo/project/getrich/.agent/brain/NOTES.md
+After=network.target postgresql.service getrich-broker.service
+Wants=postgresql.service getrich-broker.service
+# Aggregate into ``getrich-worker.target`` so operators can start /
+# stop the entire pool with one command.
+PartOf=getrich-worker.target
+
+[Service]
+Type=simple
+User=neo
+WorkingDirectory=/home/neo/project/getrich
+EnvironmentFile=/home/neo/project/getrich/.env
+# -c 1 (one concurrent task) is the recommended setting: backtests
+# are long-running and CPU-bound, so running N tasks in one worker
+# process just causes thread thrash. Scale by starting N workers
+# (e.g. ``getrich-worker@{1..4}``) instead of N concurrency per
+# worker. The custom CLI passes extra args through.
+ExecStart=/home/neo/.local/bin/uv run python -m getrich.apps.worker.cli worker --concurrency=1
+Restart=on-failure
+RestartSec=5
+# A worker can hold a long-running task for hours; don't kill it
+# for a brief CPU spike. The runner has its own stuck-job recovery
+# (BacktestJobRunner.stale_recovery_seconds=300) so a truly dead
+# worker is reclaimed by another process within minutes anyway.
+TimeoutStopSec=300
+# Limit core dumps — they are large and uninteresting for a worker.
+LimitCORE=0
+
+[Install]
+WantedBy=getrich-worker.target

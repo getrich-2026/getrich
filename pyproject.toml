@@ -9,12 +9,14 @@ description = "量化投研系统 - 模块化设计的多品种投研交易平�
 readme = "README.md"
 authors = [{ name = "GetRich Team", email = "linnan@nebulastar.com.cn" }]
 license = { text = "MIT" }
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Financial and Insurance Industry",
     "Topic :: Office/Business :: Financial :: Investment",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
@@ -34,11 +36,12 @@ dependencies = [
     "akshare",
     "clickhouse-connect",
     "python-dotenv",
-    "lntools",  # requires --find-links ./local_packages
     "matplotlib",
+    "plotly",
     "numpy",
     "pandas",
     "polars",
+    "pyarrow",
     "py_vollib",
     "pyyaml",
     "python-dateutil",
@@ -54,13 +57,24 @@ dependencies = [
     "pydantic>=2.7,<3",
     "psycopg[binary,pool]>=3.2",
     "orjson>=3.10",
+    "bcrypt>=4.0",
+    "celery[redis]>=5.4",
+    "redis>=5.0",
+    "bleach>=6.3.0",
 ]
+
+
+[project.scripts]
+getrich-migrate = "getrich.migrations.cli:main"
 
 
 [project.optional-dependencies]
 dev = [
     "mypy",
     "pandas-stubs",
+    "pytest",
+    "ruff",
+    "flower>=2.0",
 ]
 
 [tool.setuptools]
@@ -69,7 +83,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["getrich*"]
+include = ["getrich*", "getrich_backtest*"]
 exclude = ["tests*", "reference*", "docs*"]
 
 [tool.setuptools.package-data]
@@ -80,7 +94,7 @@ exclude = ["tests*", "reference*", "docs*"]
 # 代码每行最大长度
 line-length = 100
 # 目标 Python 版本
-target-version = "py312"
+target-version = "py310"
 
 [tool.ruff.lint]
 # 融合后的规则集：你的原版 + 推荐增强
@@ -111,6 +125,8 @@ lines-after-imports = 2
 "*.ipynb" = ["E402", "F401"]
 # 在 __init__.py 中允许未使用的导入 (通常用于暴露 API)
 "__init__.py" = ["F401"]
+# FastAPI 路由的 Depends() 在函数签名中是标准模式
+"**/routers/*.py" = ["B008"]
 
 [tool.pytest.ini_options]
 # 测试配置
@@ -141,7 +157,7 @@ reportMissingTypeStubs = false
 reportUnusedImport = "warning"         # 让 Ruff 负责删除，但这里显示警告
 reportUnusedVariable = "warning"
 reportDuplicateImport = "error"
-pythonVersion = "3.12"
+pythonVersion = "3.10"
 
 # 允许我写 "多余" 的 isinstance 检查
 # 在实盘中，我不信任上游数据，即使 Type Hint 说它是 int，我也要 check 它是 int
@@ -154,4 +170,17 @@ exclude = [
     "**/.git",
     "**/.github",
     "**/.vscode",
+]
+
+[dependency-groups]
+dev = [
+    "griffe-inherited-docstrings>=1.1.3",
+    "httpx>=0.28.1",
+    "mkdocs-autorefs>=1.4.4",
+    "mkdocs-git-revision-date-localized-plugin>=1.5.3",
+    "mkdocs-include-markdown-plugin>=7.3.0",
+    "mkdocs-material>=9.7.6",
+    "mkdocs-minify-plugin>=0.8.0",
+    "mkdocstrings-python>=2.0.4",
+    "pymdown-extensions>=10",
 ]

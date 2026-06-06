@@ -42,6 +42,7 @@
 - **数据请求**：统一在 `src/api/` 下编写模块化接口函数（如 `strategies.ts`），前端组件一律通过 `@tanstack/react-query`（`useQuery`/`useMutation`）管理异步数据与加载态，**禁止**在组件内部使用 `useEffect` + `useState` 手写 API 轮询。
 - **表单校验**：表单组件必须使用 `react-hook-form` 结合 `zod` 校验器进行严格前端输入验证。
 - **UI 与图表**：优先选用 `src/components/ui/`（基于 shadcn/ui + Radix UI）的无样式基础组件，由 CLI 统一管理，不手动更改 UI 源码。时序/权益曲线图表优先选择 `echarts` 绘制；其余常规图表可采用 `recharts`。
+- **用户内容 XSS 防御**：渲染用户/作者提供的 HTML (`strategy.detail_html` 等) **必须**通过 `frontend/src/lib/sanitize.ts::sanitizeHtml()` 包装后再传给 `dangerouslySetInnerHTML`。裸的 `dangerouslySetInnerHTML` 会被本地 ESLint 规则 `getrich/no-unsanitized-danger` 拦截（`frontend/src/lib/eslint-plugin-no-unsanitized-danger.cjs`），仅放行 `sanitizeHtml()` / `DOMPurify.sanitize()` / `bleach.clean()` 之一的包裹形式。四层防御纵深：①表单 zod 长度上限 ②后端 Pydantic `max_length` + bleach 归一化 ③Postgres `CHECK` 约束（`migrations/024_*.sql`）④API 响应 `Content-Security-Policy` 头（`apps/web/middleware.py::SecurityHeadersMiddleware`，协议级最后一道兜底）。
 
 ## 5. 常用开发命令
 
@@ -49,6 +50,21 @@
 ```bash
 # 本地启动 FastAPI 开发服务器
 uvicorn getrich.apps.web.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 回测包常用命令
+```bash
+# 执行回测包测试
+uv run pytest tests/getrich_backtest -v
+
+# 执行回测包 Ruff 静态检查
+uv run ruff check src/getrich_backtest tests/getrich_backtest
+
+# 检查回测包格式
+uv run ruff format --check src/getrich_backtest tests/getrich_backtest
+
+# 执行回测包类型检查（若环境已安装 basedpyright）
+uv run basedpyright src/getrich_backtest
 ```
 
 ### 前端常用命令
@@ -77,3 +93,40 @@ npm run lint
 - 对于超过 100,000 行的大规模数据集，**绝对禁止**保存为普通 CSV 格式，必须统一采用高性能、高压缩率的 `Parquet` 格式（选用 `zstd` 压缩）。
 - **绝对禁止**在没有异常捕获 (`try-except`) 隔离的情况下在主线程中启动外部 API调用或网络请求。
 - **绝对禁止**使用 destructive 命令如 `git reset --hard` 修改用户的工作区未提交代码。
+- **绝对禁止**在浏览器组件中未通过 `frontend/src/lib/sanitize.ts::sanitizeHtml()`（或同等的 `DOMPurify.sanitize()` / `bleach.clean()`）包装就直接 `dangerouslySetInnerHTML` 渲染用户/作者提供的内容；本地 ESLint 规则 `getrich/no-unsanitized-danger` 会在 CI 阶段拦截裸 sink。
+- **绝对禁止**在 `apps/web/main.py::create_app()` 中移除 `SecurityHeadersMiddleware` —— 这是协议级 XSS 兜底（`Content-Security-Policy` / `X-Frame-Options` / `nosniff` / `Referrer-Policy`），同时也是 OWASP 推荐做法。新增路由/中间件时，测试必须用 `TestClient` 验证响应仍带这 4 个头。
+
+## 6. 数据库迁移（Migration）约定
+
+所有 PostgreSQL / ClickHouse schema 变更必须通过 `migrations/*.sql` 文件提交，并由 `python -m getrich.migrations.cli` 应用。**禁止**手动 `psql` 在生产 / 测试环境跑未走 runner 的 SQL。
+
+### 命名规范
+- 文件名前缀为 3+ 位数字（`001_xxx.sql`），决定应用顺序。
+- 数字必须**连续**（不允许 `001 → 003` 跳过 `002`），runner 会拒绝。
+- 不得有重复前缀，runner 会拒绝。
+- PostgreSQL migration 放在 `migrations/`；ClickHouse migration 放在 `migrations/clickhouse/`。
+
+### 应用 migration
+```bash
+# 应用 PostgreSQL migrations（默认目标）
+python -m getrich.migrations.cli postgres
+
+# 应用 ClickHouse migrations
+python -m getrich.migrations.cli clickhouse
+
+# 应用两个数据库的 migrations（推荐部署流程）
+python -m getrich.migrations.cli all
+
+# 只打印发现 / 已应用状态，不执行 SQL
+python -m getrich.migrations.cli status
+
+# 试跑：列出将应用哪些 migration 但不实际执行
+python -m getrich.migrations.cli postgres --dry-run
+```
+
+### 编写规范
+- 优先使用 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` 等幂等语句，方便重跑。
+- 一个文件一个逻辑主题（一张表、一个 index、一组相关 ALTER），便于 review。
+- 破坏性变更（DROP / TRUNCATE）必须先在 NOTES.md 风险评估。
+- 新增列必须显式带 `DEFAULT`（避免大表 NOT NULL 失败）。
+- ClickHouse migration 由于没有跨语句事务，**必须**幂等。

@@ -1,13 +1,14 @@
-"""策略模块路由：8 个 GET 接口。"""
+"""策略模块路由：8 个 GET 接口 + 1 个 PUT 接口。"""
 
 from __future__ import annotations
 
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 
-from getrich.apps.web.deps import get_current_user, get_db, page_dep, request_id
+from getrich.apps.web.deps import get_current_user, get_db, page_dep, request_id, require_user
 from getrich.apps.web.pagination import make_pagination
 from getrich.apps.web.response import success
 from getrich.apps.web.services import resolver, strategy as strategy_svc
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/strategies", tags=["strategies"])
 
 # ---------------------------------------------------------------- categories
 
+
 @router.get("/categories")
 async def list_categories(
     db: AsyncConnection = Depends(get_db),
@@ -34,6 +36,7 @@ async def list_categories(
 
 
 # ---------------------------------------------------------------- list
+
 
 @router.get("")
 async def list_strategies(
@@ -77,6 +80,7 @@ async def list_strategies(
 
 # ---------------------------------------------------------------- detail
 
+
 @router.get("/{strategy_code}")
 async def get_strategy_detail(
     strategy_code: str,
@@ -90,6 +94,7 @@ async def get_strategy_detail(
 
 
 # ---------------------------------------------------------------- equity curve
+
 
 @router.get("/{strategy_code}/equity-curve")
 async def get_equity_curve(
@@ -118,6 +123,7 @@ async def get_equity_curve(
 
 # ---------------------------------------------------------------- monthly returns
 
+
 @router.get("/{strategy_code}/monthly-returns")
 async def get_monthly_returns(
     strategy_code: str,
@@ -126,12 +132,15 @@ async def get_monthly_returns(
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)
     data = await strategy_svc.get_monthly_returns(
-        db, strategy_id=sid, strategy_code=strategy_code,
+        db,
+        strategy_id=sid,
+        strategy_code=strategy_code,
     )
     return success(data, rid)
 
 
 # ---------------------------------------------------------------- backtest report
+
 
 @router.get("/{strategy_code}/backtest-report")
 async def get_backtest_report(
@@ -141,12 +150,15 @@ async def get_backtest_report(
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)
     data = await strategy_svc.get_backtest_report(
-        db, strategy_id=sid, strategy_code=strategy_code,
+        db,
+        strategy_id=sid,
+        strategy_code=strategy_code,
     )
     return success(data, rid)
 
 
 # ---------------------------------------------------------------- trades
+
 
 @router.get("/{strategy_code}/trades")
 async def list_trades(
@@ -171,11 +183,13 @@ async def list_trades(
         page=page,
     )
     return success(
-        {"list": items, "pagination": make_pagination(page, total)}, rid,
+        {"list": items, "pagination": make_pagination(page, total)},
+        rid,
     )
 
 
 # ---------------------------------------------------------------- signals of strategy
+
 
 @router.get("/{strategy_code}/signals")
 async def list_signals_of_strategy(
@@ -197,5 +211,49 @@ async def list_signals_of_strategy(
         page=page,
     )
     return success(
-        {"list": items, "pagination": make_pagination(page, total)}, rid,
+        {"list": items, "pagination": make_pagination(page, total)},
+        rid,
     )
+
+
+# ---------------------------------------------------------------- update strategy
+
+
+class UpdateStrategyRequest(BaseModel):
+    """可部分更新的策略字段。仅传入的字段会被更新，未传入的保持不变。"""
+
+    name: str | None = Field(None, min_length=1, max_length=128)
+    description: str | None = None
+    # `detail_html` carries the user-supplied rich content rendered in
+    # `frontend/src/pages/StrategyDetail.tsx`. Hard-capped at 50,000 chars
+    # to match the Postgres CHECK constraint in
+    # `migrations/024_*.sql` and the frontend zod schema in
+    # `frontend/src/pages/StrategyEdit.tsx`. Bleach normalization in
+    # `services/sanitize.py` runs at the service layer; Pydantic only
+    # enforces the length ceiling here.
+    detail_html: str | None = Field(None, max_length=50_000)
+    category_id: str | None = None
+    asset_class: str | None = None
+    market: str | None = None
+    risk_level: str | None = None
+    run_status: str | None = None
+    subscription_monthly: float | None = Field(None, ge=0)
+    subscription_yearly: float | None = Field(None, ge=0)
+    backtest_start: date | None = None
+    backtest_end: date | None = None
+
+
+@router.put("/{strategy_code}")
+async def update_strategy(
+    strategy_code: str,
+    body: UpdateStrategyRequest,
+    user_id: str = Depends(require_user),
+    db: AsyncConnection = Depends(get_db),
+    rid: str = Depends(request_id),
+):
+    sid = await resolver.strategy_code_to_id(db, strategy_code)
+    fields: dict[str, Any] = body.model_dump(exclude_none=True)
+    data = await strategy_svc.update_strategy(
+        db, strategy_id=sid, user_id=user_id, **fields
+    )
+    return success(data, rid)

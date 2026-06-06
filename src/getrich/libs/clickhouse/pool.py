@@ -12,9 +12,8 @@ from contextlib import contextmanager
 from threading import RLock
 from typing import Any
 
-from lntools.utils import Logger
-
 from getrich.config.settings import settings
+from getrich.libs.logging import Logger
 
 from .database import ClickHouseClient
 

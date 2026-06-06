@@ -126,7 +126,9 @@ def find_or_create_env_file() -> Path:
 
     # Priority check
     if project_env_path.exists():
-        logging.getLogger("settings").info("Using .env from project directory: %s", project_env_path)
+        logging.getLogger("settings").info(
+            "Using .env from project directory: %s", project_env_path
+        )
         return project_env_path
 
     if user_env_path.exists():
@@ -260,6 +262,28 @@ class DuckDBConfig:
 
 
 @dataclass(frozen=True)
+class BacktestStorageConfig:
+    """Backtest artifact storage Configuration.
+
+    The artifact root is the on-disk directory that ``BacktestArtifact.uri``
+    paths are allowed to resolve under. The binary download endpoint refuses
+    any path that escapes this root (path-traversal protection).
+    """
+
+    artifact_dir: Path
+
+    @classmethod
+    def from_env(cls, project_root: Path, strict: bool) -> BacktestStorageConfig:
+        raw = _get_env("BACKTEST_ARTIFACT_DIR", "tmp/artifacts")
+        path = Path(raw) if raw else Path("tmp/artifacts")
+        if not path.is_absolute():
+            path = project_root / path
+        if not path.exists():
+            _warn(f"Backtest artifact dir does not exist: {path}", strict)
+        return cls(artifact_dir=path)
+
+
+@dataclass(frozen=True)
 class LoggingConfig:
     """Logging Configuration"""
 
@@ -385,12 +409,43 @@ class WebConfig:
     host: str
     port: int
     cors_origins: tuple[str, ...]
+    jwt_secret: str
+    jwt_expire_minutes: int
+    jwt_refresh_expire_hours: int
+    csp_policy: str
 
     @classmethod
     def from_env(cls, strict: bool) -> WebConfig:
         host = _get_env("WEB_HOST", "0.0.0.0") or "0.0.0.0"
         port_str = _get_env("WEB_PORT", "8000")
         origins_str = _get_env("WEB_CORS_ORIGINS", "http://localhost:5173") or ""
+        jwt_secret = (
+            _get_env("JWT_SECRET", "getrich-dev-secret-change-in-prod")
+            or "getrich-dev-secret-change-in-prod"
+        )
+        jwt_expire_str = _get_env("JWT_EXPIRE_MINUTES", "1440")  # default 24h
+        jwt_refresh_expire_str = _get_env("JWT_REFRESH_EXPIRE_HOURS", "168")  # default 7d
+        # Default CSP: tight, dev-friendly. Override via CSP_POLICY env to
+        # deploy a stricter prod policy (e.g. drop 'unsafe-inline' once
+        # the frontend is built without inline scripts/styles).
+        csp_policy = (
+            _get_env(
+                "CSP_POLICY",
+                # dev defaults: allow Vite's HMR + inline styles that the
+                # shadcn/ui Tailwind layer uses; allow http://localhost/127.0.0.1
+                # for the dev backend; deny framing entirely.
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: https:; "
+                "font-src 'self' data:; "
+                "connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:*; "
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'",
+            )
+            or ""
+        )
 
         try:
             port = int(port_str)  # type: ignore[arg-type]
@@ -398,9 +453,63 @@ class WebConfig:
             _warn(f"Invalid WEB_PORT: {port_str}", strict)
             port = 8000
 
+        try:
+            jwt_expire_minutes = int(jwt_expire_str)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            jwt_expire_minutes = 1440
+
+        try:
+            jwt_refresh_expire_hours = int(jwt_refresh_expire_str)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            jwt_refresh_expire_hours = 168
+
         cors_origins = tuple(o.strip() for o in origins_str.split(",") if o.strip())
 
-        return cls(host=host, port=port, cors_origins=cors_origins)
+        return cls(
+            host=host,
+            port=port,
+            cors_origins=cors_origins,
+            jwt_secret=jwt_secret,
+            jwt_expire_minutes=jwt_expire_minutes,
+            jwt_refresh_expire_hours=jwt_refresh_expire_hours,
+            csp_policy=csp_policy,
+        )
+
+
+@dataclass(frozen=True)
+class WorkerConfig:
+    """Backtest Worker Pool Configuration.
+
+    P0: jobs run in-process via FastAPI BackgroundTasks
+    (GETRICH_WORKER_BACKEND=inproc). P1+: jobs dispatched to a
+    Celery worker pool backed by Redis
+    (GETRICH_WORKER_BACKEND=celery).
+    """
+
+    backend: str  # 'inproc' or 'celery'
+    broker_url: str  # Redis URL when backend=celery
+    result_backend: str  # Redis URL for Celery results
+    flower_url: str  # monitoring UI
+
+    @classmethod
+    def from_env(cls, strict: bool) -> WorkerConfig:
+        backend = (_get_env("GETRICH_WORKER_BACKEND", "inproc") or "inproc").lower()
+        if backend not in ("inproc", "celery"):
+            _warn(f"Invalid GETRICH_WORKER_BACKEND={backend!r}, falling back to 'inproc'", strict)
+            backend = "inproc"
+        broker_url = (
+            _get_env("GETRICH_BROKER_URL", "redis://localhost:6379/0") or "redis://localhost:6379/0"
+        )
+        result_backend = _get_env("GETRICH_RESULT_BACKEND", broker_url) or broker_url
+        flower_url = (
+            _get_env("GETRICH_FLOWER_URL", "http://localhost:5555") or "http://localhost:5555"
+        )
+        return cls(
+            backend=backend,
+            broker_url=broker_url,
+            result_backend=result_backend,
+            flower_url=flower_url,
+        )
 
 
 @dataclass(frozen=True)
@@ -417,6 +526,8 @@ class Settings:
     insight: InsightConfig
     postgres: PostgresConfig
     web: WebConfig
+    backtest_storage: BacktestStorageConfig
+    worker: WorkerConfig
 
     @property
     def is_dev(self) -> bool:
@@ -460,6 +571,8 @@ def load_settings(env_file: str | None = None) -> Settings:
     insight_config = InsightConfig.from_env(strict=strict_mode)
     pg_config = PostgresConfig.from_env(strict=strict_mode)
     web_config = WebConfig.from_env(strict=strict_mode)
+    backtest_storage_config = BacktestStorageConfig.from_env(root, strict=strict_mode)
+    worker_config = WorkerConfig.from_env(strict=strict_mode)
 
     return Settings(
         root=root,
@@ -472,6 +585,8 @@ def load_settings(env_file: str | None = None) -> Settings:
         insight=insight_config,
         postgres=pg_config,
         web=web_config,
+        backtest_storage=backtest_storage_config,
+        worker=worker_config,
     )
 
 
@@ -499,3 +614,33 @@ def setup_logging(settings: Settings) -> None:
 # This allows `from settings import settings` in other files.
 # For lazy loading, you could remove this and let the user call load_settings().
 settings = load_settings()
+
+
+# ------------------------------------------------------------------------------
+# 6. Helpers
+# ------------------------------------------------------------------------------
+
+
+def make_pg_dsn(postgres: PostgresConfig) -> str:
+    """Build a libpq DSN string for synchronous psycopg connections.
+
+    Used by the worker pool's ``sync_is_cancelled_status`` probe, which
+    runs in a thread / worker process and needs a short-lived sync
+    connection rather than the async pool that ``PgBacktestJobStore``
+    borrows from. Mirrors the async pool's connection parameters so a
+    probe on a different connection observes the same writes.
+
+    Parameters
+    ----------
+    postgres : PostgresConfig
+        The application's Postgres config dataclass.
+
+    Returns
+    -------
+    str
+        A libpq-style DSN, e.g.
+        ``postgresql://quant:s3cr3t@100.80.19.6:5432/goldmine``.
+    """
+    password = f":{postgres.password}" if postgres.password else ""
+    user = postgres.user or "postgres"
+    return f"postgresql://{user}{password}@{postgres.host}:{postgres.port}/{postgres.database}"

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from getrich.apps.strategy.trade_reconciler import reconcile_trades
 from getrich.apps.web.errors import NotFound
+from getrich.apps.web.services.sanitize import normalize_reason
 
 
 if TYPE_CHECKING:
@@ -21,11 +25,12 @@ _TZ_SH = ZoneInfo("Asia/Shanghai")
 
 # ---------------------------------------------------------------- list
 
+
 async def list_signals(
     db: AsyncConnection,
     *,
     user_id: str | None,
-    strategy_id: str | None,           # 可以是 strategy_code
+    strategy_id: str | None,  # 可以是 strategy_code
     strategy_ids: list[str] | None,
     signal_type: str | None,
     action: str | None,
@@ -84,8 +89,7 @@ async def list_signals(
     user_join = ""
     if user_id:
         user_join = (
-            "LEFT JOIN user_signal_reads usr "
-            "ON usr.signal_id = s.id AND usr.user_id = %(uid)s"
+            "LEFT JOIN user_signal_reads usr ON usr.signal_id = s.id AND usr.user_id = %(uid)s"
         )
         params["uid"] = user_id
 
@@ -108,8 +112,8 @@ async def list_signals(
             COALESCE(s.reason, '')      AS reason,
             s.published_at              AS trigger_time,
             s.status,
-            { 'usr.user_id IS NOT NULL' if user_id else 'FALSE' } AS is_read,
-            { 'COALESCE(usr.is_executed, FALSE)' if user_id else 'FALSE' } AS is_executed,
+            {"usr.user_id IS NOT NULL" if user_id else "FALSE"} AS is_read,
+            {"COALESCE(usr.is_executed, FALSE)" if user_id else "FALSE"} AS is_executed,
             COUNT(*) OVER() AS _total
         FROM signals s
         JOIN strategies st ON st.id = s.strategy_id
@@ -154,7 +158,7 @@ async def list_signals(
             "stop_loss_price": _f(r["stop_loss_price"]),
             "confidence": _f(r["confidence"]),
             "urgency": r["urgency"],
-            "reason": r["reason"],
+            "reason": normalize_reason(r["reason"]),
             "trigger_time": _dt(r["trigger_time"]),
             "is_read": bool(r["is_read"]),
             "is_executed": bool(r["is_executed"]),
@@ -166,6 +170,7 @@ async def list_signals(
 
 
 # ---------------------------------------------------------------- unread summary
+
 
 async def unread_summary(
     db: AsyncConnection,
@@ -250,6 +255,7 @@ async def unread_summary(
 
 
 # ---------------------------------------------------------------- detail
+
 
 async def get_signal_detail(
     db: AsyncConnection,
@@ -336,7 +342,9 @@ async def get_signal_detail(
         hist = await cur.fetchone() or {}
 
     reason_detail = row["reason_detail"] or {}
-    market_snapshot = _build_market_snapshot(snap) if snap else _empty_market_snapshot(row["symbol"])
+    market_snapshot = (
+        _build_market_snapshot(snap) if snap else _empty_market_snapshot(row["symbol"])
+    )
 
     return {
         "id": row["signal_code"],
@@ -359,7 +367,7 @@ async def get_signal_detail(
         "position_pct": _f(row["position_pct"]),
         "confidence": _f(row["confidence"]),
         "urgency": row["urgency"],
-        "reason": row["reason"],
+        "reason": normalize_reason(row["reason"]),
         "reason_detail": {
             "spread_current": _f(reason_detail.get("spread_current")),
             "spread_mean": _f(reason_detail.get("spread_mean")),
@@ -414,13 +422,18 @@ def _empty_market_snapshot(symbol: str) -> dict[str, Any]:
     return {
         "symbol": symbol,
         "snapshot_time": "",
-        "open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0,
-        "volume": 0, "open_interest": 0,
+        "open": 0.0,
+        "high": 0.0,
+        "low": 0.0,
+        "close": 0.0,
+        "volume": 0,
+        "open_interest": 0,
         "indicators": {"ma5": 0.0, "ma20": 0.0, "rsi_14": 0.0, "atr_14": 0.0},
     }
 
 
 # ---------------------------------------------------------------- mark read
+
 
 async def mark_read(
     db: AsyncConnection,
@@ -467,6 +480,7 @@ async def mark_read(
 
 # ---------------------------------------------------------------- execute
 
+
 async def record_execute(
     db: AsyncConnection,
     *,
@@ -477,12 +491,17 @@ async def record_execute(
 ) -> dict[str, Any]:
     """POST /signals/{signal_id}/execute。
 
-    复用 user_signal_reads 表（schema 中执行字段挂在已读记录上）：
-    UPSERT user_signal_reads，把 is_executed / executed_price / executed_qty / executed_at / note 写入。
+    复用 user_signal_reads 表（schema 中执行字段挂在已读记录上）。
+    UPSERT user_signal_reads 写入 is_executed / executed_price / executed_qty /
+    executed_at / note。
     """
     async with db.cursor() as cur:
         await cur.execute(
-            "SELECT trigger_price FROM signals WHERE id = %s",
+            """
+            SELECT trigger_price, symbol, action, strategy_id, published_at
+            FROM signals
+            WHERE id = %s
+            """,
             (signal_id,),
         )
         row = await cur.fetchone()
@@ -490,9 +509,14 @@ async def record_execute(
             raise NotFound(f"signal not found: {signal_code}")
 
         trigger_price = _f(row["trigger_price"])
+        signal_symbol = row["symbol"]
+        signal_action = row["action"]
+        signal_sid = row["strategy_id"]
+        signal_bar_dt = row["published_at"]
         executed_price = body.executed_price if body.executed_price is not None else trigger_price
         slippage = executed_price - trigger_price
         slippage_pct = (slippage / trigger_price) if trigger_price else 0.0
+        executed_qty = body.executed_quantity or 0
 
         executed_at = body.executed_at or datetime.now(_TZ_SH)
         if executed_at.tzinfo is None:
@@ -512,13 +536,44 @@ async def record_execute(
                 note = COALESCE(EXCLUDED.note, user_signal_reads.note)
             """,
             (
-                user_id, signal_id,
+                user_id,
+                signal_id,
                 executed_price,
                 body.executed_quantity,
                 executed_at,
                 body.note,
             ),
         )
+
+        # Also write a strategy-level trade record for the trade journal.
+        executed_price_decimal = Decimal(str(executed_price))
+        notional = executed_price_decimal * Decimal(str(executed_qty))
+        trade_bar_dt = signal_bar_dt or executed_at
+        await cur.execute(
+            """
+            INSERT INTO strategy_trades
+                (id, strategy_id, signal_id, symbol, action,
+                 quantity, price, notional, fee, slippage, executed_at, bar_dt, tag)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                str(uuid4()),
+                signal_sid,
+                signal_id,
+                signal_symbol,
+                signal_action,
+                executed_qty,
+                executed_price_decimal,
+                notional,
+                Decimal("0"),  # fee — unknown at execution time
+                Decimal(str(slippage)),
+                executed_at,
+                trade_bar_dt,
+                body.note,
+            ),
+        )
+        await reconcile_trades(signal_sid, conn=db)
         await db.commit()
 
     return {
@@ -532,6 +587,7 @@ async def record_execute(
 
 
 # ---------------------------------------------------------------- helpers
+
 
 def _f(v: Any) -> float:
     if v is None:

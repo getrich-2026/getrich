@@ -1,0 +1,16 @@
+[Unit]
+Description=GetRich Live Signal Generator
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=neo
+WorkingDirectory=/home/neo/project/getrich
+EnvironmentFile=/home/neo/project/getrich/.env
+ExecStart=/home/neo/.local/bin/uv run python -m getrich.apps.strategy.cli
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

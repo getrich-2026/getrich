@@ -18,21 +18,26 @@ class ApiError(Exception):
             self.http_status = http_status
 
 
-class NotFound(ApiError):
+class NotFound(ApiError):  # noqa: N818
     http_status = 404
     code = 4040
 
 
-class BadRequest(ApiError):
+class BadRequest(ApiError):  # noqa: N818
     http_status = 400
     code = 4000
 
 
-class Forbidden(ApiError):
+class Forbidden(ApiError):  # noqa: N818
     http_status = 403
     code = 4030
 
 
-class Unauthorized(ApiError):
+class Unauthorized(ApiError):  # noqa: N818
     http_status = 401
     code = 4010
+
+
+class Conflict(ApiError):  # noqa: N818
+    http_status = 409
+    code = 4090

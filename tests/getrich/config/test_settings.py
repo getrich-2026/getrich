@@ -1,0 +1,76 @@
+"""Tests for the ``WorkerConfig`` block in ``getrich.config.settings``."""
+
+from __future__ import annotations
+
+import os
+
+from getrich.config.settings import WorkerConfig, make_pg_dsn
+
+
+def test_from_env_defaults(monkeypatch: object) -> None:
+    """Defaults: backend=inproc, broker=localhost, flower=localhost:5555."""
+    # No env vars set; rely on dataclass defaults.
+    cfg = WorkerConfig.from_env(strict=False)
+    assert cfg.backend == "inproc"
+    assert cfg.broker_url == "redis://localhost:6379/0"
+    assert cfg.result_backend == "redis://localhost:6379/0"
+    assert cfg.flower_url == "http://localhost:5555"
+
+
+def test_from_env_celery_backend(monkeypatch: object) -> None:
+    """Switching to celery with a non-default broker URL is reflected."""
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        os,
+        "environ",
+        {
+            "GETRICH_WORKER_BACKEND": "celery",
+            "GETRICH_BROKER_URL": "redis://broker.internal:6379/3",
+            "GETRICH_RESULT_BACKEND": "redis://broker.internal:6379/4",
+        },
+    )
+    cfg = WorkerConfig.from_env(strict=False)
+    assert cfg.backend == "celery"
+    assert cfg.broker_url == "redis://broker.internal:6379/3"
+    assert cfg.result_backend == "redis://broker.internal:6379/4"
+
+
+def test_from_env_invalid_backend_falls_back(monkeypatch: object) -> None:
+    """Unknown backend values fall back to ``inproc`` with a warning."""
+    monkeypatch.setattr(os, "environ", {"GETRICH_WORKER_BACKEND": "rabbitmq"})  # type: ignore[attr-defined]
+    cfg = WorkerConfig.from_env(strict=False)
+    assert cfg.backend == "inproc"
+
+
+def test_from_env_backend_case_insensitive(monkeypatch: object) -> None:
+    """``CELERY`` (uppercase) normalises to ``celery``."""
+    monkeypatch.setattr(os, "environ", {"GETRICH_WORKER_BACKEND": "CELERY"})  # type: ignore[attr-defined]
+    cfg = WorkerConfig.from_env(strict=False)
+    assert cfg.backend == "celery"
+
+
+def test_make_pg_dsn_with_password() -> None:
+    """A populated password is included in the DSN."""
+
+    class _Pg:
+        host = "db.example.com"
+        port = 5432
+        user = "quant"
+        password = "s3cr3t"
+        database = "goldmine"
+
+    dsn = make_pg_dsn(_Pg())  # type: ignore[arg-type]
+    assert dsn == "postgresql://quant:s3cr3t@db.example.com:5432/goldmine"
+
+
+def test_make_pg_dsn_without_password() -> None:
+    """An empty password collapses the colon (avoids ``user:@host``)."""
+
+    class _Pg:
+        host = "db.example.com"
+        port = 5432
+        user = "quant"
+        password = ""
+        database = "goldmine"
+
+    dsn = make_pg_dsn(_Pg())  # type: ignore[arg-type]
+    assert dsn == "postgresql://quant@db.example.com:5432/goldmine"

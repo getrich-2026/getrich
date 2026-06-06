@@ -6,15 +6,21 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
+from getrich.apps.web.middleware import SecurityHeadersMiddleware
 from getrich.apps.web.response import register_exception_handlers
 from getrich.apps.web.routers import (
+    auth as auth_router,
+    backtest_jobs as backtest_jobs_router,
+    backtest_runs as backtest_runs_router,
+    backtest_sweeps as backtest_sweeps_router,
+    backtest_walk_forwards as backtest_walk_forwards_router,
     payments as payments_router,
     signal_settings as signal_settings_router,
     signals as signals_router,
@@ -22,17 +28,44 @@ from getrich.apps.web.routers import (
     subscriptions as subscriptions_router,
     user as user_router,
 )
+from getrich.apps.web.services import (
+    backtest_job as job_svc,
+    backtest_sweep as sweep_svc,
+    backtest_walk_forward as wf_svc,
+)
+from getrich.apps.web.services.job_listener import BacktestJobListener
 from getrich.config import settings
 from getrich.libs.postgres import pg_pool
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """初始化与释放 PG 连接池。"""
+    """Initialize the PG pool, start the LISTEN pump, serve, then tear down.
+
+    Order matters: ``pg_pool.init()`` must come first (the listener
+    is configured against the same DSN but opens its own dedicated
+    connection; it does not borrow from the pool). ``pg_pool.close()``
+    must come last so the listener's ``stop()`` can still touch its
+    conn during shutdown.
+
+    The listener is wired into the 3 SSE service modules so the
+    ``stream_*_events`` generators can ``subscribe(job_id)`` and
+    wake up within ~10ms of a worker-side ``pg_notify`` instead of
+    waiting up to ``POLL_INTERVAL_S`` (1s) for the next poll tick.
+    """
     await pg_pool.init()
+    listener = BacktestJobListener()
+    job_svc._LISTENER = listener
+    sweep_svc._LISTENER = listener
+    wf_svc._LISTENER = listener
+    await listener.start()
     try:
         yield
     finally:
+        await listener.stop()
+        job_svc._LISTENER = None
+        sweep_svc._LISTENER = None
+        wf_svc._LISTENER = None
         await pg_pool.close()
 
 
@@ -52,8 +85,22 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Defense-in-depth security headers. Set on every response
+    # (including 4xx/5xx envelopes and `/health`) so a future bug in
+    # a router doesn't accidentally drop CSP. See middleware.py for
+    # the rationale on each header.
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        csp_policy=settings.web.csp_policy,
+    )
+
     register_exception_handlers(app)
 
+    app.include_router(auth_router.router, prefix="/v1")
+    app.include_router(backtest_jobs_router.router, prefix="/v1")
+    app.include_router(backtest_runs_router.router, prefix="/v1")
+    app.include_router(backtest_sweeps_router.router, prefix="/v1")
+    app.include_router(backtest_walk_forwards_router.router, prefix="/v1")
     app.include_router(strategies_router.router, prefix="/v1")
     app.include_router(signals_router.router, prefix="/v1")
     app.include_router(subscriptions_router.router, prefix="/v1")

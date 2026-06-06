@@ -11,9 +11,9 @@ from getrich.apps.web.errors import BadRequest, NotFound, Unauthorized
 
 
 if TYPE_CHECKING:
-    from getrich.apps.web.schemas.subscription import PaymentWebhookIn
-
     from psycopg import AsyncConnection
+
+    from getrich.apps.web.schemas.subscription import PaymentWebhookIn
 
 
 def verify_signature(raw_body: bytes, signature: str | None) -> None:
@@ -27,7 +27,9 @@ def verify_signature(raw_body: bytes, signature: str | None) -> None:
     if not signature:
         raise Unauthorized("missing X-Webhook-Signature header")
     expected = hmac.new(
-        secret.encode("utf-8"), raw_body, hashlib.sha256,
+        secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(expected, signature):
         raise Unauthorized("invalid webhook signature")
