@@ -14,6 +14,11 @@
 6. [Artifact 写失败 / 报告打不开](#6-artifact-写失败--报告打不开)
 7. [内存飙升 / OOM](#7-内存飙升--oom)
 8. [前端 CSP 拦截 / 浏览器拒加载](#8-前端-csp-拦截--浏览器拒加载)
+9. [通用应急 SOP](#9-通用应急-sop)
+10. [联系 / 升级路径](#10-联系--升级路径)
+11. [进一步阅读](#11-进一步阅读)
+12. [文档 CI 故障（gh-pages 部署）](#12-文档-ci-故障（gh-pages-部署）)
+13. [备份演练（每月一次 DR drill）](#13-备份演练（每月一次-dr-drill）)
 
 ---
 
@@ -708,4 +713,157 @@ uv run python scripts/verify_docs_ci.py
 - 验证脚本测试：`tests/scripts/test_verify_docs_ci.py`（6+ regression tests）
 - Material i18n 文档：<https://squidfunk.github.io/mkdocs-material/setup/setting-up-site-search/#language>
 - i18n 路线图：[../translations.md](../translations.md)
+
+---
+
+## 13. 备份演练（每月一次 DR drill）
+
+> **本节是 `scripts/backup/` 6 个脚本的实战演练 SOP**。备份在没人测过的情况下约等于没有 ——
+> 月度演练的目的是让 SRE 在真正出事时不用在 P0 故障中边读代码边敲命令。
+> 监控入口：`/var/log/getrich/backup.log` + `journalctl -u getrich-backup.service --since='-30d'`。
+
+### 13.1 演练节奏
+
+| 频率 | 责任人 | 范围 | 通过标准 |
+|---|---|---|---|
+| 每月 1 日 | SRE on-call | 随机抽最近 7 天的 1 个 PG dump + 1 个 CH snapshot | restore 在 4h 内完成；sanity check 全过 |
+| 季度 | Tech lead | **全量**：PG + CH + artifact 恢复到独立 sandbox | 业务可冷启动到「接受首单」状态 |
+| 灾备演练（年度） | 全 SRE 团队 | 切流量到 standby | RPO ≤ 24h, RTO ≤ 4h |
+
+### 13.2 演练前置
+
+```bash
+# 1. 确认最新备份存在
+ls -lh /var/backups/getrich/pg/ | tail -3
+ls -lh /var/backups/getrich/ch/ | tail -3
+ls -lh /var/backups/getrich/artifact/ | tail -3
+
+# 2. 准备 scratch 资源（不污染 prod）
+#    - PG: 临时建一个 getrich_restore_scratch 库
+#    - CH: 临时一个 data dir 挂载点
+#    - artifact: 一个 /tmp/getrich-artifact-drill 目录
+PG_NEW_DB="getrich_restore_scratch_$(date +%s)"
+CH_DATA=/var/lib/clickhouse-drill
+ARTIFACT_DIR=/tmp/getrich-artifact-drill
+mkdir -p "${CH_DATA}" "${ARTIFACT_DIR}"
+chown clickhouse:clickhouse "${CH_DATA}"
+```
+
+### 13.3 PG 演练
+
+```bash
+# 1. 选 dump（取最近 7 天里体积最大的，挑大概率命中写）
+DUMP=$(ls -t /var/backups/getrich/pg/*.dump | head -1)
+echo "Restoring: ${DUMP}"
+ls -lh "${DUMP}"
+
+# 2. 创建空库
+sudo -u postgres createdb "${PG_NEW_DB}"
+
+# 3. 恢复
+sudo -u postgres /opt/getrich/scripts/backup/pg_restore.sh "${DUMP}" "${PG_NEW_DB}"
+
+# 4. Sanity check（脚本内置的 6 项校验）
+#    - 必须看到 "Restore verified" 才算过
+#    - 主要关注 frontend.* 表行数与生产 diff < 5%
+```
+
+**典型耗时**：1 GB dump ≈ 2 min（`pg_restore --jobs=4`）
+
+**常见失败 & 修法**：
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| `pg_restore: error: could not execute query: ERROR: relation "xxx" already exists` | 上次演练残留 | `sudo -u postgres dropdb "${PG_NEW_DB}"` 重做 |
+| `FATAL: password authentication failed` | PGPASSWORD_FILE 路径错 | 检查 `/etc/getrich/.pgpass` 权限 0600, owner getrich |
+| 恢复后 `frontend.strategies` 行数为 0 | 用了 `--section=pre-data` 之类的误参数 | 严格用 `pg_restore.sh` 包装脚本，不直跑底层命令 |
+
+### 13.4 ClickHouse 演练
+
+```bash
+# 1. 选最近一个 freeze
+SNAP=$(ls -td /var/backups/getrich/ch/freeze-* | head -1)
+echo "Restoring CH from: ${SNAP}"
+
+# 2. 停 server（演练服务器是独立的，不影响 prod）
+sudo systemctl stop clickhouse-drill.service   # 假设演练用独立 unit
+
+# 3. 恢复
+sudo -u clickhouse /opt/getrich/scripts/backup/ch_restore.sh "${SNAP}"
+
+# 4. 启 server
+sudo systemctl start clickhouse-drill.service
+
+# 5. Sanity check
+clickhouse-client --query "SELECT count() FROM default.md_bars_1m" --database default
+# 预期：行数与生产同窗口的 diff < 5%
+clickhouse-client --query "SELECT partition, count() FROM system.parts WHERE database='default' AND table='md_bars_1m' AND active GROUP BY partition ORDER BY partition" | head -10
+# 预期：每个 partition 都有 active parts
+```
+
+**典型耗时**：100 GB 行情表 ≈ 8 min（`rsync -a` + chown 是瓶颈）
+
+**常见失败 & 修法**：
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| `ERROR: clickhouse-server is still running` | 演练 unit 名字错或没停 | 改用演练专属的 `clickhouse-drill.service`，配置独立的 `path=` |
+| restore 后 `md_bars_1m` 0 rows | `rsync` 把空目录当 source | 检查 `${SNAP}/data/` 是否非空（freeze 失败时是空目录） |
+| `chown: cannot access ...` | 演练机的 clickhouse user uid 不同 | 加 `useradd -u <same-uid> clickhouse` 对齐 |
+
+### 13.5 Artifact 演练
+
+```bash
+# 1. 选最近一个 tar
+TAR=$(ls -t /var/backups/getrich/artifact/*.tar.zst | head -1)
+echo "Restoring artifact: ${TAR}"
+
+# 2. 恢复（脚本会做完整性校验）
+sudo /opt/getrich/scripts/backup/artifact_backup.sh --restore "${TAR}" "${ARTIFACT_DIR}"
+
+# 3. 抽样打开一个 parquet
+ls "${ARTIFACT_DIR}/runs/$(ls -t "${ARTIFACT_DIR}"/runs | head -1)/equity.parquet"
+python -c "import polars as pl; print(pl.read_parquet('${ARTIFACT_DIR}/runs/$(ls -t ${ARTIFACT_DIR}/runs | head -1)/equity.parquet').shape)"
+# 预期：(> 100, 5) 至少 100 个 bar、5 列 OHLCV 衍生
+```
+
+**典型耗时**：10 GB artifact ≈ 1 min
+
+### 13.6 演练报告（必填）
+
+演练结束后 24h 内由当班 SRE 在 `docs/operations/dr-drills/` 下写一份 markdown 报告，模板：
+
+```markdown
+# DR Drill YYYY-MM-DD
+
+- 执行人：<姓名>
+- 范围：PG | CH | Artifact | 全量
+- 选择的备份文件：<dump / snapshot / tar 路径>
+- 恢复耗时：<mm 分钟>
+- Sanity check：通过 / 部分失败 / 失败
+- 失败项：<具体哪个表/文件>
+- 根因 + 修法：<填在 SRE 排障表里>
+- 备份策略是否调整：是（见 commit <hash>）/ 否
+- 备份脚本是否调整：是（见 commit <hash>）/ 否
+```
+
+### 13.7 升级路径
+
+| 失败严重度 | 升级对象 | 通知方式 |
+|---|---|---|
+| 单次演练失败但脚本本身没问题（如磁盘满） | 当班 SRE | 飞书 SRE 群 |
+| **连续 2 个月**演练失败 | Tech lead | 飞书 + 邮件 |
+| 备份脚本本身有 bug（导致演练根本起不来） | Tech lead + 平台 owner | PagerDuty P3 |
+| 真实灾备触发 | 平台 owner + CTO | PagerDuty P1 + 全员飞书 |
+
+### 13.8 进一步阅读
+
+- 备份脚本源码：`scripts/backup/`（6 个 bash 脚本 + 2 个 systemd unit）
+- 备份脚本测试：`tests/scripts/test_backup_scripts.py`（14 passed, 9 skipped）
+- 备份日志：`/var/log/getrich/backup.log`
+- systemd timer：`scripts/backup/getrich-backup.{service,timer}`
+- 历史演练报告：`docs/operations/dr-drills/`
+- CH FREEZE 机制：<https://clickhouse.com/docs/en/operations/backup#backup-as-a-copy-of-remote-filesystem>
+- pg_dump -Fc 格式：<https://www.postgresql.org/docs/current/app-pgdump.html>
+
 
