@@ -215,7 +215,10 @@ def _make_finding(
     return Finding(
         file=str(path),
         try_line=try_node.lineno,
-        except_line=_format_handler_header(handler),
+        except_line=_format_handler_header(
+            handler,
+            is_try_star=isinstance(try_node, ast.TryStar),
+        ),
         first_handler_line=_first_handler_line(handler, lines),
         is_vendored=is_vendored,
         is_likely_ok=is_likely_ok,
@@ -301,15 +304,21 @@ def _flatten_body(body: list[ast.stmt]) -> str:
         return "\n".join(chunks)
 
 
-def _format_handler_header(handler: ast.ExceptHandler) -> str:
+def _format_handler_header(handler: ast.ExceptHandler, *, is_try_star: bool = False) -> str:
     """Render ``except [TYPE] [as NAME]:`` for the report.
 
     Bare ``except:`` renders as just ``except:`` (no type, no name).
     The colon is always glued to the preceding token (no space)
     so the report matches what an actual Python source line would
     look like (``except Exception:``, not ``except Exception :``).
+
+    When the parent is a PEP 654 ``ast.TryStar`` node, the
+    handler is rendered with a ``*`` (``except* ValueError:``) —
+    this is information that lives on the parent, not on the
+    handler, so :func:`ast.unparse` on a single handler drops it.
+    Round #1152: callers must pass ``is_try_star=True`` to opt in.
     """
-    parts = ["except"]
+    parts = ["except*"] if is_try_star else ["except"]
     if handler.type is not None:
         try:
             type_text = ast.unparse(handler.type)

@@ -439,6 +439,38 @@ def test_scan_file_detects_try_star_handler(scanner, tmp_path):
     findings = scanner.scan_file(p)
     assert len(findings) == 1
     assert findings[0].except_line.startswith("except*")
+    # Round #1152 regression: the handler header must include both
+    # the ``*`` marker (from the TryStar parent) AND the exception
+    # type, glued together with no space before the colon. Earlier
+    # rounds only checked the ``startswith("except*")`` half, which
+    # let the unparsed type leak in with a stray space.
+    assert findings[0].except_line == "except* ValueError as eg:", (
+        f"except_line is {findings[0].except_line!r}; expected the "
+        f"PEP 654 canonical form 'except* ValueError as eg:'"
+    )
+
+
+@pytest.mark.skipif(not hasattr(__import__("ast"), "TryStar"), reason="PEP 654 except* requires Python 3.11+")
+def test_scan_file_try_star_handler_no_name(scanner, tmp_path):
+    """A ``except* ValueError:`` handler (no ``as`` binding) inside a
+    ``try:`` group must render with the ``*`` marker, the type, and
+    NO trailing space before the colon. Regression for Round #1152."""
+    p = _write(
+        tmp_path,
+        (
+            "def f():\n"
+            "    try:\n"
+            "        do_thing()\n"
+            "    except* ValueError:\n"
+            "        log.warning('group failed')\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 1
+    assert findings[0].except_line == "except* ValueError:", (
+        f"except_line is {findings[0].except_line!r}; expected "
+        f"'except* ValueError:' (no space before colon)"
+    )
 
 
 def test_scan_file_format_handler_header_no_trailing_space(scanner, tmp_path):
