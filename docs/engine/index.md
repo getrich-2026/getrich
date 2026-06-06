@@ -21,20 +21,16 @@
 
 ## 5 层架构
 
-```text
-┌────────────────────────────────────────────────────────────┐
-│ 60. Backtest (Backtest class — public entry point)         │
-├────────────────────────────────────────────────────────────┤
-│ 50. Research: sweep · walk_forward · report · config       │
-├────────────────────────────────────────────────────────────┤
-│ 40. Analytics: metrics · benchmark · attribution · factor  │
-├────────────────────────────────────────────────────────────┤
-│ 30. Execution: order → match → fill → fee/slip → account   │
-├────────────────────────────────────────────────────────────┤
-│ 20. Strategy: strategy → portfolio → allocator → intent    │
-├────────────────────────────────────────────────────────────┤
-│ 10. Data: PgSQL / DuckDB / DataFrame BarLoader (Polars)    │
-└────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    L60["60. Backtest<br/>(public entry point)"]
+    L50["50. Research<br/>sweep · walk_forward · report · config"]
+    L40["40. Analytics<br/>metrics · benchmark · attribution · factor"]
+    L30["30. Execution<br/>order → match → fill → fee/slip → account"]
+    L20["20. Strategy<br/>strategy → portfolio → allocator → intent"]
+    L10["10. Data<br/>PgSQL / DuckDB / DataFrame BarLoader (Polars)"]
+
+    L60 --> L50 --> L40 --> L30 --> L20 --> L10
 ```
 
 每层只依赖**下一层**，上层不感知下层实现细节。
