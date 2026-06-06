@@ -41,7 +41,7 @@ export default function StrategiesPage() {
     queryFn: () => getStrategyList({ page: 1, page_size: 20 }),
   })
 
-  const strategies = (data as any)?.data?.list ?? []
+  const strategies = data?.data?.list ?? []
 
   return (
     <div className="max-w-[1100px] mx-auto px-6 py-6">

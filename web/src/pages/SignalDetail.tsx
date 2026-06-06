@@ -105,6 +105,20 @@ const mockSignal = {
 
 /* ---------- Page Component ---------- */
 
+interface PriceMetricItem {
+  label: string
+  value: string
+  sub?: string | null
+  subColor?: string
+}
+
+interface OhlcItem {
+  label: string
+  value: string
+  color: string
+  bg?: string
+}
+
 export default function SignalDetail() {
   const navigate = useNavigate()
   const { id } = useParams()
@@ -201,12 +215,12 @@ export default function SignalDetail() {
             </div>
           ) : (
             <div className="grid grid-cols-4">
-              {[
+              {([
                 { label: '触发价格', value: s.triggerPrice.toFixed(2), sub: null },
                 { label: '目标价格', value: s.targetPrice.toFixed(2), sub: `+${targetPct.toFixed(2)}%`, subColor: 'var(--gr-green)' },
                 { label: '止损价格', value: s.stopLossPrice.toFixed(2), sub: `${stopPct.toFixed(2)}%`, subColor: 'var(--gr-red)' },
                 { label: '建议仓位', value: `${Math.round(s.positionPct * 100)}%`, sub: `${s.suggestedQuantity}手` },
-              ].map((item, i) => (
+              ] satisfies PriceMetricItem[]).map((item, i) => (
                 <div
                   key={item.label}
                   className="p-5 text-center"
@@ -219,7 +233,7 @@ export default function SignalDetail() {
                     {item.value}
                   </div>
                   {item.sub && (
-                    <div className="text-xs mt-1 tabular font-medium" style={{ color: (item as any).subColor || 'var(--gr-text-tertiary)' }}>
+                    <div className="text-xs mt-1 tabular font-medium" style={{ color: item.subColor || 'var(--gr-text-tertiary)' }}>
                       {item.sub}
                     </div>
                   )}
@@ -284,15 +298,15 @@ export default function SignalDetail() {
 
               {/* OHLC - 4 unified cards with bg */}
               <div className="grid grid-cols-4 gap-3 mb-4">
-                {[
+                {([
                   { label: '开盘', value: s.marketSnapshot.open.toFixed(2), color: 'var(--gr-text)' },
                   { label: '最高', value: s.marketSnapshot.high.toFixed(2), color: 'var(--gr-red)' },
                   { label: '最低', value: s.marketSnapshot.low.toFixed(2), color: 'var(--gr-green)' },
                   { label: '收盘（触发价）', value: s.marketSnapshot.close.toFixed(2), color: 'var(--gr-red)', bg: '#FEF2F2' },
-                ].map((item) => (
-                  <div key={item.label} className="text-center rounded-lg py-4 px-2" style={{ background: (item as any).bg || 'var(--gr-bg)' }}>
+                ] satisfies OhlcItem[]).map((item) => (
+                  <div key={item.label} className="text-center rounded-lg py-4 px-2" style={{ background: item.bg || 'var(--gr-bg)' }}>
                     <div className="text-[10px] font-medium uppercase tracking-wide mb-1.5" style={{ color: 'var(--gr-text-tertiary)', letterSpacing: '0.05em' }}>{item.label}</div>
-                    <div className="text-xl font-bold tabular" style={{ color: (item as any).color }}>{item.value}</div>
+                    <div className="text-xl font-bold tabular" style={{ color: item.color }}>{item.value}</div>
                   </div>
                 ))}
               </div>

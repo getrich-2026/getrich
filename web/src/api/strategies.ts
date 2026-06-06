@@ -17,7 +17,10 @@ import type {
 
 // 获取策略列表
 export const getStrategyList = (params?: StrategyListParams) => {
-  return apiClient.get<ApiResponse<StrategyListData>>('/strategies', { params })
+  return apiClient.get<ApiResponse<StrategyListData>>(
+    '/strategies',
+    { params }
+  ) as unknown as Promise<ApiResponse<StrategyListData>>
 }
 
 // 获取策略分类列表

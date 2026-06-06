@@ -19,6 +19,8 @@ const rawData = [
   { year: 2026, values: [2.8, 1.9, 2.5, null, null, null, null, null, null, null, null, null], yearly: 7.4 },
 ]
 
+type HeatDataPoint = [number, number, number | null, string]
+
 function getColor(value: number | null): string {
   if (value === null) return '#F5F6F8'
   if (value >= 5) return '#16A34A'
@@ -53,7 +55,7 @@ export default function MonthlyHeatmap({ isLoading = false }: MonthlyHeatmapProp
     const chart = echarts.init(chartRef.current)
 
     // Build heatmap data: [xIndex, yIndex, value, displayValue]
-    const heatData: [number, number, number | null, string][] = []
+    const heatData: HeatDataPoint[] = []
     const yAxisData: string[] = []
 
     rawData.forEach((row, yIdx) => {
@@ -69,7 +71,7 @@ export default function MonthlyHeatmap({ isLoading = false }: MonthlyHeatmapProp
 
     const option: EChartsCoreOption = {
       tooltip: {
-        formatter: (params: any) => {
+        formatter: (params: { data: HeatDataPoint }) => {
           const d = params.data
           const monthLabel = xAxisData[d[0]]
           const yearLabel = yAxisData[d[1]]
@@ -107,7 +109,7 @@ export default function MonthlyHeatmap({ isLoading = false }: MonthlyHeatmapProp
         data: heatData,
         label: {
           show: true,
-          formatter: (p: any) => p.data[3],
+          formatter: (p: { data: HeatDataPoint }) => p.data[3],
           color: '#fff',
           fontSize: 11,
           fontFamily: '-apple-system, sans-serif',
