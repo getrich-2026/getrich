@@ -7,6 +7,19 @@ from getrich.apps.strategy.backtest_job_runner import (
     BacktestJobRunResult,
     BacktestOneShotOp,
 )
+from getrich.apps.strategy.broker import (
+    BrokerAdapter,
+    BrokerError,
+    BrokerKind,
+    CtpAdapter,
+    InMemoryAdapter,
+    OrderAck,
+    OrderIntent,
+    OrderSide,
+    OrderStatus,
+    TimeInForce,
+    XtpAdapter,
+)
 from getrich.apps.strategy.errors import (
     BacktestJobError,
     LiveDataError,
@@ -68,6 +81,18 @@ __all__ = [
     "StrategyRegistry",
     "StrategyRegistryError",
     "WebhookAlertChannel",
+    # Round #1163 — broker integration stubs
+    "BrokerAdapter",
+    "BrokerError",
+    "BrokerKind",
+    "CtpAdapter",
+    "InMemoryAdapter",
+    "OrderAck",
+    "OrderIntent",
+    "OrderSide",
+    "OrderStatus",
+    "TimeInForce",
+    "XtpAdapter",
     "backfill_trade_gaps",
     "get_registry",
     "reconcile_trades",
