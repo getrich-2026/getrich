@@ -20,11 +20,11 @@ This project is a new implementation aligned with the design document. It is not
 | T3.4 | Partial | SymbolMapService supports resolving source symbols to instrument metadata through `meta.symbol_map`. Missing-code alerting is not wired yet. |
 | T3.5 | Partial | TradingCalendarService supports open-day checks, previous/next trading day, and configurable night-session assignment; minute-bar import uses it to assign `trading_day`. |
 | T4.1 | Partial | Imports generic instruments from Yinhe hist_code parquet. Contract extension details depend on upstream fields. |
-| T4.2 | Partial | Imports trading calendars from Yinhe calendar parquet. P1 found only SH calendar rows loaded while instruments include SH and SZ, so SZ minute-bar trading-day assignment still needs an exchange mapping or calendar coverage fix. |
+| T4.2 | Done | Imports trading calendars from Yinhe calendar parquet. If only one A-share calendar side is present, Yinhe import now explicitly fills the missing SH/SZ calendar alias. |
 | T5.1 | Partial | `extract` request/plan layer structures import-bars asset/freq/date/symbol/mode and source kwargs. Source-level checkpoint persistence is not implemented. |
 | T5.2 | Partial | Normalizes bar fields and attaches `instrument_id`; full unit/adjustment policy still needs source-specific detail. |
 | T5.3 | Partial | OHLC/non-negative/adj_factor and configurable price-jump checks implemented; missing-bar and expected-minute checks still pending. |
-| T5.4 | Partial | PostgreSQL temp-table upsert with `ON CONFLICT DO UPDATE`. P1 small samples pass, but full stock 1d import hit PostgreSQL `out of shared memory` because many temp tables were created inside one large transaction. |
+| T5.4 | Done | PostgreSQL temp-table upsert with `ON CONFLICT DO UPDATE`; successful upserts now drop the temporary staging table immediately to avoid lock accumulation in large transactions. |
 
 ## Database Initialization
 
@@ -42,15 +42,16 @@ Local `getrich` PostgreSQL/TimescaleDB was cleaned, rebuilt, and verified throug
 Local source directory: `/home/quant/data`.
 
 - `scan` found one calendar file, 578 index instruments, 5244 stock instruments, 1548 ETF instruments, 126179 daily kline files, and 5195+ minute kline files. Future and option instruments were not available and were skipped.
-- `load-metadata` completed with 23394 rows written.
+- `load-metadata` completed after the SH/SZ calendar alias fix with 32048 rows written.
 - 1d sample imports passed:
   - stock: 397 rows, 100 instruments, 2026-06-01 to 2026-06-04.
   - ETF: 200 rows, 50 instruments, 2026-06-01 to 2026-06-04.
   - index: 200 rows, 50 instruments, 2026-06-01 to 2026-06-04.
-- 1m sample import passed for SH stock only: 720 rows, 3 instruments, 2026-06-04.
+- 1m sample import passed for SH and SZ stock: 1440 rows, 6 instruments, 2026-06-04.
+- 500-symbol stock 1d single-day import passed after temporary staging tables were dropped per upsert.
 - Sample checks passed for duplicate keys and core OHLCV nulls.
 - Parquet exports were written and read back from `/tmp/getrich_p1_*`.
-- Verification commands passed: `.venv/bin/ruff check src tests` and `.venv/bin/pytest tests -q` with 73 tests.
+- Verification commands passed: `.venv/bin/ruff check src tests` and `.venv/bin/pytest tests -q` with 75 tests.
 
 ## Not Yet Implemented
 

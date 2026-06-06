@@ -29,6 +29,11 @@ SECURITY_TYPE_EXCHANGE = {
     "EXTRA_OPTION_CFFEX": "CFFEX",
 }
 
+A_SHARE_CALENDAR_ALIASES = {
+    "SH": ("SZ",),
+    "SZ": ("SH",),
+}
+
 
 class YinheParquetSource:
     name = "yinhe"
@@ -51,23 +56,25 @@ class YinheParquetSource:
         )
 
     def calendar_frames(self) -> Iterable[pd.DataFrame]:
+        available_exchanges = {path.stem.replace("calendar_", "", 1) for path in self._calendar_paths()}
         for path in self._calendar_paths():
             exchange = path.stem.replace("calendar_", "", 1)
             raw = pd.read_parquet(path)
             dates = raw.index.to_series().map(int_yyyymmdd_to_date).sort_values()
             if dates.empty:
                 continue
-            df = pd.DataFrame(
-                {
-                    "exchange": exchange,
-                    "trading_day": dates.values,
-                    "is_open": True,
-                    "has_night": False,
-                    "prev_trading_day": dates.shift(1).values,
-                    "next_trading_day": dates.shift(-1).values,
-                }
-            )
-            yield df.where(pd.notna(df), None)
+            for output_exchange in self._calendar_output_exchanges(exchange, available_exchanges):
+                df = pd.DataFrame(
+                    {
+                        "exchange": output_exchange,
+                        "trading_day": dates.values,
+                        "is_open": True,
+                        "has_night": False,
+                        "prev_trading_day": dates.shift(1).values,
+                        "next_trading_day": dates.shift(-1).values,
+                    }
+                )
+                yield df.where(pd.notna(df), None)
 
     def instrument_frame(self) -> pd.DataFrame:
         rows: list[dict[str, object]] = []
@@ -133,6 +140,14 @@ class YinheParquetSource:
 
     def _calendar_paths(self) -> list[Path]:
         return sorted((self.data_dir / "calendar").glob("calendar_*.parquet"))
+
+    def _calendar_output_exchanges(self, exchange: str, available_exchanges: set[str]) -> tuple[str, ...]:
+        aliases = tuple(
+            alias
+            for alias in A_SHARE_CALENDAR_ALIASES.get(exchange, ())
+            if alias not in available_exchanges
+        )
+        return (exchange, *aliases)
 
     def _hist_path(self, security_type: str) -> Path:
         return self.data_dir / "hist_code_list" / f"hist_code_list_{security_type}.parquet"

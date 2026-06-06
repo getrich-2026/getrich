@@ -47,6 +47,36 @@ def test_kline_paths_are_limited_to_requested_symbols(tmp_path) -> None:
     assert source._kline_paths("1d", symbols={"600000.SH"}) == [wanted]
 
 
+def test_calendar_frames_copy_single_a_share_calendar_to_missing_exchange(tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    calendar_dir = data_dir / "calendar"
+    calendar_dir.mkdir(parents=True)
+    pd.DataFrame(index=[20260601, 20260602]).to_parquet(calendar_dir / "calendar_SH.parquet")
+    source = YinheParquetSource(data_dir)
+
+    frames = list(source.calendar_frames())
+
+    assert [frame["exchange"].iloc[0] for frame in frames] == ["SH", "SZ"]
+    assert [frame["trading_day"].tolist() for frame in frames] == [
+        frames[0]["trading_day"].tolist(),
+        frames[0]["trading_day"].tolist(),
+    ]
+
+
+def test_calendar_frames_do_not_copy_a_share_calendar_when_alias_exists(tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    calendar_dir = data_dir / "calendar"
+    calendar_dir.mkdir(parents=True)
+    pd.DataFrame(index=[20260601]).to_parquet(calendar_dir / "calendar_SH.parquet")
+    pd.DataFrame(index=[20260602]).to_parquet(calendar_dir / "calendar_SZ.parquet")
+    source = YinheParquetSource(data_dir)
+
+    frames = list(source.calendar_frames())
+
+    assert [frame["exchange"].iloc[0] for frame in frames] == ["SH", "SZ"]
+    assert frames[0]["trading_day"].tolist() != frames[1]["trading_day"].tolist()
+
+
 def test_future_contract_frame_uses_hist_code_list_fields(tmp_path) -> None:
     data_dir = tmp_path / "data"
     hist_dir = data_dir / "hist_code_list"

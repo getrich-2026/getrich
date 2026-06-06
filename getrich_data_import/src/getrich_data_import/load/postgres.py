@@ -65,7 +65,9 @@ def upsert_dataframe(
             """
         )
     )
-    return int(result.rowcount or 0)
+    rows = int(result.rowcount or 0)
+    conn.execute(text(f"DROP TABLE IF EXISTS pg_temp.{qident(tmp_name)}"))
+    return rows
 
 
 def table_column_types(conn: Connection, schema: str, table: str) -> dict[str, str]:

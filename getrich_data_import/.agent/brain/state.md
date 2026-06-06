@@ -1,6 +1,6 @@
 # Current State
 
-更新时间：2026-06-05
+更新时间：2026-06-06
 
 ## 边界
 
@@ -21,7 +21,8 @@
 - 数据质量：duplicate key、OHLC、非负数、`adj_factor`、缺交易日、expected-minute、price jump 检查已覆盖核心路径。
 - P0 已完成：本地 `getrich` 库清理后重新执行 `migrate-schema`，`verify-schema` 通过。
 - `/home/quant/data` P1 smoke 已跑通：scan、load-metadata、stock/ETF/index 1d 小样本导入和 Parquet 导出。
-- stock 1m 的 SH 小样本导入和 Parquet 导出已跑通；SZ 1m 暂因缺少 SZ 交易日历失败。
+- stock 1m 的 SH/SZ 小样本导入已跑通；Yinhe 只有单侧 A 股日历文件时会显式补齐 SH/SZ 日历覆盖。
+- PostgreSQL upsert 已在成功写入后立即 drop 临时 staging 表，降低大事务内 temp table 锁累积风险。
 
 ## 已验证
 
@@ -33,26 +34,28 @@
   - `market.etf_bar_1d`：200 rows，50 instruments，2026-06-01 到 2026-06-04，重复键 0，核心 OHLCV 空值 0。
   - `market.index_bar_1d`：200 rows，50 instruments，2026-06-01 到 2026-06-04，重复键 0，核心 OHLCV 空值 0。
 - 1m 小样本：
-  - `market.stock_bar_1m`：720 rows，3 SH instruments，2026-06-04，重复键 0，核心 OHLCV 空值 0。
+  - `market.stock_bar_1m`：1440 rows，3 SH instruments + 3 SZ instruments，2026-06-04，重复键 0，核心 OHLCV 空值 0。
+- 扩大样本：
+  - `market.stock_bar_1d`：500-symbol 单日导入成功，新增 500 rows，未再触发 PostgreSQL temp table 锁错误。
 - 导出文件已读回：
   - `/tmp/getrich_p1_stock_1d_20260601_20260605.parquet`
   - `/tmp/getrich_p1_etf_1d_20260601_20260605.parquet`
   - `/tmp/getrich_p1_index_1d_20260601_20260605.parquet`
   - `/tmp/getrich_p1_stock_sh_1m_20260604.parquet`
 - `.venv/bin/ruff check src tests`：passed。
-- `.venv/bin/pytest tests -q`：73 passed。
+- `.venv/bin/pytest tests -q`：75 passed。
 
 ## 下一步
 
-1. 修复日历覆盖：当前 `meta.trading_calendar` 只有 SH，而 instruments 有 SH/SZ；需要让 Yinhe calendar 能覆盖 SZ，或明确 A 股共用交易日历的映射策略，再重跑 SZ 1m smoke。
-2. 修复全量导入事务/锁问题：全量 stock 1d 曾因单个大事务内反复创建临时表触发 PostgreSQL `out of shared memory`，应改为按 symbol/date chunk 独立事务或复用 staging 表。
-3. 扩大 `/home/quant/data` 的 stock/ETF/index 1d 导入范围，但在第 2 点完成前不要直接跑全量。
-4. 扫描 ETF/index 是否存在可用 1m 文件；有数据后补对应分钟线 smoke。
-5. 等 future/option 数据到位后验证合约扩展元数据和对应 bar 导入。
+1. 扩大 `/home/quant/data` 的 stock/ETF/index 1d 导入范围，优先按日期或 symbol chunk 逐步放大，不直接跳到长期全量。
+2. 扫描 ETF/index 是否存在可用 1m 文件；有数据后补对应分钟线 smoke。
+3. 评估是否需要把 import job 的 chunk/commit 边界提升为显式配置，便于生产回放和失败续跑。
+4. 等 future/option 数据到位后验证合约扩展元数据和对应 bar 导入。
+5. 普通物化视图暂未接自动 refresh job；后续如果要查询这些 helper view，需要补刷新策略。
 
 ## 注意事项
 
 - 不要改动或回滚 `yinhe_data_fetcher` 的未归属改动。
 - 本地测试库可重建，但执行 drop/delete 前需要用户明确确认。
 - 普通物化视图暂未接自动 refresh job；后续如果要查询这些 helper view，需要补刷新策略。
-- 本地 DB 里保留了 P1 过程中的失败审计记录：一次全量 stock 1d 锁不足失败、一次 SZ stock 1m 缺日历失败。
+- 本地 DB 里保留了 P1 过程中的历史失败审计记录：一次全量 stock 1d 锁不足失败、一次修复前 SZ stock 1m 缺日历失败。

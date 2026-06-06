@@ -11,10 +11,10 @@ class _Result:
 
 class _Conn:
     def __init__(self) -> None:
-        self.sql = None
+        self.sqls = []
 
     def execute(self, sql):
-        self.sql = sql
+        self.sqls.append(sql)
         return _Result()
 
 
@@ -24,7 +24,10 @@ def test_upsert_dataframe_returns_database_rowcount(monkeypatch) -> None:
     to_sql_calls = []
 
     monkeypatch.setattr("getrich_data_import.load.postgres.table_columns", lambda *_args: ["id", "value"])
-    monkeypatch.setattr("getrich_data_import.load.postgres.table_column_types", lambda *_args: {"id": "bigint", "value": "text"})
+    monkeypatch.setattr(
+        "getrich_data_import.load.postgres.table_column_types",
+        lambda *_args: {"id": "bigint", "value": "text"},
+    )
     monkeypatch.setattr(pd.DataFrame, "to_sql", lambda self, *args, **kwargs: to_sql_calls.append((args, kwargs)))
 
     written = upsert_dataframe(
@@ -37,8 +40,9 @@ def test_upsert_dataframe_returns_database_rowcount(monkeypatch) -> None:
 
     assert written == 1
     assert len(to_sql_calls) == 1
-    assert '"id"::bigint' in str(conn.sql)
-    assert '"value"::text' in str(conn.sql)
+    assert '"id"::bigint' in str(conn.sqls[0])
+    assert '"value"::text' in str(conn.sqls[0])
+    assert "DROP TABLE IF EXISTS pg_temp." in str(conn.sqls[1])
 
 
 def test_attach_instrument_ids_keeps_mapping_dimensions(monkeypatch) -> None:
