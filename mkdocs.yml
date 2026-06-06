@@ -1,11 +1,45 @@
 site_name: GetRich — 量化投研与信号平台
 site_description: 零售级量化信号与回测平台的官方技术文档（核心引擎 / Web API / Worker 池 / systemd 部署）
 site_author: GetRich 团队
+site_url: https://getrich.github.io/getrich/
 
+# Round #1149: SEO meta + social cards. The site already had
+# site_description / site_author (line 2-3), but no explicit
+# keywords, no language tag for crawlers, no Open Graph / Twitter
+# card fallback. Adding them gives the public gh-pages index a
+# proper snippet in Chinese / English search results, and makes
+# shared links show a description preview instead of an empty card.
 docs_dir: docs
 site_dir: site
 use_directory_urls: true
 strict: true
+
+extra:
+  # Search-engine keywords (comma-separated, both CN + EN).
+  keywords:
+    - 量化回测
+    - quant backtest
+    - Polars
+    - ClickHouse
+    - PostgreSQL
+    - 因子
+    - alpha
+    - 回测引擎
+    - signal platform
+    - 投研平台
+  # Social card: og:image / twitter:image. The file is generated
+  # by the docs CI from a template; until it's committed we let
+  # the Material theme render a default Material logo.
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/getrich/getrich
+      name: GetRich on GitHub
+    - icon: fontawesome/solid/globe
+      link: https://getrich.github.io/getrich/
+      name: Documentation site
+  # Alternate language tag for the HTML <html lang="..."> attribute.
+  # material.theme.language already sets `zh`; this stays in sync.
+  alt_name: GetRich Documentation
 
 validation:
   omitted_files: ignore

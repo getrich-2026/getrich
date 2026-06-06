@@ -64,26 +64,28 @@ class Order:
 
 ### 2.1 订单状态机
 
-```
-                ┌─────────┐
-   intent  →   │ PENDING │  (尚未达到 execution_lag_bars)
-                └────┬────┘
-                     │ 下根 bar 触发 match
-                     ▼
-                ┌──────────┐
-                │ ACCEPTED │  (已通过保证金 / 涨跌停 / 流动性预检)
-                └────┬─────┘
-                     │ 撮合成功 → Fill
-                     ▼
-                ┌────────┐
-                │ FILLED │
-                └────────┘
-                     ↗
-                ┌──────────┐
-   任何阶段 →   │ REJECTED │ (保证金不足 / 涨跌停 / 流动性不足 / 撮合条件不满足)
-                └──────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: strategy emits OrderIntent
+    PENDING --> ACCEPTED: execution_lag_bars elapsed<br/>+ pre-check passed
+    PENDING --> REJECTED: pre-check failed
+    ACCEPTED --> FILLED: matcher produced Fill
+    ACCEPTED --> EXPIRED: Limit/Stop 未在 1 bar 内满足条件
+    ACCEPTED --> ACCEPTED: 未满足条件，下根 bar 再试
+    ACCEPTED --> REJECTED: 保证金不足 / 涨跌停 / 停牌 / 无数据
+    FILLED --> [*]
+    REJECTED --> [*]
+    EXPIRED --> [*]
 
-   Limit/Stop 订单如果在 1 bar 内未满足条件 → EXPIRED
+    note right of PENDING
+        等待 execution_lag_bars 根 bar
+    end note
+    note right of ACCEPTED
+        通过保证金 / 涨跌停 / 流动性预检
+    end note
+    note right of REJECTED
+        保证金不足 / 涨跌停 / 停牌<br/>流动性不足 / 撮合条件不满足
+    end note
 ```
 
 ### 2.2 `OrderStatus` enum
