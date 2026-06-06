@@ -248,3 +248,10 @@ nav:
       - 数据库 Schema（Phase 2）: reference/database-schema.md
   - 关于:
       - 许可证（Phase 2）: about/license.md
+  # Round #1156: i18n placeholder. The site is currently
+  # Chinese-only (see docs/translations.md for the rationale);
+  # this nav entry surfaces the i18n plan and acts as the
+  # future landing page when the English mirror is built.
+  # When i18n actually starts, replace the path with
+  # translations/index.md and add per-language sub-entries.
+  - Translations / 翻译: translations.md

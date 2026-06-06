@@ -103,11 +103,19 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      # Round #1156: bump from v3 to v5.
+      # v4 (Sep 2024) changed the default to exclude hidden files —
+      # mkdocs build output has none, so this is safe. v5 (Apr 2026)
+      # tracks upload-artifact@v7 and adds include-hidden-files.
       - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site/
 
+      # Round #1156: bump from v4 to v5. v5 (Mar 2026) updates Node
+      # runtime to 24.x (was 20.x in v4) and ships the immutable
+      # action package workflow. No behavioral change for our
+      # site/ artifact path.
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

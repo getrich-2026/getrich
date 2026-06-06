@@ -574,3 +574,138 @@ curl -s http://localhost:8000/health
     - [32 风险控制](../design-contracts/32-risk-control.md)
 - 内部 IM：<https://feishu.example.com/getrich>
 - on-call 排班：<https://confluence.example.com/oncall>
+
+---
+
+## 12. 文档 CI 故障（gh-pages 部署）
+
+> **本节是 `.github/workflows/docs.yml` 5 类故障的处置清单**。
+> 文档 CI 跟业务 CI 一样会在 PR 上跑，区别在
+> (a) 它不跑 pytest，只跑 `mkdocs build --strict`
+> (b) main / dev push 触发 gh-pages 部署
+> 监控入口：`.github/workflows/docs.yml` 的 run history。
+
+### 12.1 症状：mkdocs build --strict 失败
+
+#### 定位
+
+```bash
+# 1. 本地复现：与 CI 一致的环境
+uv run --frozen mkdocs build --strict --clean
+
+# 2. 跑验证脚本（预检）
+uv run python scripts/verify_docs_ci.py
+#   - 第 [3/4] 步会跑相同的 strict build
+#   - 第 [4/4] 步会验证 site/index.html / size / subdir 完整性
+```
+
+#### 根因（典型）
+
+| 根因 | 修法 |
+|---|---|
+| 死链：加了新页但没在 mkdocs.yml `nav:` 登记 | 加 nav 条目；或加到 omitted_files 忽略清单 |
+| 死链：相对路径写错（`engine/...` 写成 `../engine/...`） | 相对路径以 docs 源文件位置为基准 |
+| `pymdownx.tabbed` 嵌套超 3 层 | 拆 tab 或用 `=== "title"` 扁平化 |
+| Mermaid 语法错 | 本地起 `mkdocs serve` 看浏览器 console 报错 |
+| `mkdocstrings` 找不到类 | `paths: [src]` 配置 + 类是否在 `__all__` |
+| git-revision-date-localized 报 WARNING | 新文件没 commit history；`fetch-depth: 0` 已配，等下次 commit |
+
+### 12.2 症状：gh-pages deploy 失败
+
+#### 定位
+
+```bash
+# 1. 看 deploy job 的 Actions 日志
+#    重点是 "Upload to GitHub Pages" 和 "Deploy to GitHub Pages" 两步
+
+# 2. 最常见：actions/upload-pages-artifact 报
+#    "Error: Path does not exist"
+#    意味着 site/ 没生成
+ls -la site/index.html      # 本地跑过 verify_docs_ci.py 必存在
+```
+
+#### 根因（典型）
+
+| 根因 | 修法 |
+|---|---|
+| `site/index.html` 缺失 | build job 失败；先查 §12.1 |
+| `actions/upload-pages-artifact` 版本过旧 | 升级到 v5（Round #1156 已升级） |
+| `permissions: pages: write` 缺失 | 已在 docs.yml 配好；新环境要确认 repo settings → Pages |
+| `concurrency` 冲突 | 同 PR 多 push；`cancel-in-progress: true` 已配 |
+| `environment: github-pages` 没建 | repo Settings → Environments → New → name: github-pages |
+
+#### 手动强制重部署
+
+```bash
+# 在 GitHub UI：
+# 1. Actions → Docs workflow → 失败 run
+# 2. 右上角 "Re-run all jobs"
+# 或：
+gh workflow run docs.yml --ref dev
+```
+
+### 12.3 症状：部署后页面 404
+
+#### 定位
+
+```bash
+# 1. 打开 https://getrich.github.io/getrich/ 测主页
+# 2. 找具体死链
+#    mkdocs build --strict 应该已经捕获，没有就查 build log
+curl -sI https://getrich.github.io/getrich/platform/live-signal-pipeline/ | head -1
+# 应为 200 OK；404 即问题
+```
+
+#### 根因（典型）
+
+| 根因 | 修法 |
+|---|---|
+| `use_directory_urls: true` 但没部署 `index.html` | mkdocs 自动生成，build 失败即无；查 §12.1 |
+| 子页有跨目录相对链接但没 `..` | 修链接为 `../engine/live-signals.md` |
+| gh-pages 缓存 | 浏览器 hard refresh (Ctrl+Shift+R) |
+| CDN 缓存 5-10 分钟 | 等；或 Cloudflare purge |
+
+### 12.4 症状：strict-mode warning（非 ERROR）
+
+#### 定位
+
+`mkdocs build --strict` 把 WARNING 当 ERROR。
+**所有 WARNING 必须解决**。常见：
+
+```text
+WARNING -  A relative path to 'foo.md' is included in the 'nav' configuration,
+            which is not found in the documentation files
+WARNING -  Documentation file 'docs/x.md' is not included in the "nav" configuration
+WARNING -  An absolute path to '/x.md' is included in the 'nav', which is not found
+WARNING -  A relative path to '../foo.md' is included in the 'nav'
+```
+
+#### 修法
+
+| 根因 | 修法 |
+|---|---|
+| 忘了加到 nav | 加条目 |
+| 路径写错 | 改成相对 docs 根的路径 |
+| validation 配置太严 | mkdocs.yml 已有 `omitted_files: ignore` / `absolute_links: ignore`，需要时再调 |
+
+### 12.5 预防：pre-push 验证（Round #1154）
+
+```bash
+# 任何 push docs 相关改动前都跑：
+uv run python scripts/verify_docs_ci.py
+
+# 4 步：workflow YAML 解析 → glob 校验 → strict build → deploy-step 输入校验
+# 全绿才推，省去一次 round-trip
+```
+
+`scripts/verify_docs_ci.py` 跑的事与 CI 完全一致，
+**本地绿 = CI 必绿**。
+
+### 12.6 进一步阅读
+
+- 文档 CI 配置：`.github/workflows/docs.yml`（含 Round #1156 升级到 v5 的注释）
+- 预检脚本：`scripts/verify_docs_ci.py`（4 步本地验证）
+- 验证脚本测试：`tests/scripts/test_verify_docs_ci.py`（6+ regression tests）
+- Material i18n 文档：<https://squidfunk.github.io/mkdocs-material/setup/setting-up-site-search/#language>
+- i18n 路线图：[../translations.md](../translations.md)
+

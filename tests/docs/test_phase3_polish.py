@@ -342,3 +342,213 @@ def test_live_signal_pipeline_html_renders_sequence_diagram() -> None:
         f"First block starts: {pre_blocks[0][:80]!r}"
     )
 
+
+# ---------------------------------------------------------------- i18n / gh-pages deploy (Round #1156)
+#
+# Round #1156 has three moving parts:
+# 1. ``docs/translations.md`` — i18n placeholder + status table
+# 2. ``mkdocs.yml`` adds a ``Translations / 翻译: translations.md`` nav
+#    entry so the page is reachable from the left sidebar
+# 3. ``.github/workflows/docs.yml`` bumps
+#    ``actions/upload-pages-artifact`` v3 -> v5 and
+#    ``actions/deploy-pages`` v4 -> v5
+#
+# The first two are guards against accidental deletion of the i18n
+# page (which is the placeholder for the future English mirror).
+# The third is a guard against the actions falling back below
+# GitHub's "Latest" major — older majors quietly lose security
+# patches and the `node:24` runtime deploy-pages v5 ships with.
+
+
+TRANSLATIONS_DOC = REPO_ROOT / "docs" / "translations.md"
+RUNBOOK_DOC = REPO_ROOT / "docs" / "operations" / "runbook.md"
+DOCS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "docs.yml"
+
+
+def test_translations_doc_exists() -> None:
+    """The i18n placeholder must not be silently deleted.
+
+    A future contributor who wants to nuke the ``Translations`` nav
+    entry has to also delete this file (or rewrite it to be a stub
+    redirect). The test makes the deletion a deliberate act.
+    """
+    assert TRANSLATIONS_DOC.is_file(), (
+        "docs/translations.md is missing — Round #1156 i18n placeholder "
+        "was deleted; restore it (or replace with a real i18n landing page)"
+    )
+
+
+def test_translations_documents_current_status_table() -> None:
+    """The page must show a language status table so the placeholder
+    doesn't read as 'we forgot English'."""
+    text = TRANSLATIONS_DOC.read_text(encoding="utf-8")
+    # 4 columns: 语言 / 状态 / 入口 / 维护者
+    for col in ("语言", "状态", "入口", "维护者"):
+        assert col in text, (
+            f"translations.md status table is missing column {col!r}. "
+            f"Use a 4-column table: | 语言 | 状态 | 入口 | 维护者 |"
+        )
+    # 4 expected languages: 中文 (current), 英文 (placeholder),
+    # 日文 + 繁体 (未规划). Dropping one is a regression in the
+    # i18n roadmap visibility.
+    for lang in ("中文", "英文", "日文", "繁体"):
+        assert lang in text, f"translations.md status table missing language {lang!r}"
+
+
+def test_translations_explains_tech_choice() -> None:
+    """The page must document WHY only Chinese for now + the future
+    i18n candidate (mkdocs-static-i18n).
+
+    Without the rationale, a contributor might "fix" the missing
+    English by adding a second mkdocs.yml and splitting the
+    workflows — which doubles the maintenance cost.
+    """
+    text = TRANSLATIONS_DOC.read_text(encoding="utf-8")
+    assert "mkdocs-static-i18n" in text, (
+        "translations.md must name mkdocs-static-i18n as the chosen "
+        "i18n tool, otherwise a future contributor picks a heavier "
+        "alternative (Crowdin / Transifex / split mkdocs.yml)"
+    )
+    assert "中文" in text, "page must mention current Chinese-only state"
+
+
+def test_translations_listed_in_mkdocs_nav() -> None:
+    """mkdocs.yml must keep the ``Translations / 翻译`` nav entry.
+
+    Without the nav entry the page is buildable but unreachable
+    from the left sidebar; mkdocs --strict would warn but not
+    fail (mkdocs.yml has ``omitted_files: ignore`` in validation).
+    """
+    cfg = yaml.load(MKDOCS.read_text(encoding="utf-8"), Loader=_MkdocsYamlLoader)
+    nav = cfg.get("nav", [])
+    found_path = False
+    found_title = False
+    for entry in nav:
+        if not isinstance(entry, dict):
+            continue
+        for title, value in entry.items():
+            if value == "translations.md":
+                found_path = True
+            if "Translations" in str(title) or "翻译" in str(title):
+                found_title = True
+    assert found_path, (
+        "translations.md is not in mkdocs.yml nav. "
+        "Add `- Translations / 翻译: translations.md` at the top level."
+    )
+    assert found_title, (
+        "Translations nav entry is missing the bilingual title "
+        "(must contain 'Translations' or '翻译')"
+    )
+
+
+def test_runbook_has_documentation_ci_section() -> None:
+    """The runbook must have a §12 "文档 CI 故障（gh-pages 部署）" section.
+
+    Round #1156 added this; the test prevents future refactors
+    from collapsing the section back into §1-§8 (which are
+    runtime issues, not docs-CI issues).
+    """
+    text = RUNBOOK_DOC.read_text(encoding="utf-8")
+    assert "## 12. 文档 CI 故障" in text, (
+        "runbook.md is missing §12 文档 CI 故障. "
+        "Add the section covering mkdocs build / gh-pages deploy / 404 / "
+        "strict warnings / pre-push verification."
+    )
+
+
+def test_runbook_documentation_ci_lists_5_failure_modes() -> None:
+    """§12 must cover at least 5 distinct failure modes.
+
+    The section is only useful if a fresh SRE can find their symptom
+    in < 30 seconds. 5 modes (build / deploy / 404 / strict warning
+    / pre-push verification) is the minimum; dropping one means
+    a real failure mode has no runbook entry.
+    """
+    text = RUNBOOK_DOC.read_text(encoding="utf-8")
+    section_start = text.find("## 12. 文档 CI 故障")
+    assert section_start > 0, "§12 not found"
+    section = text[section_start:]
+    # 5 sub-sections, each ### 12.N ... pattern
+    expected_subtitles = (
+        "### 12.1 症状：mkdocs build --strict 失败",
+        "### 12.2 症状：gh-pages deploy 失败",
+        "### 12.3 症状：部署后页面 404",
+        "### 12.4 症状：strict-mode warning",
+        "### 12.5 预防：pre-push 验证",
+    )
+    missing = [s for s in expected_subtitles if s not in section]
+    assert not missing, (
+        f"runbook §12 missing failure-mode sub-sections: {missing}. "
+        f"Add all 5: build / deploy / 404 / strict warning / pre-push."
+    )
+
+
+def test_runbook_documentation_ci_references_verify_script() -> None:
+    """§12.5 must point to ``scripts/verify_docs_ci.py`` (Round #1154 helper).
+
+    The pre-push verification is the cheapest defense against docs
+    CI red runs; the runbook must surface it.
+    """
+    text = RUNBOOK_DOC.read_text(encoding="utf-8")
+    assert "verify_docs_ci.py" in text, (
+        "runbook §12.5 must reference scripts/verify_docs_ci.py "
+        "so SREs know to run it before pushing docs changes"
+    )
+
+
+def test_docs_workflow_uses_upload_pages_artifact_v5() -> None:
+    """The gh-pages deploy step must use ``actions/upload-pages-artifact@v5``.
+
+    Round #1156 upgraded from v3 to v5 (v4 changed the default to
+    exclude hidden files; v5 tracks upload-artifact@v7). Going back
+    to v3 is a regression — GitHub dropped v3 from the marketplace
+    latest in Sep 2024 and security patches have stopped.
+    """
+    text = DOCS_WORKFLOW.read_text(encoding="utf-8")
+    assert "actions/upload-pages-artifact@v5" in text, (
+        "docs.yml deploy step dropped to an older actions/upload-pages-artifact "
+        "version. Pin to @v5 (Round #1156 baseline)."
+    )
+    assert "actions/upload-pages-artifact@v3" not in text, (
+        "docs.yml still uses actions/upload-pages-artifact@v3 — "
+        "this version is unmaintained; bump to @v5"
+    )
+
+
+def test_docs_workflow_uses_deploy_pages_v5() -> None:
+    """The gh-pages deploy step must use ``actions/deploy-pages@v5``.
+
+    v5 (Mar 2026) updates Node to 24.x and ships the immutable
+    action package workflow. v4 (Node 20) is end-of-life.
+    """
+    text = DOCS_WORKFLOW.read_text(encoding="utf-8")
+    assert "actions/deploy-pages@v5" in text, (
+        "docs.yml deploy step is on an older actions/deploy-pages "
+        "version. Pin to @v5 (Round #1156 baseline)."
+    )
+    assert "actions/deploy-pages@v4" not in text, (
+        "docs.yml still uses actions/deploy-pages@v4 — "
+        "bump to @v5 for Node 24 + security patches"
+    )
+
+
+def test_docs_workflow_keeps_pages_environment() -> None:
+    """The deploy job must keep the ``github-pages`` environment.
+
+    GitHub Pages uses an OIDC `id-token` grant scoped to the
+    `github-pages` environment; without the env block the deploy
+    fails with a 403 from the OIDC handshake.
+    """
+    text = DOCS_WORKFLOW.read_text(encoding="utf-8")
+    assert "environment:" in text, "docs.yml lost the `environment:` block"
+    assert "github-pages" in text, (
+        "docs.yml deploy job lost the `github-pages` environment "
+        "(required for the OIDC id-token grant; deploy will 403 without it)"
+    )
+    # Both OIDC perms must be present
+    assert "pages: write" in text, "docs.yml deploy lost `pages: write` permission"
+    assert "id-token: write" in text, (
+        "docs.yml deploy lost `id-token: write` permission "
+        "(required for the OIDC handshake with github-pages env)"
+    )
+
