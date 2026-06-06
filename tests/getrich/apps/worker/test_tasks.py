@@ -98,6 +98,16 @@ def _stub_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(worker_tasks, "BacktestJobRunner", fake_make_runner)
     monkeypatch.setattr(worker_tasks, "init_pg_pool", fake_init_pg_pool)
     monkeypatch.setattr(worker_tasks, "close_pg_pool", fake_close_pg_pool)
+    # Round #1145: also stub the cancel listener. Without this, when
+    # test_celery_app.py runs first it changes the asyncio event
+    # loop policy (or otherwise perturbs psycopg's expectation of
+    # the loop class), and the next task body fails with
+    # ``psycopg.InterfaceError: Psycopg cannot use the
+    # 'ProactorEventLoop' to run in async mode``. The listener
+    # itself is exercised by test_cancel_listener.py; these tests
+    # only care that _run_job_sync makes the right op selection.
+    monkeypatch.setattr(worker_tasks, "init_cancel_listener", lambda: calls.setdefault("init_listener", 1))
+    monkeypatch.setattr(worker_tasks, "close_cancel_listener", lambda: calls.setdefault("close_listener", 1))
     return calls
 
 
@@ -113,6 +123,9 @@ def test_run_backtest_job_picks_backtest_op(_stub_dependencies: dict[str, Any]) 
     assert _stub_dependencies["ops_seen"] == [("backtest", "str")]
     assert _stub_dependencies["init"] == 1
     assert _stub_dependencies["close"] == 1
+    # Round #1145: cancel listener stubs are also invoked.
+    assert _stub_dependencies["init_listener"] == 1
+    assert _stub_dependencies["close_listener"] == 1
 
 
 def test_run_sweep_job_picks_sweep_op(_stub_dependencies: dict[str, Any]) -> None:
