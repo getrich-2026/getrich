@@ -1,10 +1,11 @@
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Bell, TrendingUp, BookOpen } from 'lucide-react'
+import { Bell, TrendingUp, BookOpen, Database } from 'lucide-react'
 
 const items = [
   { icon: Bell, label: '信号', path: '/market' },
   { icon: TrendingUp, label: '策略', path: '/strategies' },
   { icon: BookOpen, label: '知识库', path: '/knowledge' },
+  { icon: Database, label: '导入', path: '/admin/imports' },
 ]
 
 export default function SideNav() {
