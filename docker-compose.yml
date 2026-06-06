@@ -1,0 +1,85 @@
+version: "3.9"
+
+# GetRich 平台完整开发栈
+# 用法：
+#   docker compose up -d              # 起所有服务
+#   docker compose logs -f ch redis   # tail 日志
+#   docker compose down -v            # 关 + 清数据卷
+#   docker compose exec postgres psql -U quant getrich
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: getrich-postgres
+    environment:
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: getrich
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant -d getrich"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: getrich-clickhouse
+    environment:
+      CLICKHOUSE_DB: getrich
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: devpass
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"   # HTTP
+      - "9000:9000"   # native
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: getrich-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 一次性初始化：跑 migration 后退出
+  # 用法：docker compose run --rm migrate
+  migrate:
+    profiles: ["migrate"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    env_file: .env.local
+    command: >
+      sh -c "uv run python -m getrich.migrations.cli postgres &&
+             uv run python -m getrich.migrations.cli clickhouse &&
+             echo 'Migrations applied successfully'"
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  redis-data:
