@@ -8,7 +8,62 @@ import path from "path";
 // package name; everything that doesn't match falls into the
 // auto-generated `index` (app code + tiny vendors).
 function vendorChunk(id: string): string | undefined {
-  if (id.includes("node_modules/echarts")) return "vendor-echarts";
+  // Round #1151: split ECharts into 3 sub-chunks by sub-package so
+  // each piece can be (a) cached independently on version bumps and
+  // (b) loaded only when a route actually needs it. The first-pass
+  // chunk put all 4 sub-packages in one 494 KB file. The split:
+  //   - vendor-echarts-core        ~  30 KB  (echarts/core + renderers + zrender)
+  //   - vendor-echarts-charts      ~ 300 KB  (all chart type re-exports)
+  //   - vendor-echarts-components  ~ 180 KB  (all component re-exports)
+  // Note: the renderers sub-package is merged into the core chunk
+  // because its actual code is just a 100-byte empty re-export shim
+  // (the real CanvasRenderer code lives in `lib/renderer/...` and
+  // would be ~30 KB if separated). Splitting it gives no cache win.
+  // Even though `echarts/charts` re-exports every chart type from a
+  // single barrel file, the split still gives us:
+  //   1. Independent cache invalidation when ECharts bumps versions
+  //      (the chart registry changes more often than the components).
+  //   2. A future migration path: when a new feature page only
+  //      needs `echarts/core` + 1 chart, we can dynamically
+  //      `import()` the chart chunk and skip the components chunk.
+  //   3. Better debugging — the network waterfall shows which
+  //      sub-package is taking the longest to parse.
+  //
+  // Path matching caveat (the bug we hit during dev): the public
+  // sub-package entry points are `echarts/core.js`, `echarts/charts.js`
+  // etc. at the top level, but the actual modules are nested under
+  // `echarts/lib/...` (e.g. `echarts/lib/chart/line/LineSeries.js`).
+  // Rolldown passes the leaf path of every transitively-imported
+  // module, so the regex must cover BOTH the top-level barrel AND
+  // the `lib/<group>/...` subtree. Forgetting the latter collapses
+  // the whole library into the main app chunk and silently undoes
+  // the split.
+  if (
+    id.includes("node_modules/echarts/core.js") ||
+    id.includes("node_modules/echarts/renderers.js") ||
+    id.includes("node_modules/echarts/lib/core/") ||
+    id.includes("node_modules/echarts/lib/renderer/") ||
+    id.includes("node_modules/zrender")
+  ) {
+    // Core + renderers + zrender all go in one chunk. The renderer
+    // modules are tiny (CanvasRenderer + SVGRenderer are just thin
+    // adapters over zrender), and they have no value as their own
+    // chunk (would be ~100 bytes of empty re-export shim). Merging
+    // them keeps zrender + the renderer registration atomic.
+    return "vendor-echarts-core";
+  }
+  if (
+    id.includes("node_modules/echarts/charts.js") ||
+    id.includes("node_modules/echarts/lib/chart/")
+  ) {
+    return "vendor-echarts-charts";
+  }
+  if (
+    id.includes("node_modules/echarts/components.js") ||
+    id.includes("node_modules/echarts/lib/component/")
+  ) {
+    return "vendor-echarts-components";
+  }
   if (id.includes("node_modules/react-dom")) return "vendor-react-dom";
   if (
     id.includes("node_modules/react/") ||
