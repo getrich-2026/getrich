@@ -7,11 +7,13 @@ import re
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from decimal import Decimal
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, Protocol
 
 import polars as pl
 
 from getrich.apps.strategy.errors import LiveDataError
+from getrich.apps.web.metrics import LIVE_DATA_LOAD_SECONDS
 from getrich.libs.clickhouse.pool import ClickHouseConnectionPool
 from getrich_backtest.data.schema import validate_bar_schema
 from getrich_backtest.strategy.context import (
@@ -253,12 +255,16 @@ class LiveDataProvider:
         else:
             effective_n_bars = n_bars
 
+        bars_t0 = perf_counter()
         bars = self.load_latest_bars(symbols, n_bars=effective_n_bars)
+        LIVE_DATA_LOAD_SECONDS.labels("bars").observe(perf_counter() - bars_t0)
         if bars.is_empty():
             return None
 
         if self._account_loader is not None:
+            account_t0 = perf_counter()
             account = await self._account_loader.load_account_view(strategy_id=strategy_id)
+            LIVE_DATA_LOAD_SECONDS.labels("account").observe(perf_counter() - account_t0)
         else:
             account = AccountView(cash=Decimal("0"), available_cash=Decimal("0"))
 
@@ -298,7 +304,9 @@ class LiveDataProvider:
         )
 
         if factor_names:
+            factors_t0 = perf_counter()
             factors_dict = self.load_latest_factors(symbols, factor_names, n_bars=effective_n_bars)
+            LIVE_DATA_LOAD_SECONDS.labels("factors").observe(perf_counter() - factors_t0)
             if factors_dict:
                 set_ctx_factors(ctx, factors_dict)
 

@@ -13,6 +13,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from getrich.apps.web.metrics import LIVE_ALERTS_EMITTED_TOTAL
 from getrich_backtest import get_shanghai_tz
 from getrich_backtest.risk import RiskConfig
 from getrich_backtest.time import require_shanghai_aware
@@ -319,6 +320,11 @@ class LiveRiskMonitor:
     async def send_alerts(self, alerts: list[RiskAlert]) -> None:
         """Deliver *alerts* through all configured channels."""
         for alert in alerts:
+            # Increment the per-severity counter BEFORE the channel
+            # send so even a totally-failing channel is observable.
+            # The send itself is wrapped in try/except below so a
+            # single channel failure does not stop the others.
+            LIVE_ALERTS_EMITTED_TOTAL.labels(alert.severity).inc()
             for channel in self._channels:
                 try:
                     await channel.send(alert)

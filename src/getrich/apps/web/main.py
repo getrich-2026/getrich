@@ -11,8 +11,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import ORJSONResponse, Response
 
+from getrich.apps.web.metrics import render_metrics
+from getrich.apps.web.metrics_middleware import MetricsMiddleware
 from getrich.apps.web.middleware import SecurityHeadersMiddleware
 from getrich.apps.web.response import register_exception_handlers
 from getrich.apps.web.routers import (
@@ -94,6 +96,14 @@ def create_app() -> FastAPI:
         csp_policy=settings.web.csp_policy,
     )
 
+    # Prometheus HTTP request metrics. The middleware is added AFTER
+    # SecurityHeadersMiddleware so the response headers layer is
+    # stable (CORS / security headers never see metric-induced
+    # attribute changes). The middleware itself excludes /metrics
+    # from its own counting so a Prometheus scrape loop doesn't
+    # pollute the rate panel.
+    app.add_middleware(MetricsMiddleware)
+
     register_exception_handlers(app)
 
     app.include_router(auth_router.router, prefix="/v1")
@@ -111,6 +121,22 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics", tags=["meta"])
+    async def metrics() -> Response:
+        """Prometheus exposition endpoint (text format).
+
+        Mounted at the un-prefixed ``/metrics`` path (NOT under
+        ``/v1``) so the default ``prometheus.yml`` scrape config
+        ``/metrics`` works out of the box. The endpoint is
+        intentionally NOT auth-protected — Prometheus scrapers
+        don't carry user JWTs. The risk surface is bounded: the
+        payload exposes the metric NAMES + the current counter
+        values, not user data. The endpoint does NOT touch the
+        DB / CH / Redis (it reads the in-process registry).
+        """
+        body, content_type = render_metrics()
+        return Response(content=body, media_type=content_type)
 
     return app
 

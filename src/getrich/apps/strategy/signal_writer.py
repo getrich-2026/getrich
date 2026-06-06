@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from getrich.apps.strategy.errors import SignalWriteError
+from getrich.apps.web.metrics import LIVE_SIGNALS_PERSISTED_TOTAL
 from getrich.libs.postgres.pool import PgConnectionPool, pg_pool
 from getrich_backtest.live.signal import Signal
 
@@ -144,6 +145,11 @@ class PgSignalWriter:
                 async with c.cursor() as cur:
                     await cur.execute(_INSERT_SQL, params)
                     row = await cur.fetchone()
+                # Only increment on a NEW row (not on the ON CONFLICT
+                # DO NOTHING path). A duplicate means the signal was
+                # already counted in a previous tick.
+                if row is not None:
+                    LIVE_SIGNALS_PERSISTED_TOTAL.inc()
                 return row[0] if row is not None else None
             except Exception as exc:
                 raise SignalWriteError(f"failed to write signal: {exc}") from exc

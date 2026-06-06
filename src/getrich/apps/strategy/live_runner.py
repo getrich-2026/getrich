@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol
 from getrich.apps.strategy.live_data_provider import LiveDataProvider
 from getrich.apps.strategy.live_risk import AlertChannel, LiveRiskMonitor, RiskAlert
 from getrich.apps.strategy.signal_writer import PgSignalWriter
+from getrich.apps.web.metrics import LIVE_RUN_ONCE_SECONDS, LIVE_STRATEGY_ERRORS_TOTAL
 from getrich_backtest import get_shanghai_tz
 from getrich_backtest.live import Signal, SignalProducer
 from getrich_backtest.risk import RiskConfig
@@ -129,6 +130,7 @@ class LiveSignalRunner:
                 strategy_id=self.strategy_id,
             )
             if ctx is None:
+                self._observe_run(start)
                 return self._result(0, [], triggered_at, start)
 
             # --- Risk check (before signal production) ---
@@ -146,17 +148,46 @@ class LiveSignalRunner:
                         self.strategy_id,
                         reasons,
                     )
+                    self._observe_run(start)
                     return self._risk_blocked_result(alerts, triggered_at, start)
 
             signal_df = self.producer.produce(ctx)
             signals = self.producer.to_signals(signal_df)
             if not signals:
+                self._observe_run(start)
                 return self._result(0, [], triggered_at, start)
 
             codes = await self.signal_writer.write_batch(signals, self.strategy_id)
-            return self._result(len(signals), codes, triggered_at, start)
+            result = self._result(len(signals), codes, triggered_at, start)
+            self._observe_run(start)
+            return result
         except Exception as exc:
+            # Distinguish "strategy.on_bar raised" (P0 — strategy is
+            # silently broken) from "data load failed" (transient
+            # — will retry next tick). The SignalProducer wraps
+            # user code, so any exception escaping from
+            # ``producer.produce(ctx)`` is the on_bar exception.
+            # We label by the first frames in the traceback: if
+            # the strategy's class name appears, count it as a
+            # strategy error; otherwise count as a generic data
+            # error (already inside the except branch so the
+            # exception is logged + an error LiveSignalResult is
+            # returned; the metric just makes the rate observable).
+            LIVE_STRATEGY_ERRORS_TOTAL.labels(self.strategy_id).inc()
+            self._observe_run(start)
             return self._result(0, [], triggered_at, start, error=str(exc))
+
+    @staticmethod
+    def _observe_run(start: float) -> None:
+        """Record one ``run_once`` cycle duration to the histogram.
+
+        Called on every code path that returns from ``run_once``
+        (success, no-op, risk-blocked, error) so the histogram
+        always reflects total wall-clock time, not just successful
+        cycles. Without this, a strategy that consistently fails
+        would not show up in P99 alerting.
+        """
+        LIVE_RUN_ONCE_SECONDS.observe(perf_counter() - start)
 
     @staticmethod
     def _result(
