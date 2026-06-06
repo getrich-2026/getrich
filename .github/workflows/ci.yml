@@ -7,6 +7,7 @@
 # Jobs:
 #   - lint:        ruff check + format
 #   - silent-fails: scripts/find_silent_fails.py --strict (Round #1059)
+#   - clickhouse-lint: scripts/lint_clickhouse_migrations.py (Round #1150)
 #   - frontend:   npm ci + ESLint + vitest + tsc/vite build
 #   - test:       uv sync + run migration runner + pytest (PostgreSQL + ClickHouse)
 
@@ -103,6 +104,30 @@ jobs:
       # on any un-suppressed P0_REVIEW finding.
       - name: Scan for silent failures
         run: uv run --frozen python scripts/find_silent_fails.py --strict
+
+  # ---------------------------------------------------------------- clickhouse-lint
+  # Round #1150: enforce the GetRich 3-DB topology铁律 at the
+  # migration-file level. The linter scans migrations/clickhouse/*.sql
+  # and fails the build if any row-level UPDATE / DELETE / TRUNCATE
+  # / OPTIMIZE FINAL slips in. These operations are forbidden in
+  # CH per docs/operations/database-topology.md §2.
+  clickhouse-lint:
+    name: ClickHouse migration topology lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      # Pure stdlib script; no third-party deps needed.
+      - name: Lint CH migrations
+        run: uv run --frozen python scripts/lint_clickhouse_migrations.py
 
   # ---------------------------------------------------------------- frontend
   # Runs in parallel with `lint` and `test`. The frontend test suite is
