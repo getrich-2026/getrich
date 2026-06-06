@@ -1,0 +1,1 @@
+--8<-- "backtest/docs/10-data-layer.md"

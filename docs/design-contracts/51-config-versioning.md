@@ -1,0 +1,1 @@
+--8<-- "backtest/docs/51-config-versioning.md"

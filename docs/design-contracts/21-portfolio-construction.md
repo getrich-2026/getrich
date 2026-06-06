@@ -1,0 +1,1 @@
+--8<-- "backtest/docs/21-portfolio-construction.md"

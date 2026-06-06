@@ -1,0 +1,1 @@
+--8<-- "backtest/docs/41-factor-eval.md"

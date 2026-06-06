@@ -1,0 +1,1 @@
+--8<-- "backtest/docs/40-metrics.md"

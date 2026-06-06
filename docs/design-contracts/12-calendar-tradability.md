@@ -1,0 +1,1 @@
+--8<-- "backtest/docs/12-calendar-tradability.md"

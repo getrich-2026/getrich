@@ -1,0 +1,1 @@
+--8<-- "backtest/docs/60-client-api.md"

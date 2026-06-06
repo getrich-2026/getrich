@@ -1,0 +1,1 @@
+--8<-- "backtest/docs/30-execution-engine.md"
