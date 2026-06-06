@@ -1,0 +1,33 @@
+[Unit]
+Description=GetRich daily backup (PG + ClickHouse + artifacts)
+Documentation=https://github.com/getrich/getrich/blob/main/scripts/backup/
+After=network-online.target postgresql.service clickhouse-server.service
+Wants=network-online.target
+# Only start after PG and CH are up — the backup script needs both
+# to be reachable. If either is down, the timer will retry on the
+# next 24h slot; we don't want a retry loop during a transient
+# outage.
+Requires=postgresql.service clickhouse-server.service
+
+[Service]
+Type=oneshot
+# Run as the deploy user; the script must have read access to the
+# PG .pgpass file and write access to BACKUP_DIR.
+User=getrich
+Group=getrich
+Environment=PGPASSWORD_FILE=/etc/getrich/.pgpass
+Environment=BACKUP_DIR=/var/backups/getrich
+# Dump each component's log to its own file under /var/log, so
+# the runbook can grep failures cleanly.
+ExecStart=/opt/getrich/scripts/backup/daily_backup.sh
+StandardOutput=append:/var/log/getrich/backup.log
+StandardError=append:/var/log/getrich/backup.log
+
+# Hard timeouts — if the backup hangs (e.g. PG unreachable) the
+# systemd service must NOT hang forever. 6h ceiling covers a
+# worst-case 3x size growth on the artifact dir.
+TimeoutStartSec=6h
+# No auto-restart — it's a oneshot; the timer fires the next day.
+
+[Install]
+WantedBy=multi-user.target
