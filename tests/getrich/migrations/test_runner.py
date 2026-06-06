@@ -265,3 +265,99 @@ def test_run_directory_empty_directory(tmp_path: Path) -> None:
     # Empty directory never touches the executor (no tracking table).
     assert executor.ensure_calls == 0
     assert executor.fetch_calls == 0
+
+
+# ---------------------------------------------------------------- #1143 ClickHouse migration verification
+#
+# Round #1143: verify the real ``migrations/clickhouse/`` directory
+# (a) is discoverable, (b) contains valid MergeTree DDL, (c) uses
+# ``IF NOT EXISTS`` for idempotency. The runner contract is exercised
+# end-to-end against a fake executor so we don't need a live CH.
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_CH_MIGRATIONS_DIR = _PROJECT_ROOT / "migrations" / "clickhouse"
+
+
+def _read_ch_migration(name: str) -> str:
+    """Read a real CH migration file from the repo."""
+    path = _CH_MIGRATIONS_DIR / name
+    assert path.exists(), f"CH migration file missing: {path}"
+    return path.read_text(encoding="utf-8")
+
+
+def test_ch_migrations_dir_exists_and_has_files() -> None:
+    """The committed ``migrations/clickhouse/`` directory contains
+    the expected migrations."""
+    assert _CH_MIGRATIONS_DIR.exists(), (
+        f"CH migrations directory missing: {_CH_MIGRATIONS_DIR}"
+    )
+    files = sorted(_CH_MIGRATIONS_DIR.glob("*.sql"))
+    assert len(files) >= 2, f"expected >= 2 CH migrations, found {len(files)}"
+    prefixes = [f.stem.split("_", 1)[0] for f in files]
+    # First two should be 001 and 002 (contiguous, no gaps).
+    assert prefixes[:2] == ["001", "002"], f"unexpected prefix sequence: {prefixes}"
+
+
+def test_ch_migrations_discoverable_via_runner() -> None:
+    """The runner's ``discover_migrations`` finds the real CH
+    files in the right order. Uses a fresh ``_FakeExecutor`` so
+    no real CH client is needed."""
+    if not _CH_MIGRATIONS_DIR.exists():
+        pytest.skip(f"CH migrations dir not present: {_CH_MIGRATIONS_DIR}")
+    found = discover_migrations(_CH_MIGRATIONS_DIR)
+    assert len(found) >= 2
+    # Migrations are sorted by numeric prefix.
+    prefixes = [m.prefix for m in found]
+    assert prefixes == sorted(prefixes, key=lambda p: int(p))
+    # First migration is 001_ohlcv_bars.
+    assert found[0].name == "001_ohlcv_bars.sql"
+    assert found[0].sql.strip().startswith("-- 001_ohlcv_bars.sql") or "ohlcv" in found[0].sql.lower()
+
+
+def test_ch_001_ohlcv_bars_uses_merge_tree() -> None:
+    """The OHLCV migration declares two MergeTree tables
+    (1m and 1d) with the platform's required clauses."""
+    sql = _read_ch_migration("001_ohlcv_bars.sql")
+    # Both tables must use MergeTree.
+    assert sql.count("ENGINE = MergeTree()") == 2, (
+        "expected 2 MergeTree tables (1m + 1d) in 001_ohlcv_bars.sql"
+    )
+    # Both tables must use ``IF NOT EXISTS`` for idempotent re-runs.
+    assert sql.count("CREATE TABLE IF NOT EXISTS") == 2
+    # The minute and daily tables are both declared.
+    assert "md_bars_1m" in sql
+    assert "md_bars_1d" in sql
+    # Time column is the platform's primary timezone (Asia/Shanghai).
+    assert "DateTime64(3, 'Asia/Shanghai')" in sql
+    # Both tables partition by month.
+    assert sql.count("PARTITION BY toYYYYMM(dt)") == 2
+
+
+def test_ch_002_factors_long_uses_merge_tree() -> None:
+    """The factors_long migration is a single MergeTree table
+    with the long-format (factor, symbol, dt) primary key."""
+    sql = _read_ch_migration("002_factors_long.sql")
+    assert sql.count("ENGINE = MergeTree()") == 1
+    assert "CREATE TABLE IF NOT EXISTS factors_long" in sql
+    # Long format: (factor, symbol, dt) — factor first because the
+    # read pattern is "latest N for factor F" (the inverse of bars).
+    assert "ORDER BY (factor, symbol, dt)" in sql
+    assert "DateTime64(3, 'Asia/Shanghai')" in sql
+    assert "PARTITION BY toYYYYMM(dt)" in sql
+
+
+def test_ch_migrations_apply_via_fake_executor() -> None:
+    """The runner's ``apply_migrations`` end-to-end works on the
+    real CH directory using a fake executor. Catches a class of
+    bugs where the runner breaks on multi-statement files."""
+    if not _CH_MIGRATIONS_DIR.exists():
+        pytest.skip(f"CH migrations dir not present: {_CH_MIGRATIONS_DIR}")
+    executor = _FakeExecutor()  # nothing applied yet
+    plan = _run(run_directory(_CH_MIGRATIONS_DIR, executor))
+    assert len(plan) >= 2
+    # All migrations were \"applied\" in order.
+    assert [m.prefix for m in executor.apply_calls] == [m.prefix for m in plan]
+    # Each migration's SQL was passed verbatim to the executor.
+    for migration, call in zip(plan, executor.apply_calls):
+        assert call == migration

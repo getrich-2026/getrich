@@ -209,7 +209,13 @@ class ClickHouseConfig:
 
     @classmethod
     def from_env(cls, strict: bool) -> ClickHouseConfig:
-        host = _get_env("CLICKHOUSE_HOST", "192.168.1.60")
+        # Default to localhost — matches .env.example and the
+        # docker-compose.yml service name. The previous default of
+        # "192.168.1.60" was a dev's personal LAN IP that leaked
+        # into the committed code; a fresh clone without an
+        # .env.local would then fail to connect to a non-existent
+        # host with a confusing "connection reset" error.
+        host = _get_env("CLICKHOUSE_HOST", "localhost")
         port_str = _get_env("CLICKHOUSE_PORT", "8123")
         user = _get_env("CLICKHOUSE_USER", "default")
         password = _get_env("CLICKHOUSE_PASSWORD", "getrich")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from getrich.config.settings import WorkerConfig, make_pg_dsn
+from getrich.config.settings import ClickHouseConfig, WorkerConfig, make_pg_dsn
 
 
 def test_from_env_defaults(monkeypatch: object) -> None:
@@ -74,3 +74,25 @@ def test_make_pg_dsn_without_password() -> None:
 
     dsn = make_pg_dsn(_Pg())  # type: ignore[arg-type]
     assert dsn == "postgresql://quant@db.example.com:5432/goldmine"
+
+
+# ---------------------------------------------------------------- #1143 ClickHouse config defaults (Round #1143 regression test)
+
+
+def test_clickhouse_default_host_is_localhost() -> None:
+    """Regression for Round #1143: a developer's LAN IP (``192.168.1.60``)
+    leaked into ``settings.py`` as the default ``CLICKHOUSE_HOST``.
+    A fresh clone without an ``.env.local`` would then fail to
+    connect with a confusing "connection reset" error. The default
+    must be ``localhost`` to match ``.env.example`` and the
+    ``docker-compose.yml`` service name.
+    """
+    cfg = ClickHouseConfig.from_env(strict=False)
+    assert cfg.host == "localhost", (
+        f"CLICKHOUSE_HOST default must be 'localhost' to match "
+        f".env.example and docker-compose.yml; got {cfg.host!r}"
+    )
+    # Port + user defaults are also documented in .env.example.
+    assert cfg.port == 8123
+    assert cfg.user == "default"
+    assert cfg.protocol == "http"
