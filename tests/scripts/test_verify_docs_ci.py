@@ -99,3 +99,56 @@ def test_api_reference_html_has_class_blocks() -> None:
         f"api-reference only renders {n} classes (expected >= 50). "
         f"Did a mkdocstrings directive silently stop resolving?"
     )
+
+
+# ---------------------------------------------------------------- deploy-step checks (Round #1154)
+
+
+def test_site_has_index_html_at_root() -> None:
+    """GitHub Pages refuses to serve a site that lacks a top-level
+    ``index.html``. The ``actions/upload-pages-artifact@v3`` step
+    fails the deploy with no useful error if this is missing."""
+    assert (SITE / "index.html").is_file(), (
+        "site/index.html is missing - the gh-pages deploy will 404."
+    )
+
+
+def test_site_index_html_under_threshold() -> None:
+    """A regression that pushes the api-reference onto the landing
+    page would balloon index.html to 1+ MB. The mkdocs homepage
+    with full nav is naturally 30-50 KB; flag anything > 100 KB."""
+    size = (SITE / "index.html").stat().st_size
+    assert size < 100_000, (
+        f"site/index.html is {size:,} bytes (> 100 KB). "
+        f"Did api-reference leak onto the landing page?"
+    )
+
+
+def test_site_total_under_threshold() -> None:
+    """Total site size should be < 15 MB (round #1146 cut was
+    8.4 MB; 50% headroom for content growth before re-trimming)."""
+    total = sum(p.stat().st_size for p in SITE.rglob("*") if p.is_file())
+    assert total < 15 * 1024 * 1024, (
+        f"site/ total is {total / 1024 / 1024:.1f} MB (> 15 MB). "
+        f"Re-trim needed; see Round #1146 for the optimization."
+    )
+
+
+def test_no_broken_subdirs() -> None:
+    """Every site/ subdir (excluding mkdocs static assets) must
+    have either its own index.html OR a deeper html/xml/json
+    file. A dir with neither is a broken page that would 404
+    on GitHub Pages."""
+    skip = {"assets", "css", "js", "search", "search_index"}
+    broken = []
+    for d in SITE.iterdir():
+        if not d.is_dir() or d.name in skip:
+            continue
+        if (d / "index.html").exists():
+            continue
+        files = list(d.rglob("*"))
+        if not any(f.suffix in (".html", ".xml", ".json") for f in files if f.is_file()):
+            broken.append(d.name)
+    assert not broken, (
+        f"site/ subdirs have no index.html and no static asset: {broken}"
+    )
