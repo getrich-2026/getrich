@@ -310,8 +310,23 @@ jobs:
         # The full backtest + apps suites run against the in-process
         # fakes; only a handful of legacy integration tests need a real
         # network and are skipped here.
+        #
+        # Coverage gate (Round #1161):
+        #   ``--cov-fail-under=60`` is the hard floor. We start at 60%
+        #   (defensive — well below the real number) and bump it ~5pp
+        #   per quarter. Bump is a one-line PR; see comments in
+        #   ``pyproject.toml [tool.coverage.*]`` for the schedule.
+        #   ``--cov-report=term-missing`` shows the N lowest-covered
+        #   files so a reviewer can spot what regressed.
+        #   ``--cov-report=xml`` writes the codecov-compatible file
+        #   (currently unused, but future-proofs a codecov.io badge).
         run: |
-          uv run --frozen pytest tests/getrich_backtest tests/getrich/apps -x --timeout=60
+          uv run --frozen pytest tests/getrich_backtest tests/getrich/apps -x --timeout=60 \
+            --cov=getrich \
+            --cov=getrich_backtest \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=60
 
   # ---------------------------------------------------------------- docs
   # Defense-in-depth docs build. The dedicated `.github/workflows/docs.yml`

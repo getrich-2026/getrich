@@ -138,9 +138,92 @@ testpaths = ["tests"]
 # -v: 详细输出
 # -ra: 显示跳过/失败的原因
 # --durations=10: 列出最慢的 10 个测试 (用于性能优化)
+# --no-cov-on-fail: 如果测试失败不要被覆盖率覆盖输出淹没
+# --cov=<packages>: 默认开 coverage 但只在终端打印 (--cov-report=term-missing)，
+# CI 用 ``--cov-fail-under=`` 单独强制阈值；本地不加 -no-cov 是
+# 不阻断的。``--cov`` 默认关闭在 ``addopts`` 里，由 ``measure_coverage.sh`` 启用。
 addopts = "-v -ra --durations=10"
 # 过滤器：将特定警告视为错误 (严格模式)
 filterwarnings = ["ignore::DeprecationWarning"]
+
+# ---------------------------------------------------------------------------
+# Coverage configuration (pytest-cov)
+# ---------------------------------------------------------------------------
+# Round #1161 adds a coverage gate to CI. We don't gate the local
+# test run (avoids noisy dev loops); CI sets ``--cov-fail-under=``
+# explicitly. The ``source`` here tells pytest-cov WHAT to measure
+# (so it doesn't accidentally sweep tests/scripts/ into the denominator).
+#
+# Threshold policy:
+#   The CI floor is set in .github/workflows/ci.yml (single source of
+#   truth). Raise it in lockstep with the #1161 plan:
+#     2026-Q3  target 60%   (initial — defensive)
+#     2026-Q4  target 70%   (after backtest tests mature)
+#     2027-Q1  target 80%   (post P0 cleanup)
+#   Each bump should be a one-line PR; bump in PR-sized chunks of ≤5pp.
+[tool.coverage.run]
+# ``source`` is a list of packages to measure. Anything outside this
+# list is treated as "third-party" and not measured. We intentionally
+# EXCLUDE tests/ (that's not source) and apps/data/ (data tables,
+# not logic).
+source = [
+    "getrich",
+    "getrich_backtest",
+]
+# Branch coverage is required for the engine (lots of if/else in
+# execution / account / portfolio). Without it, a 100% line-coverage
+# score can hide a missing else-branch.
+branch = true
+# Don't fail the run on a missing source file (e.g. a deleted module
+# that was once imported); the file just stops being measured.
+ignore_errors = true
+# Use source= layout, not auto, so we don't accidentally measure
+# test fixtures that happen to import getrich.
+source_pkgs = ["getrich", "getrich_backtest"]
+
+[tool.coverage.report]
+# Skip these as "not source" (they're not libraries we ship):
+#   - tests/                     (test code; covered by definition)
+#   - getrich.migrations.*       (Alembic / SQL migration scripts)
+#   - getrich.apps.data.table    (large auto-generated SQL)
+exclude_lines = [
+    # Standard "skip me" comments (mirrors coverage's defaults but
+    # spelled out so future maintainers know what's expected).
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+    # Abstract methods (covered by their concrete subclasses; counting
+    # them inflates the denominator).
+    "@abstractmethod",
+    "@abstractclassmethod",
+    "@abstractstaticmethod",
+    # Defensive `pass` lines; the function's intent is documented
+    # by the docstring and a no-op pass is fine.
+    '^\s*pass\s*$',
+    # ``...`` ellipsis in Protocol / ABC method bodies.
+    '^\s*\.\.\.\s*$',
+]
+# Show the N lowest-covered files at the end; helps reviewers spot
+# which modules regressed in the diff.
+show_missing = true
+skip_covered = false
+# Precision of the percentage in the terminal / report. 1 decimal is
+# enough to spot a 0.1pp regression.
+precision = 1
+# Exclude these paths entirely (they're not first-party source).
+exclude_also = [
+    "tests/.*",
+    "migrations/.*",
+    "scripts/.*",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"
 
 [tool.basedpyright]
 typeCheckingMode = "all"
@@ -184,4 +267,9 @@ dev = [
     "mkdocs-minify-plugin>=0.8.0",
     "mkdocstrings-python>=2.0.4",
     "pymdown-extensions>=10",
+    "pytest-cov>=6.0.0",
+    # ``tomllib`` is stdlib in 3.11+; the CI matrix still
+    # includes 3.10, so we keep ``tomli`` as the fallback for
+    # the test that reads pyproject.toml.
+    "tomli>=2.0; python_version < '3.11'",
 ]
