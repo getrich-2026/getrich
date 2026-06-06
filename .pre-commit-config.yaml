@@ -1,0 +1,202 @@
+# Pre-commit hooks for the GetRich platform.
+#
+# Install:
+#   uv tool install pre-commit        # or: pipx install pre-commit
+#   pre-commit install
+#   pre-commit install --hook-type commit-msg
+#
+# Run on demand (CI parity):
+#   pre-commit run --all-files
+#   pre-commit run --all-files --hook-stage manual
+#
+# Skips a hook in a pinch (NOT recommended):
+#   SKIP=ruff git commit -m "..."
+#
+# Design notes
+# ------------
+# 1. We mirror the cheap CI checks: ruff lint/format, ESLint,
+#    tsc, the silent-fail scanner, and the clickhouse / PG
+#    migration linters. We do NOT run pytest or vitest in
+#    pre-commit — those need a live PG/CH/Redis and are too
+#    slow for the commit-loop. CI is the gate.
+#
+# 2. We pin revs (no `rev: main`). Renovate / Dependabot
+#    (Round #1160) will keep them current.
+#
+# 3. The 3 local Python scanners are wired through
+#    ``language: system`` so we don't pin a second Python
+#    toolchain. The CI uses uv, and locally you should
+#    already be on the same Python the rest of the project
+#    uses.
+#
+# 4. .pre-commit-config.yaml itself is linted by
+#    pre-commit-hooks' check-yaml + end-of-file-fixer.
+
+# Minimum pre-commit version. v3.5+ for `language: system`
+# and stages support.
+minimum_pre_commit_version: "3.5.0"
+
+# Fail fast on the first failing hook per file; fast iteration
+# when ruff-format mangles a file.
+fail_fast: false
+
+# Default stages. `pre-commit` runs on `pre-commit` (the
+# "git commit" hook) and `manual` (when you `pre-commit run`).
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  # ------------------------------------------------------------------
+  # 1. Generic repo hygiene
+  # ------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Markdown and the bash runbook keep trailing
+        # double-space for line breaks; don't mangle them.
+        args: [--markdown-linebreak-ext=md]
+        exclude: |
+          (?x)^(
+            .*\.md
+          )$
+
+      - id: end-of-file-fixer
+        # systemd unit files and shell scripts are exact;
+        # the linter will yell if a newline is added wrongly.
+        # We keep end-of-file-fixer OFF for those.
+        exclude: |
+          (?x)^(
+            .*\.service |
+            .*\.timer |
+            .*\.target
+          )$
+
+      - id: check-yaml
+        # Allow multiple documents (mkdocs.yml can use them).
+        args: [--allow-multiple-documents]
+
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        # 2 MB cap; a real reason to commit > 2MB is almost
+        # always "use git-lfs instead".
+        args: [--maxkb=2048]
+
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+      - id: mixed-line-ending
+        # Force LF on text files we touch on Windows; the
+        # .gitattributes (or autocrlf) decides the rest.
+        args: [--fix=lf]
+        exclude: |
+          (?x)^(
+            .*\.bat |
+            .*\.cmd |
+            .*\.ps1
+          )$
+
+  # ------------------------------------------------------------------
+  # 2. Ruff (Python) — mirrors CI `lint` job
+  # ------------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      # Linter: catches E/F/I/B/SIM/NPY/UP/N violations
+      # (matches pyproject.toml [tool.ruff.lint].select).
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+
+      # Formatter: matches `ruff format` from CI. ``--check``
+      # makes it fail-on-dirty without rewriting (we want the
+      # formatter to run on a clean checkout).
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # ------------------------------------------------------------------
+  # 3. Local scanners that already run in CI
+  # ------------------------------------------------------------------
+  - repo: local
+    hooks:
+      # Silent-fail scanner (Round #1059). CI runs this with
+      # --strict; locally we run without --strict so an
+      # intentional, UN-triaged finding is allowed but printed.
+      - id: silent-fails-scan
+        name: Silent-fail scanner (informational)
+        entry: python scripts/find_silent_fails.py
+        language: system
+        types: [python]
+        # 8 MB PyYAML-safe regex set still scans fast.
+        pass_filenames: false
+        # Scan the whole src/ tree in one go.
+        args: [src/getrich]
+
+      # PG migration linter (kept separate from the
+      # clickhouse linter since their SQL dialects differ).
+      - id: pg-migrations-lint
+        name: PG migration linter
+        entry: python scripts/lint_migrations.py
+        language: system
+        files: ^migrations/.*\.sql$
+        pass_filenames: false
+        args: [migrations/]
+
+      # ClickHouse migration linter (Round #1150).
+      - id: clickhouse-migrations-lint
+        name: ClickHouse migration linter
+        entry: python scripts/lint_clickhouse_migrations.py
+        language: system
+        files: ^migrations/clickhouse/.*\.sql$
+        pass_filenames: false
+        args: [migrations/clickhouse/]
+
+  # ------------------------------------------------------------------
+  # 4. Frontend (npm) — mirrors CI `frontend` job lint step
+  # ------------------------------------------------------------------
+  # We use the local frontend node_modules to avoid pulling
+  # the same deps twice. ``language: system`` means you
+  # must have run `npm ci` once in frontend/.
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint (frontend)
+        entry: bash -c 'cd frontend && npm run lint --silent'
+        language: system
+        types_or: [javascript, jsx, ts, tsx]
+        # The custom `getrich/no-unsanitized-danger` rule
+        # lives in frontend/src/lib/eslint-plugin-*.cjs;
+        # no extra config needed.
+        pass_filenames: false
+
+      - id: tsc-no-emit
+        name: TypeScript type-check (no emit)
+        # `tsc -b --noEmit` is the same shape as
+        # `npm run build` minus the actual Vite bundle.
+        # We keep it separate so the type errors don't
+        # block on Vite plugin resolution.
+        entry: bash -c 'cd frontend && npx tsc -b --noEmit'
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false
+        # tsc is slow on cold cache; let it run without
+        # a hard timeout.
+        require_serial: true
+
+  # ------------------------------------------------------------------
+  # 5. Commit message hygiene
+  # ------------------------------------------------------------------
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.6.0
+    hooks:
+      - id: conventional-pre-commit
+        # Conventional Commits enforcement. Allowed types
+        # match the prefixes we've been using:
+        #   feat, fix, docs, style, refactor, perf, test,
+        #   build, ci, chore, revert
+        # The conventional-pre-commit default covers all
+        # of these; we keep the default scope handling
+        # (`feat(scope):` optional).
+        stages: [commit-msg]
+        args: []
