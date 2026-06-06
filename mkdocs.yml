@@ -71,7 +71,22 @@ plugins:
           paths: [src]
           options:
             docstring_style: google
-            show_source: true
+            # Round #1146: show_source: false globally. The
+            # previous default of true inlined the full source
+            # of every public class/function in the rendered HTML,
+            # which made ``docs/engine/api-reference/index.html``
+            # ~4.7MB and the full mkdocs site ~13MB. Users who
+            # need the source can click the [View Source] link
+            # (Material theme generates one from
+            # ``show_source: true`` per-directive if needed; we
+            # also enable it for the "top entry points" in
+            # engine/api-reference.md §1 for quick look-up).
+            # Default stays OFF — the per-symbol pages are
+            # 5-10x smaller, scroll much faster on mobile, and
+            # search engines index more of the actual docstring
+            # content (the inlined source was stealing relevance
+            # from the rendered parameter docs).
+            show_source: false
             show_root_heading: true
             show_root_full_path: false
             show_symbol_type_heading: true

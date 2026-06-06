@@ -44,13 +44,23 @@ from getrich_backtest import (
 )
 ```
 
+> **Round #1146 优化**：仅 4 个最常查阅的"顶层入口"类开启 `show_source: true`（读者在文档站里就能看到完整源码，省去跳转 GitHub 的时间）。其余 ~90 个 `:::` 指令默认 `show_source: false`，单页从 4.7MB 缩到 < 700KB（约 -85%），搜索也能更精确地命中 docstring 而非被源码噪声稀释。
+
 ::: getrich_backtest.Backtest
+    options:
+      show_source: true
 
 ::: getrich_backtest.RunConfig
+    options:
+      show_source: true
 
 ::: getrich_backtest.BarContext
+    options:
+      show_source: true
 
 ::: getrich_backtest.Context
+    options:
+      show_source: true
 
 ---
 
