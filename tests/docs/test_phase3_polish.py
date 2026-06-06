@@ -147,3 +147,198 @@ def test_execution_accounting_html_has_mermaid_state_diagram() -> None:
         f"none of the {len(pre_blocks)} Mermaid blocks is a stateDiagram; "
         f"first block starts: {pre_blocks[0][:80]!r}"
     )
+
+
+# ---------------------------------------------------------------- live-signal-pipeline (Round #1155)
+#
+# Round #1155 introduces ``docs/platform/live-signal-pipeline.md``: the
+# first end-to-end "1 tick" sequenceDiagram for the GetRich live
+# signal path (systemd timer → Celery worker → LiveDataProvider →
+# ClickHouse → LiveRiskMonitor → LiveSignalRunner → Strategy →
+# EvalSignalWriter → PostgreSQL signals table → AlertChannel). The
+# page is the platform-side companion to ``engine/live-signals.md``,
+# which is the engine-side walkthrough. Both pages link to each
+# other; this set of tests guards the platform page from regressing
+# back to prose ("...then this calls that...") and locks the
+# end-to-end actor set so a future refactor that drops one role
+# (e.g. removes the LiveRiskMonitor alt branch) fails loud.
+
+
+LIVE_PIPELINE_DOC = REPO_ROOT / "docs" / "platform" / "live-signal-pipeline.md"
+LIVE_PIPELINE_HTML = REPO_ROOT / "site" / "platform" / "live-signal-pipeline" / "index.html"
+
+
+def test_live_signal_pipeline_doc_exists() -> None:
+    """The page must be present and non-empty (catches accidental deletion)."""
+    assert LIVE_PIPELINE_DOC.is_file(), (
+        "docs/platform/live-signal-pipeline.md is missing — "
+        "the end-to-end live signal sequence diagram has no home"
+    )
+    text = LIVE_PIPELINE_DOC.read_text(encoding="utf-8")
+    assert len(text) > 2000, (
+        f"live-signal-pipeline.md is suspiciously short ({len(text)} chars); "
+        f"expected a full tick walkthrough (>2KB)"
+    )
+
+
+def test_live_signal_pipeline_uses_mermaid_sequence_diagram() -> None:
+    """§1 must be a ``sequenceDiagram`` (not a flowchart, not ASCII).
+
+    ASCII prose like ``Timer -> Worker -> LDP -> ...`` was the
+    pre-Round-#1155 state; it loses the swimlane clarity that
+    sequenceDiagram gives. A future regression to ASCII hides
+    the actor boundaries and breaks the §2 "8-step walkthrough"
+    that depends on the diagram numbering.
+    """
+    text = LIVE_PIPELINE_DOC.read_text(encoding="utf-8")
+    section_start = text.find("## 1. 全景")
+    assert section_start > 0, "§1 全景 section missing"
+    snippet = text[section_start : section_start + 4000]
+    assert "```mermaid" in snippet, (
+        "§1 全景 regressed to non-Mermaid. "
+        "Use a ```mermaid sequenceDiagram block (not ASCII / flowchart)."
+    )
+    assert "sequenceDiagram" in snippet, (
+        "§1 mermaid block must be a sequenceDiagram, not a stateDiagram or flowchart"
+    )
+
+
+def test_live_signal_pipeline_lists_all_actors() -> None:
+    """The sequence diagram must include the full actor set.
+
+    The 5 process / external actors are:
+    1. Timer (systemd)
+    2. Worker (Celery)
+    3. LiveDataProvider
+    4. ClickHouse
+    5. LiveRiskMonitor
+    6. LiveSignalRunner
+    7. Strategy (user code)
+    8. EvalSignalWriter
+    9. PostgreSQL signals table
+    10. AlertChannel (Log/Webhook/Email)
+
+    Dropping any one of these breaks the end-to-end story: the
+    page is the ONLY place in the docs that names all 10 actors
+    on one page (engine/live-signals.md only covers 5 of them).
+    """
+    text = LIVE_PIPELINE_DOC.read_text(encoding="utf-8")
+    section_start = text.find("## 1. 全景")
+    snippet = text[section_start : section_start + 4000]
+    expected_actors = [
+        "Timer",          # systemd
+        "Worker",         # Celery
+        "LiveDataProvider",
+        "ClickHouse",
+        "LiveRiskMonitor",
+        "LiveSignalRunner",
+        "Strategy",       # user code
+        "EvalSignalWriter",
+        "PostgreSQL",
+        "AlertChannel",   # Log/Webhook/Email
+    ]
+    missing = [a for a in expected_actors if a not in snippet]
+    assert not missing, (
+        f"§1 sequence diagram missing actors: {missing}. "
+        f"All 10 roles are required to tell the end-to-end story."
+    )
+
+
+def test_live_signal_pipeline_documents_alt_branch() -> None:
+    """The diagram must show the alerts/non-empty branch.
+
+    LiveRiskMonitor emits a RiskAlert; the alt branch proves the
+    alerts go to AlertChannel (Log/Webhook/Email) AND the signal
+    still lands in PostgreSQL with reason='ALERTED: ...'. Dropping
+    this branch hides the "告警是旁路" design point and makes
+    the page inconsistent with ``engine/live-signals.md``.
+    """
+    text = LIVE_PIPELINE_DOC.read_text(encoding="utf-8")
+    section_start = text.find("## 1. 全景")
+    snippet = text[section_start : section_start + 4000]
+    # Mermaid sequenceDiagram alt branch syntax: ``alt alerts == []``
+    assert "alt" in snippet, (
+        "§1 sequence diagram missing the alt branch for alerts. "
+        "Add: alt alerts == [] ... else alerts is non-empty ... end"
+    )
+    # And the explanatory Note about the旁路 (旁路 = bypass)
+    assert "旁路" in text or "ALERTED" in text, (
+        "Page must explain that alerts are a旁路 (bypass) channel "
+        "and signals still land in PG with reason='ALERTED: ...'"
+    )
+
+
+def test_live_signal_pipeline_links_to_engine_live_signals() -> None:
+    """The page must cross-link ``engine/live-signals.md``.
+
+    The two pages are the platform-side / engine-side companion
+    walkthroughs; breaking the link is the #1 way for new
+    contributors to duplicate content instead of linking.
+    """
+    text = LIVE_PIPELINE_DOC.read_text(encoding="utf-8")
+    assert "../engine/live-signals.md" in text, (
+        "live-signal-pipeline.md must cross-link to ../engine/live-signals.md "
+        "(the engine-side walkthrough). Add a link in §3-§6."
+    )
+
+
+def test_live_signal_pipeline_listed_in_mkdocs_nav() -> None:
+    """mkdocs.yml must register the page under 平台指南.
+
+    Without a nav entry the page is buildable but unreachable
+    from the left sidebar (mkdocs warns under --strict, but
+    the build still succeeds if the file exists in the source
+    tree). This guard prevents that.
+    """
+    cfg = yaml.load(MKDOCS.read_text(encoding="utf-8"), Loader=_MkdocsYamlLoader)
+    nav = cfg.get("nav", [])
+    # nav is a list of (title | dict) entries; flatten to find the page path
+    found = False
+    for entry in nav:
+        if not isinstance(entry, dict):
+            continue
+        for section in entry.values():
+            if not isinstance(section, list):
+                continue
+            for item in section:
+                if not isinstance(item, dict):
+                    continue
+                for value in item.values():
+                    if value == "platform/live-signal-pipeline.md":
+                        found = True
+                        break
+    assert found, (
+        "platform/live-signal-pipeline.md is not in mkdocs.yml nav. "
+        "Add it under 平台指南 (next to platform/architecture.md)."
+    )
+
+
+@pytest.mark.skipif(
+    not LIVE_PIPELINE_HTML.exists(),
+    reason="site/ not built; run `mkdocs build --strict` first",
+)
+def test_live_signal_pipeline_html_renders_sequence_diagram() -> None:
+    """The built HTML must contain a Mermaid sequenceDiagram source block.
+
+    Catches three regressions in one check:
+    1. The mkdoc build silently dropping the page
+    2. A directive typo that makes the sequenceDiagram not parse
+    3. The minifier stripping the ``<pre class=mermaid>`` wrapper
+    """
+    html = LIVE_PIPELINE_HTML.read_text(encoding="utf-8")
+    assert "sequenceDiagram" in html, (
+        "sequenceDiagram source not in built page — "
+        "did the §1 mermaid block fail to render?"
+    )
+    pre_blocks = re.findall(r'<pre class=mermaid><code>([^<]+)', html)
+    assert pre_blocks, (
+        "no <pre class=mermaid><code> block in built page; "
+        "Mermaid source missing from build output"
+    )
+    seq_blocks = [b for b in pre_blocks if "sequenceDiagram" in b]
+    assert seq_blocks, (
+        f"none of the {len(pre_blocks)} Mermaid blocks is a sequenceDiagram; "
+        f"the live signal flow is not visualized. "
+        f"First block starts: {pre_blocks[0][:80]!r}"
+    )
+

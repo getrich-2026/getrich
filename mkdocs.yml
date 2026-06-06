@@ -226,6 +226,7 @@ nav:
       - "60 客户端接口": design-contracts/60-client-api.md
   - 平台指南:
       - 架构总览（Phase 2）: platform/architecture.md
+      - 实盘信号流水线: platform/live-signal-pipeline.md
       - Web API: platform/api-reference.md
       - Web 前端（Phase 2）: platform/web-ui.md
   - 运维指南:
