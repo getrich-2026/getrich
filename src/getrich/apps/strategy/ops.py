@@ -109,6 +109,9 @@ def _sync_progress_adapter(
             asyncio.run_coroutine_threadsafe(progress_cb(pct), loop)
         except Exception:  # noqa: BLE001
             # Loop closed or other scheduling failure: log once and move on.
+            # silent-fail-ok: the progress callback is best-effort;
+            # a closed loop means we're shutting down anyway, and
+            # the engine has already produced the data we care about.
             logger.exception("failed to schedule progress update (%d/%d)", done, total)
 
     return _adapter

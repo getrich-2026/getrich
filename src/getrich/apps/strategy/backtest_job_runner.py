@@ -475,6 +475,10 @@ class BacktestJobRunner:
             try:
                 await self.store.update_progress(job_id, value)
             except Exception:  # noqa: BLE001
+                # silent-fail-ok: progress reporting is best-effort —
+                # a transient DB error here must not abort the
+                # actual backtest (the runner's _cb only affects
+                # the progress bar in the UI, not the result).
                 logger.exception("update_progress failed for job %s", job_id)
 
         return _cb

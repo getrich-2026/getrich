@@ -90,6 +90,9 @@ class AccountStateLoader:
             if row is not None:
                 return row["sub_account_id"]
         except Exception:
+            # silent-fail-ok: sub_account_mapping table is optional
+            # — fall back to global account id=1 (the function's
+            # documented default when no per-strategy routing exists).
             logger.debug(
                 "strategy_sub_account_mapping table not available, "
                 "falling back to global account id=1"

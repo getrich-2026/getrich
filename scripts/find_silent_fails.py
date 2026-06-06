@@ -1,34 +1,60 @@
 """Static analyzer for silent-failure patterns in try/except blocks.
 
-Walks the source tree looking for try/except blocks whose
-handler ONLY logs (no `return` / `raise` / explicit
-recovery). These are the most common silent-failure
-shape: an exception fires, gets logged, and the function
-returns as if nothing happened.
+Walks the source tree looking for ``try``/``except`` blocks whose
+handler ONLY logs (no ``return`` / ``raise`` / explicit recovery).
+These are the most common silent-failure shape: an exception
+fires, gets logged, and the function returns as if nothing happened.
 
-The scanner is intentionally permissive: it surfaces
-EVERY try/except that only logs. The operator must
-then triage the result, because most of them are
-intentional ("best effort" cleanups, fallbacks to a
-sane default, etc.). A second pass — the triage pass —
-classifies each finding as:
+The scanner is intentionally permissive: it surfaces EVERY
+try/except that only logs. The operator must then triage the
+result, because most of them are intentional ("best effort"
+cleanups, fallbacks to a sane default, etc.). A second pass —
+the triage pass — classifies each finding as:
 
-  * P0   — caller would want the failure propagated
-  * OK   — intentional "log + continue" (cleanup,
-            config fallback, optional import)
+  * P0              — caller would want the failure propagated
+  * OK              — intentional "log + continue" (cleanup,
+                       config fallback, optional import)
+
+Implementation
+--------------
+Round #1141: switched from regex + manual line-walking to Python's
+:mod:`ast` module. AST mode correctly handles:
+
+* **Nested try/except.** Each :class:`ast.Try` is walked once
+  (via :func:`ast.walk`) and yields ONE finding per handler.
+  The legacy scanner iterated line-by-line with indent-based
+  heuristics and could mis-classify inner try bodies as part of
+  the outer try's body.
+* **Handlers longer than 8 lines.** The legacy scanner capped
+  the handler body capture at 8 non-empty lines. A real-world
+  30-line handler with a single ``log.warning()`` at the top and
+  no other statements would be silently miscounted as "OK"
+  because the side-effect scan never saw the bottom of the
+  handler. AST gives us the full structured body.
+* **Indentation quirks.** Tabs vs spaces, line continuations,
+  multi-line statements, decorators, etc. The legacy scanner's
+  indent-based stop condition (``if not lines[k].startswith(...)``)
+  was fragile. AST doesn't care about whitespace.
+* **PEP 654 ``except*:``** is recognized when running on 3.11+.
 
 Suppression
 -----------
-A finding is suppressed (skipped) when a comment on the
-line right after the ``except:`` matches::
+A finding is suppressed (skipped) when a comment on the 4
+non-blank lines BEFORE *or* AFTER the ``except:`` matches::
 
     # silent-fail-ok: <reason>
 
-The reason is a free-form string. Use the comment to
-document WHY the swallow is intentional (e.g. "best-effort
-resample", "SMTP teardown — process is exiting"). The
-suppression makes the operator's intent visible at the
-call site and survives a code review.
+The reason is a free-form string. Use the comment to document
+WHY the swallow is intentional (e.g. "best-effort resample",
+"SMTP teardown — process is exiting"). The suppression makes
+the operator's intent visible at the call site and survives a
+code review.
+
+The suppression check itself is still a line-based scan (4
+lines before / 4 after the ``except:``) because the comment is
+a pure-lexical artifact — there's no AST shape for "a comment
+adjacent to this node". We use the handler's :attr:`lineno` as
+the anchor and walk the source lines from there.
 
 Modes
 -----
@@ -41,10 +67,12 @@ Modes
 from __future__ import annotations
 
 import argparse
+import ast
 import pathlib
 import re
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 
 ROOT = pathlib.Path("src/getrich")
@@ -69,6 +97,12 @@ VENDORED_DIR_PREFIXES = (
 # swallowed — the handler has observable side effects
 # (state mutation, control flow, network I/O, ...). We
 # flag such handlers as LIKELY_OK to reduce false positives.
+#
+# The check runs against :func:`ast.unparse` of the handler
+# body (not raw source lines), so the matches are exact token
+# boundaries. The leading/trailing space in some tokens is
+# preserved to avoid partial matches (e.g. ``return`` vs
+# ``return_value``).
 SIDE_EFFECT_TOKENS = (
     "self.",
     "return ",  # space to avoid matching `return_value`
@@ -93,6 +127,12 @@ SIDE_EFFECT_TOKENS = (
     "_warn(",
 )
 
+# ``ast.TryStar`` (PEP 654 ``except*:``) is a 3.11+ node.
+# Probe the attribute so the scanner keeps running on 3.10.
+_TRY_NODE_TYPES: tuple[type[ast.AST], ...] = (ast.Try,)
+if hasattr(ast, "TryStar"):
+    _TRY_NODE_TYPES = _TRY_NODE_TYPES + (ast.TryStar,)
+
 
 @dataclass
 class Finding:
@@ -107,71 +147,197 @@ class Finding:
 
 
 def scan_file(path: pathlib.Path) -> list[Finding]:
-    """Return suspicious try/except blocks in `path`."""
+    """Return suspicious try/except blocks in ``path``.
+
+    Parses the file with :mod:`ast` and walks every
+    :class:`ast.Try` / :class:`ast.TryStar` node (recursively,
+    via :func:`ast.walk`). Each handler on each ``try`` becomes
+    one finding — so a single ``try`` with three ``except``
+    clauses produces three findings, and a nested ``try``
+    inside a handler produces a separate finding for the
+    inner ``try``'s handlers.
+    """
     text = path.read_text(encoding="utf-8")
     lines = text.split("\n")
+    try:
+        tree = ast.parse(text, filename=str(path))
+    except SyntaxError:
+        # Unparseable — leave for the type checker / ruff / CI lint.
+        # A silent-fail scan that crashes the build on broken syntax
+        # would mask the real lint failure.
+        return []
+
+    rel = str(path).replace("\\", "/")
+    is_vendored = any(rel.startswith(p) for p in VENDORED_DIR_PREFIXES)
     findings: list[Finding] = []
-    i = 0
-    while i < len(lines):
-        m = re.match(r"^(\s*)try:\s*$", lines[i])
-        if not m:
-            i += 1
+
+    for try_node in ast.walk(tree):
+        if not isinstance(try_node, _TRY_NODE_TYPES):
             continue
-        base_indent = m.group(1)
-        body_indent = base_indent + "    "
-        # Find the matching `except` at base_indent level. Walk past
-        # blank lines, comments (suppression markers are commonly
-        # placed at base_indent, NOT body_indent), and the try body.
-        # Stop at the first structural line (except/else/finally) or
-        # a dedent below body_indent.
-        j = i + 1
-        while j < len(lines):
-            stripped = lines[j].lstrip()
-            if not stripped or stripped.startswith("#"):
-                j += 1
-                continue
-            if lines[j].startswith(body_indent):
-                j += 1
-                continue
-            break
-        if j >= len(lines) or not lines[j].lstrip().startswith("except"):
-            i += 1
-            continue
-        # Capture the handler body (everything indented past
-        # the `except` line, up to 8 non-empty lines).
-        k = j + 1
-        handler_non_empty: list[str] = []
-        while k < len(lines) and len(handler_non_empty) < 8:
-            if lines[k].strip():
-                handler_non_empty.append(lines[k])
-                # Stop at first line at or below the base indent
-                if not lines[k].startswith(base_indent + " "):
-                    break
-            k += 1
-        handler_text = "\n".join(handler_non_empty)
-        # If the handler doesn't return/raise, the exception
-        # is "absorbed" — the function continues past the
-        # try block as if the body succeeded.
-        if "return" not in handler_text and "raise" not in handler_text:
-            first = handler_non_empty[0] if handler_non_empty else "<empty>"
-            rel = str(path).replace("\\", "/")
-            is_vendored = any(rel.startswith(p) for p in VENDORED_DIR_PREFIXES)
-            is_likely_ok = any(tok in handler_text for tok in SIDE_EFFECT_TOKENS)
-            is_suppressed, reason = _check_suppression(lines, j)
-            findings.append(
-                Finding(
-                    file=str(path),
-                    try_line=i + 1,
-                    except_line=lines[j].strip(),
-                    first_handler_line=first,
-                    is_vendored=is_vendored,
-                    is_likely_ok=is_likely_ok,
-                    is_suppressed=is_suppressed,
-                    suppression_reason=reason,
-                )
+        for handler in try_node.handlers:
+            finding = _make_finding(
+                path=path,
+                try_node=try_node,
+                handler=handler,
+                lines=lines,
+                is_vendored=is_vendored,
             )
-        i = j + 1
+            if finding is not None:
+                findings.append(finding)
     return findings
+
+
+def _make_finding(
+    *,
+    path: pathlib.Path,
+    try_node: ast.Try | ast.TryStar,
+    handler: ast.ExceptHandler,
+    lines: list[str],
+    is_vendored: bool,
+) -> Finding | None:
+    """Build a single :class:`Finding` from one handler, or
+    ``None`` if the handler has an observable outcome
+    (return / raise / break / continue / yield)."""
+    body = handler.body
+    if _has_observable_outcome(body):
+        # Handler returns / re-raises / breaks out of the loop.
+        # Not a silent fail — the caller (or the loop) sees it.
+        return None
+
+    handler_text = _flatten_body(body)
+    is_likely_ok = (
+        any(tok in handler_text for tok in SIDE_EFFECT_TOKENS)
+        or _has_state_mutation(body)
+    )
+    # `handler.lineno` is 1-indexed (Python AST convention);
+    # `_check_suppression` takes 0-indexed.
+    is_suppressed, reason = _check_suppression(lines, handler.lineno - 1)
+    return Finding(
+        file=str(path),
+        try_line=try_node.lineno,
+        except_line=_format_handler_header(handler),
+        first_handler_line=_first_handler_line(handler, lines),
+        is_vendored=is_vendored,
+        is_likely_ok=is_likely_ok,
+        is_suppressed=is_suppressed,
+        suppression_reason=reason,
+    )
+
+
+def _has_observable_outcome(body: list[ast.stmt]) -> bool:
+    """``True`` if any statement in ``body`` would re-raise, return,
+    or otherwise let the caller observe the exception (or branch
+    around it).
+
+    ``ast.Pass`` and ``ast.Expr`` (a bare expression like a log call)
+    are NOT observable — they are the silent-fail shape we want
+    to surface.
+    """
+    if not body:
+        # Empty handler (`except: pass` is implicit). That's the
+        # canonical silent-fail — surface it.
+        return False
+    # Walk the entire body. The body is a list of top-level
+    # statements, so we wrap in a Module node for ast.walk.
+    module = ast.Module(body=body, type_ignores=[])
+    for node in ast.walk(module):
+        if isinstance(
+            node, (ast.Return, ast.Raise, ast.Break, ast.Continue, ast.Yield, ast.YieldFrom)
+        ):
+            return True
+    return False
+
+
+def _has_state_mutation(body: list[ast.stmt]) -> bool:
+    """``True`` if the handler body mutates any local / module-level
+    / instance state via assignment.
+
+    This is the AST-structural replacement for the literal-value
+    pattern matching in ``SIDE_EFFECT_TOKENS`` (e.g. `` = 100``,
+    `` = None``). The regex list is brittle — every new fallback
+    value requires a new entry. AST catches ALL assignments
+    uniformly:
+
+    * ``x = 1``               → ast.Assign
+    * ``a, b = 1, 2``         → ast.Assign with Tuple target
+    * ``x += 1``              → ast.AugAssign
+    * ``self.conn = None``    → ast.Assign with Attribute target
+                               (already caught by ``self.`` token
+                               but we include for completeness)
+
+    The check intentionally does NOT consider ``x = compute()``
+    separately from ``x = 1`` — both are observable state
+    mutations from the caller's perspective (and ``x = compute()``
+    also implies a function call, which is itself a side effect).
+    """
+    if not body:
+        return False
+    module = ast.Module(body=body, type_ignores=[])
+    for node in ast.walk(module):
+        # ast.Assign covers plain = and tuple/list unpacking
+        # (the targets list contains Tuple/List nodes).
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            return True
+    return False
+
+
+def _flatten_body(body: list[ast.stmt]) -> str:
+    """Unparse a handler body to a single text string for token scanning.
+
+    Falls back to per-statement unparse if the whole-body unparse
+    fails (e.g. some :class:`ast.Match` shapes on 3.10).
+    """
+    if not body:
+        return ""
+    try:
+        return ast.unparse(ast.Module(body=body, type_ignores=[]))
+    except Exception:
+        chunks: list[str] = []
+        for stmt in body:
+            try:
+                chunks.append(ast.unparse(stmt))
+            except Exception:
+                chunks.append("<unparseable>")
+        return "\n".join(chunks)
+
+
+def _format_handler_header(handler: ast.ExceptHandler) -> str:
+    """Render ``except [TYPE] [as NAME]:`` for the report.
+
+    Bare ``except:`` renders as just ``except:`` (no type, no name).
+    The colon is always glued to the preceding token (no space)
+    so the report matches what an actual Python source line would
+    look like (``except Exception:``, not ``except Exception :``).
+    """
+    parts = ["except"]
+    if handler.type is not None:
+        try:
+            type_text = ast.unparse(handler.type)
+        except Exception:
+            type_text = "<unparseable>"
+        parts.append(type_text.strip())
+    if handler.name is not None:
+        parts.append(f"as {handler.name}")
+    # Join everything except the trailing colon with spaces, then
+    # concatenate the colon directly so there's no space before it.
+    return " ".join(parts) + ":"
+
+
+def _first_handler_line(handler: ast.ExceptHandler, lines: list[str]) -> str:
+    """First non-empty source line of the handler body, for the report.
+
+    The legacy scanner reported ``<empty>`` for empty handlers, which
+    is what we keep here. (Empty handler body is rare in practice —
+    Python inserts an implicit ``pass`` — but the AST still gives us
+    a 0-length body, so we handle it gracefully.)
+    """
+    if not handler.body:
+        return "<empty handler>"
+    start = handler.body[0].lineno
+    for i in range(start - 1, min(start + 8, len(lines))):
+        if 0 <= i < len(lines) and lines[i].strip():
+            return lines[i].strip()
+    return "<empty handler>"
 
 
 def _check_suppression(lines: list[str], except_line: int) -> tuple[bool, str | None]:

@@ -268,6 +268,225 @@ def test_scan_file_pure_log_is_p0_review(scanner, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# scan_file — AST-specific capabilities (Round #1141 regression tests)
+# ---------------------------------------------------------------------------
+
+
+def test_scan_file_nested_try_yields_two_findings(scanner, tmp_path):
+    """A nested ``try`` inside a handler is a separate finding.
+
+    The legacy regex scanner walked line-by-line and the inner
+    ``try`` was either double-counted or missed depending on
+    indentation quirks. AST mode correctly walks both — the outer
+    handler swallows (no return/raise), and the inner handler
+    also swallows. Two P0_REVIEW findings, one per handler.
+    """
+    p = _write(
+        tmp_path,
+        (
+            "def outer():\n"
+            "    try:\n"
+            "        do_thing()\n"
+            "    except Exception:\n"
+            "        try:\n"
+            "            recover()\n"
+            "        except Exception:\n"
+            "            pass\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 2
+    # Both are un-suppressed pure-passes (silent fails).
+    assert all(f.is_likely_ok is False for f in findings)
+    assert all(f.is_suppressed is False for f in findings)
+    # Both are at different try_line values (outer @ 2, inner @ 5).
+    assert findings[0].try_line == 2
+    assert findings[1].try_line == 5
+    assert findings[0].try_line < findings[1].try_line
+
+
+def test_scan_file_handler_longer_than_8_lines(scanner, tmp_path):
+    """A handler body of 20 lines is fully captured.
+
+    The legacy scanner capped handler body capture at 8 non-empty
+    lines. A real-world long handler with a single ``log.warning``
+    at line 1 and a 19-line side-effect at the bottom would have
+    been mis-classified because the side-effect never entered the
+    text used for the SIDE_EFFECT_TOKENS check. AST mode walks
+    the full structured body — no line cap.
+    """
+    body = "\n".join(f"        line_{i} = {i}" for i in range(20))
+    p = _write(
+        tmp_path,
+        (
+            "def f():\n"
+            "    try:\n"
+            "        do_thing()\n"
+            "    except Exception:\n"
+            f"{body}\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 1
+    # All 20 `line_N = N` assignments are state mutations, so
+    # the handler is LIKELY_OK (not a silent fail).
+    assert findings[0].is_likely_ok is True
+
+
+def test_scan_file_return_after_handler_not_counted(scanner, tmp_path):
+    """Regression test for the account_loader.py:82 false negative.
+
+    The legacy scanner's "capture up to 8 non-empty lines after
+    except:" heuristic would include a ``return 1`` line from
+    AFTER the handler body (same indent as ``try:``) and
+    mis-classify the handler as LIKELY_OK (has 'return ' token).
+    AST mode uses structural boundaries: only statements inside
+    the ``handler.body`` count.
+    """
+    p = _write(
+        tmp_path,
+        (
+            "def resolve():\n"
+            "    try:\n"
+            "        fetch_mapping()\n"
+            "    except Exception:\n"
+            "        log.debug('mapping table missing')\n"
+            "    return 1\n"  # same indent as try: — NOT in the handler
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 1
+    # The `return 1` is at the function level, not the handler level.
+    # The handler is a pure log → silent fail → P0_REVIEW.
+    assert findings[0].is_likely_ok is False
+    assert findings[0].is_suppressed is False
+
+
+def test_scan_file_detects_tuple_unpacking_state_mutation(scanner, tmp_path):
+    """``a, b = 1, 2`` is state mutation even though it doesn't
+    match any literal-value SIDE_EFFECT_TOKEN (e.g. `` = 100``).
+
+    AST mode catches this via ``ast.Assign`` with a ``Tuple``
+    target. The legacy scanner would have flagged it as P0_REVIEW
+    because no token in the literal-value list matched.
+    """
+    p = _write(
+        tmp_path,
+        (
+            "def cfg():\n"
+            "    try:\n"
+            "        int(value_str)\n"
+            "    except (TypeError, ValueError):\n"
+            "        min_size, max_size = 2, 20\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 1
+    assert findings[0].is_likely_ok is True
+
+
+def test_scan_file_aug_assign_is_state_mutation(scanner, tmp_path):
+    """``x += 1`` is also a state mutation (``ast.AugAssign``)."""
+    p = _write(
+        tmp_path,
+        (
+            "def counter():\n"
+            "    try:\n"
+            "        do_thing()\n"
+            "    except Exception:\n"
+            "        counter.x += 1\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 1
+    assert findings[0].is_likely_ok is True
+
+
+def test_scan_file_empty_handler_is_p0_review(scanner, tmp_path):
+    """``except: pass`` (implicit empty body) is the canonical
+    silent-fail and should land in P0_REVIEW. AST mode reports
+    an empty body as a finding; the legacy scanner skipped it."""
+    p = _write(
+        tmp_path,
+        (
+            "def f():\n"
+            "    try:\n"
+            "        do_thing()\n"
+            "    except Exception:\n"
+            "        pass\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 1
+    assert findings[0].is_likely_ok is False
+    assert findings[0].is_suppressed is False
+
+
+@pytest.mark.skipif(not hasattr(__import__("ast"), "TryStar"), reason="PEP 654 except* requires Python 3.11+")
+def test_scan_file_detects_try_star_handler(scanner, tmp_path):
+    """PEP 654 ``except*`` (Python 3.11+) is recognized by the
+    scanner via ``ast.TryStar``."""
+    p = _write(
+        tmp_path,
+        (
+            "def f():\n"
+            "    try:\n"
+            "        do_thing()\n"
+            "    except* ValueError as eg:\n"
+            "        log.warning('group failed')\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 1
+    assert findings[0].except_line.startswith("except*")
+
+
+def test_scan_file_format_handler_header_no_trailing_space(scanner, tmp_path):
+    """The report's ``except_line`` should be ``except Exception:`` —
+    no space before the colon. Regression for an ``ast.unparse``
+    formatting artifact."""
+    p = _write(
+        tmp_path,
+        (
+            "def f():\n"
+            "    try:\n"
+            "        do_thing()\n"
+            "    except Exception:\n"
+            "        log.error('boom')\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    assert len(findings) == 1
+    assert findings[0].except_line == "except Exception:"
+
+
+def test_scan_file_multiple_handlers_yield_multiple_findings(scanner, tmp_path):
+    """A single ``try`` with N ``except`` clauses produces N
+    findings — one per handler. Each is independently classified."""
+    p = _write(
+        tmp_path,
+        (
+            "def f():\n"
+            "    try:\n"
+            "        do_thing()\n"
+            "    except ValueError:\n"
+            "        log.warning('value error')\n"
+            "    except TypeError:\n"
+            "        raise\n"  # observable — not a silent fail
+            "    except Exception:\n"
+            "        log.error('fallback')\n"
+        ),
+    )
+    findings = scanner.scan_file(p)
+    # ValueError and Exception handlers both swallow (P0_REVIEW).
+    # TypeError re-raises, so it's not a finding.
+    assert len(findings) == 2
+    except_types = {f.except_line for f in findings}
+    assert "except ValueError:" in except_types
+    assert "except Exception:" in except_types
+
+
+# ---------------------------------------------------------------------------
 # classify
 # ---------------------------------------------------------------------------
 
