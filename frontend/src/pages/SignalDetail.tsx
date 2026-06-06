@@ -216,6 +216,7 @@ export default function SignalDetailPage() {
         </div>
         <button
           onClick={() => navigate(-1)}
+          aria-label="Back"
           style={{
             marginTop: 12,
             padding: "6px 16px",

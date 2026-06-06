@@ -32,7 +32,12 @@ from celery import shared_task
 
 from getrich.apps.strategy.backtest_job_runner import BacktestJobRunner
 from getrich.apps.strategy.ops import get_op_for_job_type
-from getrich.apps.worker.lifespan import close_pg_pool, init_pg_pool
+from getrich.apps.worker.lifespan import (
+    close_cancel_listener,
+    close_pg_pool,
+    init_cancel_listener,
+    init_pg_pool,
+)
 from getrich.config.settings import make_pg_dsn, settings
 from getrich_backtest.job_persistence import PgBacktestJobStore
 
@@ -57,6 +62,13 @@ def _run_job_sync(job_id: str) -> dict[str, Any]:
     closed around the runner call so a failed task doesn't leak
     pool resources on a long-lived worker child.
 
+    Round #1080 P0.1: also opens/closes the
+    :class:`WorkerCancelListener` so the per-trial ``is_cancelled``
+    probe is push-driven (in-memory) instead of a per-trial DB
+    read. The listener is best-effort — if ``start()`` fails, the
+    probe falls back to the DB read on every trial (still correct,
+    just slower).
+
     Parameters
     ----------
     job_id : str
@@ -69,6 +81,7 @@ def _run_job_sync(job_id: str) -> dict[str, Any]:
         ``job_id``, ``final_status``, ``error``.
     """
     init_pg_pool()
+    init_cancel_listener()
     try:
 
         async def _go() -> dict[str, Any]:
@@ -94,6 +107,7 @@ def _run_job_sync(job_id: str) -> dict[str, Any]:
 
         return asyncio.run(_go())
     finally:
+        close_cancel_listener()
         close_pg_pool()
 
 

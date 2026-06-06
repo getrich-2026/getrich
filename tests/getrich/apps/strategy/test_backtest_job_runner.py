@@ -426,6 +426,168 @@ def test_runner_treats_op_cancelled_dict_as_cancellation() -> None:
     assert store.mark_failed_calls == []
 
 
+# ---------------- WorkerCancelListener integration (Round #1080) ----------------
+
+
+def test_runner_consults_cancel_listener_before_db_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round #1080 P0.1: when the worker cancel listener is
+    running, the runner's probe must consult the in-memory set
+    first. If the listener has the job_id, the probe returns
+    True *without* calling the DB probe — the listener is the
+    source of truth and the DB read is just the safety net.
+    """
+    from getrich.apps.worker import cancel_listener
+
+    # Force the listener singleton to a known state — a started
+    # listener that has a "this job is cancelled" entry in the set.
+    listener = cancel_listener.WorkerCancelListener()
+    listener._running = True
+    listener._unsafe_mark("job-listener-wins")
+    monkeypatch.setattr(cancel_listener, "_LISTENER", listener)
+
+    db_probe_calls: list[str] = []
+
+    def _tracking_db_probe(job_id: str, *, conninfo: str) -> bool:
+        db_probe_calls.append(job_id)
+        return False  # Listener is the source of truth — DB must NOT be consulted.
+
+    monkeypatch.setattr(
+        "getrich_backtest.job_persistence.sync_is_cancelled_status",
+        _tracking_db_probe,
+    )
+
+    seen: list[bool] = []
+
+    class _ProbeOp:
+        async def __call__(self, job: dict[str, Any]) -> dict[str, Any] | None:
+            seen.append(job["_is_cancelled"]())
+            return None
+
+    store = _FakeStore(queued=[_make_job("job-listener-wins")])
+    runner = BacktestJobRunner(store, _ProbeOp(), sleep_seconds=0, db_conninfo="x")
+    _run(runner.run_once())
+
+    # The probe returned True because the listener flipped the
+    # in-memory set, even though the DB probe would have
+    # returned False.
+    assert seen == [True]
+    # The DB probe is NOT called when the listener has the
+    # job_id — that is the optimization Round #1080 P0.1 ships.
+    # The DB probe is only invoked when the listener is silent
+    # (no entry for the job_id) AND the listener is running
+    # (so we know we couldn't have missed a notify by virtue of
+    # the listener not being up).
+    assert db_probe_calls == []
+    # Cleanup.
+    listener._running = False
+    listener._unsafe_clear()
+
+
+def test_runner_falls_back_to_db_when_listener_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the listener is running but has NOT seen a NOTIFY
+    for the job_id, the runner falls back to the DB read. This
+    is the safety-net path for a missed notify (PG restart
+    between commit and listener startup, listener conn dropped
+    mid-NOTIFY, etc.).
+    """
+    from getrich.apps.worker import cancel_listener
+
+    # Listener is up, but the in-memory set is empty — the
+    # notify hasn't been seen yet (or the cancel happened
+    # before the listener started).
+    listener = cancel_listener.WorkerCancelListener()
+    listener._running = True
+    listener._unsafe_clear()
+    monkeypatch.setattr(cancel_listener, "_LISTENER", listener)
+
+    monkeypatch.setattr(
+        "getrich_backtest.job_persistence.sync_is_cancelled_status",
+        lambda _job_id, *, conninfo: True,  # DB has the cancel
+    )
+
+    seen: list[bool] = []
+
+    class _ProbeOp:
+        async def __call__(self, job: dict[str, Any]) -> dict[str, Any] | None:
+            seen.append(job["_is_cancelled"]())
+            return None
+
+    store = _FakeStore(queued=[_make_job("job-missed-notify")])
+    runner = BacktestJobRunner(store, _ProbeOp(), sleep_seconds=0, db_conninfo="x")
+    _run(runner.run_once())
+
+    # The DB read picked up the cancel the listener missed.
+    assert seen == [True]
+    # Cleanup.
+    listener._running = False
+
+
+def test_runner_falls_back_to_db_when_listener_unstarted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the listener singleton is not running (the in-process
+    API fallback path, or a worker that hasn't called
+    ``init_cancel_listener`` yet), the probe must defer entirely
+    to the DB read.
+    """
+    from getrich.apps.worker import cancel_listener
+
+    # Default state: ``_LISTENER`` is None or ``_running`` is False.
+    # The runner's probe closure should still work — it will
+    # short-circuit on the ``_running`` check and fall through
+    # to the DB read.
+    monkeypatch.setattr(cancel_listener, "_LISTENER", None)
+
+    monkeypatch.setattr(
+        "getrich_backtest.job_persistence.sync_is_cancelled_status",
+        lambda _job_id, *, conninfo: False,
+    )
+
+    seen: list[bool] = []
+
+    class _ProbeOp:
+        async def __call__(self, job: dict[str, Any]) -> dict[str, Any] | None:
+            seen.append(job["_is_cancelled"]())
+            return None
+
+    store = _FakeStore(queued=[_make_job("job-db-only")])
+    runner = BacktestJobRunner(store, _ProbeOp(), sleep_seconds=0, db_conninfo="x")
+    _run(runner.run_once())
+    assert seen == [False]
+
+
+def test_runner_probe_is_noop_when_no_db_conninfo_and_no_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty ``db_conninfo`` + no listener → constant ``False``.
+
+    The legacy in-process API path that opted out of cross-process
+    cancellation must still work: the probe is a no-op (returns
+    False on every call) and the op can still self-cancel via
+    ``return {"cancelled": True}``.
+    """
+    from getrich.apps.worker import cancel_listener
+
+    monkeypatch.setattr(cancel_listener, "_LISTENER", None)
+
+    seen: list[bool] = []
+
+    class _ProbeOp:
+        async def __call__(self, job: dict[str, Any]) -> dict[str, Any] | None:
+            seen.append(job["_is_cancelled"]())
+            return None
+
+    store = _FakeStore(queued=[_make_job("job-no-cancel")])
+    # db_conninfo default is "" — opt-out path.
+    runner = BacktestJobRunner(store, _ProbeOp(), sleep_seconds=0)
+    _run(runner.run_once())
+    assert seen == [False]
+
+
 # ---------------------------------------------------------------- progress throttling
 
 

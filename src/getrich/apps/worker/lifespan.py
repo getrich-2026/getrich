@@ -5,23 +5,28 @@ A Celery worker runs ``task`` functions in *worker child processes*
 
 1. A live async ``pg_pool`` (the runner uses async psycopg for its
    lifecycle writes).
-2. A clean teardown when the task finishes (or the worker dies).
+2. A long-lived cancel LISTEN connection (Round #1080) so the
+   runner's per-trial ``is_cancelled`` probe is push-driven
+   instead of per-trial DB-read.
+3. A clean teardown when the task finishes (or the worker dies).
 
-This module exposes :func:`init_pg_pool` and :func:`close_pg_pool`,
-small sync wrappers around the async :class:`PgConnectionPool` API,
-so the Celery tasks (which are *sync* — Celery's task body is not
-async) can drive the pool via ``asyncio.run``.
+This module exposes :func:`init_pg_pool`, :func:`close_pg_pool`,
+:func:`init_cancel_listener`, and :func:`close_cancel_listener` —
+small sync wrappers around the async :class:`PgConnectionPool` and
+:class:`WorkerCancelListener` APIs so the Celery tasks (which are
+*sync* — Celery's task body is not async) can drive them via
+``asyncio.run``.
 
 Why ``asyncio.run`` per call rather than one long-lived loop:
 
 * The runner is *itself* async, and :meth:`BacktestJobRunner.run_once`
   is invoked via ``asyncio.run`` inside ``_run_job_sync``. That call
-  already opens and closes its own loop. The pool needs to outlive
-  that loop, so we open it before the runner's ``asyncio.run`` and
-  close it after.
-* The pool is process-local. Each Celery child worker gets its own
-  pool; we open it lazily on the first task.
-* ``init`` is idempotent (a no-op if the pool is already open), so
+  already opens and closes its own loop. The pool and the cancel
+  listener need to outlive that loop, so we open them before the
+  runner's ``asyncio.run`` and close them after.
+* The pool and the listener are process-local. Each Celery child
+  worker gets its own; we open them lazily on the first task.
+* All ``init`` helpers are idempotent (no-op if already open), so
   the second call in the same process is cheap.
 """
 
@@ -59,3 +64,46 @@ def close_pg_pool() -> None:
     # to handle it).
     except Exception:  # noqa: BLE001
         logger.exception("pg_pool.close() failed during worker teardown")
+
+
+def init_cancel_listener() -> None:
+    """Open the worker's cancel LISTEN connection (Round #1080).
+
+    Idempotent: a second call without a matching ``close`` is a
+    no-op. Failure is logged and swallowed — the runner's probe
+    will fall back to the per-trial DB read on every call, which
+    is correct but slower. The operator sees a single WARNING in
+    the worker log, and the next reconnect attempt (driven by the
+    pump's exponential backoff) will pick up automatically if PG
+    recovers.
+    """
+    from getrich.apps.worker.cancel_listener import get_cancel_listener
+
+    listener = get_cancel_listener()
+    try:
+        asyncio.run(listener.start())
+    # silent-fail-ok: a failed LISTEN start is recoverable via the
+    # DB probe fallback (see ``BacktestJobRunner._make_is_cancelled_fn``).
+    # Logging the failure is enough — there is no caller to raise
+    # to (this is called from a sync Celery task body).
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "WorkerCancelListener.start() failed in worker process; "
+            "runner will fall back to per-trial DB read",
+        )
+
+
+def close_cancel_listener() -> None:
+    """Close the worker's cancel LISTEN connection, if open.
+
+    Idempotent. Best-effort: errors are logged but never raised —
+    teardown cannot fail in a way that has a caller to handle.
+    """
+    from getrich.apps.worker.cancel_listener import get_cancel_listener
+
+    listener = get_cancel_listener()
+    try:
+        asyncio.run(listener.stop())
+    # silent-fail-ok: see ``close_pg_pool`` — teardown is best-effort.
+    except Exception:  # noqa: BLE001
+        logger.exception("WorkerCancelListener.stop() failed during worker teardown")

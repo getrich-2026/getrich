@@ -330,20 +330,32 @@ class BacktestJobRunner:
     def _make_is_cancelled_fn(self, job_id: str) -> Callable[[], bool]:
         """Build a ``() -> bool`` cancel probe for this job.
 
-        When ``db_conninfo`` is set, the closure calls
-        :func:`sync_is_cancelled_status` — a short-lived sync psycopg
-        read against PostgreSQL. When empty (the in-process API
-        fallback or a unit test), it returns a constant ``False`` so
-        a job that opts out of cross-process cancellation is never
-        cancelled by the probe (the op can still self-cancel via
-        ``return {"cancelled": True}``).
+        Three-tier fallback (Round #1080 P0.1):
+
+        1. **WorkerCancelListener** — if started in this process
+           (the Celery worker path), the probe reads an in-memory
+           ``set`` populated by the LISTEN pump. O(1), no DB
+           round-trip, sub-microsecond latency from NOTIFY to
+           ``True``.
+        2. **DB read** — if the listener isn't running but
+           ``db_conninfo`` is set, fall back to
+           :func:`sync_is_cancelled_status` (a short-lived sync
+           psycopg ``SELECT status``). This is the safety net for
+           a missed notify (PG restart, listener not yet started
+           when the cancel was committed, etc.) and is the
+           default for callers without a listener (e.g. the
+           in-process API fallback path).
+        3. **Constant ``False``** — if neither is available (the
+           legacy empty-conninfo path or a test that opts out of
+           cross-process cancellation), the probe is a no-op. The
+           op can still self-cancel via ``return {"cancelled":
+           True}``.
 
         The closure is intentionally trivial: ops may call it from
         any thread (sync engine) or coroutine (async op).
         """
         if not self.db_conninfo:
             return lambda: False
-        conninfo = self.db_conninfo
         # Lazy import to break a circular import: ``getrich.apps.strategy``
         # is imported from ``getrich_backtest.job_persistence`` via the
         # ``getrich`` package __init__ chain, so the top-level
@@ -353,7 +365,31 @@ class BacktestJobRunner:
         # module is fully initialized by the time the runner runs.
         from getrich_backtest.job_persistence import sync_is_cancelled_status
 
+        # Likewise for the worker cancel listener — import here so
+        # the runner module can be imported in environments that do
+        # not have the worker app on the import path (e.g. unit
+        # tests that mock the runner).
+        try:
+            from getrich.apps.worker.cancel_listener import get_cancel_listener
+
+            listener = get_cancel_listener()
+        except Exception:  # noqa: BLE001 - any import failure → DB fallback
+            listener = None
+
+        conninfo = self.db_conninfo
+
         def _probe() -> bool:
+            # Tier 1: in-memory cancel set. The listener flips
+            # ``_running`` to True after a successful start and
+            # back to False after stop; reads outside that window
+            # short-circuit without consulting the lock.
+            if listener is not None and listener.is_cancelled(job_id):
+                return True
+            # Tier 2: DB read. Fails-open: any error returns False
+            # so a transient outage does not abort a healthy job
+            # (the runner's probe is best-effort; cancellation
+            # will be observed on the next trial boundary once the
+            # DB recovers).
             return sync_is_cancelled_status(job_id, conninfo=conninfo)
 
         return _probe

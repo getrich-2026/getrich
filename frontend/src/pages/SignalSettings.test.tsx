@@ -58,8 +58,13 @@ const FIXED_SETTINGS: UserSignalSettings = {
 };
 
 function wrapSettings(s: UserSignalSettings): ApiResponse<UserSignalSettings> {
-  return { code: 0, message: "ok", data: s, timestamp: 0, request_id: "test" }
-    as ApiResponse<UserSignalSettings>;
+  return {
+    code: 0,
+    message: "ok",
+    data: s,
+    timestamp: 0,
+    request_id: "test",
+  } as ApiResponse<UserSignalSettings>;
 }
 
 function renderPage() {
