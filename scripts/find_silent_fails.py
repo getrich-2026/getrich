@@ -190,16 +190,25 @@ def _check_suppression(lines: list[str], except_line: int) -> tuple[bool, str | 
     """
     candidates: list[int] = []
     # Before the except: walk backwards, skipping blanks.
+    # Each loop tracks its OWN count — they share the ``candidates``
+    # list but the cap is per-direction (4 above + 4 below = 8 total).
+    # Sharing the cap (the v1 bug) caused the AFTER loop to break on
+    # its first append whenever the BEFORE loop filled 4, so the
+    # most common annotation style — a one-line ``# silent-fail-ok:``
+    # comment directly under ``except:`` — was silently missed.
+    before_count = 0
     for offset in range(except_line - 1, max(except_line - 8, -1), -1):
         if lines[offset].strip():
             candidates.append(offset)
-            if len(candidates) >= 4:
+            before_count += 1
+            if before_count >= 4:
                 break
-    # After the except: walk forwards, skipping blanks.
+    after_count = 0
     for offset in range(except_line + 1, min(except_line + 8, len(lines))):
         if lines[offset].strip():
             candidates.append(offset)
-            if len(candidates) >= 4:
+            after_count += 1
+            if after_count >= 4:
                 break
     for offset in candidates:
         line = lines[offset]

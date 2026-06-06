@@ -128,6 +128,53 @@ def test_check_suppression_supports_chinese_colon(scanner):
     assert reason == "中文理由"
 
 
+def test_check_suppression_finds_marker_when_before_loop_is_full(scanner):
+    """Regression test for the v1 counter-reuse bug: when the BEFORE
+    loop fills its 4-candidate quota, the AFTER loop must STILL scan
+    for markers. The v1 code shared a single ``len(candidates) >= 4``
+    cap between both loops, so the AFTER loop broke on its first
+    append and missed markers placed 2+ lines below ``except:`` —
+    which is exactly the shape used by the SSE poll-loop swallow in
+    ``backtest_job.py`` / ``backtest_sweep.py`` / ``backtest_walk_forward.py``.
+
+    The synthetic layout below forces the BEFORE loop to collect 4
+    candidates (lines 3, 2, 1, 0 — all non-blank try/except context),
+    and then puts the marker on the 2nd line after ``except:``. The
+    v1 code would have returned ``(False, None)`` here.
+    """
+    lines = [
+        "    if condition:",                              # before_count = 1
+        "        await poll_loop()",                      # before_count = 2
+        "    try:",                                       # before_count = 3
+        "        await asyncio.wait_for(ev.wait(), t)",   # before_count = 4 (BEFORE loop full)
+        "    except asyncio.TimeoutError:",
+        "        pass",                                   # after_count = 1
+        "        # silent-fail-ok: documented fallthrough to DB poll",  # after_count = 2 — THE MARKER
+        "    else:",
+    ]
+    is_sup, reason = scanner._check_suppression(lines, 4)
+    assert is_sup is True
+    assert reason == "documented fallthrough to DB poll"
+
+
+def test_check_suppression_after_loop_finds_marker_at_offset_2(scanner):
+    """The classic annotation shape — ``# silent-fail-ok:`` on the
+    2nd line below ``except:`` — is detected even when the BEFORE
+    loop is empty. Locks in the AFTER direction independently."""
+    lines = [
+        "def poll():",
+        "    try:",
+        "        await wait()",
+        "    except asyncio.TimeoutError:",
+        "        pass",
+        "        # silent-fail-ok: timer-based fallthrough",
+        "        # a coarser strategy polls the DB.",
+    ]
+    is_sup, reason = scanner._check_suppression(lines, 3)
+    assert is_sup is True
+    assert reason == "timer-based fallthrough"
+
+
 # ---------------------------------------------------------------------------
 # scan_file — walk-past-comments (Round #1059 regression test)
 # ---------------------------------------------------------------------------

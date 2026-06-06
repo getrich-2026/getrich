@@ -540,6 +540,7 @@ async def stream_job_events(
                     ev.clear()
                 except asyncio.TimeoutError:
                     pass
+                    # silent-fail-ok: timer-based fallthrough to DB poll is the documented design (Round #1058)
             else:
                 try:
                     await asyncio.sleep(_POLL_INTERVAL_S)
