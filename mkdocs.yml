@@ -139,6 +139,9 @@ nav:
       - 概览: getting-started/index.md
       - 安装: getting-started/installation.md
       - 第一个回测: getting-started/first-backtest.md
+      - 配置: getting-started/configuration.md
+      - Docker 快速启动: getting-started/docker-quickstart.md
+      - 仓库导览: getting-started/repository-tour.md
   - 引擎用户指南:
       - 引擎总览: engine/index.md
       - 5 分钟上手: engine/getting-started.md
@@ -173,12 +176,14 @@ nav:
       - "52 报告与可视化": design-contracts/52-report-visualization.md
       - "60 客户端接口": design-contracts/60-client-api.md
   - 平台指南:
+      - 架构总览（Phase 2）: platform/architecture.md
       - Web API: platform/api-reference.md
       - Web 前端（Phase 2）: platform/web-ui.md
   - 运维指南:
       - 概览: operations/index.md
       - 数据库迁移: operations/migration-runner.md
       - systemd 部署: operations/systemd.md
+      - 数据库拓扑: operations/database-topology.md
       - 监控与告警（Phase 2）: operations/monitoring.md
       - 故障 Runbook（Phase 2）: operations/runbook.md
   - 开发指南:
