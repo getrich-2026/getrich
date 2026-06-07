@@ -196,6 +196,110 @@ env:
 
 ---
 
+## 3.5 Pre-commit / Dependabot / Coverage gate（Round #1159-#1161）
+
+### 3.5.1 Pre-commit hooks
+
+`.pre-commit-config.yaml` 配 17 个 hook，分 4 组：
+
+| 类别 | hook 例子 | 作用 |
+|---|---|---|
+| 通用 hygiene | `trailing-whitespace`, `end-of-file-fixer`, `check-yaml/toml/json`, `check-added-large-files` (≤ 2 MB), `check-merge-conflict`, `detect-private-key`, `mixed-line-ending` | 提交前防低级错误 |
+| Python | `ruff` (lint + `--fix --exit-non-zero-on-fix`), `ruff-format` | 镜像 CI 的 `lint` job |
+| 本地扫描器 | `silent-fails-scan` (Round #1059), `pg-migrations-lint`, `clickhouse-migrations-lint` (Round #1150/#1153) | CI parity |
+| 前端 | `eslint` (frontend), `tsc -b --noEmit` | 镜像 `frontend` job 的 lint + 类型检查 |
+| Commit 消息 | `conventional-pre-commit` (v3.6.0) | 强制 Conventional Commits 格式 |
+
+**安装**（一次性）：
+
+```bash
+uv tool install pre-commit        # 或 pipx install pre-commit
+pre-commit install                # 装 .git/hooks/pre-commit
+pre-commit install --hook-type commit-msg
+```
+
+**本地全量复现**（与 CI 完全等价）：
+
+```bash
+pre-commit run --all-files
+```
+
+**跳过**（紧急情况，不推荐）：
+
+```bash
+SKIP=ruff git commit -m "..."   # 跳过 ruff
+git commit -m "..." --no-verify  # 跳过全部
+```
+
+> ⚠️ `--no-verify` 后 CI 仍会跑，**不能真正绕过**。
+
+### 3.5.2 Dependabot（`.github/dependabot.yml`，Round #1160）
+
+3 个 ecosystem，周一 01:00 UTC 批量开 PR（亚洲工作时间窗）：
+
+| ecosystem | directory | 频率 | PR cap | major 隔离 |
+|---|---|---|---|---|
+| `pip` (uv) | `/` | weekly | 10 | 单独 group（major 独立 PR） |
+| `npm` | `/frontend` | weekly | 10 | 单独 group |
+| `github-actions` | `/` | weekly | 3 | 单独 group |
+
+分组策略：
+
+- `frontend-patch` / `python-patch`：minor + patch 合并成 1 个 PR（review 友好）
+- `frontend-major` / `python-major` / `actions-major`：单独 PR（CVEs 类可快速合并）
+
+commit prefix：`deps(pip):` / `deps(frontend):` / `ci(actions):`，可用 `git log --grep="^deps"` 一把抓出所有依赖升级。
+
+### 3.5.3 Coverage gate（Round #1161）
+
+`test` job 在 `pytest ... -x --timeout=60` 之后追加：
+
+```bash
+--cov=getrich \
+--cov=getrich_backtest \
+--cov-report=term-missing \      # PR diff 展示 missing 行
+--cov-report=xml \               # codecov.io 兼容
+--cov-fail-under=60              # 硬阈值
+```
+
+**阈值演进**（记录在 `pyproject.toml [tool.coverage.*]` 注释）：
+
+| 季度 | floor | 备注 |
+|---|---|---|
+| 2026-Q3 | 60% | 初始（防御性） |
+| 2026-Q4 | 70% | 引擎核心覆盖成熟 |
+| 2027-Q1 | 80% | 终态目标 |
+
+**本地复现**：
+
+```bash
+COVERAGE_FLOOR=60 scripts/measure_coverage.sh
+COVERAGE_FLOOR=60 scripts/measure_coverage.sh html    # 写 htmlcov/
+```
+
+> 注意：CI 阈值是 60%；`measure_coverage.sh` 默认无阈值（仅报告），需 `COVERAGE_FLOOR=60` 才 exit 1。
+
+### 3.5.4 完整门禁链
+
+```
+   pre-commit (本地)            CI (远端)
+       │                          │
+       ▼                          ▼
+  ruff / format ──────►   ruff check + format --check
+  silent-fails ────────►   silent-fails scan --strict
+  pg/ch migrations ────►   同名 lint script
+  eslint / tsc ─────────►   frontend job
+  conventional msg ────►   (CI 不强制；仅 PR 标题给 squash 用)
+                              │
+                              ▼
+                          coverage --cov-fail-under=60
+                          pytest -x --timeout=60
+```
+
+> 即本地 pre-commit + 远端 CI 任意一方拦截都不能 merge。两层防御：本地拦截免一轮 CI 浪费时间，CI 拦截防有人跳过 pre-commit。
+
+---
+
 ## 4. 独立 `docs.yml` —— MkDocs build
 
 > 源：`.github/workflows/docs.yml`（Phase #1096）

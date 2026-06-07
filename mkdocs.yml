@@ -204,6 +204,7 @@ nav:
       - 分析与报告（Phase 2）: engine/analysis-reporting.md
       - 实盘信号生成（Phase 2）: engine/live-signals.md
       - 持久化与 artifact（Phase 2）: engine/persistence.md
+      - 券商对接（CTP / XTP）: engine/broker-integration.md
       - 引擎 API 参考（Phase 2）: engine/api-reference.md
   - 设计契约（原 backtest/docs）:
       - 索引: design-contracts/index.md
@@ -235,12 +236,14 @@ nav:
       - systemd 部署: operations/systemd.md
       - 数据库拓扑: operations/database-topology.md
       - 监控与告警（Phase 2）: operations/monitoring.md
+      - 负载测试（k6）: operations/load-testing.md
       - 故障 Runbook（Phase 2）: operations/runbook.md
   - 开发指南:
       - 概览: development/index.md
       - 编码规范: development/coding-standards.md
       - 测试: development/testing.md
       - CI 工作流（Phase 2）: development/ci-workflow.md
+      - 移动端响应式: development/mobile-responsive.md
   - 参考:
       - 索引: reference/index.md
       - 环境变量: reference/env-vars.md

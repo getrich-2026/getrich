@@ -348,6 +348,84 @@ class RiskAlert:
 | signal 落库延迟 | < 1s | L2 SSE |
 | 风控拦截率 | < 5% | L4 `RiskAlert` 计数 |
 
+### 6.4 Prometheus 指标端点（`/metrics`，Round #1157）
+
+> 自 Round #1157 起，FastAPI app 暴露 Prometheus 标准格式
+> 的 `/metrics` 端点。无需认证（与 `/health` 同样在 v1
+> prefix 之外），不计入 SLO endpoint 的 p99 延迟。
+
+**端点**：`GET /metrics`，返回 `text/plain; version=0.0.4` (Prometheus 文本格式)。 流量用 prom 自身的 `http_requests_total` Counter 计。
+
+**5 个 live-signal metric**（`src/getrich/apps/strategy/live_runner.py` 等）：
+
+| Metric | 类型 | Labels | 单位 | 含义 |
+|---|---|---|---|---|
+| `live_run_once_seconds` | Histogram | (无) | s | 单次 `LiveSignalRunner.run_once` 耗时分布 |
+| `live_signals_persisted_total` | Counter | (无) | signals | 实际 INSERT 成功的 signal 数（**不含** `ON CONFLICT` 跳过） |
+| `live_alerts_emitted_total` | Counter | `severity` | alerts | 风控告警计数（按 severity 分桶：info/warn/critical） |
+| `live_data_load_seconds` | Histogram | `step` | s | LiveDataProvider 3 段加载耗时（`bars` / `account` / `factors`） |
+| `live_strategy_errors_total` | Counter | `strategy_id` | errors | 策略内异常计数（标 strategy_id 便于按策略定位） |
+
+**2 个 HTTP metric**（`src/getrich/apps/web/metrics_middleware.py`）：
+
+| Metric | 类型 | Labels | 含义 |
+|---|---|---|---|
+| `http_requests_total` | Counter | `method`, `path`, `status` | 每个路由的请求数（`path` 是路由模板 `/v1/strategies/{strategy_code}` 而非实际值，防 cardinality 爆炸） |
+| `http_request_duration_seconds` | Histogram | `method`, `path` | 每个路由的延迟分布（buckets 0.005 → 10s） |
+
+#### 6.4.1 Scrape 配置（Prometheus）
+
+```yaml
+# /etc/prometheus/prometheus.yml 新增 scrape job
+scrape_configs:
+  - job_name: getrich-api
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['getrich-api:8000']
+        labels: { tier: 'web' }
+```
+
+#### 6.4.2 关键告警规则
+
+```yaml
+# /etc/prometheus/rules/getrich.yml
+groups:
+  - name: getrich-api
+    rules:
+      - alert: LiveStrategyErrorsSpiking
+        # 5 分钟内单策略错误 > 10 次
+        expr: sum by (strategy_id) (rate(live_strategy_errors_total[5m])) > 0.033
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: "策略 {{ $labels.strategy_id }} 5min 错误率飙升"
+
+      - alert: LiveDataLoadSlow
+        # 95 分位数 bars 加载 > 5s
+        expr: histogram_quantile(0.95, sum by (le, step) (rate(live_data_load_seconds_bucket{step="bars"}[5m]))) > 5
+        for: 10m
+
+      - alert: SignalPersistStalled
+        # 5min 内 0 写入但 run_once 还在跑 = signal 落库卡了
+        expr: rate(live_signals_persisted_total[5m]) == 0 and rate(live_run_once_seconds_count[5m]) > 0
+        for: 10m
+```
+
+#### 6.4.3 Grafana 面板（建议 4 个）
+
+1. **Live signal throughput**：timeseries，`live_signals_persisted_total` rate(1m)
+2. **Latency p50/p95/p99**：timeseries，`histogram_quantile(...)` of `live_run_once_seconds`
+3. **Alerts by severity**：stacked bar，`live_alerts_emitted_total`
+4. **HTTP error rate by route**：timeseries，`http_requests_total{status=~"5.."}` by `path`
+
+#### 6.4.4 测试与实现参考
+
+- 源码：`src/getrich/apps/web/metrics.py`（5 个 live-signal metric 定义）+ `src/getrich/apps/web/metrics_middleware.py`（HTTP middleware）
+- 单元测试：`tests/getrich/apps/web/test_metrics.py`（9 个）
+- CI 集成：`/metrics` 不在 `--cov-fail-under` 排除之列
+- 验证：`curl localhost:8000/metrics | head -30` 应看到 7 个 HELP/TYPE 行
+
 ---
 
 ## 7. 故障排查 4 步走

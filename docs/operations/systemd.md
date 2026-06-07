@@ -203,6 +203,84 @@ WantedBy=timers.target
 - `RandomizedDelaySec=30`：随机 0-30 秒延迟（防多个实例同时跑）
 - `Persistent=true`：开机后补跑错过的触发
 
+### 3.6 `getrich-backup.{service,timer}`（每日 02:00 全量备份，Round #1158）
+
+> 自 Round #1158 起，平台提供每日全量备份（PG / ClickHouse / artifact），通过 systemd timer 调度。
+> 详细恢复 SOP 见 [Runbook §13](runbook.md#13-备份演练每月一次-dr-drill)；本节只讲部署。
+
+`getrich-backup.service`（oneshot，不自动重启）：
+
+```ini
+# /etc/systemd/system/getrich-backup.service
+[Unit]
+Description=GetRich daily backup (PG + ClickHouse + artifacts)
+After=network-online.target postgresql.service clickhouse-server.service
+Requires=postgresql.service clickhouse-server.service
+
+[Service]
+Type=oneshot
+User=getrich
+Group=getrich
+# PGPASSWORD_FILE 指向 0600 权限的 .pgpass，避免在 unit 里露明文
+Environment=PGPASSWORD_FILE=/etc/getrich/.pgpass
+Environment=BACKUP_DIR=/var/backups/getrich
+ExecStart=/opt/getrich/scripts/backup/daily_backup.sh
+# 单组件 dump + rsync + tar 全跑一遍 6h ceiling
+TimeoutStartSec=6h
+# 标准输出/错误重定向到独立日志（runbook §13 排查用）
+StandardOutput=append:/var/log/getrich/backup.log
+StandardError=append:/var/log/getrich/backup.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`getrich-backup.timer`（每日 02:00 Asia/Shanghai）：
+
+```ini
+# /etc/systemd/system/getrich-backup.timer
+[Unit]
+Description=GetRich daily backup timer
+
+[Timer]
+# 02:00 本地时间 = 18:00 UTC
+OnCalendar=*-*-* 02:00:00
+# 错过的触发在下次启动时补跑（机器维护 / 节假日）
+Persistent=true
+# ±60s jitter 避免多实例 thundering-herd
+RandomizedDelaySec=60s
+Unit=getrich-backup.service
+
+[Install]
+WantedBy=timers.target
+```
+
+部署步骤：
+
+```bash
+sudo cp scripts/backup/getrich-backup.service /etc/systemd/system/
+sudo cp scripts/backup/getrich-backup.timer  /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now getrich-backup.timer
+
+# 验证下一次触发时间
+systemctl list-timers getrich-backup.timer
+# Next: <date> 02:00:00 CST
+# Remaining: 14h 23min
+```
+
+**手动触发演练**（runbook §13 月度演练的标准动作）：
+
+```bash
+sudo systemctl start getrich-backup.service
+sudo journalctl -u getrich-backup.service -n 100
+# 期望：3 个 component 全部 "OK"，exit 0
+# 若任一 component 失败，service 退出码 1
+# （systemd 不会自动重启，因 Type=oneshot）
+```
+
+**常见故障 & 处置**：见 [Runbook §13](runbook.md#13-备份演练每月一次-dr-drill)。
+
 ---
 
 ## 4. 部署流程
