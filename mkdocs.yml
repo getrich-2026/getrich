@@ -186,6 +186,7 @@ nav:
   - 首页: index.md
   - 快速开始:
       - 概览: getting-started/index.md
+      - 回测快速上手（角色导航）: getting-started/getrich-backtest-quickstart.md
       - 安装: getting-started/installation.md
       - 第一个回测: getting-started/first-backtest.md
       - 配置: getting-started/configuration.md
