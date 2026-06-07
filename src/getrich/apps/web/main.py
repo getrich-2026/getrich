@@ -18,6 +18,7 @@ from getrich.apps.web.metrics_middleware import MetricsMiddleware
 from getrich.apps.web.middleware import SecurityHeadersMiddleware
 from getrich.apps.web.response import register_exception_handlers
 from getrich.apps.web.routers import (
+    admin_imports as admin_imports_router,
     auth as auth_router,
     backtest_jobs as backtest_jobs_router,
     backtest_runs as backtest_runs_router,
@@ -149,6 +150,10 @@ def create_app() -> FastAPI:
     app.include_router(signal_settings_router.router, prefix="/v1")
     app.include_router(user_router.router, prefix="/v1")
     app.include_router(payments_router.router, prefix="/v1")
+    # Admin-only backoffice routes (strategy import / preview / commit / history).
+    # All endpoints guarded by ``require_admin`` — see
+    # ``routers/admin_imports.py`` for the per-endpoint contract.
+    app.include_router(admin_imports_router.router, prefix="/v1")
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:
