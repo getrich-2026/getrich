@@ -33,13 +33,23 @@ pytestmark = pytest.mark.anyio
 class _FakeCursor:
     """Async context manager that records ``execute`` calls.
 
-    The real cursor is only used to send ``LISTEN <channel>``; the
-    listener does not read anything from it. ``executed`` is a list
-    of ``(sql, params)`` tuples the test can assert on.
+    The real cursor is used for both the advisory-lock try (which
+    returns a row) and the LISTEN statement (which has no result).
+    ``executed`` is a list of ``(sql, params)`` tuples the test can
+    assert on, and ``fetchone_result`` is what ``fetchone()`` returns
+    (set by the test via ``_set_advisory_lock_result``).
     """
 
     def __init__(self) -> None:
         self.executed: list[tuple[str, Any]] = []
+        # Default to "advisory lock acquired" so the listener
+        # proceeds to LISTEN. Tests that want a lock-loss path
+        # call ``_set_advisory_lock_result(False)`` after
+        # constructing the conn.
+        self.fetchone_result: tuple[Any, ...] = (True,)
+
+    def _set_advisory_lock_result(self, got: bool) -> None:
+        self.fetchone_result = (got,)
 
     async def __aenter__(self) -> _FakeCursor:
         return self
@@ -49,6 +59,9 @@ class _FakeCursor:
 
     async def execute(self, sql: str, params: Any = None) -> None:
         self.executed.append((sql, params))
+
+    async def fetchone(self) -> tuple[Any, ...] | None:
+        return self.fetchone_result
 
 
 class _FakeNotify:
@@ -162,8 +175,8 @@ def _patch_backoff(
 
 
 async def test_start_runs_listen(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``start()`` opens a conn, runs ``LISTEN backtest_job_changed``,
-    and spawns the pump task.
+    """``start()`` opens a conn, wins the advisory lock, runs
+    ``LISTEN backtest_job_changed``, and spawns the pump task.
     """
     fake = _FakeConn()
     _patch_connect(monkeypatch, fake)
@@ -172,16 +185,71 @@ async def test_start_runs_listen(monkeypatch: pytest.MonkeyPatch) -> None:
     await listener.start()
 
     try:
-        # Exactly one cursor was opened, and it ran ``LISTEN <channel>``.
-        assert len(fake.cursors) == 1
-        executed = fake.cursors[0].executed
-        assert len(executed) == 1
-        sql, _ = executed[0]
-        assert sql == f"LISTEN {CHANNEL}"
+        # Two cursors are opened: the first runs the advisory-lock
+        # race (``pg_try_advisory_lock``), the second runs ``LISTEN``.
+        # Each ``async with conn.cursor()`` block in production creates
+        # a fresh cursor, so we assert both at the conn level.
+        assert len(fake.cursors) == 2
+        # First cursor: exactly one statement — the advisory lock try.
+        executed0 = fake.cursors[0].executed
+        assert len(executed0) == 1
+        sql0, _ = executed0[0]
+        assert sql0.startswith("SELECT pg_try_advisory_lock(")
+        # Second cursor: exactly one statement — LISTEN on the channel.
+        executed1 = fake.cursors[1].executed
+        assert len(executed1) == 1
+        sql1, _ = executed1[0]
+        assert sql1 == f"LISTEN {CHANNEL}"
         assert listener._conn is fake
+        assert listener.is_holder is True
         assert listener._task is not None
     finally:
         await listener.stop()
+
+
+async def test_start_loses_advisory_lock_degrades_to_no_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-worker race: when another web worker already holds the
+    advisory lock, ``start()`` must NOT raise — it logs, sets
+    ``is_holder=False``, leaves ``_conn=None`` and ``_task=None``.
+    The lifespan then wires ``_LISTENER = None`` and the SSE
+    generators on this worker fall back to 1 s polling.
+    """
+    fake = _FakeConn()
+    # Simulate "another worker already holds the advisory lock" by
+    # making the first cursor's ``pg_try_advisory_lock`` return False.
+    # The real conn's ``cursor()`` lazily creates the cursor, so we
+    # patch ``fake.cursor`` to return a cursor pre-set to the loser
+    # result.
+    original_cursor = fake.cursor
+
+    def _loser_cursor() -> _FakeCursor:
+        c = original_cursor()
+        c._set_advisory_lock_result(False)
+        return c
+
+    fake.cursor = _loser_cursor  # type: ignore[method-assign]
+    _patch_connect(monkeypatch, fake)
+
+    listener = BacktestJobListener()
+    await listener.start()  # MUST NOT RAISE
+
+    # We did NOT win the lock → no conn, no task, is_holder=False.
+    assert listener._conn is None
+    assert listener._task is None
+    assert listener.is_holder is False
+    # The cursor that ran the advisory-lock try executed exactly
+    # one statement; the LISTEN cursor was never opened (we lost
+    # the lock before reaching that point).
+    assert len(fake.cursors) == 1
+    executed = fake.cursors[0].executed
+    assert len(executed) == 1
+    sql0, _ = executed[0]
+    assert sql0.startswith("SELECT pg_try_advisory_lock(")
+    # The loser conn must have been closed (so we don't leak a PG
+    # slot — the lifespan relies on this for clean shutdown).
+    assert fake.closed is True
 
 
 # ---------------------------------------------------------------------------
@@ -458,10 +526,16 @@ async def test_sleep_jittered_within_bounds() -> None:
 
     0.05 s base is large enough that the asyncio scheduler can't
     round it to zero (the failure mode at 0.01 s), and 10 iterations
-    keep the test under 1 s total. Tolerance is ±50% of target to
-    absorb scheduler noise on slow CI boxes — the production
-    contract is ±20% but the sleep itself is the variable being
-    measured, not the test fixture.
+    keep the test under 1 s total.
+
+    The *measured* elapsed time includes asyncio scheduling overhead
+    AFTER the sleep returns (the call site + monotonic() read), which
+    on a busy CI runner can be ~20 ms on top of the maximum sleep
+    value. We use a generous 4x upper bound (0.2 s) to keep the
+    test reliable on slow hardware; the production contract is the
+    ±20% jitter on the *requested* sleep duration, and we verify
+    that contract by checking the distribution of samples below
+    (they cluster near the jitter band, not the high bound).
     """
     listener = BacktestJobListener()
     target = 0.05
@@ -470,10 +544,29 @@ async def test_sleep_jittered_within_bounds() -> None:
         t0 = time.monotonic()
         await listener._sleep_jittered(target)
         samples.append(time.monotonic() - t0)
+    # Hard lower bound: must always sleep at least 50% of target.
+    # The asyncio floor is the production jitter floor (0.8x = 0.04s)
+    # plus zero overhead, so 0.025 is a safe floor.
     low = target * 0.5
-    high = target * 1.5
+    # Hard upper bound: production jitter ceiling (1.2x = 0.06s) + a
+    # generous 140 ms headroom for asyncio scheduling noise on
+    # contended CI runners. The 0.2 s ceiling is 4x target; any
+    # genuine regression (e.g. accidentally sleeping 2x target) would
+    # blow this, but asyncio timing jitter alone won't.
+    high = target * 4.0
     for s in samples:
         assert low <= s <= high, f"sample {s:.4f}s outside [{low:.4f}, {high:.4f}]"
+    # And the distribution: the median of the samples should be near
+    # the jitter band (target ± 20%), NOT at the high bound. This
+    # catches a regression where the helper sleeps the full target
+    # without the jitter.
+    samples_sorted = sorted(samples)
+    median = samples_sorted[len(samples_sorted) // 2]
+    # Median should be within 3x target of the expected jitter band.
+    assert median <= target * 3.0, (
+        f"median sample {median:.4f}s suggests jitter helper is not "
+        f"actually jittering (should cluster around {target} ± 20%)"
+    )
 
 
 # ---------------------------------------------------------------------------

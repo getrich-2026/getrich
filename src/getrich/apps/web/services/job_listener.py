@@ -30,6 +30,7 @@ safety net and falls through to a normal poll.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import random
 from contextlib import suppress
@@ -50,6 +51,25 @@ logger = logging.getLogger(__name__)
 # Channel name. Matches the literal in
 # ``getrich_backtest.job_persistence._NOTIFY_JOB_SQL``.
 CHANNEL = "backtest_job_changed"
+
+# Advisory-lock key for the cross-worker race. The value is a
+# 64-bit signed int; we use a stable hash of the channel name so
+# other apps using the same PG cluster don't accidentally collide
+# (PG advisory locks are cluster-global). The hash uses the same
+# algorithm as ``hashtext`` in PG (``pg_try_advisory_lock`` accepts
+# a bigint; we compute it once in Python for symmetry).
+_ADVISORY_KEY = int.from_bytes(
+    hashlib.blake2b(CHANNEL.encode("utf-8"), digest_size=8).digest(),
+    byteorder="big",
+    signed=True,
+)
+
+# Raised by ``_reconnect`` when another web worker already holds
+# the advisory lock. ``start()`` catches and degrades to no-listener
+# (the SSE generators then fall back to 1 s polling).
+class _NotListenerHolderError(Exception):
+    """Internal: another web worker holds the listener advisory lock."""
+
 
 # Reconnect backoff bounds (seconds). Doubles on each consecutive
 # failure, capped at ``_RECONNECT_MAX_S`` to keep recovery snappy
@@ -96,9 +116,23 @@ class BacktestJobListener:
         generators always check ``_LISTENER`` before subscribing,
         so the listener may be started but non-functional without
         breaking the polling fallback.
+
+        When ``_reconnect`` raises ``_NotListenerHolderError`` (another
+        web worker is already the listener), this is *expected*
+        and silent — we just log at info level. The non-holders
+        have ``listener = None`` set by the lifespan so SSE falls
+        back to polling.
         """
         try:
             await self._reconnect()
+        except _NotListenerHolderError as e:
+            logger.info(
+                "BacktestJobListener: not the LISTEN holder (%s); "
+                "SSE streams on this worker will fall back to polling",
+                e,
+            )
+            self._holder = False
+            return
         except Exception:
             logger.warning(
                 "BacktestJobListener: failed to acquire LISTEN connection; "
@@ -106,10 +140,22 @@ class BacktestJobListener:
                 exc_info=True,
             )
             await self._drop_conn()
+            self._holder = False
             return
 
+        self._holder = True
         self._task = asyncio.create_task(self._pump(), name="backtest_job_listener")
         logger.info("BacktestJobListener: listening on %s", CHANNEL)
+
+    @property
+    def is_holder(self) -> bool:
+        """True iff this worker won the advisory-lock race.
+
+        The lifespan uses this to decide whether to install the
+        listener into the SSE service modules (``_LISTENER``)
+        or leave them as ``None`` (polling fallback).
+        """
+        return getattr(self, "_holder", False)
 
     async def stop(self) -> None:
         """Cancel the pump task, close the conn, drain subscribers.
@@ -119,6 +165,11 @@ class BacktestJobListener:
         intent is to let the SSE generator continue, not to abort
         the stream. The events dict is cleared so a subsequent
         ``start()`` starts from a clean slate.
+
+        If we are the advisory-lock holder, release the lock
+        explicitly before closing the conn (session-scoped locks
+        die with the conn anyway, but being explicit helps when
+        debugging via ``pg_locks``).
         """
         if self._task is not None:
             self._task.cancel()
@@ -126,6 +177,14 @@ class BacktestJobListener:
                 await self._task
             self._task = None
         if self._conn is not None:
+            # Best-effort advisory unlock (idempotent — the lock
+            # dies with the conn if we miss it).
+            with suppress(Exception):
+                async with self._conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT pg_advisory_unlock(%s)",
+                        (_ADVISORY_KEY,),
+                    )
             with suppress(Exception):
                 await self._conn.close()
             self._conn = None
@@ -231,6 +290,15 @@ class BacktestJobListener:
         Raises on failure; the caller (``_pump``) catches and
         backs off. ``start()`` also catches and degrades to
         "no listener" — the SSE generators then poll.
+
+        **Multi-worker guard**: when ``uvicorn --workers N`` runs,
+        each worker calls ``start()``. We use
+        ``pg_try_advisory_lock`` to elect exactly one worker as
+        the LISTEN holder. Non-holders raise ``_NotListenerHolderError``
+        (which ``start()`` swallows and degrades to polling). The
+        lock is *session-scoped* — it lives as long as the conn,
+        so the holder's ``stop()`` must explicitly release it
+        (otherwise restarts leak it until the conn is reaped).
         """
         dsn = make_pg_dsn(settings.postgres)
         # ``autocommit=True`` so LISTEN takes effect immediately
@@ -238,6 +306,23 @@ class BacktestJobListener:
         # at COMMIT) and notifications arrive on every commit by
         # the notifying process.
         self._conn = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
+        # Race for the advisory lock. If another worker already
+        # holds it, close our conn (so we don't leak a PG slot)
+        # and signal "not the holder".
+        async with self._conn.cursor() as cur:
+            await cur.execute(
+                "SELECT pg_try_advisory_lock(%s) AS got",
+                (_ADVISORY_KEY,),
+            )
+            row = await cur.fetchone()
+            got = bool(row and row[0])
+        if not got:
+            await self._conn.close()
+            self._conn = None
+            raise _NotListenerHolderError(
+                f"another web worker holds advisory lock {_ADVISORY_KEY}",
+            )
+        # We're the elected holder — run LISTEN.
         async with self._conn.cursor() as cur:
             await cur.execute(f"LISTEN {CHANNEL}")
 

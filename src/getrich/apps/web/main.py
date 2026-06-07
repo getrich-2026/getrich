@@ -54,17 +54,49 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     ``stream_*_events`` generators can ``subscribe(job_id)`` and
     wake up within ~10ms of a worker-side ``pg_notify`` instead of
     waiting up to ``POLL_INTERVAL_S`` (1s) for the next poll tick.
+
+    **Multi-worker guard**: when ``uvicorn --workers N`` runs, the
+    lifespan runs N times in N processes. We only want ONE process
+    to hold the LISTEN connection. The ``BacktestJobListener``
+    itself races for a PG advisory lock inside ``_reconnect`` —
+    first worker to grab it becomes the holder; the others get
+    ``is_holder=False`` and stay quiet, so the SSE generators on
+    those workers fall back to 1 s polling (still functional, just
+    slightly higher latency). The lock is released explicitly in
+    ``stop()``.
     """
     await pg_pool.init()
+
     listener = BacktestJobListener()
-    job_svc._LISTENER = listener
-    sweep_svc._LISTENER = listener
-    wf_svc._LISTENER = listener
-    await listener.start()
+    await listener.start()  # may silently fail to be the holder
+
+    if listener.is_holder:
+        # Wire into the 3 SSE service modules so generators
+        # ``subscribe(job_id)`` and wake up within ~10ms of a
+        # worker-side ``pg_notify``.
+        job_svc._LISTENER = listener
+        sweep_svc._LISTENER = listener
+        wf_svc._LISTENER = listener
+    else:
+        # Non-holder workers — leave _LISTENER unset (the SSE
+        # generators check ``if _LISTENER is None`` and fall back
+        # to polling). Also reset the service-module globals so
+        # a previous holder that got rotated out doesn't leave a
+        # stale listener behind.
+        job_svc._LISTENER = None
+        sweep_svc._LISTENER = None
+        wf_svc._LISTENER = None
+        # The listener object is not useful on this worker; we
+        # still call ``stop()`` to clean up the failed-to-acquire
+        # conn and the would-be subscribers dict.
+        await listener.stop()
+        listener = None  # noqa: F841 — for the ``finally`` clause
+
     try:
         yield
     finally:
-        await listener.stop()
+        if listener is not None:
+            await listener.stop()
         job_svc._LISTENER = None
         sweep_svc._LISTENER = None
         wf_svc._LISTENER = None
