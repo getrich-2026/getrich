@@ -344,18 +344,20 @@ function StrategyDescTab() {
 }
 
 function BacktestTab() {
+  const summaryItems: Array<{ label: string; value: string; color?: string }> = [
+    { label: '初始资金', value: '¥1,000,000' },
+    { label: '最终资金', value: '¥1,561,000' },
+    { label: '总收益率', value: '+56.1%', color: 'var(--gr-green)' },
+    { label: '回测区间', value: '2020.01-2026.04' },
+  ]
+
   return (
     <div>
       <div className="grid grid-cols-4 gap-4 mb-6">
-        {[
-          { label: '初始资金', value: '¥1,000,000' },
-          { label: '最终资金', value: '¥1,561,000' },
-          { label: '总收益率', value: '+56.1%', color: 'var(--gr-green)' },
-          { label: '回测区间', value: '2020.01-2026.04' },
-        ].map((item) => (
+        {summaryItems.map((item) => (
           <div key={item.label} className="text-center">
             <div className="text-xs mb-1" style={{ color: 'var(--gr-text-tertiary)' }}>{item.label}</div>
-            <div className="text-lg font-semibold tabular" style={{ color: (item as any).color || 'var(--gr-text)' }}>
+            <div className="text-lg font-semibold tabular" style={{ color: item.color || 'var(--gr-text)' }}>
               {item.value}
             </div>
           </div>

@@ -5,6 +5,7 @@ import StrategiesPage from './pages/StrategiesPage'
 import StrategyDetail from './pages/StrategyDetail'
 import SignalDetail from './pages/SignalDetail'
 import KnowledgePage from './pages/KnowledgePage'
+import AdminImportsPage from './pages/AdminImportsPage'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
             <Route path="/market" element={<MarketPage />} />
             <Route path="/strategies" element={<StrategiesPage />} />
             <Route path="/knowledge" element={<KnowledgePage />} />
+            <Route path="/admin/imports" element={<AdminImportsPage />} />
             <Route path="/strategies/:id" element={<StrategyDetail />} />
             <Route path="/signals/:id" element={<SignalDetail />} />
           </Routes>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as echarts from 'echarts/core'
+import type { EChartsType } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, DataZoomComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -41,7 +42,7 @@ function generateEquityData(days: number) {
 
 export default function EquityChart({ isLoading = false }: EquityChartProps) {
   const chartRef = useRef<HTMLDivElement>(null)
-  const chartInstance = useRef<any>(null)
+  const chartInstance = useRef<EChartsType | null>(null)
   const [activeRange, setActiveRange] = useState('ALL')
   const [show, setShow] = useState(false)
   const data = useRef(generateEquityData(1540))
@@ -69,15 +70,15 @@ export default function EquityChart({ isLoading = false }: EquityChartProps) {
         { type: 'category', data: dates, gridIndex: 1, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { show: false } },
       ],
       yAxis: [
-        { type: 'value', gridIndex: 0, axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: '#F0F0F0' } }, axisLabel: { color: '#9CA3AF', fontSize: 11, formatter: (v: any) => Number(v).toFixed(2) } },
-        { type: 'value', gridIndex: 1, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { color: '#9CA3AF', fontSize: 11, formatter: (v: any) => `${(Number(v) * 100).toFixed(0)}%` } },
+        { type: 'value', gridIndex: 0, axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: '#F0F0F0' } }, axisLabel: { color: '#9CA3AF', fontSize: 11, formatter: (v: number | string) => Number(v).toFixed(2) } },
+        { type: 'value', gridIndex: 1, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { color: '#9CA3AF', fontSize: 11, formatter: (v: number | string) => `${(Number(v) * 100).toFixed(0)}%` } },
       ],
       dataZoom: [{ type: 'slider', xAxisIndex: [0, 1], bottom: 0, height: 24, borderColor: 'transparent', backgroundColor: '#F5F6F8', fillerColor: 'rgba(232, 71, 63, 0.15)', handleStyle: { color: '#E8473F', borderColor: '#E8473F' }, textStyle: { color: '#9CA3AF', fontSize: 11 }, brushSelect: false }],
       tooltip: { trigger: 'axis', backgroundColor: '#fff', borderColor: 'transparent', borderRadius: 8, padding: [12, 16], textStyle: { color: '#1A1D24', fontSize: 12 }, extraCssText: 'box-shadow: 0 4px 12px rgba(0,0,0,0.08);' },
       legend: { data: ['策略净值', '中证500'], right: 0, top: 0, textStyle: { color: '#6B7280', fontSize: 12 }, itemWidth: 16, itemHeight: 2 },
       series: [
         { name: '策略净值', type: 'line', data: nav, smooth: true, symbol: 'none', lineStyle: { color: '#E8473F', width: 2 }, xAxisIndex: 0, yAxisIndex: 0 },
-        { name: '中证500', type: 'line', data: benchmark, smooth: true, symbol: 'none', lineStyle: { color: '#3B82F6', width: 1.5, type: [4, 2] as any }, xAxisIndex: 0, yAxisIndex: 0 },
+        { name: '中证500', type: 'line', data: benchmark, smooth: true, symbol: 'none', lineStyle: { color: '#3B82F6', width: 1.5, type: 'dashed' }, xAxisIndex: 0, yAxisIndex: 0 },
         { name: '回撤', type: 'line', data: drawdown, smooth: true, symbol: 'none', lineStyle: { color: '#E8473F', width: 0 }, areaStyle: { color: 'rgba(232, 71, 63, 0.15)' }, xAxisIndex: 1, yAxisIndex: 1 },
       ],
     })

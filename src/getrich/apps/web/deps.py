@@ -14,6 +14,7 @@ from getrich.apps.web.pagination import (
     PageParams,
     make_page_params,
 )
+from getrich.config import settings
 from getrich.libs.postgres import pg_pool
 
 
@@ -77,6 +78,27 @@ async def require_user(request: Request) -> str:
     return user_id
 
 
+async def require_admin(
+    user_id: str = Depends(require_user),
+) -> str:
+    """要求当前用户具备后台导入权限。
+
+    开发环境允许已登录用户访问，生产环境必须通过
+    ``GETRICH_ADMIN_USER_IDS`` 显式配置管理员用户 ID。
+    """
+    admin_ids = {
+        item.strip() for item in os.getenv("GETRICH_ADMIN_USER_IDS", "").split(",") if item.strip()
+    }
+    if user_id in admin_ids:
+        return user_id
+    if settings.is_dev:
+        return user_id
+
+    from getrich.apps.web.errors import Forbidden
+
+    raise Forbidden("admin permission required")
+
+
 async def request_id(x_request_id: str | None = Header(default=None)) -> str:
     """获取或生成本次请求的 request_id。"""
     return x_request_id or uuid4().hex
@@ -101,6 +123,7 @@ __all__ = [
     "get_db",
     "get_current_user",
     "require_user",
+    "require_admin",
     "request_id",
     "page_dep",
     "Depends",
