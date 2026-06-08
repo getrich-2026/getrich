@@ -423,7 +423,7 @@ _DATASET_SPECS: tuple[DatasetSpec, ...] = (
         asset="fund",
         freq="1d",
         phase="P1",
-        status="planned",
+        status="ready",
     ),
     DatasetSpec(
         provider="insight",
@@ -463,7 +463,7 @@ _DATASET_SPECS: tuple[DatasetSpec, ...] = (
         asset="fund",
         freq="1d",
         phase="P1",
-        status="planned",
+        status="ready",
     ),
     DatasetSpec(
         provider="insight",

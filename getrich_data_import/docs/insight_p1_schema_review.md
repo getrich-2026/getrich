@@ -3,13 +3,14 @@
 > Lead agent: code_dev
 > Sample date: 2026-06-04
 > Sample root: `/home/quant/data/insight/p1_samples`
-> Status: Draft, sample-backed ETF loaders split from ordinary fund tables
+> Status: Draft, sample-backed ETF and non-ETF fund loaders split into separate tables
 
 ## Current Design Decisions
 
 - Local database rebuild is allowed during this P1 phase. P1 schema changes can be folded into `sql/init/backend/60_insight.sql` before the next stable commit and verified by recreating the local `getrich` database.
 - ETF and ordinary fund must be separated. The `510300.SH` samples below are ETF samples even though they come from INSIGHT fund-family APIs.
-- ETF daily/NAV samples should target `market.etf_daily` and `market.etf_nav`; ordinary fund imports should use separate `market.fund_daily` and `market.fund_nav` tables after `meta.instruments.asset` supports `fund`.
+- ETF daily/NAV samples should target `market.etf_daily` and `market.etf_nav`; non-ETF fund/LOF imports should use separate `market.fund_daily` and `market.fund_nav` tables with `asset='fund'`.
+- OTC public fund codes such as `110022` returned NAV rows from `get_fund_target` but no daily trading rows from `get_fund_info`; keep that as a separate NAV-only path until its symbol convention is finalized.
 
 ## Goal
 
@@ -25,6 +26,8 @@ statements before implementing canonical P1 loaders.
 | `index_component` | `000300.SH` | 300 | Written |
 | `etf_daily` from `get_fund_info` | `510300.SH` | 1 | Written |
 | `etf_nav` from `get_fund_target` | `510300.SH` | 1 | Written |
+| `fund_daily` from `get_fund_info` | `161725.SZ` | 1 | Written |
+| `fund_nav` from `get_fund_target` | `161725.SZ` | 1 | Written |
 | `etf_basket` | `510300.SH` | 300 | Written |
 | `stock_adj_factor` | `000001.SZ` | 0 | Empty for sample day |
 | `etf_redemption` | `510300.SH` | 0 | SDK returned `exchange does not exist`; needs parameter or permission confirmation |
@@ -111,6 +114,17 @@ DDL changes:
 - Target table should be `market.etf_nav` for ETF rows. Ordinary fund NAV rows should
   use `market.fund_nav`.
 
+### `fund_daily` / `fund_nav`
+
+The `161725.SZ` sample is a non-ETF listed fund/LOF row and uses the same raw column
+families as ETF daily/NAV. It should load into `market.fund_daily` and
+`market.fund_nav`, not ETF tables.
+
+OTC public fund candidates such as `110022` and `000001` returned NAV rows with
+`exchange='DefaultSecurityIDSource'`, but `get_fund_info` returned no daily rows for
+the same date. Treat OTC fund NAV import as a later refinement of the fund path rather
+than mixing it into ETF semantics.
+
 ### `etf_basket`
 
 Raw columns:
@@ -138,8 +152,9 @@ tables:
 
 - `market.etf_daily`: ETF rows from `get_fund_info`.
 - `market.etf_nav`: ETF rows from `get_fund_target`.
-- `market.fund_daily`: ordinary fund rows only, after ordinary fund metadata is available.
-- `market.fund_nav`: ordinary fund rows only, after ordinary fund metadata is available.
+- `market.fund_daily`: non-ETF listed fund/LOF rows from `get_fund_info`.
+- `market.fund_nav`: non-ETF listed fund/LOF rows from `get_fund_target`; OTC fund
+  NAV rows need a follow-up symbol convention decision.
 
 Do not create adjusted-price views yet. `stock_valuation` and `stock_adj_factor` must be
 cross-checked before choosing the authoritative adjusted-close source.
@@ -153,6 +168,8 @@ Implemented:
 - `index_component`
 - `etf_daily`
 - `etf_nav`
+- `fund_daily`
+- `fund_nav`
 - `etf_basket`
 
 These datasets can be fetched to `staging.parquet_file` through `fetch-dataset` and
@@ -162,4 +179,5 @@ Remaining:
 
 1. Add `stock_adj_factor` retry samples across a wider date range, because factors are sparse.
 2. Confirm `get_etf_redemption` parameters or permissions before making its loader `ready`.
-3. Run a small local PostgreSQL smoke after rebuilding the P1 schema.
+3. Decide whether OTC public fund NAV codes without exchange suffix should be canonicalized
+   into `meta.instruments.symbol` as bare codes or source-qualified symbols.

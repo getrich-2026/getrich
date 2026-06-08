@@ -12,7 +12,7 @@
 
 - Local PostgreSQL + TimescaleDB can be cleaned and rebuilt during the current P1 development phase. The backend SQL files are still treated as the rebuildable baseline schema, so changing `sql/init/backend/60_insight.sql` is acceptable before the next stable commit. Additive migrations become mandatory after the INSIGHT P1 schema is promoted beyond local development.
 - ETF and ordinary fund data must be modeled separately. ETF rows returned by fund-family INSIGHT APIs should land in ETF-specific tables, while ordinary funds should use separate fund tables. Do not mix ETF and fund rows in a shared `market.fund_*` table.
-- `meta.instruments.asset` should include `fund` before ordinary fund imports are enabled. ETF instruments remain `asset='etf'`; ordinary mutual funds, LOF, and other non-ETF funds use `asset='fund'` with a subtype when needed.
+- ETF instruments remain `asset='etf'`; ordinary mutual funds, LOF, and other non-ETF funds use `asset='fund'` with a subtype when needed. The current ready fund path is verified with listed non-ETF fund/LOF rows; OTC public fund NAV rows need a follow-up symbol convention decision.
 
 ## 1. Architecture Goal
 
@@ -405,7 +405,7 @@ Planned read views after adjustment-factor reconciliation:
 | A1.4 Add stock daily basic and valuation DDL/transforms | A1.1 | Source raw adjusted close fields stored separately. |
 | A1.5 Add index component DDL/transform | A1.1 | PIT index membership. |
 | A1.6 Add ETF DDL/transforms | A1.1 | ETF daily, ETF NAV, basket, and redemption data. |
-| A1.7 Add ordinary fund DDL/transforms | A1.6 | Separate fund daily and NAV tables with `asset='fund'`. |
+| A1.7 Add ordinary fund DDL/transforms | A1.6 | Separate fund daily and NAV tables with `asset='fund'`; listed fund/LOF ready, OTC NAV convention pending. |
 | A1.8 Add generic `import-dataset` pipeline | A0.2, A1.1 | Non-bar dataset imports. |
 | A1.9 Add DuckDB workspace writer | A1.1 | Validation and snapshot artifacts. |
 | A1.10 Add adjustment reconciliation job | A1.3, A1.4, A1.9 | Trusted/experimental adjustment decision support. |

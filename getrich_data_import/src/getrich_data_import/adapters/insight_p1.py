@@ -35,6 +35,8 @@ P1_DEFAULT_SAMPLE_DATASETS: tuple[str, ...] = (
     "index_component",
     "etf_daily",
     "etf_nav",
+    "fund_daily",
+    "fund_nav",
     "etf_basket",
     "etf_redemption",
 )
@@ -44,6 +46,8 @@ P1_READY_DATASETS: tuple[str, ...] = (
     "index_component",
     "etf_daily",
     "etf_nav",
+    "fund_daily",
+    "fund_nav",
     "etf_basket",
 )
 

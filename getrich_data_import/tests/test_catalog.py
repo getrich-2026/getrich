@@ -31,7 +31,7 @@ def test_insight_catalog_includes_parquet_staging_and_ready_bars() -> None:
 
     fund_nav = get_dataset_spec("insight", "fund_nav")
     assert fund_nav.target == "market.fund_nav"
-    assert fund_nav.status == "planned"
+    assert fund_nav.status == "ready"
 
     etf_redemption = get_dataset_spec("insight", "etf_redemption")
     assert etf_redemption.status == "planned"

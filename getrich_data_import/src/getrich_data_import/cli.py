@@ -113,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--index-symbol", default="000300.SH", help="index sample symbol"
     )
     p_p1_samples.add_argument(
-        "--fund-symbol", default="510300.SH", help="fund or ETF sample symbol"
+        "--fund-symbol", default="161725.SZ", help="fund sample symbol"
     )
     p_p1_samples.add_argument(
         "--etf-symbol", default="510300.SH", help="ETF sample symbol"

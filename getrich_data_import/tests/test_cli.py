@@ -82,3 +82,4 @@ def test_parser_accepts_export_insight_p1_samples_command() -> None:
     assert args.provider == "insight"
     assert args.datasets == ["stock_valuation"]
     assert args.stock_symbol == "000001.SZ"
+    assert args.fund_symbol == "161725.SZ"
