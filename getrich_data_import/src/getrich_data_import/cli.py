@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import date
 from pathlib import Path
+from typing import Any
+
+from sqlalchemy import text
 
 from getrich_data_import.adapters.registry import get_history_source, provider_names
 from getrich_data_import.adapters.insight_p1 import (
@@ -57,6 +61,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument(
         "--all", action="store_true", help="show datasets for every provider"
     )
+    p_show_job = sub.add_parser("show-job", help="show recent import job runs")
+    p_show_job.add_argument("--run-id", type=int, help="specific run id")
+    p_show_job.add_argument("--dataset", help="filter by dataset name")
+    p_show_job.add_argument(
+        "--limit", type=int, default=10, help="maximum rows when --run-id is omitted"
+    )
+    p_checkpoints = sub.add_parser(
+        "list-checkpoints", help="list import checkpoints"
+    )
+    p_checkpoints.add_argument("--dataset", help="filter by dataset name")
+    p_checkpoints.add_argument("--partition-key", help="filter by partition key")
+    p_checkpoints.add_argument("--limit", type=int, default=20, help="maximum rows")
     p_fetch = sub.add_parser(
         "fetch-dataset", help="fetch one registered dataset into local parquet staging"
     )
@@ -218,6 +234,28 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.write(_format_dataset_specs(specs))
             return 0
+        if args.cmd == "show-job":
+            engine = make_engine(settings.database_url)
+            rows = _fetch_job_rows(
+                engine,
+                provider=provider,
+                run_id=args.run_id,
+                dataset_name=args.dataset,
+                limit=args.limit,
+            )
+            sys.stdout.write(_format_job_rows(rows))
+            return 0
+        if args.cmd == "list-checkpoints":
+            engine = make_engine(settings.database_url)
+            rows = _fetch_checkpoint_rows(
+                engine,
+                provider=provider,
+                dataset_name=args.dataset,
+                partition_key=args.partition_key,
+                limit=args.limit,
+            )
+            sys.stdout.write(_format_checkpoint_rows(rows))
+            return 0
 
         source = get_history_source(provider, settings)
         if args.cmd == "scan":
@@ -343,6 +381,173 @@ def _format_dataset_specs(specs: tuple[object, ...]) -> str:
         )
         for spec in specs
     ]
+    return _format_table(headers, rows)
+
+
+def _fetch_job_rows(
+    engine,
+    *,
+    provider: str,
+    run_id: int | None,
+    dataset_name: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    clauses = ["provider = :provider"]
+    params: dict[str, object] = {"provider": provider, "limit": max(1, limit)}
+    if run_id is not None:
+        clauses.append("run_id = :run_id")
+        params["run_id"] = run_id
+    if dataset_name:
+        clauses.append("dataset_name = :dataset_name")
+        params["dataset_name"] = dataset_name
+    limit_sql = "" if run_id is not None else "LIMIT :limit"
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT run_id,
+                       job_name,
+                       provider,
+                       dataset_name,
+                       start_date,
+                       end_date,
+                       status,
+                       rows_written,
+                       warning_count,
+                       request,
+                       checkpoint,
+                       error,
+                       started_at,
+                       finished_at
+                FROM ops.etl_job_run
+                WHERE {" AND ".join(clauses)}
+                ORDER BY run_id DESC
+                {limit_sql}
+                """
+            ),
+            params,
+        ).mappings()
+        return [dict(row) for row in rows]
+
+
+def _fetch_checkpoint_rows(
+    engine,
+    *,
+    provider: str,
+    dataset_name: str | None,
+    partition_key: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    clauses = ["provider = :provider"]
+    params: dict[str, object] = {"provider": provider, "limit": max(1, limit)}
+    if dataset_name:
+        clauses.append("dataset_name = :dataset_name")
+        params["dataset_name"] = dataset_name
+    if partition_key:
+        clauses.append("partition_key = :partition_key")
+        params["partition_key"] = partition_key
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT provider,
+                       dataset_name,
+                       partition_key,
+                       watermark_date,
+                       watermark_ts,
+                       state,
+                       updated_at
+                FROM ops.import_checkpoint
+                WHERE {" AND ".join(clauses)}
+                ORDER BY updated_at DESC, dataset_name, partition_key
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings()
+        return [dict(row) for row in rows]
+
+
+def _format_job_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "No job runs found.\n"
+    headers = (
+        "run_id",
+        "job_name",
+        "dataset",
+        "status",
+        "range",
+        "rows",
+        "warnings",
+        "request",
+        "checkpoint",
+    )
+    table_rows = [
+        (
+            str(row["run_id"]),
+            str(row["job_name"]),
+            str(row.get("dataset_name") or ""),
+            str(row["status"]),
+            _date_range(row.get("start_date"), row.get("end_date")),
+            str(row["rows_written"]),
+            str(row["warning_count"]),
+            _compact_json(row.get("request")),
+            _compact_json(row.get("checkpoint")),
+        )
+        for row in rows
+    ]
+    return _format_table(headers, table_rows)
+
+
+def _format_checkpoint_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "No checkpoints found.\n"
+    headers = (
+        "provider",
+        "dataset",
+        "partition",
+        "watermark_date",
+        "watermark_ts",
+        "state",
+        "updated_at",
+    )
+    table_rows = [
+        (
+            str(row["provider"]),
+            str(row["dataset_name"]),
+            str(row["partition_key"]),
+            str(row.get("watermark_date") or ""),
+            str(row.get("watermark_ts") or ""),
+            _compact_json(row.get("state")),
+            str(row.get("updated_at") or ""),
+        )
+        for row in rows
+    ]
+    return _format_table(headers, table_rows)
+
+
+def _date_range(start: object | None, end: object | None) -> str:
+    if start and end:
+        return f"{start}..{end}"
+    if start:
+        return str(start)
+    if end:
+        return str(end)
+    return ""
+
+
+def _compact_json(value: object) -> str:
+    if value is None:
+        return "{}"
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _format_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
     widths = [
         max(len(headers[index]), *(len(row[index]) for row in rows))
         for index in range(len(headers))

@@ -318,16 +318,19 @@ Add commands in dependency order:
 |---|---|---|
 | `list-datasets` | Show registry and DB catalog status. | P0 |
 | `fetch-dataset` | Fetch INSIGHT dataset into local Parquet staging and manifest. | P0 |
+| `show-job` | Inspect job run request, status, row counts, warnings, and final checkpoint. | P1 implemented |
+| `list-checkpoints` | Inspect import checkpoint watermarks and per-partition state. | P1 implemented |
 | `import-dataset` | Generic non-bar dataset import. | P1 |
 | `validate-adjustments` | Compare adjustment sources and write DuckDB detail output. | P1 |
 | `export-snapshot` | Build named DuckDB or parquet snapshots from canonical data. | P1 |
-| `show-job` | Inspect job run, warnings, row counts, artifacts. | P1 |
 
 Example:
 
 ```bash
 getrich-import --provider insight list-datasets
 getrich-import --provider insight fetch-dataset --dataset stock_bar_1d --start-date 2026-06-01 --end-date 2026-06-05
+getrich-import --provider insight show-job --dataset fund_nav --limit 5
+getrich-import --provider insight list-checkpoints --dataset fund_nav --partition-key 161725.SZ
 getrich-import --provider insight import-dataset --dataset stock_adj_factor --start-date 2020-01-01 --end-date 2026-06-07
 getrich-import --provider insight validate-adjustments --symbol 601688.SH --start-date 2015-01-01 --end-date 2026-06-07
 ```
