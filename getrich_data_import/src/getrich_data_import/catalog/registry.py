@@ -224,6 +224,7 @@ _DATASET_SPECS: tuple[DatasetSpec, ...] = (
         ),
         asset="stock",
         phase="P1",
+        status="ready",
     ),
     DatasetSpec(
         provider="insight",

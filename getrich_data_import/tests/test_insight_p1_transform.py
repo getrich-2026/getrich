@@ -7,6 +7,31 @@ import pandas as pd
 from getrich_data_import.transform.insight_p1 import normalize_insight_p1_dataset
 
 
+def test_normalize_stock_adj_factor_maps_sparse_factor_interval() -> None:
+    raw = pd.DataFrame(
+        [
+            {
+                "htsc_code": "000001.SZ",
+                "name": "平安银行",
+                "begin_date": pd.Timestamp("2025-10-15"),
+                "end_date": pd.Timestamp("2026-06-11"),
+                "xdy": 1.020822,
+                "b_xdy": 1.0,
+                "f_xdy": 145.924146,
+            }
+        ]
+    )
+
+    out = normalize_insight_p1_dataset("stock_adj_factor", raw, source="insight")
+
+    assert out["source_symbol"].tolist() == ["000001.SZ"]
+    assert out["begin_date"].tolist() == [pd.Timestamp("2025-10-15").date()]
+    assert out["xdy"].tolist() == [1.020822]
+    assert out["b_xdy"].tolist() == [1.0]
+    assert out["f_xdy"].tolist() == [145.924146]
+    assert json.loads(out["raw_payload"].iloc[0])["end_date"] == "2026-06-11 00:00:00"
+
+
 def test_normalize_stock_valuation_maps_adjusted_close_and_ratios() -> None:
     raw = pd.DataFrame(
         [

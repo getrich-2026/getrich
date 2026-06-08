@@ -10,6 +10,7 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "tomli>=2.0; python_version < '3.11'",
     "insight-py-linux>=6.1.2",
+    "polars>=1.41.2",
 ]
 
 [project.scripts]

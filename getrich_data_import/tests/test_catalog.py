@@ -25,6 +25,10 @@ def test_insight_catalog_includes_parquet_staging_and_ready_bars() -> None:
     assert stock_bar.status == "ready"
     assert stock_bar.target == "market.stock_bar_1d"
 
+    stock_adj_factor = get_dataset_spec("insight", "stock_adj_factor")
+    assert stock_adj_factor.status == "ready"
+    assert stock_adj_factor.target == "market.stock_adj_factor"
+
     etf_nav = get_dataset_spec("insight", "etf_nav")
     assert etf_nav.target == "market.etf_nav"
     assert etf_nav.status == "ready"

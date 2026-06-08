@@ -35,6 +35,7 @@ from getrich_data_import.quality.rules import (
     validate_bars,
     write_quality_issues,
 )
+from getrich_data_import.services import TradingCalendarMissingError
 from getrich_data_import.services import TradingCalendarService
 from getrich_data_import.staging import (
     file_sha256,
@@ -744,12 +745,20 @@ class ImportPipeline:
             return frame
         service = TradingCalendarService(conn)
         out = frame.copy()
-        out["trading_day"] = [
-            service.assign_trading_day(str(exchange), timestamp, NIGHT_SESSION_CUTOFF)
-            for exchange, timestamp in zip(
-                out["exchange"], pd.to_datetime(out["dt"]), strict=False
-            )
-        ]
+        existing_days = None
+        if "trading_day" in out.columns:
+            existing_days = pd.to_datetime(out["trading_day"], errors="coerce").dt.date
+        try:
+            out["trading_day"] = [
+                service.assign_trading_day(str(exchange), timestamp, NIGHT_SESSION_CUTOFF)
+                for exchange, timestamp in zip(
+                    out["exchange"], pd.to_datetime(out["dt"]), strict=False
+                )
+            ]
+        except TradingCalendarMissingError:
+            if existing_days is None or not existing_days.notna().all():
+                raise
+            out["trading_day"] = existing_days
         return out
 
     def _expected_trading_days(
@@ -1100,7 +1109,7 @@ def _filter_frame_by_symbols(
 
 
 def _frame_date_column(frame: pd.DataFrame) -> str | None:
-    for column in ("trading_day", "dt", "end_date", "begin_date", "pub_date"):
+    for column in ("trading_day", "dt", "begin_date", "end_date", "pub_date"):
         if column in frame.columns:
             return column
     return None

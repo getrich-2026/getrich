@@ -6,6 +6,7 @@ import pandas as pd
 
 
 P1_CANONICAL_DATASETS: tuple[str, ...] = (
+    "stock_adj_factor",
     "stock_daily_basic",
     "stock_valuation",
     "index_component",
@@ -38,6 +39,8 @@ def normalize_insight_p1_dataset(
 
     if raw.empty:
         return pd.DataFrame()
+    if dataset_name == "stock_adj_factor":
+        return _normalize_stock_adj_factor(raw, source=source)
     if dataset_name == "stock_daily_basic":
         return _normalize_stock_daily_basic(raw, source=source)
     if dataset_name == "stock_valuation":
@@ -53,6 +56,28 @@ def normalize_insight_p1_dataset(
     if dataset_name == "etf_basket":
         return _normalize_etf_basket(raw, source=source)
     raise ValueError(f"unsupported INSIGHT P1 canonical dataset: {dataset_name}")
+
+
+def _normalize_stock_adj_factor(raw: pd.DataFrame, *, source: str) -> pd.DataFrame:
+    _require_columns(raw, "stock_adj_factor", ("htsc_code", "begin_date"))
+    out = pd.DataFrame(index=raw.index)
+    out["source_symbol"] = _text(raw, "htsc_code")
+    out["begin_date"] = _date(raw, "begin_date")
+    _copy_numeric(
+        raw,
+        out,
+        {
+            "xdy": "xdy",
+            "b_xdy": "b_xdy",
+            "f_xdy": "f_xdy",
+        },
+    )
+    return _finish(
+        out,
+        raw,
+        source=source,
+        required=("source_symbol", "begin_date", "xdy", "b_xdy", "f_xdy"),
+    )
 
 
 def _normalize_stock_daily_basic(raw: pd.DataFrame, *, source: str) -> pd.DataFrame:

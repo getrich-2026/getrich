@@ -41,6 +41,7 @@ P1_DEFAULT_SAMPLE_DATASETS: tuple[str, ...] = (
     "etf_redemption",
 )
 P1_READY_DATASETS: tuple[str, ...] = (
+    "stock_adj_factor",
     "stock_daily_basic",
     "stock_valuation",
     "index_component",

@@ -53,6 +53,16 @@ Local source directory: `/home/quant/data`.
 - Parquet exports were written and read back from `/tmp/getrich_p1_*`.
 - Verification commands passed: `.venv/bin/ruff check src tests` and `.venv/bin/pytest tests -q` with 75 tests.
 
+## INSIGHT P1 Local Data Verification
+
+Verification date: 2026-06-08.
+
+- `stock_adj_factor` wide-date retry passed for `000001.SZ`, `2020-01-01` to `2026-06-04`: fetch 8 rows, load 8 rows. The loader now filters sparse factor intervals by `begin_date`; `end_date` remains in `raw_payload`.
+- ETF ready datasets passed for `510300.SH` on `2026-06-04`: `etf_daily` 1 row, `etf_nav` 1 row, `etf_basket` 300 rows.
+- Futures samples passed for `CU00.SHF` on `2026-06-04`: `future_bar_1d` 1 row, `future_bar_1m` 224 rows.
+- Options samples passed for `10010317.SH` on `2026-06-04`: `option_bar_1d` 1 row, `option_bar_1m` 242 rows.
+- Minute-bar load now preserves staged `trading_day` when `meta.trading_calendar` is missing and the staged parquet already has complete source trading days. When the calendar is available, the calendar-backed night-session assignment remains authoritative.
+
 ## Not Yet Implemented
 
 RQData direct adapter, scheduler, realtime Redis stream, API/SDK, missing-bar checks, full contract-detail import, and production deployment are not implemented in this first cut.

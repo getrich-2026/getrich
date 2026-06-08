@@ -29,7 +29,7 @@ statements before implementing canonical P1 loaders.
 | `fund_daily` from `get_fund_info` | `161725.SZ` | 1 | Written |
 | `fund_nav` from `get_fund_target` | `161725.SZ` | 1 | Written |
 | `etf_basket` | `510300.SH` | 300 | Written |
-| `stock_adj_factor` | `000001.SZ` | 0 | Empty for sample day |
+| `stock_adj_factor` | `000001.SZ` | 8 | Written from wide date retry |
 | `etf_redemption` | `510300.SH` | 0 | SDK returned `exchange does not exist`; needs parameter or permission confirmation |
 
 ## Field Observations
@@ -63,6 +63,24 @@ DDL changes:
 - Map `forward_adjusted_closing_price` to `front_adjusted_close`.
 - Map `backward_adjusted_closing_price` to `back_adjusted_close`.
 - Add `pc_ttm`, `ps_ttm`, `avg_price`, `avg_volume_per_trade`, and `avg_amount_per_trade`.
+
+### `stock_adj_factor`
+
+Wide date retry result:
+
+- Symbol: `000001.SZ`
+- Date range: `2020-01-01` to `2026-06-04`
+- Rows: 8
+- Raw columns: `htsc_code, name, begin_date, end_date, xdy, b_xdy, f_xdy`
+
+DDL decision:
+
+- Existing `market.stock_adj_factor` primary key `instrument_id, begin_date, source`
+  is sufficient for sparse factor events.
+- Map `htsc_code` to `source_symbol` and persist `xdy`, `b_xdy`, `f_xdy`.
+- Keep `end_date` in `raw_payload` for now. Some symbols returned `1900-01-01` as an
+  open-ended sentinel; adding it as a canonical validity field should wait until
+  downstream adjusted-price semantics are finalized.
 
 ### `index_component`
 
@@ -165,6 +183,7 @@ Implemented:
 
 - `stock_daily_basic`
 - `stock_valuation`
+- `stock_adj_factor`
 - `index_component`
 - `etf_daily`
 - `etf_nav`
@@ -177,7 +196,6 @@ loaded through `load-dataset` after the database schema has the P1 columns.
 
 Remaining:
 
-1. Add `stock_adj_factor` retry samples across a wider date range, because factors are sparse.
-2. Confirm `get_etf_redemption` parameters or permissions before making its loader `ready`.
-3. Decide whether OTC public fund NAV codes without exchange suffix should be canonicalized
+1. Confirm `get_etf_redemption` parameters or permissions before making its loader `ready`.
+2. Decide whether OTC public fund NAV codes without exchange suffix should be canonicalized
    into `meta.instruments.symbol` as bare codes or source-qualified symbols.
