@@ -43,6 +43,18 @@ uv run getrich-import --config /etc/getrich/getrich-data-import.toml \
   --provider insight load-metadata
 
 uv run getrich-import --config /etc/getrich/getrich-data-import.toml \
+  --provider insight fetch-dataset \
+  --dataset stock_bar_1d \
+  --start-date 2026-05-19 --end-date 2026-05-19 \
+  --symbol 000001.SZ
+
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml \
+  --provider insight load-dataset \
+  --dataset stock_bar_1d \
+  --start-date 2026-05-19 --end-date 2026-05-19 \
+  --symbol 000001.SZ
+
+uv run getrich-import --config /etc/getrich/getrich-data-import.toml \
   --provider insight import-bars \
   --asset future --freq 1m \
   --start-date 2026-05-19 --end-date 2026-05-19 \
@@ -55,6 +67,7 @@ Insight 需要配置：
 [insight]
 runtime_paths = []
 env_file = ""
+staging_dir = "~/data/insight"
 username_env = "INSIGHT_USER"
 password_env = "INSIGHT_PASSWORD"
 login_required = true

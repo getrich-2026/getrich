@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import date
 from pathlib import Path
 
 from getrich_data_import.adapters.registry import get_history_source, provider_names
 from getrich_data_import.common.config import Settings
 from getrich_data_import.common.logger import configure_logging, get_logger
+from getrich_data_import.catalog import (
+    dataset_specs_for_provider,
+    registered_dataset_specs,
+)
 from getrich_data_import.db.health import check_database
 from getrich_data_import.db.migrations import apply_migrations
 from getrich_data_import.db.postgres import execute_schema, make_engine
@@ -33,10 +38,55 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("init-schema", help="execute design-version backend DDL")
-    sub.add_parser("migrate-schema", help="apply backend DDL files with checksum tracking")
-    sub.add_parser("check-db", help="check PostgreSQL connectivity and TimescaleDB extension")
-    sub.add_parser("verify-schema", help="verify expected tables, hypertables, and migrations")
+    sub.add_parser(
+        "migrate-schema", help="apply backend DDL files with checksum tracking"
+    )
+    sub.add_parser(
+        "check-db", help="check PostgreSQL connectivity and TimescaleDB extension"
+    )
+    sub.add_parser(
+        "verify-schema", help="verify expected tables, hypertables, and migrations"
+    )
     sub.add_parser("scan", help="show upstream parquet coverage")
+    p_list = sub.add_parser("list-datasets", help="list registered import datasets")
+    p_list.add_argument(
+        "--all", action="store_true", help="show datasets for every provider"
+    )
+    p_fetch = sub.add_parser(
+        "fetch-dataset", help="fetch one registered dataset into local parquet staging"
+    )
+    p_fetch.add_argument(
+        "--dataset", required=True, help="registered dataset name, e.g. stock_bar_1d"
+    )
+    p_fetch.add_argument("--start-date", help="inclusive YYYY-MM-DD source date")
+    p_fetch.add_argument("--end-date", help="inclusive YYYY-MM-DD source date")
+    p_fetch.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="source symbol; can be repeated",
+    )
+    p_load_dataset = sub.add_parser(
+        "load-dataset", help="load one staged parquet dataset into canonical tables"
+    )
+    p_load_dataset.add_argument(
+        "--dataset", required=True, help="registered dataset name, e.g. stock_bar_1d"
+    )
+    p_load_dataset.add_argument(
+        "--start-date", help="inclusive YYYY-MM-DD manifest date"
+    )
+    p_load_dataset.add_argument("--end-date", help="inclusive YYYY-MM-DD manifest date")
+    p_load_dataset.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="source symbol; can be repeated",
+    )
+    p_load_dataset.add_argument(
+        "--reload",
+        action="store_true",
+        help="explicitly reload staged files that are already marked loaded",
+    )
     sub.add_parser("load-metadata", help="load calendar, instruments, and symbol map")
 
     p_import = sub.add_parser("import-bars", help="import historical bars")
@@ -57,12 +107,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="auto/full currently read the requested source range and rely on idempotent upsert",
     )
 
-    p_export = sub.add_parser("export-bars", help="export historical bars from PostgreSQL to parquet")
+    p_export = sub.add_parser(
+        "export-bars", help="export historical bars from PostgreSQL to parquet"
+    )
     p_export.add_argument("--asset", choices=BAR_ASSETS, required=True)
     p_export.add_argument("--freq", choices=BAR_FREQUENCIES, required=True)
     p_export.add_argument("--start-date", help="inclusive YYYY-MM-DD trading day")
     p_export.add_argument("--end-date", help="inclusive YYYY-MM-DD trading day")
-    p_export.add_argument("--symbol", action="append", dest="symbols", help="canonical symbol; can be repeated")
+    p_export.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="canonical symbol; can be repeated",
+    )
     p_export.add_argument("--output", required=True, help="output parquet path")
     return parser
 
@@ -112,8 +169,17 @@ def main(argv: list[str] | None = None) -> int:
                 start_date=_parse_date(args.start_date),
                 end_date=_parse_date(args.end_date),
                 symbols=args.symbols,
+                reload=args.reload,
             )
             print(f"exported {result.rows} rows to {result.path}")
+            return 0
+        if args.cmd == "list-datasets":
+            specs = (
+                registered_dataset_specs()
+                if args.all
+                else dataset_specs_for_provider(provider)
+            )
+            sys.stdout.write(_format_dataset_specs(specs))
             return 0
 
         source = get_history_source(provider, settings)
@@ -133,7 +199,31 @@ def main(argv: list[str] | None = None) -> int:
         pipeline = ImportPipeline(settings=settings, engine=engine, source=source)
         if args.cmd == "load-metadata":
             result = pipeline.load_metadata()
-            print(f"{result.job_name} status={result.status} rows={result.rows_written}")
+            print(
+                f"{result.job_name} status={result.status} rows={result.rows_written}"
+            )
+            return 0
+        if args.cmd == "fetch-dataset":
+            result = pipeline.fetch_dataset(
+                dataset_name=args.dataset,
+                start_date=_parse_date(args.start_date),
+                end_date=_parse_date(args.end_date),
+                symbols=args.symbols,
+            )
+            print(
+                f"{result.job_name} status={result.status} rows={result.rows_written}"
+            )
+            return 0
+        if args.cmd == "load-dataset":
+            result = pipeline.load_dataset(
+                dataset_name=args.dataset,
+                start_date=_parse_date(args.start_date),
+                end_date=_parse_date(args.end_date),
+                symbols=args.symbols,
+            )
+            print(
+                f"{result.job_name} status={result.status} rows={result.rows_written}"
+            )
             return 0
         if args.cmd == "import-bars":
             result = pipeline.import_bars(
@@ -144,7 +234,9 @@ def main(argv: list[str] | None = None) -> int:
                 end_date=_parse_date(args.end_date),
                 symbols=args.symbols,
             )
-            print(f"{result.job_name} status={result.status} rows={result.rows_written}")
+            print(
+                f"{result.job_name} status={result.status} rows={result.rows_written}"
+            )
             return 0
     except Exception as exc:
         logger.error("command failed: %s", exc)
@@ -158,6 +250,47 @@ def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
     return date.fromisoformat(value)
+
+
+def _format_dataset_specs(specs: tuple[object, ...]) -> str:
+    if not specs:
+        return "No datasets registered.\n"
+    headers = (
+        "provider",
+        "dataset",
+        "status",
+        "phase",
+        "storage",
+        "target",
+        "asset",
+        "freq",
+    )
+    rows = [
+        (
+            str(getattr(spec, "provider")),
+            str(getattr(spec, "name")),
+            str(getattr(spec, "status")),
+            str(getattr(spec, "phase")),
+            str(getattr(spec, "storage")),
+            str(getattr(spec, "target")),
+            str(getattr(spec, "asset") or "-"),
+            str(getattr(spec, "freq") or "-"),
+        )
+        for spec in specs
+    ]
+    widths = [
+        max(len(headers[index]), *(len(row[index]) for row in rows))
+        for index in range(len(headers))
+    ]
+    lines = [
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)),
+        "  ".join("-" * width for width in widths),
+    ]
+    lines.extend(
+        "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+        for row in rows
+    )
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":

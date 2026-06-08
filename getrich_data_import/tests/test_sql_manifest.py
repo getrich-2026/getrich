@@ -24,7 +24,13 @@ def test_market_schema_includes_stock_etf_and_raw_source_fields() -> None:
     for table_name in ["stock_bar_1d", "stock_bar_1m", "etf_bar_1d", "etf_bar_1m"]:
         assert f"market.{table_name}" in sql
 
-    for column_name in ["trading_status", "limit_up", "limit_down", "pre_close", "pre_settle"]:
+    for column_name in [
+        "trading_status",
+        "limit_up",
+        "limit_down",
+        "pre_close",
+        "pre_settle",
+    ]:
         assert column_name in sql
 
 
@@ -139,3 +145,63 @@ def test_ops_schema_has_api_key_and_quality_indexes() -> None:
     assert "idx_api_keys_user_id" in sql
     assert "chk_etl_job_run_timestamps" in sql
     assert "idx_quality_check_detail" in sql
+
+
+def test_insight_schema_creates_staging_schema_for_local_parquet_manifest() -> None:
+    settings = Settings.load()
+    sql = (settings.sql_dir / "60_insight.sql").read_text(encoding="utf-8")
+
+    assert "CREATE SCHEMA IF NOT EXISTS staging" in sql
+
+
+def test_insight_schema_tracks_parquet_staging_and_artifacts() -> None:
+    settings = Settings.load()
+    sql = (settings.sql_dir / "60_insight.sql").read_text(encoding="utf-8")
+
+    for table_name in [
+        "ops.dataset_catalog",
+        "ops.import_checkpoint",
+        "staging.parquet_file",
+        "ops.duckdb_artifact",
+    ]:
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in sql
+
+    assert "UNIQUE (provider, dataset_name, source_path)" in sql
+    assert "status IN ('written', 'loaded', 'failed', 'superseded')" in sql
+    assert (
+        "artifact_type IN ('raw_sample', 'validation', 'adjustment', 'snapshot')" in sql
+    )
+
+
+def test_insight_schema_adds_p1_canonical_market_tables() -> None:
+    settings = Settings.load()
+    sql = (settings.sql_dir / "60_insight.sql").read_text(encoding="utf-8")
+
+    for table_name in [
+        "stock_adj_factor",
+        "stock_daily_basic",
+        "stock_valuation",
+        "index_component",
+        "fund_daily",
+        "fund_nav",
+        "etf_basket",
+        "etf_redemption",
+    ]:
+        assert f"CREATE TABLE IF NOT EXISTS market.{table_name}" in sql
+
+
+def test_insight_schema_makes_time_series_tables_hypertables() -> None:
+    settings = Settings.load()
+    sql = (settings.sql_dir / "60_insight.sql").read_text(encoding="utf-8")
+
+    for table_name in [
+        "stock_adj_factor",
+        "stock_daily_basic",
+        "stock_valuation",
+        "index_component",
+        "fund_daily",
+        "fund_nav",
+        "etf_basket",
+        "etf_redemption",
+    ]:
+        assert f"create_hypertable('market.{table_name}'" in sql

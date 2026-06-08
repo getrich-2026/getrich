@@ -9,6 +9,7 @@ data_dir = "/data"
 [insight]
 runtime_paths = []
 env_file = ""
+staging_dir = "~/data/insight"
 username_env = "INSIGHT_USER"
 password_env = "INSIGHT_PASSWORD"
 login_required = true

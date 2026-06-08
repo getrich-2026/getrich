@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 import os
+import ctypes
+import importlib.util
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
@@ -65,7 +67,9 @@ class InsightSource:
             return
 
         api = self._load_api()
-        for exchange in sorted({e for values in TYPE_EXCHANGE.values() for e in values}):
+        for exchange in sorted(
+            {e for values in TYPE_EXCHANGE.values() for e in values}
+        ):
             raw_days = api.get_trading_days(
                 exchange=exchange,
                 trading_day=[
@@ -117,15 +121,23 @@ class InsightSource:
             frames.append(_normalize_instruments(raw, asset=asset))
         if not frames:
             if errors:
-                raise RuntimeError(f"insight basic info failed for all requested assets: {'; '.join(errors)}")
+                raise RuntimeError(
+                    f"insight basic info failed for all requested assets: {'; '.join(errors)}"
+                )
             logger.warning("insight basic info returned no instrument rows")
-            return pd.DataFrame(columns=["symbol", "asset", "exchange", "name", "status"])
-        return pd.concat(frames, ignore_index=True).drop_duplicates(["asset", "exchange", "symbol"])
+            return pd.DataFrame(
+                columns=["symbol", "asset", "exchange", "name", "status"]
+            )
+        return pd.concat(frames, ignore_index=True).drop_duplicates(
+            ["asset", "exchange", "symbol"]
+        )
 
     def symbol_map_frame(self) -> pd.DataFrame:
         instruments = self.instrument_frame()
         if instruments.empty:
-            return pd.DataFrame(columns=["asset", "exchange", "symbol", "source", "source_symbol"])
+            return pd.DataFrame(
+                columns=["asset", "exchange", "symbol", "source", "source_symbol"]
+            )
         out = instruments.loc[:, ["asset", "exchange", "symbol"]].copy()
         out["source"] = self.provider
         out["source_symbol"] = out["symbol"]
@@ -192,7 +204,10 @@ class InsightSource:
         for chunk in _chunks(source_symbols, self.settings.batch_size):
             raw = api.get_kline(
                 htsc_code=chunk,
-                time=[_request_start(effective_start, freq), _request_end(effective_end, freq)],
+                time=[
+                    _request_start(effective_start, freq),
+                    _request_end(effective_end, freq),
+                ],
                 frequency=frequency,
                 fq="none",
             )
@@ -208,7 +223,12 @@ class InsightSource:
         instruments = self.instrument_frame()
         if instruments.empty:
             return []
-        return sorted(instruments[instruments["asset"] == asset]["symbol"].dropna().astype(str).unique())
+        return sorted(
+            instruments[instruments["asset"] == asset]["symbol"]
+            .dropna()
+            .astype(str)
+            .unique()
+        )
 
     def _load_api(self) -> _InsightApi:
         if self._api is not None:
@@ -217,6 +237,7 @@ class InsightSource:
         _load_env_file(self.settings.env_file)
         for runtime_path in self.settings.runtime_paths:
             _prepend_sys_path(runtime_path)
+        _prepare_insight_native_libs()
 
         try:
             try:
@@ -283,6 +304,26 @@ def _load_env_file(path: Path | None) -> None:
         os.environ[key] = value.strip().strip("'\"")
 
 
+def _prepare_insight_native_libs() -> None:
+    spec = importlib.util.find_spec("insight_python")
+    if spec is None or not spec.submodule_search_locations:
+        return
+    package_dir = Path(next(iter(spec.submodule_search_locations)))
+    lib_dir = (
+        package_dir
+        / "com"
+        / "libs"
+        / "linux"
+        / f"python{sys.version_info.major}{sys.version_info.minor}"
+    )
+    if not lib_dir.exists():
+        return
+    for name in ["libcrypto.so.10", "libssl.so.10"]:
+        path = lib_dir / name
+        if path.exists():
+            ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+
+
 def _normalize_instruments(raw: pd.DataFrame, *, asset: str) -> pd.DataFrame:
     symbol_col = _first_existing(raw, ["htsc_code", "symbol", "security_code", "code"])
     exchange_col = _first_existing(raw, ["exchange", "exchange_code", "market"])
@@ -302,7 +343,9 @@ def _normalize_instruments(raw: pd.DataFrame, *, asset: str) -> pd.DataFrame:
     return out.dropna(subset=["symbol", "exchange"])
 
 
-def _normalize_bars(raw: pd.DataFrame, *, asset: str, freq: str, provider: str) -> pd.DataFrame:
+def _normalize_bars(
+    raw: pd.DataFrame, *, asset: str, freq: str, provider: str
+) -> pd.DataFrame:
     time_col = _first_existing(raw, ["time", "datetime", "trade_time"])
     symbol_col = _first_existing(raw, ["htsc_code", "symbol", "security_code"])
     if time_col is None or symbol_col is None:
@@ -354,7 +397,9 @@ def _normalize_bars(raw: pd.DataFrame, *, asset: str, freq: str, provider: str) 
         if col not in out.columns:
             out[col] = None
     status_col = _first_existing(raw, ["trading_status", "status", "suspend_status"])
-    out["trading_status"] = raw[status_col].astype("string") if status_col is not None else None
+    out["trading_status"] = (
+        raw[status_col].astype("string") if status_col is not None else None
+    )
     out["adj_factor"] = 1.0 if freq == "1d" and asset in {"stock", "etf"} else None
     out["source"] = provider
     return out.dropna(subset=["dt", "trading_day", "source_symbol"])

@@ -14,6 +14,7 @@ SCHEMA_FILES = [
     "30_compress_ca.sql",
     "40_realtime.sql",
     "50_ops.sql",
+    "60_insight.sql",
 ]
 
 
@@ -29,7 +30,9 @@ def qualified(schema: str, table: str) -> str:
     return f"{qident(schema)}.{qident(table)}"
 
 
-def execute_schema(engine: Engine, sql_dir: Path, files: Iterable[str] = SCHEMA_FILES) -> None:
+def execute_schema(
+    engine: Engine, sql_dir: Path, files: Iterable[str] = SCHEMA_FILES
+) -> None:
     with engine.begin() as conn:
         for file_name in files:
             conn.exec_driver_sql((sql_dir / file_name).read_text(encoding="utf-8"))

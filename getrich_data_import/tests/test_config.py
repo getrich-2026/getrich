@@ -52,6 +52,14 @@ def test_insight_runtime_paths_accept_comma_separated_env(monkeypatch) -> None:
     assert settings.insight.runtime_paths == (Path("/a"), Path("/b"))
 
 
+def test_insight_staging_dir_accepts_env(monkeypatch) -> None:
+    monkeypatch.setenv("GETRICH_IMPORT__INSIGHT_STAGING_DIR", "/tmp/insight-stage")
+
+    settings = Settings.load()
+
+    assert settings.insight.staging_dir == Path("/tmp/insight-stage")
+
+
 def test_quality_expected_minutes_accepts_env(monkeypatch) -> None:
     monkeypatch.setenv("GETRICH_IMPORT__QUALITY_EXPECTED_MINUTES_PER_DAY", "240")
 

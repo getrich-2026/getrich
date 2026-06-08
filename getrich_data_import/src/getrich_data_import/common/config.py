@@ -26,6 +26,7 @@ class YinheSettings:
 class InsightSettings:
     runtime_paths: tuple[Path, ...] = ()
     env_file: Path | None = None
+    staging_dir: Path = Path("~/data/insight")
     username_env: str = "INSIGHT_USER"
     password_env: str = "INSIGHT_PASSWORD"
     login_required: bool = True
@@ -99,26 +100,39 @@ class Settings:
             timezone=str(raw.get("timezone", "Asia/Shanghai")),
             batch_rows=int(raw.get("batch_rows", 50_000)),
             yinhe=YinheSettings(
-                data_dir=_resolve_path(yinhe_raw.get("data_dir", "../yinhe_data_fetcher/data"), base_dir),
+                data_dir=_resolve_path(
+                    yinhe_raw.get("data_dir", "../yinhe_data_fetcher/data"), base_dir
+                ),
             ),
             insight=InsightSettings(
                 runtime_paths=runtime_paths,
                 env_file=_resolve_path(env_file, base_dir) if env_file else None,
+                staging_dir=_resolve_path(
+                    insight_raw.get("staging_dir", "~/data/insight"), base_dir
+                ),
                 username_env=str(insight_raw.get("username_env", "INSIGHT_USER")),
                 password_env=str(insight_raw.get("password_env", "INSIGHT_PASSWORD")),
                 login_required=bool(insight_raw.get("login_required", True)),
                 batch_size=int(insight_raw.get("batch_size", 300)),
-                default_start_date=_parse_optional_date(insight_raw.get("default_start_date")),
-                default_end_date=_parse_optional_date(insight_raw.get("default_end_date")),
+                default_start_date=_parse_optional_date(
+                    insight_raw.get("default_start_date")
+                ),
+                default_end_date=_parse_optional_date(
+                    insight_raw.get("default_end_date")
+                ),
                 symbols=_parse_symbols(insight_raw.get("symbols", [])),
             ),
             parquet=ParquetSettings(
-                export_dir=_resolve_path(parquet_raw.get("export_dir", "/data/parquet/getrich"), base_dir),
+                export_dir=_resolve_path(
+                    parquet_raw.get("export_dir", "/data/parquet/getrich"), base_dir
+                ),
             ),
             quality=QualitySettings(
                 fail_on_error=bool(quality_raw.get("fail_on_error", True)),
                 price_jump_warn_pct=float(quality_raw.get("price_jump_warn_pct", 0.2)),
-                expected_minutes_per_day=_parse_optional_int(quality_raw.get("expected_minutes_per_day")),
+                expected_minutes_per_day=_parse_optional_int(
+                    quality_raw.get("expected_minutes_per_day")
+                ),
             ),
             sql_dir=sql_dir,
         )
@@ -158,6 +172,7 @@ def _apply_env(raw: dict[str, Any]) -> dict[str, Any]:
         "GETRICH_IMPORT__INSIGHT_RUNTIME_PATH": ("insight", "runtime_path"),
         "GETRICH_IMPORT__INSIGHT_RUNTIME_PATHS": ("insight", "runtime_paths"),
         "GETRICH_IMPORT__INSIGHT_ENV_FILE": ("insight", "env_file"),
+        "GETRICH_IMPORT__INSIGHT_STAGING_DIR": ("insight", "staging_dir"),
         "GETRICH_IMPORT__INSIGHT_USERNAME_ENV": ("insight", "username_env"),
         "GETRICH_IMPORT__INSIGHT_PASSWORD_ENV": ("insight", "password_env"),
         "GETRICH_IMPORT__INSIGHT_LOGIN_REQUIRED": ("insight", "login_required"),
@@ -167,8 +182,14 @@ def _apply_env(raw: dict[str, Any]) -> dict[str, Any]:
         "GETRICH_IMPORT__INSIGHT_SYMBOLS": ("insight", "symbols"),
         "GETRICH_IMPORT__PARQUET_EXPORT_DIR": ("parquet", "export_dir"),
         "GETRICH_IMPORT__QUALITY_FAIL_ON_ERROR": ("quality", "fail_on_error"),
-        "GETRICH_IMPORT__QUALITY_PRICE_JUMP_WARN_PCT": ("quality", "price_jump_warn_pct"),
-        "GETRICH_IMPORT__QUALITY_EXPECTED_MINUTES_PER_DAY": ("quality", "expected_minutes_per_day"),
+        "GETRICH_IMPORT__QUALITY_PRICE_JUMP_WARN_PCT": (
+            "quality",
+            "price_jump_warn_pct",
+        ),
+        "GETRICH_IMPORT__QUALITY_EXPECTED_MINUTES_PER_DAY": (
+            "quality",
+            "expected_minutes_per_day",
+        ),
     }
     for env_name, path in mappings.items():
         if env_name not in os.environ:
@@ -225,4 +246,8 @@ def _parse_paths(value: object, base_dir: Path) -> tuple[Path, ...]:
         parts = value.split(",") if "," in value else [value]
     else:
         parts = list(value)  # type: ignore[arg-type]
-    return tuple(_resolve_path(str(part).strip(), base_dir) for part in parts if str(part).strip())
+    return tuple(
+        _resolve_path(str(part).strip(), base_dir)
+        for part in parts
+        if str(part).strip()
+    )

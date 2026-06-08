@@ -15,11 +15,19 @@ EXPECTED_TABLES = {
     "market.etf_bar_1m",
     "market.index_bar_1d",
     "market.index_bar_1m",
+    "market.index_component",
     "market.option_bar_1d",
     "market.option_bar_1m",
     "market.option_greeks_1d",
+    "market.etf_basket",
+    "market.etf_redemption",
+    "market.fund_daily",
+    "market.fund_nav",
+    "market.stock_adj_factor",
     "market.stock_bar_1d",
     "market.stock_bar_1m",
+    "market.stock_daily_basic",
+    "market.stock_valuation",
     "meta.future_contracts",
     "meta.instruments",
     "meta.option_contracts",
@@ -27,10 +35,14 @@ EXPECTED_TABLES = {
     "meta.trading_calendar",
     "ops.api_keys",
     "ops.data_quality_check",
+    "ops.dataset_catalog",
+    "ops.duckdb_artifact",
     "ops.etl_job_run",
+    "ops.import_checkpoint",
     "ops.schema_migrations",
     "ops.users",
     "realtime.tick_buffer",
+    "staging.parquet_file",
 }
 
 EXPECTED_HYPERTABLES = {
@@ -40,10 +52,18 @@ EXPECTED_HYPERTABLES = {
     "market.etf_bar_1m",
     "market.index_bar_1d",
     "market.index_bar_1m",
+    "market.index_component",
     "market.option_bar_1d",
     "market.option_bar_1m",
+    "market.etf_basket",
+    "market.etf_redemption",
+    "market.fund_daily",
+    "market.fund_nav",
+    "market.stock_adj_factor",
     "market.stock_bar_1d",
     "market.stock_bar_1m",
+    "market.stock_daily_basic",
+    "market.stock_valuation",
     "realtime.tick_buffer",
 }
 
@@ -56,7 +76,11 @@ class SchemaCheckResult:
 
     @property
     def ok(self) -> bool:
-        return not self.missing_tables and not self.missing_hypertables and not self.missing_migrations
+        return (
+            not self.missing_tables
+            and not self.missing_hypertables
+            and not self.missing_migrations
+        )
 
 
 def check_schema(engine: Engine) -> SchemaCheckResult:
@@ -67,7 +91,7 @@ def check_schema(engine: Engine) -> SchemaCheckResult:
                     """
                     SELECT table_schema || '.' || table_name
                     FROM information_schema.tables
-                    WHERE table_schema IN ('meta', 'market', 'realtime', 'ops')
+                    WHERE table_schema IN ('meta', 'market', 'realtime', 'ops', 'staging')
                       AND table_type = 'BASE TABLE'
                     """
                 )

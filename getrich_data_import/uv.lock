@@ -37,6 +37,7 @@ name = "getrich-data-import"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "insight-py-linux" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "psycopg", extra = ["binary"] },
@@ -53,6 +54,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "insight-py-linux", specifier = ">=6.1.2" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pyarrow", specifier = ">=12.0" },
@@ -144,6 +146,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
 ]
+
+[[package]]
+name = "insight-py-linux"
+version = "6.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/d0/d922b86a2704db3d55bc7b49488f71d6fe329206b4bb2da3067680a57d3e/insight_py_linux-6.1.2.tar.gz", hash = "sha256:fb3216681c7eb0e0432f8595943391250d77c8b799e6d834c04e33b3a4f90bc6", size = 98417382, upload-time = "2026-04-24T10:21:40.198Z" }
 
 [[package]]
 name = "numpy"
