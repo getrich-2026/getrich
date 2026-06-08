@@ -108,6 +108,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="explicitly reload staged files that are already marked loaded",
     )
+    p_import_dataset = sub.add_parser(
+        "import-dataset", help="fetch and load one registered dataset"
+    )
+    p_import_dataset.add_argument(
+        "--dataset", required=True, help="registered dataset name, e.g. fund_nav"
+    )
+    p_import_dataset.add_argument("--start-date", help="inclusive YYYY-MM-DD date")
+    p_import_dataset.add_argument("--end-date", help="inclusive YYYY-MM-DD date")
+    p_import_dataset.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="source symbol; can be repeated",
+    )
+    p_import_dataset.add_argument(
+        "--reload",
+        action="store_true",
+        help="load staged files even if they are already marked loaded",
+    )
     p_p1_samples = sub.add_parser(
         "export-insight-p1-samples",
         help="export raw INSIGHT P1 sample datasets to local parquet",
@@ -299,6 +318,29 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(
                 f"{result.job_name} status={result.status} rows={result.rows_written}"
+            )
+            return 0
+        if args.cmd == "import-dataset":
+            fetch_result = pipeline.fetch_dataset(
+                dataset_name=args.dataset,
+                start_date=_parse_date(args.start_date),
+                end_date=_parse_date(args.end_date),
+                symbols=args.symbols,
+            )
+            print(
+                f"{fetch_result.job_name} status={fetch_result.status} "
+                f"rows={fetch_result.rows_written}"
+            )
+            load_result = pipeline.load_dataset(
+                dataset_name=args.dataset,
+                start_date=_parse_date(args.start_date),
+                end_date=_parse_date(args.end_date),
+                symbols=args.symbols,
+                reload=args.reload,
+            )
+            print(
+                f"{load_result.job_name} status={load_result.status} "
+                f"rows={load_result.rows_written}"
             )
             return 0
         if args.cmd == "export-insight-p1-samples":
