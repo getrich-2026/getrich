@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthResponse } from "../api/auth";
+import type { AuthData } from "../api/auth";
 import { register as registerApi } from "../api/auth";
 import { ApiClientError } from "../api/client";
 import { clearAccessToken, clearRefreshToken, clearStoredUser } from "../api/client";
@@ -21,9 +21,10 @@ vi.mock("../api/auth", async () => {
   };
 });
 
-const STUB_AUTH_RESPONSE: AuthResponse = {
+const STUB_AUTH_RESPONSE: AuthData = {
   access_token: "stub-access-token",
   refresh_token: "stub-refresh-token",
+  token_type: "bearer",
   user: { id: "user-1", email: "alice@example.com", name: "Alice" },
 };
 
@@ -125,6 +126,8 @@ describe("Register — submit", () => {
       code: 0,
       message: "ok",
       data: STUB_AUTH_RESPONSE,
+      timestamp: 0,
+      request_id: "test",
     });
     const user = userEvent.setup();
     renderRegister();

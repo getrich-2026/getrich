@@ -32,7 +32,7 @@ const FIXED = "2026-05-15T10:00:00Z";
 function makeSignal(overrides: Partial<SignalDetail> = {}): SignalDetail {
   return {
     id: SIGNAL_CODE,
-    strategy: { id: "s-1", name: "MA Cross", code: "MACross" },
+    strategy: { id: "s-1", name: "MA Cross", category: "trend", risk_level: "medium" },
     symbol: "000001.SZ",
     symbol_name: "Ping An Bank",
     signal_type: "entry",
@@ -42,6 +42,7 @@ function makeSignal(overrides: Partial<SignalDetail> = {}): SignalDetail {
     trigger_price: 10.5,
     target_price: 11,
     stop_loss_price: 10,
+    suggested_quantity: 100,
     confidence: 0.8,
     urgency: "high",
     position_pct: 0.1,
@@ -49,7 +50,7 @@ function makeSignal(overrides: Partial<SignalDetail> = {}): SignalDetail {
     reason_detail: null,
     market_snapshot: null,
     historical_performance: null,
-    user_state: { is_read: false, is_executed: false, read_at: null, executed_at: null, executed_price: null, note: null },
+    user_state: { is_read: false, is_executed: false, read_at: null, executed_price: null, note: null },
     status: "active",
     trigger_time: FIXED,
     expired_at: null,
@@ -84,14 +85,14 @@ beforeEach(() => {
   readMock.mockResolvedValue({
     code: 0,
     message: "ok",
-    data: { id: SIGNAL_CODE, is_read: true, read_at: FIXED },
+    data: { signal_id: SIGNAL_CODE, is_read: true, read_at: FIXED, remaining_unread: 0 },
     timestamp: 0,
     request_id: "test",
   });
   executeMock.mockResolvedValue({
     code: 0,
     message: "ok",
-    data: { id: SIGNAL_CODE, is_executed: true, executed_price: 10.5, executed_quantity: 100, executed_at: FIXED, note: null },
+    data: { signal_id: SIGNAL_CODE, is_executed: true, executed_price: 10.5, executed_at: FIXED, slippage: 0, slippage_pct: 0 },
     timestamp: 0,
     request_id: "test",
   });

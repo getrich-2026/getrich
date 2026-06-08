@@ -63,6 +63,8 @@ describe("Dashboard — populated", () => {
   ];
 
   // Real EquityCurveData shape (see frontend/src/api/strategies.ts).
+  // The full ApiResponse envelope (code/message/data/timestamp/request_id)
+  // is required by the `getEquityCurve` return type.
   const EMPTY_CURVE = {
     code: 0,
     message: "ok",
@@ -74,6 +76,8 @@ describe("Dashboard — populated", () => {
       drawdown_curve: [],
       total_points: 0,
     },
+    timestamp: 0,
+    request_id: "test",
   };
 
   it("renders a strategy option for each strategy and fetches the first one's curve", async () => {
