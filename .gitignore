@@ -168,3 +168,15 @@ cython_debug/
 
 .claude/
 .antigravitycli/
+
+# --- Secrets / local config (Round #1195 A-2) ---
+# Real credentials must NEVER be committed. The previous .env leak is
+# documented in .agent/brain/NOTES.md (Round #1195); the leaked DB
+# password must be rotated at the DB and `git filter-repo` considered
+# for the pre-fix history.
+.env
+.env.local
+.env.*.local
+# Allow committing the example / template variants
+!.env.example
+!.env.template

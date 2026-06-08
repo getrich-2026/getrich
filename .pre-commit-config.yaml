@@ -200,3 +200,32 @@ repos:
         # (`feat(scope):` optional).
         stages: [commit-msg]
         args: []
+
+  # ------------------------------------------------------------------
+  # 6. Secret scanning (Round #1195 A-2)
+  # ------------------------------------------------------------------
+  # `gitleaks` is the de-facto industry standard for catching
+  # committed secrets. We pin to v8 (the line that matches
+  # the GitHub Advanced Security `gitleaks-action` v2 used
+  # in CI). The hook:
+  #   1. Scans every file in the commit (staged diff + full
+  #      history the first time) for known secret patterns
+  #      (AWS / Stripe / GitHub PATs / generic high-entropy
+  #      strings / hard-coded PG passwords).
+  #   2. Fails the commit if anything matches.
+  #
+  # History note: the `.env` file with the real PG password
+  # `zedbi4-revSat-nepqik` was committed in early 2026.
+  # The leaked password MUST be rotated at the DB and the
+  # pre-fix history scrubbed via `git filter-repo`. See
+  # .agent/brain/NOTES.md Round #1195.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        # `entry` is the binary; gitleaks defaults to scanning
+        # the staged diff against HEAD (and the full repo on
+        # first run with the cache file). We do NOT add an
+        # `.gitleaks.toml` allowlist — any future allowlist
+        # entries must come with a comment explaining why.
+        name: gitleaks secret scanner
