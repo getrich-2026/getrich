@@ -866,4 +866,76 @@ python -c "import polars as pl; print(pl.read_parquet('${ARTIFACT_DIR}/runs/$(ls
 - CH FREEZE 机制：<https://clickhouse.com/docs/en/operations/backup#backup-as-a-copy-of-remote-filesystem>
 - pg_dump -Fc 格式：<https://www.postgresql.org/docs/current/app-pgdump.html>
 
+---
+
+## 14. Admin Import（策略导入）异常
+
+> Admin Import 是后台批量导入/更新策略定义的通道，通过 `/v1/admin/imports/*` 暴露（仅 `admin` 角色可访问）。
+> 6 个端点：`upsert` / `preview` / `{job_code}/commit` / `history` / `{job_code}` / `{job_code}/errors`。
+> 详见：[`reference/database-schema.md`](../reference/database-schema.md#import_jobs) 的 `import_jobs` 表段。
+
+### 14.1 症状
+
+- `POST /v1/admin/imports/strategies/upsert` 返回 5xx
+- `GET /v1/admin/imports/history` 一直 0 行
+- `GET /v1/admin/imports/{job_code}/errors` 报 404
+- 导入 preview 通过但 commit 后 strategies 表未变化
+
+### 14.2 定位
+
+```bash
+# 1) 确认 router 已挂载（fastapi 启动日志应包含 'admin-imports' tag）
+journalctl -u getrich-api -n 200 | grep -i admin-imports
+
+# 2) 确认 admin 角色正确（无 admin 角色 → 403）
+psql -d getrich -c "SELECT id, role FROM user_auth WHERE email = 'admin@…';"
+
+# 3) 看最新 import job 的状态
+psql -d getrich -c "SELECT job_code, status, summary, file_name, created_by, created_at
+                    FROM import_jobs ORDER BY created_at DESC LIMIT 5;"
+
+# 4) 失败明细
+psql -d getrich -c "SELECT row_number, column_name, error_code, message
+                    FROM import_job_errors
+                    WHERE job_id = (SELECT id FROM import_jobs WHERE job_code = '<JOB_CODE>')
+                    ORDER BY row_number LIMIT 50;"
+
+# 5) 端到端烟囱（不需要 admin 角色也能跑 — 应直接 401/403）
+curl -i http://localhost:8000/v1/admin/imports/history
+```
+
+### 14.3 缓解
+
+| 故障 | 处置 |
+|---|---|
+| router 未挂载 → 404 | 确认 `apps/web/main.py` 有 `app.include_router(admin_imports_router.router, prefix="/v1")`，重启 `getrich-api` |
+| 403 Forbidden | 确认调用者 role='admin'（不是 'user'） |
+| 401 Unauthorized | JWT 过期或缺失，重新登录拿新 token |
+| `error_message: 'CSV too many rows'` | 单批 ≤ 10,000 行；拆分文件再上传 |
+| `error_message: 'schema mismatch'` | 校验 CSV 表头是否匹配 Pydantic `StrategyUpsertIn` 字段，参考 [API 参考](../platform/api-reference.md) |
+| commit 成功但 strategies 未变 | 检查 `_delete_existing_records` 是否被跳过（已有专门测试覆盖） |
+| preview 一直 200 但从未 commit | 手动 commit：等待操作员 review，或触发 `pg_notify` 唤醒 SSE |
+
+### 14.4 根因（典型）
+
+- **P1：CSV 行数 > 10,000** — 单元测试覆盖，但前端未做客户端预检
+- **P2：detail_html 长度 > 64 KB** — Pydantic `max_length` + 024 migration 的 `CHECK` 约束都会拦截
+- **P2：admin 角色误判** — `user_auth.role` 字段被旧 migration 漏改；运行 `scripts/sql/grant-admin.sql <email>`
+- **P3：CSV 编码不是 UTF-8** — admin 上传 GBK 编码 CSV；Pydantic 报错 `UnicodeDecodeError`
+
+### 14.5 复盘
+
+- 是否漏写迁移？→ `python -m getrich.migrations.cli status` 应显示 `admin_imports` 已应用
+- 单元测试是否覆盖到？→ `tests/getrich/apps/web/test_admin_import.py`（36 个测试）
+- 是否需要 re-run preview？→ preview 不可重入（每次都是新 `job_code`），错误需手动修 CSV 后重新上传
+
+### 14.6 进一步阅读
+
+- Service 源码：`src/getrich/apps/web/services/admin_import.py`（约 600 行）
+- Router 源码：`src/getrich/apps/web/routers/admin_imports.py`
+- 迁移脚本：`migrations/025_admin_imports.sql`（如未应用则先 `python -m getrich.migrations.cli postgres`）
+- Schema 定义：[`reference/database-schema.md`](../reference/database-schema.md#admin_imports)
+- 单元测试：`tests/getrich/apps/web/test_admin_import.py`
+- OpenAPI 标签：`admin-imports`（`/v1/admin/imports/*`）
+
 

@@ -2,6 +2,13 @@
 
 > **量化投研与信号平台** 的官方技术文档
 
+!!! success "🎉 平台已完工 (Platform Complete)"
+    GetRich 14 个核心开发阶段 + 7 个工程化阶段全部交付。
+    引擎代码 ~10,400 行，27 个数据库迁移，4 个 systemd 服务，~80 页 MkDocs 文档。
+    所有 P0 安全加固（IDOR、CSP、XSS sanitizer、bleach、SQL CHECK 约束）已在生产路径落地。
+    CI 全绿（Python 3.12 + Node 22 + Frontend vitest + 文档 strict build）。
+    下一步建议：参考 [剩余工作状态](development/testing.md) 与 [运行手册](operations/runbook.md) 推进运营接入。
+
 GetRich 是一个零售级量化投研与信号平台，提供从历史数据加载、策略开发、回测验证、参数优化、归因分析、信号生产到部署运维的**端到端能力**。
 
 平台由 4 个协同子系统组成：

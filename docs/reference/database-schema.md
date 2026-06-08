@@ -489,6 +489,58 @@ CREATE TABLE frontend.strategy_access_grants (
 
 > 替代了直接 `author_id = ?` 的硬过滤；允许 view 公开但 execute 需要授权。
 
+#### `import_jobs` / `import_job_errors`（admin_imports）
+
+> 异步批量导入策略 / 净值 / 月度收益 / 信号 / 快照；仅 `admin` 角色可访问。
+> 详见 [runbook §14](../operations/runbook.md#14-admin-import策略导入异常) 与 [`platform/api-reference.md`](../platform/api-reference.md#admin-imports) 的 `admin-imports` 标签。
+
+```sql
+-- 任务表
+CREATE TABLE frontend.import_jobs (
+    id               BIGSERIAL PRIMARY KEY,
+    job_code         TEXT NOT NULL UNIQUE,        -- e.g. "IMP-2026-06-08-ABCD1234"
+    import_type      TEXT NOT NULL,                -- 'strategy' / 'equity_curve' / 'monthly_returns' / 'signals' / 'snapshot'
+    strategy_id      BIGINT,                       -- nullable, 关联 strategies
+    file_name        TEXT NOT NULL,
+    file_sha256      TEXT NOT NULL,                -- 重复上传检测
+    mode             TEXT NOT NULL,                -- 'upsert' / 'insert' / 'replace'
+    status           TEXT NOT NULL,                -- 'pending' / 'validated' / 'committed' / 'failed'
+    summary          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    preview_rows     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    validated_rows   JSONB NOT NULL DEFAULT '[]'::jsonb,
+    error_message    TEXT,                         -- 整体失败消息（NOT 行级）
+    created_by       BIGINT NOT NULL REFERENCES user_auth(id),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_import_jobs_status        ON frontend.import_jobs(status);
+CREATE INDEX idx_import_jobs_created_by    ON frontend.import_jobs(created_by);
+CREATE INDEX idx_import_jobs_created_at    ON frontend.import_jobs(created_at DESC);
+
+-- 行级错误明细
+CREATE TABLE frontend.import_job_errors (
+    id           BIGSERIAL PRIMARY KEY,
+    job_id       BIGINT NOT NULL REFERENCES import_jobs(id) ON DELETE CASCADE,
+    row_number   INT NOT NULL,
+    column_name  TEXT,
+    error_code   TEXT NOT NULL,                    -- 'CSV_PARSE' / 'SCHEMA_MISMATCH' / 'CHECK_CONSTRAINT' / ...
+    message      TEXT NOT NULL,
+    raw_row      JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX idx_import_job_errors_job_id ON frontend.import_job_errors(job_id);
+```
+
+**约束 / 设计要点：**
+
+- `file_sha256` 重复上传同一文件直接 409（已有专门测试覆盖）
+- `status` 枚举值由 service 层校验（`pending` → `validated` → `committed` / `failed`）
+- `validated_rows` 与 `preview_rows` 都是 JSONB —— preview 用于前端渲染前 100 行，validated 是 commit 时实际写入的源数据
+- 行级错误落 `import_job_errors`，整体失败落 `import_jobs.error_message`
+- 删除 job 用 `ON DELETE CASCADE` 级联清理 errors
+- 上限：单批 ≤ 10,000 行（service 层 hard check，测试已覆盖）
+
+**鉴权：** 所有路径走 `require_admin`（`apps/web/auth.py::require_admin`），不依赖 `user_id` 字段做权限隔离 —— admin 角色本身是网关。
+
 ---
 
 ## 3. ClickHouse 表详解
