@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from collections.abc import Mapping
 from datetime import date
+import json
+from typing import Any
 
 import pandas as pd
 from sqlalchemy import text
@@ -117,25 +120,79 @@ def insert_job_run(
     conn: Connection,
     *,
     job_name: str,
+    provider: str | None = None,
+    dataset_name: str | None = None,
     asset: str | None = None,
     freq: str | None = None,
     trading_day: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    request: Mapping[str, Any] | None = None,
 ) -> int:
+    """Insert an ETL run audit row and return its run id.
+
+    Args:
+        conn: Active SQLAlchemy connection.
+        job_name: Stable job name.
+        provider: Data provider name.
+        dataset_name: Dataset being fetched or loaded.
+        asset: Optional asset class.
+        freq: Optional frequency.
+        trading_day: Single trading day for legacy jobs.
+        start_date: Inclusive request or manifest start date.
+        end_date: Inclusive request or manifest end date.
+        request: JSON-serializable request payload.
+
+    Time Complexity:
+        O(1).
+    Space Complexity:
+        O(r), where r is the serialized request payload size.
+    """
+
     return int(
         conn.execute(
             text(
                 """
                 INSERT INTO ops.etl_job_run
-                    (job_name, trading_day, asset, freq, status, started_at)
-                VALUES (:job_name, :trading_day, :asset, :freq, 'running', now())
+                    (
+                        job_name,
+                        provider,
+                        dataset_name,
+                        trading_day,
+                        start_date,
+                        end_date,
+                        asset,
+                        freq,
+                        status,
+                        request,
+                        started_at
+                    )
+                VALUES (
+                    :job_name,
+                    :provider,
+                    :dataset_name,
+                    :trading_day,
+                    :start_date,
+                    :end_date,
+                    :asset,
+                    :freq,
+                    'running',
+                    CAST(:request AS jsonb),
+                    now()
+                )
                 RETURNING run_id
                 """
             ),
             {
                 "job_name": job_name,
+                "provider": provider,
+                "dataset_name": dataset_name,
                 "trading_day": trading_day,
+                "start_date": start_date,
+                "end_date": end_date,
                 "asset": asset,
                 "freq": freq,
+                "request": _json_dump(request or {}),
             },
         ).scalar_one()
     )
@@ -148,13 +205,34 @@ def finish_job_run(
     status: str,
     rows_written: int,
     error: str | None = None,
+    warning_count: int = 0,
+    checkpoint: Mapping[str, Any] | None = None,
 ) -> None:
+    """Finish an ETL run audit row.
+
+    Args:
+        conn: Active SQLAlchemy connection.
+        run_id: Audit row identifier.
+        status: Final job status.
+        rows_written: Number of rows written by this run.
+        error: Optional failure message.
+        warning_count: Number of warnings produced by the run.
+        checkpoint: JSON-serializable final checkpoint payload.
+
+    Time Complexity:
+        O(1).
+    Space Complexity:
+        O(c), where c is the serialized checkpoint payload size.
+    """
+
     conn.execute(
         text(
             """
             UPDATE ops.etl_job_run
             SET status = :status,
                 rows_written = :rows_written,
+                warning_count = :warning_count,
+                checkpoint = CAST(:checkpoint AS jsonb),
                 finished_at = now(),
                 error = :error
             WHERE run_id = :run_id
@@ -165,5 +243,11 @@ def finish_job_run(
             "status": status,
             "rows_written": rows_written,
             "error": error,
+            "warning_count": warning_count,
+            "checkpoint": _json_dump(checkpoint or {}),
         },
     )
+
+
+def _json_dump(value: Mapping[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)

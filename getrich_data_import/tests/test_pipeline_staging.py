@@ -153,6 +153,7 @@ def test_load_dataset_reads_staged_parquet_and_marks_loaded(
     assert captured["kwargs"]["table"] == "stock_bar_1d"
     assert captured["frame"]["trading_day"].tolist() == [date(2026, 6, 1)]
     assert any("UPDATE staging.parquet_file" in sql for sql, _params in engine.sqls)
+    assert any("INSERT INTO ops.import_checkpoint" in sql for sql, _params in engine.sqls)
     select_params = [
         params for sql, params in engine.sqls if "FROM staging.parquet_file" in sql
     ][0]

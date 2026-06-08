@@ -259,6 +259,8 @@ Rules:
 
 - Fetch jobs should be idempotent by provider, dataset, partition, and source path.
 - Manifest rows are inserted or updated before canonical load.
+- Each fetch run writes provider, dataset, date range, request JSON, and final checkpoint JSON to `ops.etl_job_run`.
+- Each written Parquet partition updates `ops.import_checkpoint` with `status='written'`, source path, row count, hash, and source symbols.
 - Raw or lightly normalized fields remain in Parquet for replay.
 
 ### 7.3 Load from Parquet to Canonical Tables
@@ -299,6 +301,7 @@ Failure behavior:
 - transform error: fail job with source columns and dataset name;
 - quality error: fail or partial based on quality policy;
 - load error: fail job and keep successful previous batches.
+- Successful loads mark staging files loaded and update `ops.import_checkpoint` with `status='loaded'`, load run id, file id, source path, and rows written.
 
 ## 8. CLI and API Surface
 
@@ -399,8 +402,8 @@ Planned read views after adjustment-factor reconciliation:
 
 | Task | Dependency | Output |
 |---|---|---|
-| A1.1 Extend job audit fields | A0.2 | Better provider/dataset/date/request traceability. |
-| A1.2 Add checkpoint table and resume contract | A1.1 | Resumable dataset imports. |
+| A1.1 Extend job audit fields | A0.2 | Implemented provider/dataset/date/request/warning/checkpoint traceability. |
+| A1.2 Add checkpoint table and resume contract | A1.1 | Implemented fetch/load checkpoint writes; resumable scheduler policy pending. |
 | A1.3 Add stock adjustment factor DDL and transform | A1.1 | Canonical sparse factor table. |
 | A1.4 Add stock daily basic and valuation DDL/transforms | A1.1 | Source raw adjusted close fields stored separately. |
 | A1.5 Add index component DDL/transform | A1.1 | PIT index membership. |

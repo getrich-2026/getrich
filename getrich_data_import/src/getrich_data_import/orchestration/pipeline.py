@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import date
@@ -69,7 +70,12 @@ class ImportPipeline:
         job_name = "load_metadata"
         rows = 0
         with self.engine.begin() as conn:
-            run_id = insert_job_run(conn, job_name=job_name)
+            run_id = insert_job_run(
+                conn,
+                job_name=job_name,
+                provider=self.source_name,
+                dataset_name="metadata",
+            )
         logger.info(
             "job started",
             extra={
@@ -111,7 +117,13 @@ class ImportPipeline:
                 rows += self._upsert_future_contracts(conn)
                 rows += self._upsert_option_contracts(conn)
             with self.engine.begin() as conn:
-                finish_job_run(conn, run_id=run_id, status="success", rows_written=rows)
+                finish_job_run(
+                    conn,
+                    run_id=run_id,
+                    status="success",
+                    rows_written=rows,
+                    checkpoint={"metadata_rows": rows},
+                )
             logger.info(
                 "job finished",
                 extra={"job_name": job_name, "run_id": run_id, "rows_written": rows},
@@ -124,6 +136,7 @@ class ImportPipeline:
                     status="failed",
                     rows_written=rows,
                     error=str(exc),
+                    checkpoint={"metadata_rows": rows},
                 )
             logger.exception(
                 "job failed",
@@ -153,12 +166,23 @@ class ImportPipeline:
         table = plan.table_name
         job_name = plan.job_name
         rows = 0
+        warning_count = 0
         with self.engine.begin() as conn:
             run_id = insert_job_run(
                 conn,
                 job_name=job_name,
+                provider=self.source_name,
+                dataset_name=table,
                 asset=plan.request.asset,
                 freq=plan.request.freq,
+                start_date=plan.request.start_date,
+                end_date=plan.request.end_date,
+                request={
+                    "asset": plan.request.asset,
+                    "freq": plan.request.freq,
+                    "mode": plan.request.mode,
+                    "symbols": list(plan.request.symbols or ()),
+                },
             )
         logger.info(
             "job started",
@@ -200,6 +224,7 @@ class ImportPipeline:
                         expected_minutes_per_day=self.settings.quality.expected_minutes_per_day,
                         expected_trading_days=expected_trading_days,
                     )
+                    warning_count += _warning_count(issues)
                     self._write_quality_issues(run_id=run_id, issues=issues)
                     if self.settings.quality.fail_on_error and has_error(issues):
                         raise ValueError(
@@ -225,7 +250,18 @@ class ImportPipeline:
                     )
 
             with self.engine.begin() as conn:
-                finish_job_run(conn, run_id=run_id, status="success", rows_written=rows)
+                finish_job_run(
+                    conn,
+                    run_id=run_id,
+                    status="success",
+                    rows_written=rows,
+                    warning_count=warning_count,
+                    checkpoint={
+                        "dataset_name": table,
+                        "rows_written": rows,
+                        "mode": plan.request.mode,
+                    },
+                )
             logger.info(
                 "job finished",
                 extra={"job_name": job_name, "run_id": run_id, "rows_written": rows},
@@ -238,6 +274,12 @@ class ImportPipeline:
                     status="failed",
                     rows_written=rows,
                     error=str(exc),
+                    warning_count=warning_count,
+                    checkpoint={
+                        "dataset_name": table,
+                        "rows_written": rows,
+                        "mode": plan.request.mode,
+                    },
                 )
             logger.exception(
                 "job failed",
@@ -291,7 +333,20 @@ class ImportPipeline:
         files = 0
         with self.engine.begin() as conn:
             run_id = insert_job_run(
-                conn, job_name=job_name, asset=spec.asset, freq=spec.freq
+                conn,
+                job_name=job_name,
+                provider=self.source_name,
+                dataset_name=spec.name,
+                asset=spec.asset,
+                freq=spec.freq,
+                start_date=start_date,
+                end_date=end_date,
+                request={
+                    "dataset_name": spec.name,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "symbols": list(symbols or ()),
+                },
             )
         logger.info(
             "job started",
@@ -367,6 +422,21 @@ class ImportPipeline:
                         primary_keys=("provider", "dataset_name", "source_path"),
                         batch_rows=self.settings.batch_rows,
                     )
+                    _upsert_import_checkpoint(
+                        conn,
+                        provider=self.source_name,
+                        dataset_name=spec.name,
+                        partition_key=staged.partition_key,
+                        watermark_date=start_date or frame_start,
+                        state={
+                            "status": "written",
+                            "fetch_run_id": run_id,
+                            "source_path": str(staged.path),
+                            "row_count": staged.row_count,
+                            "content_hash": staged.content_hash,
+                            "source_symbols": _source_symbols(source_frame),
+                        },
+                    )
                 rows += staged.row_count
                 files += 1
                 logger.info(
@@ -380,7 +450,13 @@ class ImportPipeline:
                     },
                 )
             with self.engine.begin() as conn:
-                finish_job_run(conn, run_id=run_id, status="success", rows_written=rows)
+                finish_job_run(
+                    conn,
+                    run_id=run_id,
+                    status="success",
+                    rows_written=rows,
+                    checkpoint={"files_written": files, "rows_written": rows},
+                )
             logger.info(
                 "job finished",
                 extra={
@@ -398,6 +474,7 @@ class ImportPipeline:
                     status="failed",
                     rows_written=rows,
                     error=str(exc),
+                    checkpoint={"files_written": files, "rows_written": rows},
                 )
             logger.exception(
                 "job failed",
@@ -445,9 +522,24 @@ class ImportPipeline:
         schema, table = _target_schema_table(spec.target)
         job_name = f"load_{spec.name}_parquet"
         rows = 0
+        warning_count = 0
         with self.engine.begin() as conn:
             run_id = insert_job_run(
-                conn, job_name=job_name, asset=spec.asset, freq=spec.freq
+                conn,
+                job_name=job_name,
+                provider=self.source_name,
+                dataset_name=spec.name,
+                asset=spec.asset,
+                freq=spec.freq,
+                start_date=start_date,
+                end_date=end_date,
+                request={
+                    "dataset_name": spec.name,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "symbols": list(symbols or ()),
+                    "reload": reload,
+                },
             )
             staged_files = _staged_parquet_files(
                 conn,
@@ -507,6 +599,7 @@ class ImportPipeline:
                             expected_minutes_per_day=self.settings.quality.expected_minutes_per_day,
                             expected_trading_days=expected_trading_days,
                         )
+                        warning_count += _warning_count(issues)
                         self._write_quality_issues(run_id=run_id, issues=issues)
                         if self.settings.quality.fail_on_error and has_error(issues):
                             raise ValueError(
@@ -530,6 +623,23 @@ class ImportPipeline:
                     _mark_staged_file_loaded(
                         conn, file_id=int(staged_file["file_id"]), load_run_id=run_id
                     )
+                    _upsert_import_checkpoint(
+                        conn,
+                        provider=self.source_name,
+                        dataset_name=spec.name,
+                        partition_key=str(
+                            staged_file.get("partition_key")
+                            or staged_file["source_path"]
+                        ),
+                        watermark_date=staged_file.get("end_date"),  # type: ignore[arg-type]
+                        state={
+                            "status": "loaded",
+                            "load_run_id": run_id,
+                            "file_id": int(staged_file["file_id"]),
+                            "source_path": str(staged_file["source_path"]),
+                            "rows_written": written,
+                        },
+                    )
                 rows += written
                 logger.info(
                     "loaded staged parquet file",
@@ -541,7 +651,17 @@ class ImportPipeline:
                     },
                 )
             with self.engine.begin() as conn:
-                finish_job_run(conn, run_id=run_id, status="success", rows_written=rows)
+                finish_job_run(
+                    conn,
+                    run_id=run_id,
+                    status="success",
+                    rows_written=rows,
+                    warning_count=warning_count,
+                    checkpoint={
+                        "files_loaded": len(staged_files),
+                        "rows_written": rows,
+                    },
+                )
             logger.info(
                 "job finished",
                 extra={"job_name": job_name, "run_id": run_id, "rows_written": rows},
@@ -554,6 +674,11 @@ class ImportPipeline:
                     status="failed",
                     rows_written=rows,
                     error=str(exc),
+                    warning_count=warning_count,
+                    checkpoint={
+                        "files_loaded": len(staged_files),
+                        "rows_written": rows,
+                    },
                 )
             logger.exception(
                 "job failed",
@@ -917,6 +1042,7 @@ def _staged_parquet_files(
                    schema_fingerprint,
                    start_date,
                    end_date,
+                   partition_key,
                    row_count
             FROM staging.parquet_file
             WHERE {" AND ".join(clauses)}
@@ -1049,6 +1175,51 @@ def _available_instrument_ids(
         {"source": source, "source_symbols": symbols},
     ).mappings()
     return {str(row["source_symbol"]): int(row["instrument_id"]) for row in rows}
+
+
+def _upsert_import_checkpoint(
+    conn: Connection,
+    *,
+    provider: str,
+    dataset_name: str,
+    partition_key: str,
+    watermark_date: object | None,
+    state: dict[str, object],
+) -> None:
+    conn.execute(
+        text(
+            """
+            INSERT INTO ops.import_checkpoint
+                (provider, dataset_name, partition_key, watermark_date, state)
+            VALUES (
+                :provider,
+                :dataset_name,
+                :partition_key,
+                :watermark_date,
+                CAST(:state AS jsonb)
+            )
+            ON CONFLICT (provider, dataset_name, partition_key) DO UPDATE
+            SET watermark_date = EXCLUDED.watermark_date,
+                state = EXCLUDED.state,
+                updated_at = now()
+            """
+        ),
+        {
+            "provider": provider,
+            "dataset_name": dataset_name,
+            "partition_key": partition_key,
+            "watermark_date": watermark_date,
+            "state": _json_dump(state),
+        },
+    )
+
+
+def _warning_count(issues: list[QualityIssue]) -> int:
+    return sum(1 for issue in issues if issue.severity == "warn")
+
+
+def _json_dump(value: dict[str, object]) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def _exchange_from_source_symbol(symbol: str) -> str:

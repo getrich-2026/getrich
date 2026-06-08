@@ -145,6 +145,10 @@ def test_ops_schema_has_api_key_and_quality_indexes() -> None:
     assert "REFERENCES ops.users(user_id) ON DELETE CASCADE" in sql
     assert "idx_api_keys_user_id" in sql
     assert "chk_etl_job_run_timestamps" in sql
+    assert "dataset_name VARCHAR(96)" in sql
+    assert "request      JSONB NOT NULL DEFAULT '{}'::jsonb" in sql
+    assert "checkpoint   JSONB NOT NULL DEFAULT '{}'::jsonb" in sql
+    assert "idx_etl_job_run_dataset" in sql
     assert "idx_quality_check_detail" in sql
 
 
