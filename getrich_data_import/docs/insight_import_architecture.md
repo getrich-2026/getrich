@@ -359,7 +359,21 @@ First contract is SQL-first:
 - dataset status: `ops.dataset_catalog`, `ops.etl_job_run`, `ops.data_quality_check`;
 - P1 facts: new `market.stock_adj_factor`, `market.stock_daily_basic`, `market.stock_valuation`, `market.index_component`, ETF tables, and separate ordinary fund tables.
 
-Recommended views after P1:
+Implemented SQL read views:
+
+| View | Purpose |
+|---|---|
+| `market.v_stock_daily_basic` | Symbol-enriched stock daily basic facts. |
+| `market.v_stock_valuation` | Symbol-enriched stock valuation facts. |
+| `market.v_index_component` | Symbol-enriched index constituent weights. |
+| `market.v_etf_daily` | Symbol-enriched ETF daily trading and NAV facts. |
+| `market.v_etf_nav` | Symbol-enriched ETF NAV and return metrics. |
+| `market.v_fund_daily` | Symbol-enriched ordinary fund daily facts. |
+| `market.v_fund_nav` | Symbol-enriched ordinary fund NAV and return metrics. |
+| `market.v_etf_basket` | ETF basket rows with ETF symbol enrichment and optional component instrument mapping. |
+| `ops.v_dataset_coverage` | Latest loaded staging coverage and file status by dataset. |
+
+Planned read views after adjustment-factor reconciliation:
 
 | View | Purpose |
 |---|---|
@@ -367,7 +381,6 @@ Recommended views after P1:
 | `market.v_stock_bar_1m_raw` | Symbol-enriched raw stock minute bars. |
 | `market.v_stock_adj_factor_filled` | Forward-filled sparse adjustment factor by trading day. |
 | `market.v_stock_bar_1d_adjusted_experimental` | Adjusted OHLC after reconciliation passes. |
-| `ops.v_dataset_coverage` | Latest imported date range and row count by dataset. |
 
 ## 11. Implementation WBS
 

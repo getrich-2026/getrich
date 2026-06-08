@@ -194,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"missing_tables = {list(result.missing_tables)}")
             print(f"missing_hypertables = {list(result.missing_hypertables)}")
             print(f"missing_migrations = {list(result.missing_migrations)}")
+            print(f"missing_views = {list(result.missing_views)}")
             return 0 if result.ok else 1
         if args.cmd == "export-bars":
             engine = make_engine(settings.database_url)

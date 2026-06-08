@@ -387,3 +387,297 @@ CREATE TABLE IF NOT EXISTS market.etf_redemption (
     )
 );
 SELECT create_hypertable('market.etf_redemption', 'trading_day', chunk_time_interval => INTERVAL '1 year', if_not_exists => TRUE);
+
+CREATE OR REPLACE VIEW market.v_stock_daily_basic AS
+SELECT
+    b.source,
+    sm.source_symbol,
+    i.instrument_id,
+    i.asset,
+    i.exchange,
+    i.symbol,
+    i.name,
+    b.trading_day,
+    b.trading_state,
+    b.open,
+    b.high,
+    b.low,
+    b.close,
+    b.pre_close,
+    b.backward_adjusted_closing_price,
+    b.volume,
+    b.amount,
+    b.day_change,
+    b.turnover_rate,
+    b.amplitude,
+    b.float_market_cap,
+    b.total_market_cap,
+    b.updated_at
+FROM market.stock_daily_basic b
+JOIN meta.instruments i
+  ON i.instrument_id = b.instrument_id
+JOIN meta.symbol_map sm
+  ON sm.instrument_id = b.instrument_id
+ AND sm.source = b.source;
+
+CREATE OR REPLACE VIEW market.v_stock_valuation AS
+SELECT
+    v.source,
+    sm.source_symbol,
+    i.instrument_id,
+    i.asset,
+    i.exchange,
+    i.symbol,
+    i.name,
+    v.trading_day,
+    v.close,
+    v.front_adjusted_close,
+    v.back_adjusted_close,
+    v.pe,
+    v.pe_ttm,
+    v.pb,
+    v.pc,
+    v.pc_ttm,
+    v.ps,
+    v.ps_ttm,
+    v.float_market_cap,
+    v.total_market_cap,
+    v.updated_at
+FROM market.stock_valuation v
+JOIN meta.instruments i
+  ON i.instrument_id = v.instrument_id
+JOIN meta.symbol_map sm
+  ON sm.instrument_id = v.instrument_id
+ AND sm.source = v.source;
+
+CREATE OR REPLACE VIEW market.v_index_component AS
+SELECT
+    c.source,
+    COALESCE(index_sm.source_symbol, index_i.symbol) AS index_source_symbol,
+    index_i.instrument_id AS index_instrument_id,
+    index_i.exchange AS index_exchange,
+    index_i.symbol AS index_symbol,
+    index_i.name AS index_name,
+    COALESCE(component_sm.source_symbol, component_i.symbol) AS component_source_symbol,
+    component_i.instrument_id AS component_instrument_id,
+    component_i.asset AS component_asset,
+    component_i.exchange AS component_exchange,
+    component_i.symbol AS component_symbol,
+    component_i.name AS component_name,
+    c.trading_day,
+    c.weight,
+    c.in_date,
+    c.out_date,
+    c.updated_at
+FROM market.index_component c
+JOIN meta.instruments index_i
+  ON index_i.instrument_id = c.index_instrument_id
+JOIN meta.instruments component_i
+  ON component_i.instrument_id = c.component_instrument_id
+LEFT JOIN meta.symbol_map index_sm
+  ON index_sm.instrument_id = c.index_instrument_id
+ AND index_sm.source = c.source
+LEFT JOIN meta.symbol_map component_sm
+  ON component_sm.instrument_id = c.component_instrument_id
+ AND component_sm.source = c.source;
+
+CREATE OR REPLACE VIEW market.v_etf_daily AS
+SELECT
+    d.source,
+    sm.source_symbol,
+    i.instrument_id,
+    i.asset,
+    i.exchange,
+    i.symbol,
+    i.name,
+    d.trading_day,
+    d.delisting_date,
+    d.trading_state,
+    d.open,
+    d.high,
+    d.low,
+    d.close,
+    d.pre_close,
+    d.backward_adjusted_close,
+    d.unit_nav,
+    d.accumulated_nav,
+    d.discount_rate,
+    d.premium_rate,
+    d.discount,
+    d.discount_ratio,
+    d.day_change,
+    d.day_change_rate,
+    d.turnover_rate,
+    d.amplitude,
+    d.volume,
+    d.amount,
+    d.num_trades,
+    d.updated_at
+FROM market.etf_daily d
+JOIN meta.instruments i
+  ON i.instrument_id = d.instrument_id
+JOIN meta.symbol_map sm
+  ON sm.instrument_id = d.instrument_id
+ AND sm.source = d.source;
+
+CREATE OR REPLACE VIEW market.v_etf_nav AS
+SELECT
+    n.source,
+    sm.source_symbol,
+    i.instrument_id,
+    i.asset,
+    i.exchange,
+    i.symbol,
+    i.name,
+    n.end_date,
+    n.unit_nav,
+    n.accumulated_nav,
+    n.adjusted_nav,
+    n.return_1d,
+    n.return_1w,
+    n.return_1m,
+    n.return_3m,
+    n.return_6m,
+    n.return_1y,
+    n.return_ytd,
+    n.return_3y,
+    n.return_5y,
+    n.return_since_listing,
+    n.nav_volatility,
+    n.beta,
+    n.sharpe,
+    n.jensen,
+    n.treynor,
+    n.r_squared,
+    n.updated_at
+FROM market.etf_nav n
+JOIN meta.instruments i
+  ON i.instrument_id = n.instrument_id
+JOIN meta.symbol_map sm
+  ON sm.instrument_id = n.instrument_id
+ AND sm.source = n.source;
+
+CREATE OR REPLACE VIEW market.v_fund_daily AS
+SELECT
+    d.source,
+    sm.source_symbol,
+    i.instrument_id,
+    i.asset,
+    i.exchange,
+    i.symbol,
+    i.name,
+    d.trading_day,
+    d.delisting_date,
+    d.trading_state,
+    d.open,
+    d.high,
+    d.low,
+    d.close,
+    d.pre_close,
+    d.backward_adjusted_close,
+    d.unit_nav,
+    d.accumulated_nav,
+    d.discount_rate,
+    d.premium_rate,
+    d.discount,
+    d.discount_ratio,
+    d.day_change,
+    d.day_change_rate,
+    d.turnover_rate,
+    d.amplitude,
+    d.volume,
+    d.amount,
+    d.num_trades,
+    d.updated_at
+FROM market.fund_daily d
+JOIN meta.instruments i
+  ON i.instrument_id = d.instrument_id
+JOIN meta.symbol_map sm
+  ON sm.instrument_id = d.instrument_id
+ AND sm.source = d.source;
+
+CREATE OR REPLACE VIEW market.v_fund_nav AS
+SELECT
+    n.source,
+    sm.source_symbol,
+    i.instrument_id,
+    i.asset,
+    i.exchange,
+    i.symbol,
+    i.name,
+    n.end_date,
+    n.unit_nav,
+    n.accumulated_nav,
+    n.adjusted_nav,
+    n.return_1d,
+    n.return_1w,
+    n.return_1m,
+    n.return_3m,
+    n.return_6m,
+    n.return_1y,
+    n.return_ytd,
+    n.return_3y,
+    n.return_5y,
+    n.return_since_listing,
+    n.nav_volatility,
+    n.beta,
+    n.sharpe,
+    n.jensen,
+    n.treynor,
+    n.r_squared,
+    n.updated_at
+FROM market.fund_nav n
+JOIN meta.instruments i
+  ON i.instrument_id = n.instrument_id
+JOIN meta.symbol_map sm
+  ON sm.instrument_id = n.instrument_id
+ AND sm.source = n.source;
+
+CREATE OR REPLACE VIEW market.v_etf_basket AS
+SELECT
+    b.source,
+    COALESCE(etf_sm.source_symbol, etf_i.symbol) AS etf_source_symbol,
+    etf_i.instrument_id AS etf_instrument_id,
+    etf_i.exchange AS etf_exchange,
+    etf_i.symbol AS etf_symbol,
+    etf_i.name AS etf_name,
+    b.component_symbol AS component_source_symbol,
+    component_i.instrument_id AS component_instrument_id,
+    component_i.asset AS component_asset,
+    component_i.exchange AS component_exchange,
+    component_i.symbol AS component_symbol,
+    component_i.name AS component_name,
+    b.trading_day,
+    b.pub_date,
+    b.component_type,
+    b.quantity,
+    b.unit,
+    b.cash_substitute_flag,
+    b.cash_substitute_rate,
+    b.cash_substitute_amount,
+    b.subscription_substitute_amount,
+    b.redemption_substitute_amount,
+    b.updated_at
+FROM market.etf_basket b
+JOIN meta.instruments etf_i
+  ON etf_i.instrument_id = b.etf_instrument_id
+LEFT JOIN meta.instruments component_i
+  ON component_i.instrument_id = b.component_instrument_id
+LEFT JOIN meta.symbol_map etf_sm
+  ON etf_sm.instrument_id = b.etf_instrument_id
+ AND etf_sm.source = b.source;
+
+CREATE OR REPLACE VIEW ops.v_dataset_coverage AS
+SELECT
+    provider,
+    dataset_name,
+    min(start_date) FILTER (WHERE status = 'loaded') AS loaded_start_date,
+    max(end_date) FILTER (WHERE status = 'loaded') AS loaded_end_date,
+    COALESCE(sum(row_count) FILTER (WHERE status = 'loaded'), 0) AS loaded_rows,
+    count(*) FILTER (WHERE status = 'written') AS written_files,
+    count(*) FILTER (WHERE status = 'loaded') AS loaded_files,
+    count(*) FILTER (WHERE status = 'failed') AS failed_files,
+    max(loaded_at) AS last_loaded_at,
+    max(created_at) AS last_staged_at
+FROM staging.parquet_file
+GROUP BY provider, dataset_name;

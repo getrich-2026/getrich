@@ -71,12 +71,25 @@ EXPECTED_HYPERTABLES = {
     "realtime.tick_buffer",
 }
 
+EXPECTED_VIEWS = {
+    "market.v_etf_basket",
+    "market.v_etf_daily",
+    "market.v_etf_nav",
+    "market.v_fund_daily",
+    "market.v_fund_nav",
+    "market.v_index_component",
+    "market.v_stock_daily_basic",
+    "market.v_stock_valuation",
+    "ops.v_dataset_coverage",
+}
+
 
 @dataclass(frozen=True)
 class SchemaCheckResult:
     missing_tables: tuple[str, ...]
     missing_hypertables: tuple[str, ...]
     missing_migrations: tuple[str, ...]
+    missing_views: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -84,6 +97,7 @@ class SchemaCheckResult:
             not self.missing_tables
             and not self.missing_hypertables
             and not self.missing_migrations
+            and not self.missing_views
         )
 
 
@@ -114,9 +128,21 @@ def check_schema(engine: Engine) -> SchemaCheckResult:
         migrations = set(
             conn.execute(text("SELECT file_name FROM ops.schema_migrations")).scalars()
         )
+        views = set(
+            conn.execute(
+                text(
+                    """
+                    SELECT table_schema || '.' || table_name
+                    FROM information_schema.views
+                    WHERE table_schema IN ('market', 'ops')
+                    """
+                )
+            ).scalars()
+        )
 
     return SchemaCheckResult(
         missing_tables=tuple(sorted(EXPECTED_TABLES - tables)),
         missing_hypertables=tuple(sorted(EXPECTED_HYPERTABLES - hypertables)),
         missing_migrations=tuple(sorted(set(SCHEMA_FILES) - migrations)),
+        missing_views=tuple(sorted(EXPECTED_VIEWS - views)),
     )

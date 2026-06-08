@@ -222,3 +222,25 @@ def test_insight_schema_makes_time_series_tables_hypertables() -> None:
         "etf_redemption",
     ]:
         assert f"create_hypertable('market.{table_name}'" in sql
+
+
+def test_insight_schema_adds_symbol_enriched_read_views() -> None:
+    settings = Settings.load()
+    sql = (settings.sql_dir / "60_insight.sql").read_text(encoding="utf-8")
+
+    for view_name in [
+        "market.v_stock_daily_basic",
+        "market.v_stock_valuation",
+        "market.v_index_component",
+        "market.v_etf_daily",
+        "market.v_etf_nav",
+        "market.v_fund_daily",
+        "market.v_fund_nav",
+        "market.v_etf_basket",
+        "ops.v_dataset_coverage",
+    ]:
+        assert f"CREATE OR REPLACE VIEW {view_name}" in sql
+
+    assert "sm.source_symbol" in sql
+    assert "JOIN meta.instruments i" in sql
+    assert "FROM staging.parquet_file" in sql
