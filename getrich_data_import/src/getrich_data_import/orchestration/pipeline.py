@@ -13,6 +13,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
 from getrich_data_import.adapters.base import HistoryDataSource
+from getrich_data_import.adapters.insight_p1 import (
+    P1_READY_DATASETS,
+    fetch_insight_p1_raw_frame,
+)
 from getrich_data_import.catalog import get_dataset_spec
 from getrich_data_import.common.config import Settings
 from getrich_data_import.common.logger import get_logger
@@ -37,6 +41,8 @@ from getrich_data_import.staging import (
     write_staging_parquet,
 )
 from getrich_data_import.transform.bars import to_market_frame
+from getrich_data_import.transform.insight_p1 import normalize_insight_p1_dataset
+from getrich_data_import.services.symbol_map import SymbolMapService
 
 
 logger = get_logger(__name__)
@@ -267,14 +273,18 @@ class ImportPipeline:
             raise ValueError(
                 f"dataset is not ready for fetch: {self.source_name}.{dataset_name}"
             )
-        if (
-            spec.asset is None
-            or spec.freq is None
-            or spec.source_method != "InsightSource.bar_frames"
-        ):
+        is_bar_dataset = spec.source_method == "InsightSource.bar_frames"
+        is_p1_dataset = spec.name in P1_READY_DATASETS
+        if not is_bar_dataset and not is_p1_dataset:
             raise ValueError(
-                f"fetch-dataset currently supports ready bar datasets only: {dataset_name}"
+                f"fetch-dataset does not support this dataset yet: {dataset_name}"
             )
+        if is_bar_dataset and (spec.asset is None or spec.freq is None):
+            raise ValueError(f"bar dataset requires asset and freq: {dataset_name}")
+        if is_p1_dataset and (start_date is None or end_date is None):
+            raise ValueError("P1 dataset fetch requires start_date and end_date")
+        if is_p1_dataset and not symbols:
+            raise ValueError("P1 dataset fetch requires at least one --symbol")
 
         job_name = f"fetch_{spec.name}_parquet"
         rows = 0
@@ -293,16 +303,27 @@ class ImportPipeline:
             },
         )
         try:
-            for batch_index, source_frame in enumerate(
+            source_frames = (
                 self.source.bar_frames(
-                    asset=spec.asset,
-                    freq=spec.freq,
+                    asset=str(spec.asset),
+                    freq=str(spec.freq),
                     start_date=start_date,
                     end_date=end_date,
                     symbols=symbols,
-                ),
-                start=1,
-            ):
+                )
+                if is_bar_dataset
+                else (
+                    fetch_insight_p1_raw_frame(
+                        self.source,  # type: ignore[arg-type]
+                        dataset_name=spec.name,
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    for symbol in symbols or []
+                )
+            )
+            for batch_index, source_frame in enumerate(source_frames, start=1):
                 if source_frame.empty:
                     continue
                 frame_start, frame_end = _frame_date_range(source_frame)
@@ -315,8 +336,9 @@ class ImportPipeline:
                     freq=spec.freq,
                     start_date=start_date or frame_start,
                     end_date=end_date or frame_end,
-                    partition_key=_staging_partition_key(
-                        source_frame, batch_index=batch_index
+                    partition_key=(
+                        _single_source_symbol(source_frame)
+                        or _staging_partition_key(source_frame, batch_index=batch_index)
                     ),
                 )
                 manifest = pd.DataFrame(
@@ -413,16 +435,14 @@ class ImportPipeline:
             raise ValueError(
                 f"dataset is not ready for load: {self.source_name}.{dataset_name}"
             )
-        if (
-            spec.asset is None
-            or spec.freq is None
-            or spec.source_method != "InsightSource.bar_frames"
-        ):
+        is_bar_dataset = spec.source_method == "InsightSource.bar_frames"
+        is_p1_dataset = spec.name in P1_READY_DATASETS
+        if not is_bar_dataset and not is_p1_dataset:
             raise ValueError(
-                f"load-dataset currently supports ready bar datasets only: {dataset_name}"
+                f"load-dataset does not support this dataset yet: {dataset_name}"
             )
 
-        table = f"{spec.asset}_bar_{spec.freq}"
+        schema, table = _target_schema_table(spec.target)
         job_name = f"load_{spec.name}_parquet"
         rows = 0
         with self.engine.begin() as conn:
@@ -463,44 +483,48 @@ class ImportPipeline:
                     start_date=start_date,
                     end_date=end_date,
                 )
-                if symbols and "source_symbol" in source_frame.columns:
-                    wanted = {str(symbol) for symbol in symbols}
-                    source_frame = source_frame[
-                        source_frame["source_symbol"].astype(str).isin(wanted)
-                    ]
+                source_frame = _filter_frame_by_symbols(source_frame, symbols=symbols)
                 if source_frame.empty:
                     continue
                 with self.engine.begin() as conn:
-                    frame = attach_instrument_ids(
-                        conn, source_frame, source=self.source_name
-                    )
-                    if spec.freq == "1m":
-                        frame = self._assign_minute_trading_days(conn, frame)
-                    expected_trading_days = self._expected_trading_days(
-                        conn,
-                        frame,
-                        start_date=start_date,
-                        end_date=end_date,
-                    )
-                    frame = to_market_frame(frame, freq=spec.freq)
-                    issues = validate_bars(
-                        frame,
-                        freq=spec.freq,
-                        price_jump_warn_pct=self.settings.quality.price_jump_warn_pct,
-                        expected_minutes_per_day=self.settings.quality.expected_minutes_per_day,
-                        expected_trading_days=expected_trading_days,
-                    )
-                    self._write_quality_issues(run_id=run_id, issues=issues)
-                    if self.settings.quality.fail_on_error and has_error(issues):
-                        raise ValueError(
-                            f"{job_name}: quality errors: {[issue.rule for issue in issues]}"
+                    if is_bar_dataset:
+                        frame = attach_instrument_ids(
+                            conn, source_frame, source=self.source_name
                         )
+                        if spec.freq == "1m":
+                            frame = self._assign_minute_trading_days(conn, frame)
+                        expected_trading_days = self._expected_trading_days(
+                            conn,
+                            frame,
+                            start_date=start_date,
+                            end_date=end_date,
+                        )
+                        frame = to_market_frame(frame, freq=str(spec.freq))
+                        issues = validate_bars(
+                            frame,
+                            freq=str(spec.freq),
+                            price_jump_warn_pct=self.settings.quality.price_jump_warn_pct,
+                            expected_minutes_per_day=self.settings.quality.expected_minutes_per_day,
+                            expected_trading_days=expected_trading_days,
+                        )
+                        self._write_quality_issues(run_id=run_id, issues=issues)
+                        if self.settings.quality.fail_on_error and has_error(issues):
+                            raise ValueError(
+                                f"{job_name}: quality errors: {[issue.rule for issue in issues]}"
+                            )
+                        primary_keys = ("instrument_id", "dt")
+                    else:
+                        frame = normalize_insight_p1_dataset(
+                            spec.name, source_frame, source=self.source_name
+                        )
+                        frame = self._attach_p1_instrument_ids(conn, spec.name, frame)
+                        primary_keys = spec.primary_keys
                     written = upsert_dataframe(
                         conn,
                         frame,
-                        schema="market",
+                        schema=schema,
                         table=table,
-                        primary_keys=("instrument_id", "dt"),
+                        primary_keys=primary_keys,
                         batch_rows=self.settings.batch_rows,
                     )
                     _mark_staged_file_loaded(
@@ -641,6 +665,103 @@ class ImportPipeline:
         days = [day for day in rows]
         return days or None
 
+    def _attach_p1_instrument_ids(
+        self, conn: Connection, dataset_name: str, frame: pd.DataFrame
+    ) -> pd.DataFrame:
+        if frame.empty:
+            return frame
+        if dataset_name in {"etf_daily", "etf_nav"}:
+            self._ensure_p1_symbol_map(
+                conn, frame, asset="etf", source_column="source_symbol"
+            )
+            return attach_instrument_ids(conn, frame, source=self.source_name)
+        if dataset_name in {"fund_daily", "fund_nav"}:
+            self._ensure_p1_symbol_map(
+                conn, frame, asset="fund", source_column="source_symbol"
+            )
+            return attach_instrument_ids(conn, frame, source=self.source_name)
+        if dataset_name == "index_component":
+            out = _attach_symbol_column(
+                conn,
+                frame,
+                source=self.source_name,
+                source_column="index_source_symbol",
+                target_column="index_instrument_id",
+                required=True,
+            )
+            return _attach_symbol_column(
+                conn,
+                out,
+                source=self.source_name,
+                source_column="component_source_symbol",
+                target_column="component_instrument_id",
+                required=True,
+            )
+        if dataset_name == "etf_basket":
+            self._ensure_p1_symbol_map(
+                conn, frame, asset="etf", source_column="etf_source_symbol"
+            )
+            out = _attach_symbol_column(
+                conn,
+                frame,
+                source=self.source_name,
+                source_column="etf_source_symbol",
+                target_column="etf_instrument_id",
+                required=True,
+            )
+            return _attach_symbol_column(
+                conn,
+                out,
+                source=self.source_name,
+                source_column="component_symbol",
+                target_column="component_instrument_id",
+                required=False,
+            )
+        return attach_instrument_ids(conn, frame, source=self.source_name)
+
+    def _ensure_p1_symbol_map(
+        self,
+        conn: Connection,
+        frame: pd.DataFrame,
+        *,
+        asset: str,
+        source_column: str,
+    ) -> None:
+        if frame.empty or source_column not in frame.columns:
+            return
+        symbols = sorted(
+            {
+                str(symbol).strip()
+                for symbol in frame[source_column].dropna().unique()
+                if str(symbol).strip()
+            }
+        )
+        if not symbols:
+            return
+        existing = _available_instrument_ids(
+            conn, source=self.source_name, symbols=symbols
+        )
+        missing_symbols = [symbol for symbol in symbols if symbol not in existing]
+        if not missing_symbols:
+            return
+        instruments = pd.DataFrame(
+            {
+                "symbol": missing_symbols,
+                "asset": asset,
+                "exchange": [_exchange_from_source_symbol(symbol) for symbol in missing_symbols],
+                "status": "active",
+            }
+        )
+        upsert_dataframe(
+            conn,
+            instruments,
+            schema="meta",
+            table="instruments",
+            primary_keys=("asset", "exchange", "symbol"),
+            batch_rows=self.settings.batch_rows,
+        )
+        self._upsert_symbol_map(conn, instruments)
+
     def _upsert_future_contracts(self, conn: Connection) -> int:
         frame = self.source.future_contract_frame()
         if frame.empty:
@@ -728,9 +849,20 @@ class ImportPipeline:
 
 
 def _source_symbols(frame: pd.DataFrame) -> list[str]:
-    if "source_symbol" not in frame.columns:
-        return []
-    return sorted(frame["source_symbol"].dropna().astype(str).unique().tolist())
+    for column in [
+        "source_symbol",
+        "htsc_code",
+        "index_source_symbol",
+        "etf_source_symbol",
+    ]:
+        if column in frame.columns:
+            return sorted(frame[column].dropna().astype(str).unique().tolist())
+    return []
+
+
+def _single_source_symbol(frame: pd.DataFrame) -> str | None:
+    symbols = _source_symbols(frame)
+    return symbols[0] if len(symbols) == 1 else None
 
 
 def _staging_partition_key(frame: pd.DataFrame, *, batch_index: int) -> str:
@@ -741,9 +873,12 @@ def _staging_partition_key(frame: pd.DataFrame, *, batch_index: int) -> str:
 
 
 def _frame_date_range(frame: pd.DataFrame) -> tuple[date | None, date | None]:
-    if "trading_day" not in frame.columns or frame.empty:
+    if frame.empty:
         return None, None
-    days = pd.to_datetime(frame["trading_day"], errors="coerce").dropna()
+    date_col = _frame_date_column(frame)
+    if date_col is None:
+        return None, None
+    days = pd.to_datetime(frame[date_col], errors="coerce").dropna()
     if days.empty:
         return None, None
     return days.min().date(), days.max().date()
@@ -807,16 +942,10 @@ def _filter_frame_by_date_range(
 ) -> pd.DataFrame:
     if frame.empty or (start_date is None and end_date is None):
         return frame
-    date_col = (
-        "trading_day"
-        if "trading_day" in frame.columns
-        else "dt"
-        if "dt" in frame.columns
-        else None
-    )
+    date_col = _frame_date_column(frame)
     if date_col is None:
         raise ValueError(
-            "staged parquet file cannot be date-filtered without trading_day or dt column"
+            "staged parquet file cannot be date-filtered without a date column"
         )
     days = pd.to_datetime(frame[date_col], errors="coerce").dt.date
     mask = pd.Series(True, index=frame.index)
@@ -825,6 +954,110 @@ def _filter_frame_by_date_range(
     if end_date is not None:
         mask &= days <= end_date
     return frame.loc[mask.fillna(False)].copy()
+
+
+def _filter_frame_by_symbols(
+    frame: pd.DataFrame, *, symbols: list[str] | None
+) -> pd.DataFrame:
+    if not symbols or frame.empty:
+        return frame
+    wanted = {str(symbol) for symbol in symbols}
+    for column in [
+        "source_symbol",
+        "htsc_code",
+        "index_source_symbol",
+        "etf_source_symbol",
+    ]:
+        if column in frame.columns:
+            return frame[frame[column].astype(str).isin(wanted)].copy()
+    return frame
+
+
+def _frame_date_column(frame: pd.DataFrame) -> str | None:
+    for column in ("trading_day", "dt", "end_date", "begin_date", "pub_date"):
+        if column in frame.columns:
+            return column
+    return None
+
+
+def _target_schema_table(target: str) -> tuple[str, str]:
+    if "." not in target:
+        raise ValueError(f"target must be schema.table: {target}")
+    schema, table = target.split(".", 1)
+    return schema, table
+
+
+def _attach_symbol_column(
+    conn: Connection,
+    frame: pd.DataFrame,
+    *,
+    source: str,
+    source_column: str,
+    target_column: str,
+    required: bool,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    symbols = sorted(
+        {str(symbol).strip() for symbol in frame[source_column].dropna().unique()}
+    )
+    if required:
+        resolved = SymbolMapService(conn).resolve_many(
+            source=source, source_symbols=symbols
+        )
+        mapping = {
+            source_symbol: item.instrument_id
+            for source_symbol, item in resolved.items()
+        }
+    else:
+        mapping = _available_instrument_ids(conn, source=source, symbols=symbols)
+    out = frame.copy()
+    out[target_column] = out[source_column].map(lambda symbol: mapping.get(str(symbol)))
+    if required and out[target_column].isna().any():
+        missing = sorted(
+            out.loc[out[target_column].isna(), source_column]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        raise LookupError(f"symbol_map missing for required P1 symbols: {missing[:20]}")
+    return out
+
+
+def _available_instrument_ids(
+    conn: Connection, *, source: str, symbols: list[str]
+) -> dict[str, int]:
+    if not symbols:
+        return {}
+    rows = conn.execute(
+        text(
+            """
+            SELECT sm.source_symbol,
+                   sm.instrument_id,
+                   sm.source,
+                   i.symbol,
+                   i.asset,
+                   i.exchange
+            FROM meta.symbol_map sm
+            JOIN meta.instruments i
+              ON i.instrument_id = sm.instrument_id
+            WHERE sm.source = :source
+              AND sm.source_symbol = ANY(:source_symbols)
+            """
+        ),
+        {"source": source, "source_symbols": symbols},
+    ).mappings()
+    return {str(row["source_symbol"]): int(row["instrument_id"]) for row in rows}
+
+
+def _exchange_from_source_symbol(symbol: str) -> str:
+    if "." not in symbol:
+        raise ValueError(f"source symbol must include exchange suffix: {symbol}")
+    exchange = symbol.rsplit(".", 1)[-1].strip().upper()
+    if not exchange:
+        raise ValueError(f"source symbol must include exchange suffix: {symbol}")
+    return exchange
 
 
 def _validate_staged_parquet_file(staged_file: dict[str, object]) -> None:

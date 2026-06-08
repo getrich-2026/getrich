@@ -5,8 +5,14 @@
 > - `docs/insight_import_product_requirements.md`
 > - `docs/华泰INSIGHT_数据封装_开发文档.md`
 > - Current `getrich_data_import` provider, pipeline, SQL, and export modules
-> Updated: 2026-06-07
+> Updated: 2026-06-08
 > Status: Draft
+
+## 0. Current Design Decisions
+
+- Local PostgreSQL + TimescaleDB can be cleaned and rebuilt during the current P1 development phase. The backend SQL files are still treated as the rebuildable baseline schema, so changing `sql/init/backend/60_insight.sql` is acceptable before the next stable commit. Additive migrations become mandatory after the INSIGHT P1 schema is promoted beyond local development.
+- ETF and ordinary fund data must be modeled separately. ETF rows returned by fund-family INSIGHT APIs should land in ETF-specific tables, while ordinary funds should use separate fund tables. Do not mix ETF and fund rows in a shared `market.fund_*` table.
+- `meta.instruments.asset` should include `fund` before ordinary fund imports are enabled. ETF instruments remain `asset='etf'`; ordinary mutual funds, LOF, and other non-ETF funds use `asset='fund'` with a subtype when needed.
 
 ## 1. Architecture Goal
 
@@ -54,7 +60,7 @@ The design must fit the existing `getrich_data_import` implementation:
 | No Parquet staging manifest | Add `staging.parquet_file` to track local INSIGHT files, hashes, ranges, schema fingerprints, and load state. |
 | Bar-only pipeline | Generalize import planning for dataset-specific extract/transform/load specs. |
 | No adjustment factor tables | Add source-specific adjustment and valuation tables before adjusted-price views. |
-| No daily basic, valuation, index component, ETF tables | Add incremental DDL by priority. |
+| No daily basic, valuation, index component, ETF/fund split tables | Add rebuild-baseline DDL during P1, then additive migrations after schema promotion. |
 | Job audit lacks source range and parameters | Add structured JSON parameters, provider, date range, checkpoint fields. |
 | DuckDB is only a parquet query helper | Add a controlled temporary workspace convention and manifest. |
 | No source comparison/reconciliation workflow | Add validation jobs that write summaries to PostgreSQL and detail outputs to DuckDB. |
@@ -120,7 +126,7 @@ Existing tables should remain the canonical destination for bars:
 - `market.future_bar_1d`, `market.future_bar_1m`
 - `market.option_bar_1d`, `market.option_bar_1m`
 
-Add new tables in additive migrations. Suggested priority:
+During current local P1 development, add or adjust these tables in the rebuildable backend baseline and recreate the local database. After the P1 schema is promoted, all changes must become additive migrations. Suggested priority:
 
 | Priority | Table | Time Key | Primary Key | Notes |
 |---|---|---|---|---|
@@ -131,10 +137,12 @@ Add new tables in additive migrations. Suggested priority:
 | P1 | `market.stock_daily_basic` | `trading_day` | `instrument_id, trading_day, source` | Raw daily basic fields including source adjusted close. |
 | P1 | `market.stock_valuation` | `trading_day` | `instrument_id, trading_day, source` | PE/PB/PS/PC and front/back adjusted close from INSIGHT. |
 | P1 | `market.index_component` | `trading_day` | `index_instrument_id, component_instrument_id, trading_day, source` | Use PIT component weights. |
-| P1 | `market.fund_daily` | `trading_day` | `instrument_id, trading_day, source` | Fund/ETF OHLC, NAV, discount/premium fields. |
-| P1 | `market.fund_nav` | `end_date` | `instrument_id, end_date, source` | NAV-derived and risk metrics. |
+| P1 | `market.etf_daily` | `trading_day` | `instrument_id, trading_day, source` | ETF daily market, NAV, discount/premium fields from fund-family APIs. |
+| P1 | `market.etf_nav` | `end_date` | `instrument_id, end_date, source` | ETF NAV-derived returns, rankings, and risk metrics. |
 | P1 | `market.etf_basket` | `trading_day` | `etf_instrument_id, component_instrument_id, trading_day, source` | ETF creation/redemption basket. |
 | P1 | `market.etf_redemption` | `trading_day` | `instrument_id, trading_day, source` | ETF redemption list summary. |
+| P1 | `market.fund_daily` | `trading_day` | `instrument_id, trading_day, source` | Ordinary fund daily market/NAV fields; only for `asset='fund'`. |
+| P1 | `market.fund_nav` | `end_date` | `instrument_id, end_date, source` | Ordinary fund NAV-derived returns and risk metrics; only for `asset='fund'`. |
 | P2 | `market.money_flow` | `trading_day` | `instrument_id, trading_day, source` | Stock daily money flow. |
 | P2 | `market.trade_distribution` | `trading_day` | `instrument_id, trading_day, price, source` | Price-level distribution. |
 | P2 | `market.chip_distribution` | `trading_day` | `instrument_id, trading_day, source` | Cost distribution fields. |
@@ -323,6 +331,13 @@ getrich-import --provider insight validate-adjustments --symbol 601688.SH --star
 
 ## 9. Schema Evolution Plan
 
+Current P1 local development rule:
+
+- Local database rebuild is allowed. Baseline backend SQL files can be edited directly, then the local `getrich` database can be recreated.
+- Before sharing this schema as a stable environment, record the final baseline in a commit and stop editing previously applied SQL files.
+
+Post-promotion rule:
+
 Use additive migrations only:
 
 1. Extend `ops.etl_job_run` with provider, dataset name, start/end date, request JSON, warning count, and checkpoint JSON.
@@ -342,7 +357,7 @@ First contract is SQL-first:
 - metadata: `meta.instruments`, `meta.symbol_map`, `meta.trading_calendar`;
 - bars: current `market.*_bar_*` tables;
 - dataset status: `ops.dataset_catalog`, `ops.etl_job_run`, `ops.data_quality_check`;
-- P1 facts: new `market.stock_adj_factor`, `market.stock_daily_basic`, `market.stock_valuation`, `market.index_component`, fund/ETF tables.
+- P1 facts: new `market.stock_adj_factor`, `market.stock_daily_basic`, `market.stock_valuation`, `market.index_component`, ETF tables, and separate ordinary fund tables.
 
 Recommended views after P1:
 
@@ -376,10 +391,11 @@ Recommended views after P1:
 | A1.3 Add stock adjustment factor DDL and transform | A1.1 | Canonical sparse factor table. |
 | A1.4 Add stock daily basic and valuation DDL/transforms | A1.1 | Source raw adjusted close fields stored separately. |
 | A1.5 Add index component DDL/transform | A1.1 | PIT index membership. |
-| A1.6 Add fund/ETF DDL/transforms | A1.1 | Fund daily, NAV, ETF basket/redemption data. |
-| A1.7 Add generic `import-dataset` pipeline | A0.2, A1.1 | Non-bar dataset imports. |
-| A1.8 Add DuckDB workspace writer | A1.1 | Validation and snapshot artifacts. |
-| A1.9 Add adjustment reconciliation job | A1.3, A1.4, A1.8 | Trusted/experimental adjustment decision support. |
+| A1.6 Add ETF DDL/transforms | A1.1 | ETF daily, ETF NAV, basket, and redemption data. |
+| A1.7 Add ordinary fund DDL/transforms | A1.6 | Separate fund daily and NAV tables with `asset='fund'`. |
+| A1.8 Add generic `import-dataset` pipeline | A0.2, A1.1 | Non-bar dataset imports. |
+| A1.9 Add DuckDB workspace writer | A1.1 | Validation and snapshot artifacts. |
+| A1.10 Add adjustment reconciliation job | A1.3, A1.4, A1.9 | Trusted/experimental adjustment decision support. |
 
 ### P2: Broader Data Coverage
 

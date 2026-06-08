@@ -37,7 +37,7 @@ Build an INSIGHT import capability inside `getrich_data_import` that:
 | User | Need |
 |---|---|
 | Data import operator | Configure INSIGHT credentials, run backfills, inspect failures, resume jobs. |
-| Quant research program | Read normalized historical bars, calendars, metadata, index components, fund/ETF data, and selected daily derived datasets. |
+| Quant research program | Read normalized historical bars, calendars, metadata, index components, ETF data, ordinary fund data, and selected daily derived datasets. |
 | Data validation program | Compare INSIGHT with existing local sources, detect missing rows, duplicate keys, field drift, and adjustment inconsistencies. |
 | Future realtime service | Subscribe to realtime K-line/tick streams and persist short-retention buffers or long-term tick data when enabled. |
 
@@ -54,10 +54,10 @@ MVP focuses on historical, reusable, medium-frequency data.
 | Symbol metadata import | Import and normalize securities, exchanges, security types, lifecycle dates, and INSIGHT `htsc_code` mappings. | PostgreSQL |
 | Trading calendar import | Import exchange calendars and provide sorted, queryable trading days. | PostgreSQL |
 | Adjustment factor import | Import sparse `xdy`, `b_xdy`, `f_xdy` rows and expose them for query-time adjustment. | PostgreSQL / TimescaleDB |
-| Historical K-line import | Import daily and minute K-line data for stock, index, fund/ETF, future, and option where available. | TimescaleDB hypertables |
+| Historical K-line import | Import daily and minute K-line data for stock, index, ETF, ordinary fund, future, and option where available. | TimescaleDB hypertables |
 | Daily basic and valuation import | Import stock daily basic and stock valuation data with clear raw/adjusted close semantics. | TimescaleDB hypertables |
 | Index component import | Import time-aware index components and weights to avoid survivorship bias. | PostgreSQL / TimescaleDB |
-| Fund/ETF daily import | Import fund daily data, NAV-derived data, ETF baskets, and ETF redemption lists when permissions and source coverage allow. | PostgreSQL / TimescaleDB |
+| ETF and fund daily import | Import ETF daily/NAV data, ordinary fund daily/NAV data, ETF baskets, and ETF redemption lists when permissions and source coverage allow. ETF and ordinary fund rows must not share canonical tables. | PostgreSQL / TimescaleDB |
 | Data quality checks | Validate duplicate keys, null core fields, OHLC rules, trading-day alignment, timestamp normalization, and schema drift. | PostgreSQL ops tables |
 | Import job audit | Record job parameters, row counts, source range, failures, warnings, and checkpoints. | PostgreSQL ops tables |
 | DuckDB temp workspace | Materialize validation tables, source comparisons, adjustment reconciliation, and wide research extracts. | DuckDB |
@@ -98,7 +98,8 @@ Required configuration dimensions:
 - INSIGHT profile name.
 - Parquet staging root.
 - Dataset group.
-- Asset class: stock, index, fund, ETF, future, option.
+- Asset class: stock, index, ETF, ordinary fund, future, option.
+- ETF and ordinary fund are separate product/data classes. ETF rows use `asset='etf'` and ETF-specific tables; ordinary funds use `asset='fund'` and fund-specific tables.
 - Symbol include/exclude list.
 - Exchange include/exclude list.
 - Date range.
@@ -162,7 +163,8 @@ Required datasets:
 - Stock valuation.
 - Index daily data.
 - Index components.
-- Fund/ETF daily data.
+- ETF daily/NAV data.
+- Ordinary fund daily/NAV data.
 - ETF basket and redemption data where available.
 
 Product rules:
@@ -284,7 +286,8 @@ Acceptance criteria:
 | Historical daily/minute bars | Canonical hypertables | Optional snapshot |
 | Adjustment factors | Canonical | Validation snapshot |
 | Index components | Canonical | Optional snapshot |
-| Fund/ETF daily and basket data | Canonical | Optional snapshot |
+| ETF daily, ETF NAV, basket, and redemption data | Canonical | Optional snapshot |
+| Ordinary fund daily and NAV data | Canonical | Optional snapshot |
 | Import job audit | Canonical | No |
 | Data quality results | Canonical | Optional analytical copy |
 | Raw SDK response scratch data | Only if required for audit | Preferred temp storage |
@@ -299,7 +302,7 @@ Acceptance criteria:
 - Local Parquet staging path convention and file manifest.
 - Dataset catalog draft.
 - Metadata import for symbols and calendars.
-- Daily K-line import for stock, index, fund/ETF where available.
+- Daily K-line import for stock, index, ETF, and ordinary fund where available.
 - TimescaleDB upsert and job audit.
 - Basic downstream SQL read examples.
 
@@ -309,7 +312,8 @@ Acceptance criteria:
 - Adjustment factor import.
 - Daily basic and valuation import.
 - Index component import.
-- Fund/ETF daily and ETF basket/redemption import where available.
+- ETF daily/NAV and ETF basket/redemption import where available.
+- Ordinary fund daily/NAV import into separate fund tables where available.
 - Data quality checks and failed-job retry.
 - DuckDB validation workspace for source comparison and adjustment reconciliation.
 

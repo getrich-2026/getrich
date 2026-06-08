@@ -116,6 +116,7 @@ def test_meta_schema_has_fk_indexes_without_redundant_symbol_map_index() -> None
     assert "idx_symbol_map_instrument" not in sql
     assert "chk_calendar_exchange_not_blank" in sql
     assert "idx_option_contracts_underlying" in sql
+    assert "'fund'" in sql
 
 
 def test_market_schema_has_cross_sectional_minute_dt_indexes() -> None:
@@ -182,12 +183,26 @@ def test_insight_schema_adds_p1_canonical_market_tables() -> None:
         "stock_daily_basic",
         "stock_valuation",
         "index_component",
+        "etf_daily",
+        "etf_nav",
         "fund_daily",
         "fund_nav",
         "etf_basket",
         "etf_redemption",
     ]:
         assert f"CREATE TABLE IF NOT EXISTS market.{table_name}" in sql
+
+    for sample_backed_column in [
+        "trading_state",
+        "day_change",
+        "avg_volume_per_trade",
+        "pc_ttm",
+        "ps_ttm",
+        "return_ytd_rank",
+        "nav_volatility",
+        "subscription_substitute_amount",
+    ]:
+        assert sample_backed_column in sql
 
 
 def test_insight_schema_makes_time_series_tables_hypertables() -> None:
@@ -199,6 +214,8 @@ def test_insight_schema_makes_time_series_tables_hypertables() -> None:
         "stock_daily_basic",
         "stock_valuation",
         "index_component",
+        "etf_daily",
+        "etf_nav",
         "fund_daily",
         "fund_nav",
         "etf_basket",

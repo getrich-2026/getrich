@@ -253,3 +253,121 @@ def test_load_dataset_rejects_hash_mismatch_and_marks_failed(
         pipeline.load_dataset(dataset_name="stock_bar_1d")
 
     assert any("status = 'failed'" in sql for sql, _params in engine.sqls)
+
+
+def test_load_dataset_normalizes_p1_staged_parquet(tmp_path, monkeypatch) -> None:
+    parquet_path = tmp_path / "stock_valuation.parquet"
+    pd.DataFrame(
+        [
+            {
+                "htsc_code": "000001.SZ",
+                "trading_day": pd.Timestamp("2026-06-04"),
+                "close": 10.82,
+                "backward_adjusted_closing_price": 1578.8993,
+                "forward_adjusted_closing_price": 10.82,
+                "pettm": 4.8763,
+                "pcttm": 1.101,
+                "psttm": 1.5786,
+            }
+        ]
+    ).to_parquet(parquet_path)
+    engine = _Engine([_staged_row(parquet_path)])
+    settings = SimpleNamespace(
+        batch_rows=1000,
+        quality=SimpleNamespace(
+            price_jump_warn_pct=0.2, fail_on_error=True, expected_minutes_per_day=None
+        ),
+    )
+    captured = {}
+
+    monkeypatch.setattr(
+        "getrich_data_import.orchestration.pipeline.insert_job_run",
+        lambda *_args, **_kwargs: 42,
+    )
+    monkeypatch.setattr(
+        "getrich_data_import.orchestration.pipeline.finish_job_run",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "getrich_data_import.orchestration.pipeline.attach_instrument_ids",
+        lambda _conn, frame, source: frame.assign(
+            instrument_id=1, asset="stock", exchange="SZ", symbol="000001.SZ"
+        ),
+    )
+
+    def fake_upsert_dataframe(_conn, frame, **kwargs):
+        captured["kwargs"] = kwargs
+        captured["frame"] = frame.copy()
+        return len(frame)
+
+    monkeypatch.setattr(
+        "getrich_data_import.orchestration.pipeline.upsert_dataframe",
+        fake_upsert_dataframe,
+    )
+
+    pipeline = ImportPipeline(settings=settings, engine=engine, source=_Source())  # type: ignore[arg-type]
+    result = pipeline.load_dataset(
+        dataset_name="stock_valuation",
+        start_date=date(2026, 6, 4),
+        end_date=date(2026, 6, 4),
+    )
+
+    assert result.rows_written == 1
+    assert captured["kwargs"]["schema"] == "market"
+    assert captured["kwargs"]["table"] == "stock_valuation"
+    assert captured["kwargs"]["primary_keys"] == (
+        "instrument_id",
+        "trading_day",
+        "source",
+    )
+    assert captured["frame"]["instrument_id"].tolist() == [1]
+    assert captured["frame"]["pe_ttm"].tolist() == [4.8763]
+    assert captured["frame"]["pc_ttm"].tolist() == [1.101]
+
+
+def test_p1_fund_family_symbol_map_is_created_from_source_symbol(monkeypatch) -> None:
+    engine = _Engine([])
+    settings = SimpleNamespace(
+        batch_rows=1000,
+        quality=SimpleNamespace(
+            price_jump_warn_pct=0.2, fail_on_error=True, expected_minutes_per_day=None
+        ),
+    )
+    pipeline = ImportPipeline(settings=settings, engine=engine, source=_Source())  # type: ignore[arg-type]
+    captured = {}
+
+    def fake_upsert_dataframe(_conn, frame, **kwargs):
+        captured["kwargs"] = kwargs
+        captured["instruments"] = frame.copy()
+        return len(frame)
+
+    monkeypatch.setattr(
+        "getrich_data_import.orchestration.pipeline.upsert_dataframe",
+        fake_upsert_dataframe,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_upsert_symbol_map",
+        lambda _conn, instruments: captured.setdefault(
+            "symbol_map_symbols", instruments["symbol"].tolist()
+        ),
+    )
+
+    pipeline._ensure_p1_symbol_map(
+        _Conn(engine),
+        pd.DataFrame({"source_symbol": ["510300.SH"]}),
+        asset="etf",
+        source_column="source_symbol",
+    )
+
+    assert captured["kwargs"]["schema"] == "meta"
+    assert captured["kwargs"]["table"] == "instruments"
+    assert captured["instruments"].to_dict(orient="records") == [
+        {
+            "symbol": "510300.SH",
+            "asset": "etf",
+            "exchange": "SH",
+            "status": "active",
+        }
+    ]
+    assert captured["symbol_map_symbols"] == ["510300.SH"]

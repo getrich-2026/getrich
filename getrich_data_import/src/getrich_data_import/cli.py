@@ -6,6 +6,11 @@ from datetime import date
 from pathlib import Path
 
 from getrich_data_import.adapters.registry import get_history_source, provider_names
+from getrich_data_import.adapters.insight_p1 import (
+    P1_DEFAULT_SAMPLE_DATASETS,
+    P1_SAMPLE_DATASETS,
+    export_insight_p1_samples,
+)
 from getrich_data_import.common.config import Settings
 from getrich_data_import.common.logger import configure_logging, get_logger
 from getrich_data_import.catalog import (
@@ -87,6 +92,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="explicitly reload staged files that are already marked loaded",
     )
+    p_p1_samples = sub.add_parser(
+        "export-insight-p1-samples",
+        help="export raw INSIGHT P1 sample datasets to local parquet",
+    )
+    p_p1_samples.add_argument(
+        "--dataset",
+        action="append",
+        dest="datasets",
+        choices=P1_SAMPLE_DATASETS,
+        help="P1 dataset to export; can be repeated",
+    )
+    p_p1_samples.add_argument("--start-date", required=True, help="YYYY-MM-DD")
+    p_p1_samples.add_argument("--end-date", required=True, help="YYYY-MM-DD")
+    p_p1_samples.add_argument("--output-dir", help="local parquet output root")
+    p_p1_samples.add_argument(
+        "--stock-symbol", default="000001.SZ", help="stock sample symbol"
+    )
+    p_p1_samples.add_argument(
+        "--index-symbol", default="000300.SH", help="index sample symbol"
+    )
+    p_p1_samples.add_argument(
+        "--fund-symbol", default="510300.SH", help="fund or ETF sample symbol"
+    )
+    p_p1_samples.add_argument(
+        "--etf-symbol", default="510300.SH", help="ETF sample symbol"
+    )
     sub.add_parser("load-metadata", help="load calendar, instruments, and symbol map")
 
     p_import = sub.add_parser("import-bars", help="import historical bars")
@@ -119,6 +150,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="symbols",
         help="canonical symbol; can be repeated",
+    )
+    p_export.add_argument(
+        "--reload",
+        action="store_true",
+        help="overwrite the output parquet file if it already exists",
     )
     p_export.add_argument("--output", required=True, help="output parquet path")
     return parser
@@ -220,10 +256,34 @@ def main(argv: list[str] | None = None) -> int:
                 start_date=_parse_date(args.start_date),
                 end_date=_parse_date(args.end_date),
                 symbols=args.symbols,
+                reload=args.reload,
             )
             print(
                 f"{result.job_name} status={result.status} rows={result.rows_written}"
             )
+            return 0
+        if args.cmd == "export-insight-p1-samples":
+            if provider != "insight":
+                raise ValueError(
+                    "export-insight-p1-samples requires --provider insight"
+                )
+            output_dir = (
+                Path(args.output_dir).expanduser()
+                if args.output_dir
+                else settings.insight.staging_dir / "p1_samples"
+            )
+            samples = export_insight_p1_samples(
+                source,  # type: ignore[arg-type]
+                root_dir=output_dir,
+                start_date=_parse_required_date(args.start_date),
+                end_date=_parse_required_date(args.end_date),
+                stock_symbol=args.stock_symbol,
+                index_symbol=args.index_symbol,
+                fund_symbol=args.fund_symbol,
+                etf_symbol=args.etf_symbol,
+                dataset_names=tuple(args.datasets or P1_DEFAULT_SAMPLE_DATASETS),
+            )
+            sys.stdout.write(_format_p1_samples(samples))
             return 0
         if args.cmd == "import-bars":
             result = pipeline.import_bars(
@@ -249,6 +309,10 @@ def main(argv: list[str] | None = None) -> int:
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
+    return date.fromisoformat(value)
+
+
+def _parse_required_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
@@ -291,6 +355,35 @@ def _format_dataset_specs(specs: tuple[object, ...]) -> str:
         for row in rows
     )
     return "\n".join(lines) + "\n"
+
+
+def _format_p1_samples(samples: tuple[object, ...]) -> str:
+    """Render P1 sample export results.
+
+    Time Complexity:
+        O(n * c), where n is sample count and c is column count per sample.
+    Space Complexity:
+        O(n * c), for the rendered output.
+    """
+
+    lines = []
+    for sample in samples:
+        dataset_name = getattr(sample, "dataset_name")
+        symbol = getattr(sample, "symbol")
+        rows = getattr(sample, "rows")
+        columns = ",".join(getattr(sample, "columns"))
+        error = getattr(sample, "error")
+        staged_file = getattr(sample, "staged_file")
+        if error:
+            lines.append(f"{dataset_name} symbol={symbol} status=error error={error}")
+            continue
+        path = getattr(staged_file, "path", "") if staged_file else ""
+        status = "written" if staged_file else "empty"
+        lines.append(
+            f"{dataset_name} symbol={symbol} status={status} rows={rows} path={path}"
+        )
+        lines.append(f"{dataset_name} columns={columns}")
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 if __name__ == "__main__":

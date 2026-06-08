@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS meta.instruments (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (asset, exchange, symbol),
     CONSTRAINT chk_instruments_asset
-        CHECK (asset IN ('index', 'future', 'option', 'stock', 'etf')),
+        CHECK (asset IN ('index', 'future', 'option', 'stock', 'etf', 'fund')),
     CONSTRAINT chk_instruments_symbol_not_blank
         CHECK (btrim(symbol) <> ''),
     CONSTRAINT chk_instruments_exchange_not_blank

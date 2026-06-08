@@ -57,3 +57,28 @@ def test_parser_accepts_load_dataset_command() -> None:
     assert args.dataset == "stock_bar_1d"
     assert args.end_date == "2026-06-01"
     assert args.reload is True
+
+
+def test_parser_accepts_export_insight_p1_samples_command() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "--provider",
+            "insight",
+            "export-insight-p1-samples",
+            "--dataset",
+            "stock_valuation",
+            "--start-date",
+            "2026-06-01",
+            "--end-date",
+            "2026-06-01",
+            "--stock-symbol",
+            "000001.SZ",
+        ]
+    )
+
+    assert args.cmd == "export-insight-p1-samples"
+    assert args.provider == "insight"
+    assert args.datasets == ["stock_valuation"]
+    assert args.stock_symbol == "000001.SZ"
