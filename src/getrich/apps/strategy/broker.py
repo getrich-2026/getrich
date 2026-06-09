@@ -1,5 +1,17 @@
 """Real broker integration stubs (CTP / XTP).
 
+The full design contract, the 5+1 ``BrokerAdapter`` method
+signatures, the idempotency rules, and the "how to wire a
+real SDK" step-by-step are documented in:
+
+  docs/engine/broker-integration.md
+
+This module is intentionally self-contained: it is the
+*executable* form of those rules, not a copy of the prose.
+When the doc adds a new adapter or constraint, add the
+matching code here — the doc is the source of truth, this
+file is the gate.
+
 Why this module exists
 ----------------------
 The live-signal pipeline (``LiveSignalRunner``) emits

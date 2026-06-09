@@ -6,13 +6,41 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import sys
 from collections.abc import AsyncIterator
+
+# Round #1204 (Tier 1): psycopg3 (async driver) is incompatible with the
+# default ``ProactorEventLoop`` on Windows — uvicorn on Win uses
+# Proactor by default, and the moment we touch ``pg_pool.init()`` in
+# the FastAPI lifespan we get a noisy "Psycopg cannot use the
+# ProactorEventLoop to run in async mode" stack trace. Linux + macOS
+# are unaffected (they default to SelectorEventLoop already).
+#
+# The fix is platform-scoped — DO NOT touch the policy on POSIX. We
+# register SelectorEventLoop only on Windows, and we do it at module
+# import time so it wins regardless of who starts the event loop
+# (uvicorn, pytest-asyncio, the celery worker, etc.).
+#
+# Verified against the actual error:
+#   error connecting in 'pool-1': Psycopg cannot use the
+#   'ProactorEventLoop' to run in async mode. Please use a compatible
+#   event loop, for instance by running
+#   'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(
+#       selectors.SelectSelector()))'
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response
 
+from getrich.apps.web.logging_middleware import (
+    RequestIdLogFilter,
+    RequestIdMiddleware,
+)
 from getrich.apps.web.metrics import render_metrics
 from getrich.apps.web.metrics_middleware import MetricsMiddleware
 from getrich.apps.web.middleware import SecurityHeadersMiddleware
@@ -112,6 +140,26 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Install the per-request log filter on the ROOT logger so it
+    # applies to every existing ``logging.getLogger(__name__)``
+    # caller in the codebase. The filter is idempotent (adding
+    # the same instance twice is a no-op on subsequent calls
+    # because we check by identity), so re-creating the app
+    # under ``uvicorn --reload`` doesn't stack filters.
+    _root_logger = logging.getLogger()
+    if not any(isinstance(f, RequestIdLogFilter) for f in _root_logger.filters):
+        _root_logger.addFilter(RequestIdLogFilter())
+
+    # RequestIdMiddleware MUST be the OUTERMOST layer so that
+    # every other middleware (security headers, metrics, CORS)
+    # and every route handler share the same ``request_id``
+    # context. We register it FIRST so Starlette's stack runs
+    # it LAST on the way out, which means by the time the
+    # response is built the var is still bound (we reset it in
+    # the ``finally`` block). The body envelope's ``request_id``
+    # and the ``X-Request-Id`` response header are both
+    # populated from this single value.
+    app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.web.cors_origins) or ["*"],

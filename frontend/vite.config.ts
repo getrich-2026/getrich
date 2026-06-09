@@ -93,6 +93,41 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: "./src/test/setup.ts",
+    // Round #1203 (E-1) — coverage gate for the frontend, parallel to
+    // the backend ``--cov-fail-under`` in pyproject.toml. The
+    // thresholds are calibrated to ~10pp BELOW the measured values
+    // (84.3% lines / 81.2% statements / 73.4% branches / 73.3%
+    // functions as of 2026-06-08) so a single PR can't silently
+    // knock coverage down, but the floor still has headroom for
+    // normal refactor-driven dips. Bump the numbers (and bump the
+    // comments) in lockstep every quarter.
+    //
+    // ``include`` deliberately lists only ``src/**`` files — tests,
+    // configs, and the shadcn ``components/ui/`` barrel (a vendored
+    // re-export surface) are not first-party logic and would skew
+    // the denominator.
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "text-summary", "html"],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/test/**",
+        "src/**/*.test.{ts,tsx}",
+        "src/components/ui/**",  // shadcn/ui vendored re-exports
+        "src/main.tsx",          // Vite entrypoint
+        "src/vite-env.d.ts",     // Vite ambient types
+      ],
+      thresholds: {
+        // Aggregate floor — fail-under for the WHOLE src/ tree.
+        // One orphan file shouldn't block a PR; if a single file
+        // has 0% coverage, the next code review catches it.
+        lines: 70,
+        statements: 70,
+        functions: 60,
+        branches: 60,
+        perFile: false,
+      },
+    },
   },
   resolve: {
     alias: {

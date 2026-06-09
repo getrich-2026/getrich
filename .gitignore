@@ -67,6 +67,7 @@ pip-delete-this-directory.txt
 
 # Unit test / coverage reports
 htmlcov/
+frontend/coverage/        # vitest --coverage output (text + html + coverage-final.json)
 .tox/
 .nox/
 .coverage

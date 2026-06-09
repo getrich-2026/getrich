@@ -26,9 +26,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import Any
 
 from celery import shared_task
+
+# Round #1204 (Tier 1): the worker spawns fresh asyncio.run() loops
+# per task. On Windows those default to ProactorEventLoop, which
+# psycopg3 rejects at first await. We force SelectorEventLoop
+# globally before any task body runs. POSIX is untouched.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from getrich.apps.strategy.backtest_job_runner import BacktestJobRunner
 from getrich.apps.strategy.ops import get_op_for_job_type

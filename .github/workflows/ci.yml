@@ -168,10 +168,29 @@ jobs:
         run: npm run lint
 
       - name: Vitest
-        # `-- --run` ensures we exit after one pass; the default `npm test`
-        # uses `vitest run` already, but be explicit so a future package.json
-        # change to watch mode can't hang CI.
-        run: npm run test -- --run
+        # ``npm run test:cov`` runs vitest with --coverage so the
+        # ``coverage.thresholds`` block in vite.config.ts is enforced.
+        # The thresholds are calibrated ~10pp below the measured
+        # values (84% lines / 81% statements / 73% branches / 73%
+        # functions as of 2026-06-08) so a single PR can't silently
+        # knock coverage down, but the floor still has headroom for
+        # normal refactor-driven dips. See Round #1203 (E-1) for the
+        # policy + the per-bump schedule in vite.config.ts.
+        run: npm run test:cov
+
+      - name: Upload coverage HTML report
+        # The HTML report is the only artifact a human can read;
+        # JSON / lcov are emitted by vitest but the workflow
+        # already exits non-zero on threshold breach, so we don't
+        # need them as gating signals. 3-day retention keeps the
+        # Actions storage budget sane (each PR run uploads ~5 MB).
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage
+          retention-days: 3
+          if-no-files-found: warn
 
       - name: Build (tsc -b && vite build)
         # `tsc -b` enforces the strict TS config (noUnusedLocals,
@@ -311,22 +330,31 @@ jobs:
         # fakes; only a handful of legacy integration tests need a real
         # network and are skipped here.
         #
-        # Coverage gate (Round #1161):
-        #   ``--cov-fail-under=60`` is the hard floor. We start at 60%
-        #   (defensive — well below the real number) and bump it ~5pp
-        #   per quarter. Bump is a one-line PR; see comments in
-        #   ``pyproject.toml [tool.coverage.*]`` for the schedule.
+        # Coverage gate (Round #1161 + Round #1203 E-1):
+        #   ``--cov-fail-under=75`` is the hard floor. The threshold is
+        #   calibrated to ~4pp BELOW the measured value (78.8% as of
+        #   2026-06-08) so a single PR can't silently knock coverage
+        #   down, but the floor still has headroom for normal
+        #   refactor-driven dips. Bump the number (and bump the
+        #   comment in ``pyproject.toml``) in lockstep every quarter.
         #   ``--cov-report=term-missing`` shows the N lowest-covered
         #   files so a reviewer can spot what regressed.
         #   ``--cov-report=xml`` writes the codecov-compatible file
         #   (currently unused, but future-proofs a codecov.io badge).
+        #
+        # Note: the ``--import-mode=importlib`` lives in
+        # ``pyproject.toml [tool.pytest.ini_options].addopts`` to
+        # fix the test_backtest_run / test_metrics module-name
+        # collision between ``tests/getrich_backtest/`` and
+        # ``tests/getrich/apps/web/``. pytest 9.x doesn't honour a
+        # top-level ``import_mode`` config key, only the CLI flag.
         run: |
-          uv run --frozen pytest tests/getrich_backtest tests/getrich/apps -x --timeout=60 \
+          uv run --frozen pytest tests/getrich_backtest tests/getrich/apps -x \
             --cov=getrich \
             --cov=getrich_backtest \
             --cov-report=term-missing \
             --cov-report=xml \
-            --cov-fail-under=60
+            --cov-fail-under=75
 
   # ---------------------------------------------------------------- docs
   # Defense-in-depth docs build. The dedicated `.github/workflows/docs.yml`

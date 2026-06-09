@@ -34,6 +34,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
+
+# Round #1204 (Tier 1): same psycopg3 / ProactorEventLoop guard as
+# ``tasks.py`` — the lifespan helpers also call ``asyncio.run(...)``
+# which defaults to Proactor on Windows. Setting the policy once at
+# import is enough; ``asyncio.run`` reads it on each invocation.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from getrich.libs.postgres import pg_pool
 

@@ -1,6 +1,17 @@
 #!/usr/bin/env python
 """Round #1164 — Mobile responsive audit for the GetRich frontend.
 
+The full design contract, the 5+1 rule set, and the
+"how to fix a violation" patterns are documented in:
+
+  docs/development/mobile-responsive.md
+
+This file is intentionally short: it is the *executable* form
+of those rules, not a copy of the prose. When the doc adds a
+new rule, add the matching ``check_*`` function here and wire
+it into ``run()`` — the doc is the source of truth, this
+script is the gate.
+
 Walks every .tsx file in frontend/src and flags patterns
 that are likely to break on a phone screen. We don't try to
 replicate a full Lighthouse run here — that's the playwright /
