@@ -1,4 +1,0 @@
-user_code,username,display_name,avatar_url,bio,status,auth_type,identifier
-AUTHOR_001,millerquant,MillerQuant 研究团队,https://example.com/avatar.png,策略作者简介,active,email,author@example.com
-AUTHOR_002,neolin,getrich 研究团队,,拥有十年以上金融行业从业经验。曾任职于深圳大型私募基金，历任研究员、基金经理,active,email,neo@getrich.com
-DEMO_USER_001,demo_user,演示用户,https://example.com/demo-avatar.png,用于测试订阅和信号状态,active,email,demo@example.com

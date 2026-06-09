@@ -1,2 +1,0 @@
-user_code,strategy_code,access_mode,plan_type,status,auto_renew,start_date,expire_date,payg_expires_at,source_order_no,cancelled_at,cancel_reason
-DEMO_USER_001,STR_IF_001,subscription,yearly,active,true,2026-05-22,2027-05-22,,ORDER_IF_001,,
