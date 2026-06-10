@@ -60,6 +60,18 @@ def test_insight_staging_dir_accepts_env(monkeypatch) -> None:
     assert settings.insight.staging_dir == Path("/tmp/insight-stage")
 
 
+def test_ricequant_login_and_market_accept_env(monkeypatch) -> None:
+    monkeypatch.setenv("GETRICH_IMPORT__RICEQUANT_LOGIN_REQUIRED", "false")
+    monkeypatch.setenv("GETRICH_IMPORT__RICEQUANT_MARKET", "hk")
+    monkeypatch.setenv("GETRICH_IMPORT__RICEQUANT_INIT_MODE", "license")
+
+    settings = Settings.load()
+
+    assert settings.ricequant.login_required is False
+    assert settings.ricequant.market == "hk"
+    assert settings.ricequant.init_mode == "license"
+
+
 def test_quality_expected_minutes_accepts_env(monkeypatch) -> None:
     monkeypatch.setenv("GETRICH_IMPORT__QUALITY_EXPECTED_MINUTES_PER_DAY", "240")
 

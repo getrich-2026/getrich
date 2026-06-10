@@ -42,6 +42,27 @@ class ParquetSettings:
 
 
 @dataclass(frozen=True)
+class RicequantSettings:
+    """Settings for RiceQuant provider.
+
+    Attributes:
+        staging_dir: Reserved for future Parquet staging (currently yields from memory).
+    """
+    staging_dir: Path = Path("~/data/ricequant")
+    env_file: Path | None = None
+    license_env: str = "RQDATAC_LICENSE"
+    init_mode: str = "tcp_license"
+    username_env: str = "RQDATAC_USER"
+    password_env: str = "RQDATAC_PASSWORD"
+    login_required: bool = True
+    market: str = "cn"
+    batch_size: int = 300
+    default_start_date: date | None = None
+    default_end_date: date | None = None
+    symbols: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class QualitySettings:
     fail_on_error: bool = True
     price_jump_warn_pct: float = 0.2
@@ -56,6 +77,7 @@ class Settings:
     batch_rows: int
     yinhe: YinheSettings
     insight: InsightSettings
+    ricequant: RicequantSettings
     parquet: ParquetSettings
     quality: QualitySettings
     sql_dir: Path
@@ -86,6 +108,7 @@ class Settings:
 
         yinhe_raw = raw.get("yinhe") or {}
         insight_raw = raw.get("insight") or {}
+        ricequant_raw = raw.get("ricequant") or {}
         parquet_raw = raw.get("parquet") or {}
         quality_raw = raw.get("quality") or {}
         runtime_paths = _parse_paths(
@@ -121,6 +144,28 @@ class Settings:
                     insight_raw.get("default_end_date")
                 ),
                 symbols=_parse_symbols(insight_raw.get("symbols", [])),
+            ),
+            ricequant=RicequantSettings(
+                staging_dir=_resolve_path(
+                    ricequant_raw.get("staging_dir", "~/data/ricequant"), base_dir
+                ),
+                env_file=_resolve_path(str(ricequant_raw.get("env_file") or ""), base_dir)
+                if ricequant_raw.get("env_file")
+                else None,
+                license_env=str(ricequant_raw.get("license_env", "RQDATAC_LICENSE")),
+                init_mode=str(ricequant_raw.get("init_mode", "tcp_license")),
+                username_env=str(ricequant_raw.get("username_env", "RQDATAC_USER")),
+                password_env=str(ricequant_raw.get("password_env", "RQDATAC_PASSWORD")),
+                login_required=bool(ricequant_raw.get("login_required", True)),
+                market=str(ricequant_raw.get("market", "cn")),
+                batch_size=int(ricequant_raw.get("batch_size", 300)),
+                default_start_date=_parse_optional_date(
+                    ricequant_raw.get("default_start_date")
+                ),
+                default_end_date=_parse_optional_date(
+                    ricequant_raw.get("default_end_date")
+                ),
+                symbols=_parse_symbols(ricequant_raw.get("symbols", [])),
             ),
             parquet=ParquetSettings(
                 export_dir=_resolve_path(
@@ -180,6 +225,18 @@ def _apply_env(raw: dict[str, Any]) -> dict[str, Any]:
         "GETRICH_IMPORT__INSIGHT_DEFAULT_START_DATE": ("insight", "default_start_date"),
         "GETRICH_IMPORT__INSIGHT_DEFAULT_END_DATE": ("insight", "default_end_date"),
         "GETRICH_IMPORT__INSIGHT_SYMBOLS": ("insight", "symbols"),
+        "GETRICH_IMPORT__RICEQUANT_STAGING_DIR": ("ricequant", "staging_dir"),
+        "GETRICH_IMPORT__RICEQUANT_ENV_FILE": ("ricequant", "env_file"),
+        "GETRICH_IMPORT__RICEQUANT_LICENSE_ENV": ("ricequant", "license_env"),
+        "GETRICH_IMPORT__RICEQUANT_INIT_MODE": ("ricequant", "init_mode"),
+        "GETRICH_IMPORT__RICEQUANT_USERNAME_ENV": ("ricequant", "username_env"),
+        "GETRICH_IMPORT__RICEQUANT_PASSWORD_ENV": ("ricequant", "password_env"),
+        "GETRICH_IMPORT__RICEQUANT_LOGIN_REQUIRED": ("ricequant", "login_required"),
+        "GETRICH_IMPORT__RICEQUANT_MARKET": ("ricequant", "market"),
+        "GETRICH_IMPORT__RICEQUANT_BATCH_SIZE": ("ricequant", "batch_size"),
+        "GETRICH_IMPORT__RICEQUANT_DEFAULT_START_DATE": ("ricequant", "default_start_date"),
+        "GETRICH_IMPORT__RICEQUANT_DEFAULT_END_DATE": ("ricequant", "default_end_date"),
+        "GETRICH_IMPORT__RICEQUANT_SYMBOLS": ("ricequant", "symbols"),
         "GETRICH_IMPORT__PARQUET_EXPORT_DIR": ("parquet", "export_dir"),
         "GETRICH_IMPORT__QUALITY_FAIL_ON_ERROR": ("quality", "fail_on_error"),
         "GETRICH_IMPORT__QUALITY_PRICE_JUMP_WARN_PCT": (

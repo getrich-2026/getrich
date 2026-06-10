@@ -1,4 +1,4 @@
-database_url = "postgresql+psycopg://quant:change-me@127.0.0.1:5432/getrich"
+database_url = "postgresql+psycopg://getrich:getrich@127.0.0.1:5432/getrich"
 provider = "yinhe"
 timezone = "Asia/Shanghai"
 batch_rows = 50000
@@ -7,7 +7,9 @@ batch_rows = 50000
 data_dir = "/data"
 
 [insight]
+# Optional. These paths are added to sys.path before importing insight runtime.
 runtime_paths = []
+# Optional dotenv-style file. Values are loaded into env only when the env var is absent.
 env_file = ""
 staging_dir = "~/data/insight"
 username_env = "INSIGHT_USER"
@@ -28,9 +30,9 @@ password_env = "RQDATAC_PASSWORD"
 login_required = true
 market = "cn"
 batch_size = 300
-default_start_date = ""
-default_end_date = ""
-symbols = []
+default_start_date = "2026-05-19"
+default_end_date = "2026-05-19"
+symbols = ["000001.XSHE", "IF2406"]
 
 [parquet]
 export_dir = "/data/parquet/getrich"

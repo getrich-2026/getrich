@@ -2,10 +2,21 @@
 
 设计版 GetRich 数据导入工程。它只负责把上游数据源归一化并写入 PostgreSQL/TimescaleDB 权威库，不依赖旧 `data_import` 或 `import_data`。
 
+## 文档入口
+
+- AI 工作记忆首读：`.agent/brain/PROGRESS.md`
+- 稳定事实：`.agent/brain/INFO.md`
+- 后续任务：`.agent/brain/TODO.md`
+- 版本日志：`CHANGELOG.md`
+- 项目 PRD：`docs/PRD.md`
+- 项目架构：`docs/ARCHITECTURE.md`
+- RiceQuant 导入架构：`docs/ricequant_import_architecture.md`
+
 当前上游适配器：
 
 - `yinhe`：读取 `yinhe_data_fetcher` 生成的 Parquet。`yinhe_data_fetcher` 继续作为独立下载项目存在，本工程通过目录和字段约定消费其输出。默认数据目录为 `/data`。
 - `insight`：可选直接调用当前环境里的 Insight SDK，使用 `get_all_basic_info`、`get_trading_days`、`get_kline`。未选择该 provider 时不会加载 Insight SDK。
+- `ricequant`：已注册 `rqdatac` provider，覆盖 metadata、symbol map、trading calendar、future/option contract、1d/1m bar、`id_convert` 和 `get_trading_periods` API 封装；source policy 仍待在 canonical load 层实现，INSIGHT 仍是主要行情来源。
 
 ## 已实现范围
 
@@ -34,7 +45,7 @@ uv run getrich-import --config /etc/getrich/getrich-data-import.toml --provider 
 uv run getrich-import --config /etc/getrich/getrich-data-import.toml --provider yinhe import-bars --asset index --freq 1m
 ```
 
-环境变量 `GETRICH_IMPORT__DATABASE_URL`、`GETRICH_IMPORT__YINHE_DATA_DIR`、`GETRICH_IMPORT__INSIGHT_RUNTIME_PATH`、`GETRICH_IMPORT__INSIGHT_SYMBOLS`、`GETRICH_IMPORT__PARQUET_EXPORT_DIR` 可覆盖配置文件。
+环境变量 `GETRICH_IMPORT__DATABASE_URL`、`GETRICH_IMPORT__YINHE_DATA_DIR`、`GETRICH_IMPORT__INSIGHT_RUNTIME_PATH`、`GETRICH_IMPORT__INSIGHT_SYMBOLS`、`GETRICH_IMPORT__RICEQUANT_SYMBOLS`、`GETRICH_IMPORT__RICEQUANT_MARKET`、`GETRICH_IMPORT__PARQUET_EXPORT_DIR` 可覆盖配置文件。
 
 Insight 示例：
 
@@ -75,6 +86,24 @@ batch_size = 300
 default_start_date = "2026-05-19"
 default_end_date = "2026-05-19"
 symbols = ["IF2406.CCFX", "000300.XSHG"]
+```
+
+RiceQuant 示例：
+
+```toml
+[ricequant]
+staging_dir = "~/data/ricequant"
+env_file = "../.env"
+license_env = "RQDATAC_LICENSE"
+init_mode = "tcp_license"
+username_env = "RQDATAC_USER"
+password_env = "RQDATAC_PASSWORD"
+login_required = true
+market = "cn"
+batch_size = 300
+default_start_date = "2026-05-19"
+default_end_date = "2026-05-19"
+symbols = ["000001.XSHE", "IF2406"]
 ```
 
 ## 边界
