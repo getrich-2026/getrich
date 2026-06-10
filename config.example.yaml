@@ -1,0 +1,62 @@
+# GetRich 数据接入层配置样例
+# 复制为 config.yaml 并填入真实值（config.yaml 已被 .gitignore 忽略）。
+# 凭证优先从环境变量读取，配置里只写「环境变量名」，不写明文密钥。
+
+# ---- 全局 ----
+paths:
+  # raw 层 parquet 落地根目录（仓库外）。
+  raw_root: /opt/raw_parquet
+
+logging:
+  level: INFO            # DEBUG | INFO | WARNING | ERROR
+  dir: logs             # 日志目录（相对 cwd 或绝对路径）
+  json: false           # true=结构化 JSON 行，false=人读文本
+  console: true
+
+# ---- PostgreSQL / TimescaleDB ----
+postgres:
+  host: ${PGHOST}
+  port: 5432
+  dbname: getrich
+  user: ${PGUSER}
+  password_env: PGPASSWORD   # 从该环境变量读取密码
+  min_size: 1
+  max_size: 8
+  statement_timeout_ms: 60000
+
+# ---- 数据源 ----
+providers:
+  yinhe:
+    # 银河 AmazingData，凭证从环境变量读取
+    username_env: YINHE_USER
+    password_env: YINHE_PASSWORD
+    host: ${YINHE_HOST}
+    port: 8600
+    rate_limit:
+      sleep_between_requests_sec: 1.5
+      max_retries: 5
+      retry_backoff_base_sec: 3.0
+      sleep_between_fetchers_sec: 5.0
+    start_date: null            # 可选全局下限，int8，如 20130101
+
+  ricequant:
+    license_env: RQ_LICENSE     # 或用 username_env/password_env
+    username_env: null
+    password_env: null
+    market: cn
+
+  insight:
+    username_env: INSIGHT_USER
+    password_env: INSIGHT_PASSWORD
+
+# ---- 抓取/入库开关（哪些 fetcher / importer 启用）----
+# 详见 docs/layers/*.md
+enabled:
+  raw:
+    yinhe: [calendar, hist_code_list, backward_factor, kline_day, kline_min1]
+    ricequant: [instruments, calendar, bars_1d]
+    insight: [basic_info, trading_days, kline_day]
+  ingest:
+    yinhe: [calendar, symbol_map, instruments, bars_1d]
+    ricequant: [instruments, calendar, bars_1d]
+    insight: [instruments, calendar, bars_1d]

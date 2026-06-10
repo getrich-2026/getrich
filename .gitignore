@@ -2,33 +2,42 @@
 .DS_Store
 .idea/
 .vscode/
+*.swp
 
 # --- Python ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+.eggs/
+build/
+dist/
 .venv/
 venv/
+.python-version
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# --- Secrets / local env ---
+# --- Secrets / local config ---
 .env
 .env.*
-getrich_data_import/config/defaults.toml
+config.yaml
+config.local.yaml
+*.secret.*
 
 # --- Logs ---
 logs/
 *.log
 
-# --- Data (do not commit) ---
+# --- Data: raw parquet lives in /opt/raw_parquet (outside repo); never commit data ---
 data/
 **/data/
 datasets/
 **/datasets/
 downloads/
-**/downloads/
 output/
 outputs/
 result/
@@ -37,10 +46,11 @@ tmp/
 temp/
 cache/
 .cache/
+_sdk_cache/
+_sync_status.json
 
-# --- Common data / artifact formats ---
+# --- Data / artifact formats (reference assets whitelisted below) ---
 *.csv
-!reference/design/*.csv
 *.tsv
 *.jsonl
 *.parquet
@@ -60,5 +70,11 @@ cache/
 *.tar
 *.tar.gz
 
-# --- Build / dependency artifacts ---
+# --- Vendor SDK wheels (installed manually, not committed) ---
 *.whl
+wheel/
+
+# --- Whitelisted reference assets ---
+!reference/design/*.csv
+!reference/*.xlsx
+.venv313/
