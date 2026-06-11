@@ -46,3 +46,28 @@ class YinheAdapter:
             return None
         out = pd.concat(frames, axis=0)
         return out[~out.index.duplicated(keep="last")].sort_index().reset_index()
+
+    def read_backward_factor(self, asset: str) -> pd.DataFrame | None:
+        """读取指定资产类型的复权因子（宽表）。
+
+        银河复权因子为逐日宽表：index=日期，columns=证券代码，value=后复权因子。
+        raw 层按 chunk 分文件落盘（每文件约 200 列），此处横向合并所有 chunk。
+
+        Returns:
+            DataFrame: index=日期(DatetimeIndex)，columns=证券代码，或 None。
+        """
+        st = SECURITY_TYPES.get(asset)
+        if st is None:
+            return None
+        chunk_files = sorted(
+            self.paths.dataset_dir(PROVIDER, "backward_factor").glob(f"{st}_chunk*.parquet")
+        )
+        frames = [read_parquet_if_exists(f) for f in chunk_files]
+        frames = [f for f in frames if f is not None and not f.empty]
+        if not frames:
+            return None
+        # 各 chunk 共享 date 索引，横向拼接（列=证券代码）。
+        frames = [f.set_index("date") if "date" in f.columns else f for f in frames]
+        wide = pd.concat(frames, axis=1)
+        wide.index = pd.to_datetime(wide.index)
+        return wide.loc[:, ~wide.columns.duplicated()]

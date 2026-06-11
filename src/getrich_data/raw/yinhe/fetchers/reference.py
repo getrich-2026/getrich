@@ -76,23 +76,30 @@ class BackwardFactorFetcher(BaseFetcher):
         return [str(c) for c in df["code"].tolist()]
 
     def fetch(self, mode: str = "update") -> int:
+        # 银河复权因子是宽表：index=日期，columns=证券代码，value=后复权因子。
+        # 同一 security_type 的各 chunk 列不同（不同证券）、共享日期索引，
+        # 因此分 chunk 落盘（见 paths.code/layout 文档），避免 concat 出巨型稠密矩阵。
         n = 0
         for _asset, st in SECURITY_TYPES.items():
             codes = self._codes_for(st)
-            frames: list[pd.DataFrame] = []
-            for chunk in chunk_list(codes, self.CODE_CHUNK_SIZE):
+            for i, chunk in enumerate(chunk_list(codes, self.CODE_CHUNK_SIZE)):
                 df = retry_call(
                     self.client.get_backward_factor, chunk,
                     max_retries=self.ctx.max_retries, backoff_base=self.ctx.backoff_base,
                     logger=self.log,
                 )
                 if df is not None and not df.empty:
-                    frames.append(df)
+                    # SDK 返回的日期 index 无名字，write_parquet 不保存无名 index，
+                    # 命名为 'date' 以保留日期信息。
+                    df = df.copy()
+                    df.index.name = "date"
+                    out = self.paths.dataset_file(
+                        self.PROVIDER, self.DATASET, f"{st}_chunk{i:04d}"
+                    )
+                    write_parquet(df, out, append=False)
+                    n += 1
+                    self.log.info(
+                        "backward_factor[%s] chunk%04d 写入 %d 列", st, i, df.shape[1]
+                    )
                 sleep_s(self.ctx.sleep_between_requests)
-            if frames:
-                merged = pd.concat(frames, axis=0)
-                out = self.paths.dataset_file(self.PROVIDER, self.DATASET, st)
-                write_parquet(merged, out, append=False)
-                self.log.info("backward_factor[%s] 写入 %d 行", st, len(merged))
-                n += 1
         return n

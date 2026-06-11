@@ -108,6 +108,10 @@ class _BarsImporter(BaseImporter):
         self.CONTRACT = contracts.bar_1d(self.ASSET)
         adapter = YinheAdapter(self.paths)
         id_map = resolve_by_symbol_map(self.conn, PROVIDER)
+
+        # 复权因子为逐日宽表：index=日期，columns=证券代码。按 code 取列、按 dt 对齐。
+        factor_wide = adapter.read_backward_factor(self.ASSET)
+
         frames = []
         for code in adapter.read_code_list(self.ASSET):
             iid = id_map.get(code)
@@ -116,15 +120,27 @@ class _BarsImporter(BaseImporter):
             raw = adapter.read_kline_day(code)
             if raw is None or raw.empty:
                 continue
-            frames.append(self._normalize(raw, iid))
+            factor_series = None
+            if factor_wide is not None and code in factor_wide.columns:
+                factor_series = factor_wide[code]
+            frames.append(self._normalize(raw, iid, factor_series))
         if not frames:
             return pd.DataFrame(columns=list(self.contract.columns))
         return pd.concat(frames, axis=0, ignore_index=True)
 
-    def _normalize(self, raw: pd.DataFrame, instrument_id: int) -> pd.DataFrame:
+    def _normalize(
+        self, raw: pd.DataFrame, instrument_id: int, factor_series: pd.Series | None = None
+    ) -> pd.DataFrame:
         # raw 列名取决于银河 SDK；用兜底取列。kline_time 已被 adapter reset 为列。
         time_col = "kline_time" if "kline_time" in raw.columns else raw.columns[0]
         ts = pd.to_datetime(raw[time_col])
+
+        # 按交易日对齐逐日复权因子；缺失则默认 1.0。
+        if factor_series is not None:
+            adj_factor = ts.map(factor_series).astype(float).fillna(1.0).to_numpy()
+        else:
+            adj_factor = 1.0
+
         out = pd.DataFrame(
             {
                 "instrument_id": instrument_id,
@@ -140,7 +156,7 @@ class _BarsImporter(BaseImporter):
                 "limit_up": raw.get("limit_up"),
                 "limit_down": raw.get("limit_down"),
                 "trading_status": raw.get("trading_status"),
-                "adj_factor": 1.0,
+                "adj_factor": adj_factor,
                 "source": PROVIDER,
             }
         )

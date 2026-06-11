@@ -7,6 +7,14 @@
 
 ---
 
+## 2026-06-12 00:44 — 移除本地配置中的 provider 明文凭证
+
+发现 `config.yaml` 中银河 provider 仍保留真实账号与密码字段，这是此前真实 SDK 实测遗留，不符合当前“配置文件只写环境变量名、敏感值由环境变量注入”的约定。已改为 `username_env: YINHE_USER` 与 `password_env: YINHE_PASSWORD`。未运行 lint/test；本次仅调整本地配置文件与迭代记录，未改业务代码、数据库或 raw/cache 输出。
+
+## 2026-06-12 00:43 — 确认配置与环境变量边界
+
+确认当前配置约定：结构化、非敏感配置写入 `config.yaml`；密码、license、token 等明文敏感值放在环境变量中，并由 `config.yaml` 通过 `*_env` 或 `${VAR}` 引用。查阅了 `src/getrich_data/common/config.py`、`config.example.yaml`、`.env.example` 与 `docs/runbook.md`。未运行 lint/test；本次仅做配置口径确认，未改业务代码、数据库或 raw/cache 输出。
+
 ## 2026-06-10 19:18 — 供应商本地实测（真实 SDK）
 
 在本地 uv 环境实测三个供应商的真实抓取与入库。结论：
