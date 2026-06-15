@@ -7,6 +7,10 @@
 
 ---
 
+## 2026-06-15 09:15 — 补充 uv 锁文件与 .env 自动加载
+
+为当前 Python 依赖快照补入 `uv.lock`，并在 `src/getrich_data/common/config.py` 中增加对仓库根目录 `.env` 的可选自动加载；同时把 `python-dotenv` 加入 `pyproject.toml`。未运行 lint/test；本次仅更新依赖锁、配置加载与迭代记录，未改数据库或 raw/cache 输出。
+
 ## 2026-06-12 00:44 — 移除本地配置中的 provider 明文凭证
 
 发现 `config.yaml` 中银河 provider 仍保留真实账号与密码字段，这是此前真实 SDK 实测遗留，不符合当前“配置文件只写环境变量名、敏感值由环境变量注入”的约定。已改为 `username_env: YINHE_USER` 与 `password_env: YINHE_PASSWORD`。未运行 lint/test；本次仅调整本地配置文件与迭代记录，未改业务代码、数据库或 raw/cache 输出。

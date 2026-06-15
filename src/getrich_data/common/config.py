@@ -16,6 +16,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
+
+# 项目根目录的 .env 文件（若存在则自动加载到 os.environ）
+_project_root = Path(__file__).resolve().parents[3]
+_dotenv_path = _project_root / ".env"
+if _dotenv_path.is_file():
+    load_dotenv(_dotenv_path)
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
