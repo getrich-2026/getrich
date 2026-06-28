@@ -1,3 +1,0 @@
-strategy_code,signal_code,type,action,direction,symbol,symbol_name,exchange,trigger_price,target_price,stop_loss_price,suggested_quantity,position_pct,confidence,urgency,reason,reason_detail,status,published_at,expire_at,parent_signal_code
-STR_FUT_001,SIG_20260601_001,entry,buy,long,IF2606,CSI 300 Index Futures,CFFEX,3890.2000,3960.0000,3840.0000,1,0.2500,0.8200,high,Trend breakout,"{""ma20"":3860.5,""atr14"":42.1}",active,2026-06-01T09:35:00+08:00,2026-06-01T15:00:00+08:00,
-STR_FUT_001,SIG_20260601_002,exit,close,long,IF2606,CSI 300 Index Futures,CFFEX,3958.6000,,,1,0.0000,0.7600,normal,Target reached,"{""exit_rule"":""target_price""}",expired,2026-06-01T14:42:00+08:00,2026-06-01T15:00:00+08:00,SIG_20260601_001
