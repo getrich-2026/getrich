@@ -6,12 +6,13 @@ interface SignalCardProps {
   action: string
   direction: string
   symbol: string
-  triggerPrice: number
+  triggerPrice: number | null   // null = 市价单
   triggerTime: string
   urgency: string
   isRead: boolean
   strategyName: string
   confidence: number
+  status?: string               // active | expired | ...
   result?: {
     returnPct: number
     status: string
@@ -30,23 +31,42 @@ export default function SignalCard({
   isRead,
   strategyName,
   confidence,
+  status,
   result,
   compact = false,
 }: SignalCardProps) {
   const navigate = useNavigate()
 
   const urgencyTag =
-    urgency === 'critical'
-      ? ('red' as const)
-      : urgency === 'high'
-        ? ('orange' as const)
-        : urgency === 'low'
-          ? ('gray' as const)
-          : ('blue' as const)
+    urgency === 'critical' ? ('red'    as const) :
+    urgency === 'high'     ? ('orange' as const) :
+    urgency === 'low'      ? ('gray'   as const) :
+                             ('blue'   as const)
+
+  const urgencyLabel =
+    urgency === 'critical' ? '紧急' :
+    urgency === 'high'     ? '高'   :
+    urgency === 'low'      ? '低'   : '普通'
+
+  const actionLabel =
+    action === 'buy'  ? '买入' :
+    action === 'sell' ? '卖出' : '平仓'
+
+  const actionColor =
+    action === 'buy' ? 'var(--gr-accent-green)' : 'var(--gr-accent-red)'
+
+  const directionLabel =
+    direction === 'long'  ? '做多' :
+    direction === 'short' ? '做空' : ''
+
+  const priceLabel =
+    triggerPrice != null ? `@ ${triggerPrice.toFixed(2)}` : '@ 市价'
+
+  const isExpired = status === 'expired'
 
   return (
     <div
-      className={`py-3 px-4 cursor-pointer transition-colors duration-150 hover:bg-[#F9FAFB] ${!isRead ? 'signal-unread' : ''}`}
+      className={`py-3 px-4 cursor-pointer transition-colors duration-150 hover:bg-[#F9FAFB] ${!isRead ? 'signal-unread' : ''} ${isExpired ? 'opacity-50' : ''}`}
       style={{ borderBottom: '1px solid var(--gr-border-light)' }}
       onClick={() => navigate(`/signals/${id}`)}
     >
@@ -56,12 +76,23 @@ export default function SignalCard({
           {triggerTime}
         </span>
         <div className="flex items-center gap-2">
-          <Tag variant={urgencyTag} size="default">
-            {urgency === 'critical' ? '紧急' : urgency === 'high' ? '高' : urgency === 'low' ? '低' : '普通'}
-          </Tag>
+          {/* 过期标记 */}
+          {isExpired && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded"
+              style={{
+                background: 'var(--gr-bg)',
+                color: 'var(--gr-text-tertiary)',
+                border: '1px solid var(--gr-border)',
+              }}
+            >
+              已过期
+            </span>
+          )}
+          <Tag variant={urgencyTag} size="default">{urgencyLabel}</Tag>
           {!isRead && (
             <div
-              className="w-2 h-2 rounded-full"
+              className="w-2 h-2 rounded-full flex-shrink-0"
               style={{ backgroundColor: 'var(--gr-accent-red)' }}
             />
           )}
@@ -70,17 +101,11 @@ export default function SignalCard({
 
       {/* Signal summary */}
       <div className="text-sm mb-1" style={{ color: 'var(--gr-text-primary)' }}>
-        <span
-          style={{
-            color: action === 'buy' ? 'var(--gr-accent-green)' : 'var(--gr-accent-red)',
-            fontWeight: 600,
-          }}
-        >
-          {action === 'buy' ? '买入' : action === 'sell' ? '卖出' : '平仓'}
+        <span style={{ color: actionColor, fontWeight: 600 }}>
+          {actionLabel}
         </span>
         <span style={{ color: 'var(--gr-text-secondary)' }}>
-          {' '}{direction === 'long' ? '做多' : direction === 'short' ? '做空' : ''} {symbol} @
-          {triggerPrice.toFixed(2)}
+          {' '}{directionLabel} {symbol} {priceLabel}
         </span>
         {result && (
           <span
