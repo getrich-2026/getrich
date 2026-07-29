@@ -40,10 +40,10 @@ jobs:
     name: Lint (ruff)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
 
@@ -51,7 +51,7 @@ jobs:
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Cache uv dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .venv
@@ -78,10 +78,10 @@ jobs:
     name: Silent-fail scan (--strict)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
 
@@ -89,7 +89,7 @@ jobs:
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Cache uv dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .venv
@@ -117,10 +117,10 @@ jobs:
     name: Migration topology lint (CH + PG)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
 
@@ -142,15 +142,15 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Cache npm dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json', 'frontend/package.json') }}
@@ -185,7 +185,7 @@ jobs:
         # need them as gating signals. 3-day retention keeps the
         # Actions storage budget sane (each PR run uploads ~5 MB).
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
           path: frontend/coverage
@@ -276,10 +276,10 @@ jobs:
       GETRICH_RESULT_BACKEND: redis://localhost:6379/1
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
 
@@ -287,7 +287,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Cache uv dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .venv
@@ -367,10 +367,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           version: ${{ env.UV_VERSION }}
 
@@ -378,7 +378,7 @@ jobs:
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Cache uv dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .venv
@@ -406,7 +406,7 @@ jobs:
         run: uv run mkdocs build --strict --clean
 
       - name: Upload site artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: docs-site
           path: site/
