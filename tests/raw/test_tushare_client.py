@@ -69,3 +69,27 @@ def test_query_all_empty():
 def test_missing_token_raises():
     with pytest.raises(RuntimeError, match="TUSHARE_TOKEN"):
         TushareProClient(token="").query("daily")
+
+
+def test_query_all_raises_at_offset_cap():
+    """超过 offset 上限必须抛错。
+
+    Tushare 在 offset>100000 时返回通用的「查询数据失败」，很容易被当成参数错误；
+    而悄悄返回已取到的部分就是静默丢数据。两者都不可接受。
+    """
+    from getrich_data.raw.tushare.client import MAX_OFFSET
+
+    limit = PAGE_LIMITS["daily"]
+    c, _ = _client(MAX_OFFSET + limit * 2)
+    with pytest.raises(RuntimeError, match="offset 上限"):
+        c.query_all("daily", start_date="20240101", end_date="20240131")
+
+
+def test_query_all_ok_just_below_cap():
+    """刚好在上限内不应误报。"""
+    from getrich_data.raw.tushare.client import MAX_OFFSET
+
+    limit = PAGE_LIMITS["daily"]
+    total = MAX_OFFSET - limit  # 末页在 offset<=MAX_OFFSET 处结束
+    c, _ = _client(total)
+    assert len(c.query_all("daily")) == total

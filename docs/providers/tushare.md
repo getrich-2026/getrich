@@ -67,6 +67,20 @@ Tushare 的交易所后缀**与通行简称不一致**，必须显式映射，�
 期货的 `vol` / `oi` 保持「手」——折算成基础单位需要合约乘数，
 那属于下游的口径，接入层不做猜测。
 
+### canonical 单位的核对依据（对应方案 §6.2 / D8 的「实现前待办」）
+
+该待办要求「先核对既有 provider 的实际单位，禁止凭猜测写死系数」。核对结果：
+
+| provider | ingest 层处理 | 供应商原生单位 |
+|---|---|---|
+| ricequant | 原样透传 `volume` / `total_turnover` | 股 / 元 |
+| insight | 原样透传 `volume` / `value` | 股 / 元 |
+| yinhe | 原样透传 `volume` / `amount` | **未知**（AmazingData 无文档说明）|
+
+三家都不做任何换算，仓库里也没有任何文档写明 canonical 单位。但 ricequant 与 insight 的原生单位都是股/元，因此 `market.*_bar_1d` 事实上的 canonical 单位为**股 / 元**，Tushare 的 ×100 / ×1000 换算据此确定。
+
+> ⚠️ **yinhe 的单位仍未核实**。若 AmazingData 返回的是手/千元，那么 yinhe 与 ricequant/insight 写进同一列的数据在量纲上就是不一致的——这是重构分支的既有问题，不由本次 Tushare 接入引入，但需要单独确认。
+
 ## 缺失值处理策略
 按目标列**是否允许 NULL** 区分，不搞一刀切：
 
@@ -76,10 +90,26 @@ Tushare 的交易所后缀**与通行简称不一致**，必须显式映射，�
 | `limit_up` / `limit_down` | 警告 + 留 NULL | 目标表允许 NULL；不该为一个盘前辅助字段阻断整批行情入库 |
 | `trading_status` | 无 suspend_d 记录即 NORMAL | 有日线说明当日有行情；S=停牌→HALTED，同日又有 R（盘中复牌）以 R 为准 |
 | 未登记的 `ts_code` | 警告 + 跳过该行 | `instrument_id` 是外键，写不进去；但必须让丢弃可见 |
+| 股票 OHLC 缺失 | **抛错中断** | 股票有 bar 就必然五价齐全，缺失即数据损坏 |
+| 指数 OHLC 缺失 | 写 NULL，保留该行 | 大量指数只发布收盘点位（实测某日 10967 条中 8859 条如此），目标表允许 NULL；只有连 close 都没有才丢弃 |
+| 期货 OHLC 缺失 | 写 NULL，保留该行 | 当日无成交仍发布结算价与持仓量（实测某日 940 条中 154 条如此）；只有 close 与 settle 都没有才丢弃 |
 
 `daily` 与 `stk_limit` 各自返回 `pre_close`，容差 0.011 元（一分钱的舍入）。
 超出容差说明两者价格基准不一致，此时**丢弃该行的涨跌停价**（置 NULL），
 但保留行情本身——只有附加字段不可信，行情是可信的。
+
+## 已知的上游覆盖缺口
+
+以下缺口来自 Tushare 侧，不是本地实现问题。实测（2024-01 全月）：
+
+| 现象 | 规模 | 说明 |
+|---|---|---|
+| `index_daily` 返回 `.CNI`（国证）指数行情，但 `index_basic` 查不到它们 | 1706 个标的 / 37271 行 | `index_basic` 的 7 个 market 取值（SSE/SZSE/CSI/SW/MSCI/CICC/OTH）**一个 CNI 指数都不返回** |
+| `daily` 返回的个别股票在 `stock_basic` 中查不到 | 1 个标的 / 22 行（`300114.SZ`）| L / D / P 三种 `list_status` 均无该代码 |
+| `index_basic` 的 MSCI / CICC / OTH 返回空 | — | 可能与账号积分档有关 |
+
+这些标的拿不到 `instrument_id`（外键约束），只能跳过。importer 会打印被跳过的
+行数、标的数与样例代码——**不要把这类告警当噪音忽略**，它是「数据没进来」的唯一信号。
 
 ## 数据集 → 目标表
 | importer | 目标表 |

@@ -20,6 +20,10 @@ Tushare 的所有接口都通过 ``pro.<api_name>(**params)`` 调用，形态统
   因为接口不会报错。``query_all`` 负责翻页直到取空。
 - **调用频次上限**：按积分分级限频，超限返回异常。限频由调用方
   （fetcher）通过 ``RawContext.sleep_between_requests`` 控制。
+- **offset 上限 100000**：实测 offset=100000 可用、100001 报
+  「查询数据失败，请确认参数」。即单次查询最多只能翻出约 10 万行，
+  再多的数据**取不到**。因此调用方必须把查询切小（见 fetchers/bars.py
+  按交易日调用的说明），而不是指望翻页翻到底。
 """
 
 from __future__ import annotations
@@ -30,6 +34,10 @@ import pandas as pd
 
 # 各接口单次返回上限。Tushare 未在响应中给出截断标志，只能靠行数推断，
 # 因此这里必须与官方文档保持一致；调小是安全的，调大会导致漏数据。
+# 单次查询可翻出的最大 offset。超过即报错，不是截断——但报错信息是通用的
+# 「查询数据失败」，很容易被误判成参数写错，所以这里主动拦截并给出可执行的提示。
+MAX_OFFSET = 100000
+
 DEFAULT_PAGE_LIMIT = 5000
 PAGE_LIMITS: dict[str, int] = {
     "daily": 6000,
@@ -94,6 +102,14 @@ class TushareProClient:
             if len(page) < limit:
                 break
             offset += len(page)
+            if offset > MAX_OFFSET:
+                # 到这里说明查询范围本身就太大了。继续翻只会撞供应商的通用报错，
+                # 悄悄返回已取到的部分则是静默丢数据——两者都不可接受。
+                raise RuntimeError(
+                    f"{api_name} 查询结果超过 Tushare 的 offset 上限 {MAX_OFFSET} 行"
+                    f"（params={ {k: v for k, v in params.items() if k != 'fields'} }）。"
+                    "请把查询范围切小，例如按单个交易日调用。"
+                )
         if not frames:
             return pd.DataFrame()
         return pd.concat(frames, axis=0, ignore_index=True)

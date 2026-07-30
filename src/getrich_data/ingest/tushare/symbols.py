@@ -15,7 +15,7 @@ SUFFIX_TO_EXCHANGE = {
     # 股票 / ETF / 指数
     "SH": "XSHG",
     "SZ": "XSHE",
-    "BJ": "BSE",
+    "BJ": "XBSE",
     # 指数发布机构（非交易所，但 Tushare 用同一后缀位表达）
     "CSI": "CSI",
     "SI": "SW",

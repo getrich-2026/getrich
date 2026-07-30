@@ -12,6 +12,7 @@
 | yinhe | `600000.SH` / `000001.SZ` | SH→XSHG, SZ→XSHE |
 | insight | `600000.SH` / `000001.SZ` | 同上 |
 | ricequant | `600000.XSHG` / `000001.XSHE` | 后缀已是 canonical |
+| tushare | `600000.SH` / `000001.SZ` / `430047.BJ` / `CU2401.SHF` | SH→XSHG, SZ→XSHE, **BJ→XBSE**；期货后缀与通行简称不同：SHF→SHFE, ZCE→CZCE, CFX→CFFEX, GFE→GFEX |
 
 实现：`ingest/<provider>/symbols.py`（或 adapter 内 `split_*`）。
 

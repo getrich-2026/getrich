@@ -73,6 +73,7 @@ def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):
     ctx.start_date = 20240101
 
     REGISTRY["instruments"](fake_tushare, ctx).fetch("init")
+    # 逐日 fetcher 依赖 calendar 提供交易日列表，必须先抓
     REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
     for ds in ("daily", "adj_factor", "stk_limit", "suspend_d", "index_daily", "fut_daily"):
         REGISTRY[ds](fake_tushare, ctx).fetch("init")
@@ -99,6 +100,7 @@ def test_tushare_update_refetches_newest_month(tmp_raw_root, fake_tushare):
 
     ctx = _ctx(tmp_raw_root)
     ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
     fetcher = REGISTRY["daily"](fake_tushare, ctx)
 
     months = [ym for ym, _, _ in fetcher._months_to_fetch("init")]
@@ -108,3 +110,39 @@ def test_tushare_update_refetches_newest_month(tmp_raw_root, fake_tushare):
     # 落盘后只剩 2024-01 一个文件，它同时是「最新已有月份」，应被重抓
     again = [ym for ym, _, _ in fetcher._months_to_fetch("update")]
     assert "2024-01" in again
+
+
+def test_tushare_bars_require_calendar(tmp_raw_root, fake_tushare):
+    """没有交易日历时必须明确报错，而不是对着非交易日空转请求。"""
+    import pytest
+
+    from getrich_data.raw.tushare import REGISTRY
+
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    with pytest.raises(RuntimeError, match="缺少交易日历"):
+        REGISTRY["daily"](fake_tushare, ctx).fetch("init")
+
+
+def test_tushare_fetches_by_trade_date_not_range(tmp_raw_root, fake_tushare):
+    """逐日接口必须按 trade_date 调用。
+
+    Tushare 的 offset 上限是 100000，全市场一个月约 11.7 万行——
+    用日期区间取数会取不全（实测在第 18 页失败）。
+    """
+    from getrich_data.raw.tushare import REGISTRY
+
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+
+    seen: list[dict] = []
+    orig = fake_tushare.query_all
+    fake_tushare.query_all = lambda api, **p: (seen.append({"api": api, **p}), orig(api, **p))[1]
+    REGISTRY["daily"](fake_tushare, ctx).fetch("init")
+
+    daily_calls = [c for c in seen if c["api"] == "daily"]
+    assert daily_calls, "未发出 daily 请求"
+    for c in daily_calls:
+        assert "trade_date" in c, f"daily 应按 trade_date 调用，实际: {c}"
+        assert "start_date" not in c and "end_date" not in c

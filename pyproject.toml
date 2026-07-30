@@ -10,6 +10,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.1",
     "pyyaml>=6.0",
     "python-dotenv>=1.2.2",
+    "tushare>=1.4",
 ]
 
 [project.scripts]
@@ -18,7 +19,7 @@ getrich = "getrich_data.cli:main"
 [project.optional-dependencies]
 # 供应商 SDK 不在 PyPI / 需凭证与专用 wheel，按需手动安装；此处仅占位说明。
 # ricequant: rqdatac    yinhe: AmazingData    insight: insight_python
-# tushare 在 PyPI 上有发布，但仅 raw 层运行时需要，故同样按需安装：pip install tushare
+# tushare 在 PyPI 上有发布，已列入主依赖，无需手动安装（D9）
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",

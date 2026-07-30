@@ -71,5 +71,10 @@ enabled:
     yinhe: [calendar, symbol_map, instruments, bars_1d]
     ricequant: [instruments, calendar, bars_1d]
     insight: [instruments, calendar, bars_1d]
+    # Tushare 默认**不入库**。可用的 importer：
+    #   instruments, symbol_map, calendar, stock_bar_1d, index_bar_1d, future_bar_1d
+    # 这些目标表现由 yinhe 占有（见 reference/design/tushare/tushare_integration_plan.md §3.1），
+    # 启用即等于「切主源」——是该方案里标为高风险的 P5 阶段，需逐表评估数据一致性、
+    # 走 `getrich own release/set` 显式转移，并经人工确认。不要在这里随手打开。
     # 顺序有依赖：instruments -> symbol_map -> *_bar_1d
-    tushare: [instruments, symbol_map, calendar, stock_bar_1d, index_bar_1d, future_bar_1d]
+    tushare: []

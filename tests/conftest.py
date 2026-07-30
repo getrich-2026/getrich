@@ -130,6 +130,10 @@ class FakeTushareClient:
         self.calls: list[str] = []
 
     def _days_in(self, params) -> list[str]:
+        """逐日接口按 trade_date 调用；参考类接口仍支持区间。"""
+        if "trade_date" in params:
+            d = params["trade_date"]
+            return [d] if d in self.DAYS else []
         start = params.get("start_date", "00000000")
         end = params.get("end_date", "99999999")
         return [d for d in self.DAYS if start <= d <= end]

@@ -7,6 +7,20 @@
 
 ---
 
+## 2026-07-31 02:35 — 接入 Tushare Pro（raw + ingest 纵切片）
+
+把此前在重构前代码上开发的 Tushare 导入，按本仓库四层架构重新实现：`raw/tushare`（client + 8 个 fetcher，逐交易日调用、按自然月分区落 parquet）与 `ingest/tushare`（6 个 importer，写 `meta.*` 与 `market.{stock,index,future}_bar_1d`），并注册进 `raw`/`ingest`/`cli`/`config.example.yaml`。新增 `docs/providers/tushare.md`，补 `docs/conventions/symbol-mapping.md` 的 tushare 行，`tushare_api_design.md` 补齐 `stk_limit` 章节。
+
+按 `tushare_integration_plan.md` 的既有决策对齐：`BJ→XBSE`（D9）、`tushare` 列为主依赖（D9/§7.1）、token 走 `TUSHARE_TOKEN`（D9）。`enabled.ingest.tushare` 默认置空——这些目标表现属 yinhe，启用等于该方案标为高风险的 P5「切主源」，不能由默认配置隐式打开。
+
+关闭 §6.2 / D8 标记的「实现前必须核对单位」待办：核对三家既有 provider，ricequant（`volume`/`total_turnover`）与 insight（`volume`/`value`）原生即股/元且均原样透传，故 canonical 单位为股/元，Tushare 按 ×100（手→股）/ ×1000（千元→元）换算，`fut_daily` 的 amount 为万元故 ×10000。**yinhe 的单位仍未核实**，是既有问题，另行确认。
+
+真实接口实测发现并修复三个问题：(1) Tushare 的 offset 硬上限为 100000，而全市场一个月约 11.7 万行，原按月区间取数在第 18 页失败、**取不全数据**——改为逐交易日调用（交易日来自 raw calendar），并在 `query_all` 加 offset 上限拦截，把静默截断变成显式报错；(2) 大量指数只发布收盘点位不发布 OHLC（某日 10967 条中 8859 条），原实现要求五价齐全，丢弃了 81% 的有效指数行——改为无效价格写 NULL、保留该行，指数入库量 26211 → 203834；(3) 期货当日无成交时无 OHLC 但有结算价与持仓量（某日 940 条中 154 条），同样改为保留，16869 → 20696。另修 `volume`/`open_interest` 未取整导致 `COPY` 无法写入 BIGINT 的问题。0 视为有效取值原样保留，仅非有限值与负数转 NULL。
+
+验证：`ruff` 通过；`pytest` 56 passed / 11 skipped（live 用例无 token 时跳过）；真实 Tushare 接口 + 真实 PostgreSQL 端到端跑通 2024-01 全月，单位换算按行核对一致（1158366.45 手 → 115836645 股）。新增 `tests/live/` 真实接口用例（契约核对 + 翻页无损），默认 skip。
+
+---
+
 ## 2026-06-15 09:15 — 补充 uv 锁文件与 .env 自动加载
 
 为当前 Python 依赖快照补入 `uv.lock`，并在 `src/getrich_data/common/config.py` 中增加对仓库根目录 `.env` 的可选自动加载；同时把 `python-dotenv` 加入 `pyproject.toml`。未运行 lint/test；本次仅更新依赖锁、配置加载与迭代记录，未改数据库或 raw/cache 输出。

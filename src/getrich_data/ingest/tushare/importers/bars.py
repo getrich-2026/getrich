@@ -44,6 +44,28 @@ def _to_bigint(series: pd.Series) -> pd.Series:
     return series.round().astype("Int64")
 
 
+def _null_out_invalid(df: pd.DataFrame, columns: list[str]) -> None:
+    """把**无效**价格就地置为 NaN（→ 入库为 NULL）。
+
+    无效 = 非有限值（NaN / inf）或负数。**0 是有效取值，原样保留**——
+    它表达的是「当日就是这个数」，不是「不知道」，两者不能混为一谈。
+
+    指数与期货的目标表允许价格列为 NULL，所以缺失如实写 NULL，
+    而不是把整行丢掉——那会连同该行**有效**的收盘价 / 结算价 / 持仓量一起损失。
+    """
+    for c in columns:
+        v = pd.to_numeric(df[c], errors="coerce")
+        arr = v.to_numpy(dtype=float)
+        df[c] = v.where(np.isfinite(arr) & (arr >= 0), other=np.nan)
+
+
+def _check_high_low(df: pd.DataFrame, source: str) -> None:
+    """只在 high / low 同时存在时校验，与 DDL 的 CHECK 口径一致。"""
+    both = df["high"].notna() & df["low"].notna()
+    if (df.loc[both, "high"] < df.loc[both, "low"]).any():
+        raise ValueError(f"{source} 含 high < low 的记录")
+
+
 def _parse_trade_date(df: pd.DataFrame, source: str) -> pd.Series:
     parsed = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
     if parsed.isna().any():
@@ -63,6 +85,12 @@ class _BaseBarsImporter(BaseImporter):
         return resolve_by_symbol_map(self.conn, PROVIDER)
 
     def _validate_prices(self, df: pd.DataFrame, source: str) -> None:
+        """严格校验：任一价格非有限或非正即抛错。
+
+        只用于**股票**。股票只要当日有 bar，五个价格就必然齐全，缺失即数据损坏，
+        应当中断而不是入库。指数与期货不同——它们的价格缺失是常态（只发布收盘
+        点位的指数、无成交但有结算价的合约），那边走 ``_null_out_invalid``。
+        """
         cols = list(self.PRICE_COLUMNS)
         values = df[cols].to_numpy(dtype=float)
         if not np.isfinite(values).all():
@@ -269,7 +297,12 @@ class IndexBars1dImporter(_BaseBarsImporter):
     """index_daily → market.index_bar_1d。
 
     指数没有复权因子与涨跌停：``adj_factor`` 按表语义写 1（NOT NULL DEFAULT 1），
-    涨跌停留 NULL。Tushare 会返回价格不完整的指数记录，这类记录**跳过**并记录条数。
+    涨跌停留 NULL。
+
+    大量指数（中证债券指数、各类细分指数）**只发布收盘点位、不发布 OHLC**——
+    实测某个交易日 10967 条里有 8859 条 open/high/low 为空，但 close 有效。
+    目标表这些列均允许 NULL，因此缺失写 NULL、保留该行；只有连 close 都没有的
+    记录才丢弃。
     """
 
     DATASET = "index_bar_1d"
@@ -290,17 +323,19 @@ class IndexBars1dImporter(_BaseBarsImporter):
         m = raw.drop_duplicates(subset=["ts_code", "trade_date"], keep="last").copy()
         m["ts_code"] = m["ts_code"].astype(str).str.strip()
         _to_numeric(m, ["open", "high", "low", "close", "pre_close", "vol", "amount"])
+        _null_out_invalid(m, list(self.PRICE_COLUMNS))
 
-        complete = np.isfinite(m[list(self.PRICE_COLUMNS)].to_numpy(dtype=float)).all(axis=1)
-        complete &= (m[list(self.PRICE_COLUMNS)].to_numpy(dtype=float) > 0).all(axis=1)
-        skipped = int((~complete).sum())
-        if skipped:
-            self.log.warning("index_daily 有 %d 行价格不完整，已跳过", skipped)
-        m = m[complete]
+        usable = m["close"].notna()
+        dropped = int((~usable).sum())
+        if dropped:
+            self.log.warning("index_daily 有 %d 行收盘价无效或缺失，已跳过", dropped)
+        partial = int((usable & m["open"].isna()).sum())
+        if partial:
+            self.log.info("index_daily 有 %d 行只有收盘点位（无 OHLC），已按 NULL 入库", partial)
+        m = m[usable]
         if m.empty:
             return pd.DataFrame(columns=list(self.contract.columns))
-        if (m["high"] < m["low"]).any():
-            raise ValueError("index_daily 含 high < low 的记录")
+        _check_high_low(m, "index_daily")
 
         m["dt"] = _parse_trade_date(m, "index_daily")
         m = self._attach_ids(m, self._id_map())
@@ -333,7 +368,10 @@ class FutureBars1dImporter(_BaseBarsImporter):
     """fut_daily → market.future_bar_1d。
 
     期货表无 ``adj_factor``，改有 ``open_interest`` / ``settle`` / ``pre_settle``。
-    远月或已到期合约可能返回结构完整但全为 0 的价格，这类记录跳过。
+
+    当日无成交的合约不返回 OHLC，但**仍会发布结算价与持仓量**（实测某交易日
+    940 条里 154 条如此，且全部带有效 settle）。因此价格缺失写 NULL、保留该行；
+    只有 close 与 settle 都无效的记录才丢弃。成交量 / 持仓量为 0 是真实取值，原样保留。
     """
 
     DATASET = "future_bar_1d"
@@ -359,17 +397,19 @@ class FutureBars1dImporter(_BaseBarsImporter):
             ["open", "high", "low", "close", "pre_close", "pre_settle", "settle",
              "vol", "amount", "oi"],
         )
+        _null_out_invalid(m, [*self.PRICE_COLUMNS, "settle", "pre_settle"])
 
-        prices = m[list(self.PRICE_COLUMNS)].to_numpy(dtype=float)
-        complete = np.isfinite(prices).all(axis=1) & (prices > 0).all(axis=1)
-        skipped = int((~complete).sum())
-        if skipped:
-            self.log.warning("fut_daily 有 %d 行价格不完整或为 0，已跳过", skipped)
-        m = m[complete]
+        usable = m["close"].notna() | m["settle"].notna()
+        dropped = int((~usable).sum())
+        if dropped:
+            self.log.warning("fut_daily 有 %d 行收盘价与结算价均无效或缺失，已跳过", dropped)
+        settle_only = int((usable & m["close"].isna()).sum())
+        if settle_only:
+            self.log.info("fut_daily 有 %d 行当日无成交，仅结算价入库", settle_only)
+        m = m[usable]
         if m.empty:
             return pd.DataFrame(columns=list(self.contract.columns))
-        if (m["high"] < m["low"]).any():
-            raise ValueError("fut_daily 含 high < low 的记录")
+        _check_high_low(m, "fut_daily")
         if (m[["vol", "amount", "oi"]].fillna(0).to_numpy(dtype=float) < 0).any():
             raise ValueError("fut_daily 含负成交量、成交额或持仓量")
 

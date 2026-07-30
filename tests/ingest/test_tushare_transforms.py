@@ -22,7 +22,7 @@ from getrich_data.raw.tushare.fetchers.bars import month_range
     [
         ("600000.SH", "XSHG"),
         ("000001.SZ", "XSHE"),
-        ("430047.BJ", "BSE"),
+        ("430047.BJ", "XBSE"),
         # Tushare 的期货后缀与通行简称不同，必须显式映射
         ("CU2401.SHF", "SHFE"),
         ("CF401.ZCE", "CZCE"),
@@ -245,18 +245,78 @@ def test_future_units(tmp_raw_root, monkeypatch):
     assert "adj_factor" not in imp.contract.columns
 
 
-def test_future_zero_price_rows_skipped(tmp_raw_root, monkeypatch):
+def _future_importer(tmp_raw_root):
     from getrich_data.ingest.base import IngestContext
     from getrich_data.ingest.tushare.importers.bars import FutureBars1dImporter
 
+    return FutureBars1dImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+
+
+def test_zero_prices_are_preserved_not_nulled(tmp_raw_root, monkeypatch):
+    """0 是真实取值，必须原样保留——不能和「不知道」混为一谈。"""
     _write(tmp_raw_root, "fut_daily", pd.DataFrame(
         [{"ts_code": "CU2401.SHF", "trade_date": "20240102", "pre_close": 0.0,
           "pre_settle": 0.0, "open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0,
           "settle": 0.0, "vol": 0.0, "amount": 0.0, "oi": 0.0}]))
 
-    imp = FutureBars1dImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    imp = _future_importer(tmp_raw_root)
     monkeypatch.setattr(imp, "_id_map", lambda: {"CU2401.SHF": 7})
-    assert imp.build().empty
+    df = imp.build()
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["close"] == 0.0 and row["settle"] == 0.0
+    assert row["volume"] == 0 and row["open_interest"] == 0
+
+
+def test_invalid_prices_become_null(tmp_raw_root, monkeypatch):
+    """非有限值与负数才是无效，转 NULL。"""
+    _write(tmp_raw_root, "fut_daily", pd.DataFrame(
+        [{"ts_code": "CU2401.SHF", "trade_date": "20240102", "pre_close": float("nan"),
+          "pre_settle": -1.0, "open": float("inf"), "high": None, "low": None,
+          "close": 68500.0, "settle": 68400.0, "vol": 5000.0, "amount": 1.0, "oi": 12000.0}]))
+
+    imp = _future_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"CU2401.SHF": 7})
+    row = imp.build().iloc[0]
+    assert pd.isna(row["pre_close"])    # NaN
+    assert pd.isna(row["pre_settle"])   # 负数
+    assert pd.isna(row["open"])         # inf
+    assert row["close"] == 68500.0      # 有效值不受影响
+
+
+def test_future_settle_only_rows_kept(tmp_raw_root, monkeypatch):
+    """当日无成交的合约没有 OHLC，但有结算价与持仓量——不能整行丢掉。"""
+    _write(tmp_raw_root, "fut_daily", pd.DataFrame(
+        [{"ts_code": "BB2401.DCE", "trade_date": "20240102", "pre_close": None,
+          "pre_settle": 400.0, "open": None, "high": None, "low": None, "close": None,
+          "settle": 400.0, "vol": 0.0, "amount": 0.0, "oi": 0.0}]))
+
+    imp = _future_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"BB2401.DCE": 8})
+    df = imp.build()
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["settle"] == 400.0
+    assert pd.isna(row["open"]) and pd.isna(row["close"])
+
+
+def test_index_close_only_rows_kept(tmp_raw_root, monkeypatch):
+    """大量指数只发布收盘点位，不发布 OHLC——必须保留。"""
+    from getrich_data.ingest.base import IngestContext
+    from getrich_data.ingest.tushare.importers.bars import IndexBars1dImporter
+
+    _write(tmp_raw_root, "index_daily", pd.DataFrame(
+        [{"ts_code": "H11001.CSI", "trade_date": "20240102", "open": None,
+          "high": None, "low": None, "close": 236.9688, "pre_close": 237.0151,
+          "vol": None, "amount": None}]))
+
+    imp = IndexBars1dImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    monkeypatch.setattr(imp, "_id_map", lambda: {"H11001.CSI": 11})
+    df = imp.build()
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["close"] == 236.9688
+    assert pd.isna(row["open"]) and pd.isna(row["high"])
 
 
 def test_index_no_adj_factor_no_limits(tmp_raw_root, monkeypatch):
