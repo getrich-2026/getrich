@@ -114,6 +114,129 @@ class FakeInsightClient:
         return pd.DataFrame(rows)
 
 
+class FakeTushareClient:
+    """实现 raw.tushare.client.TushareClient 协议。
+
+    按 start_date/end_date 过滤，以便测试按月分区的抓取逻辑：只有
+    2024-01 区间会返回数据，其余月份返回空表。
+    """
+
+    STOCKS = ("600000.SH", "000001.SZ")
+    INDEXES = ("000300.SH",)
+    FUTURES = ("CU2401.SHF",)
+    DAYS = ("20240102", "20240103")
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def _days_in(self, params) -> list[str]:
+        start = params.get("start_date", "00000000")
+        end = params.get("end_date", "99999999")
+        return [d for d in self.DAYS if start <= d <= end]
+
+    def query(self, api_name: str, **params) -> pd.DataFrame:
+        self.calls.append(api_name)
+        return getattr(self, f"_{api_name}")(**params)
+
+    def query_all(self, api_name: str, **params) -> pd.DataFrame:
+        # Fake 不分页；翻页逻辑由 test_tushare_client 单独覆盖
+        params.pop("limit", None)
+        params.pop("offset", None)
+        params.pop("fields", None)
+        return self.query(api_name, **params)
+
+    # ---- reference ----
+    def _stock_basic(self, list_status="L", **_) -> pd.DataFrame:
+        if list_status != "L":
+            return pd.DataFrame()
+        return pd.DataFrame(
+            [
+                {"ts_code": "600000.SH", "symbol": "600000", "name": "浦发银行",
+                 "exchange": "SSE", "curr_type": "CNY", "list_status": "L",
+                 "list_date": "19991110", "delist_date": None},
+                {"ts_code": "000001.SZ", "symbol": "000001", "name": "平安银行",
+                 "exchange": "SZSE", "curr_type": "CNY", "list_status": "L",
+                 "list_date": "19910403", "delist_date": None},
+            ]
+        )
+
+    def _index_basic(self, market="SSE", **_) -> pd.DataFrame:
+        if market != "SSE":
+            return pd.DataFrame()
+        return pd.DataFrame(
+            [{"ts_code": "000300.SH", "name": "沪深300", "fullname": "沪深300指数",
+              "market": "SSE", "list_date": "20050408", "exp_date": None}]
+        )
+
+    def _fut_basic(self, exchange="SHFE", fut_type="1", **_) -> pd.DataFrame:
+        if (exchange, fut_type) != ("SHFE", "1"):
+            return pd.DataFrame()
+        return pd.DataFrame(
+            [{"ts_code": "CU2401.SHF", "symbol": "CU2401", "exchange": "SHFE",
+              "name": "沪铜2401", "fut_code": "CU", "multiplier": 5.0,
+              "list_date": "20230117", "delist_date": "20240115"}]
+        )
+
+    def _trade_cal(self, exchange="SSE", **params) -> pd.DataFrame:
+        return pd.DataFrame(
+            [{"exchange": exchange, "cal_date": "20240102", "is_open": 1,
+              "pretrade_date": "20231229"},
+             {"exchange": exchange, "cal_date": "20240103", "is_open": 1,
+              "pretrade_date": "20240102"},
+             {"exchange": exchange, "cal_date": "20240106", "is_open": 0,
+              "pretrade_date": "20240105"}]
+        )
+
+    # ---- 逐日数据集 ----
+    def _daily(self, **params) -> pd.DataFrame:
+        rows = [
+            {"ts_code": c, "trade_date": d, "open": 10.0, "high": 10.8, "low": 9.9,
+             "close": 10.5, "pre_close": 9.8, "pct_chg": 7.14, "vol": 1000.0,
+             "amount": 10500.0}
+            for c in self.STOCKS for d in self._days_in(params)
+        ]
+        return pd.DataFrame(rows)
+
+    def _adj_factor(self, **params) -> pd.DataFrame:
+        return pd.DataFrame(
+            [{"ts_code": c, "trade_date": d, "adj_factor": 1.25}
+             for c in self.STOCKS for d in self._days_in(params)]
+        )
+
+    def _stk_limit(self, **params) -> pd.DataFrame:
+        return pd.DataFrame(
+            [{"ts_code": c, "trade_date": d, "pre_close": 9.8,
+              "up_limit": 10.78, "down_limit": 8.82}
+             for c in self.STOCKS for d in self._days_in(params)]
+        )
+
+    def _suspend_d(self, **params) -> pd.DataFrame:
+        days = self._days_in(params)
+        if not days:
+            return pd.DataFrame()
+        # 仅 600000.SH 在首日停牌
+        return pd.DataFrame(
+            [{"ts_code": "600000.SH", "trade_date": days[0], "suspend_type": "S",
+              "suspend_reason": "重大事项"}]
+        )
+
+    def _index_daily(self, **params) -> pd.DataFrame:
+        return pd.DataFrame(
+            [{"ts_code": c, "trade_date": d, "open": 3400.0, "high": 3450.0,
+              "low": 3380.0, "close": 3420.0, "pre_close": 3390.0, "pct_chg": 0.88,
+              "vol": 200000.0, "amount": 250000.0}
+             for c in self.INDEXES for d in self._days_in(params)]
+        )
+
+    def _fut_daily(self, **params) -> pd.DataFrame:
+        return pd.DataFrame(
+            [{"ts_code": c, "trade_date": d, "pre_close": 68000.0, "pre_settle": 68100.0,
+              "open": 68200.0, "high": 68900.0, "low": 68000.0, "close": 68500.0,
+              "settle": 68400.0, "vol": 5000.0, "amount": 34250.0, "oi": 12000.0}
+             for c in self.FUTURES for d in self._days_in(params)]
+        )
+
+
 @pytest.fixture
 def fake_yinhe():
     return FakeYinheClient()
@@ -127,6 +250,11 @@ def fake_ricequant():
 @pytest.fixture
 def fake_insight():
     return FakeInsightClient()
+
+
+@pytest.fixture
+def fake_tushare():
+    return FakeTushareClient()
 
 
 # --------------------------------------------------------------------------- #
@@ -205,6 +333,7 @@ def pg_conn(pg_dsn):
             TRUNCATE
               meta.instruments, meta.symbol_map, meta.trading_calendar,
               market.stock_bar_1d, market.etf_bar_1d, market.index_bar_1d,
+              market.future_bar_1d,
               realtime.tick_buffer, ops.table_ownership, ops.etl_job_run
             RESTART IDENTITY CASCADE
             """

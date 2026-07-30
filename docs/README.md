@@ -23,6 +23,7 @@ getrich-database 规范与设计文档集中地。
 - [yinhe.md](providers/yinhe.md) — 银河 AmazingData
 - [ricequant.md](providers/ricequant.md) — 米筐 rqdatac
 - [insight.md](providers/insight.md) — 华泰 INSIGHT
+- [tushare.md](providers/tushare.md) — Tushare Pro
 
 ## 运维
 - [runbook.md](runbook.md) — init/update 怎么跑、排障

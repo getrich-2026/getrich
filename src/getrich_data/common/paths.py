@@ -17,6 +17,9 @@
   insight/basic_info/<security_type>.parquet
   insight/trading_days/<exchange>.parquet
   insight/kline_day/<code>/<YYYY-MM>.parquet
+  tushare/instruments/<asset>.parquet
+  tushare/calendar/<exchange>.parquet
+  tushare/<daily|adj_factor|stk_limit|suspend_d|index_daily|fut_daily>/<YYYY-MM>.parquet
 """
 
 from __future__ import annotations

@@ -296,6 +296,86 @@ df = ts.pro_bar(ts_code='000001.SZ', adj='qfq',   # qfq=前复权, hfq=后复权
 
 ---
 
+### 3.6 每日涨跌停价格 `stk_limit`
+
+**文档**：https://tushare.pro/document/2?doc_id=183  
+**接口**：`pro.stk_limit()`
+
+获取全市场（含 A/B 股和基金）每日涨跌停价格。每个交易日 **8:40 左右**更新当日数据，可用于盘前构建可交易域。
+
+#### 输入参数
+
+| 参数 | 类型 | 必选 | 说明 |
+|------|------|------|------|
+| ts_code | str | 否 | 股票代码 |
+| trade_date | str | 否 | 交易日期 |
+| start_date | str | 否 | 开始日期 |
+| end_date | str | 否 | 结束日期 |
+
+> 单次最多返回 5800 条记录，可循环调取，总量不限制。
+
+#### 输出字段
+
+| 字段 | 类型 | 默认显示 | 说明 |
+|------|------|---------|------|
+| trade_date | str | Y | 交易日期 |
+| ts_code | str | Y | TS股票代码 |
+| pre_close | float | N | 昨日收盘价（需在 `fields` 中显式指定） |
+| up_limit | float | Y | 涨停价 |
+| down_limit | float | Y | 跌停价 |
+
+#### 示例
+
+```python
+# 获取单日全市场涨跌停价格
+df = pro.stk_limit(trade_date='20190625')
+
+# 获取单只股票的历史涨跌停价格
+df = pro.stk_limit(ts_code='002149.SZ', start_date='20190115', end_date='20190615')
+
+# 需要昨收价时显式指定 fields
+df = pro.stk_limit(trade_date='20240102',
+                   fields='trade_date,ts_code,pre_close,up_limit,down_limit')
+```
+
+#### 应用：识别涨跌停与一字板
+
+涨跌停价格由交易所按昨收价和涨跌幅限制（主板 10%、创业板/科创板 20%、ST 股 5%、北交所 30%）四舍五入到分，直接用 `pct_chg` 阈值判断会有误差，用 `stk_limit` 做精确匹配更可靠。
+
+```python
+import tushare as ts
+import pandas as pd
+
+pro = ts.pro_api()
+d = '20240102'
+
+px  = pro.daily(trade_date=d, fields='ts_code,trade_date,open,high,low,close,vol')
+lim = pro.stk_limit(trade_date=d, fields='ts_code,trade_date,up_limit,down_limit')
+
+df = px.merge(lim, on=['ts_code', 'trade_date'], how='left')
+
+# 浮点比较留 0.5 分容差
+tol = 0.005
+df['is_up_limit']   = (df['close'] - df['up_limit']).abs()   < tol
+df['is_down_limit'] = (df['close'] - df['down_limit']).abs() < tol
+# 一字板：全天最高=最低=涨停价（无法买入）
+df['is_one_word_up'] = ((df['low']  - df['up_limit']).abs()   < tol) & (df['vol'] > 0)
+df['is_one_word_dn'] = ((df['high'] - df['down_limit']).abs() < tol) & (df['vol'] > 0)
+```
+
+#### 回测与实盘中的用法
+
+| 场景 | 用法 |
+|------|------|
+| 可交易域过滤 | 次日一字涨停/跌停的股票剔除，避免回测中不可成交的虚假收益 |
+| 滑点与撮合建模 | 委托价 clip 到 `[down_limit, up_limit]` 区间，模拟交易所价格笼子 |
+| 打板/连板因子 | 统计连续涨停天数、封板率、炸板率 |
+| 盘前信号生成 | 8:40 后即可拿到当日涨跌停价，早于开盘，可用于当日下单前的风控 |
+
+> **注意**：`stk_limit` 的 `pre_close` 为未复权昨收价。与 `daily` 拼接做长周期回测时，需统一复权口径，或将涨跌停价一并按 `adj_factor` 调整。
+
+---
+
 ## 4. 财务数据（三大报表）
 
 > **重要说明**：
@@ -1166,6 +1246,7 @@ def safe_call(func, max_retry=3, **kwargs):
 | namechange / hs_const | 2000 | 基础参考 |
 | adj_factor | 2000 | 复权因子 |
 | suspend_d | 2000 | 停复牌 |
+| stk_limit | 2000 | 每日涨跌停价格，单次 5800 条 |
 | share_float / repurchase | 2000 | 解禁/回购 |
 | holder_trade | 2000 | 增减持 |
 | pledge_stat / pledge_detail | 2000 | 质押数据 |

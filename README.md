@@ -23,7 +23,7 @@ GetRich 平台的**外部数据接入层**：把上游供应商数据下载、�
                   └─────────────────────────────────────────────┘
 ```
 
-每层内按 provider 分：`yinhe`（银河 AmazingData）、`ricequant`（米筐 rqdatac）、`insight`（华泰 INSIGHT）。
+每层内按 provider 分：`yinhe`（银河 AmazingData）、`ricequant`（米筐 rqdatac）、`insight`（华泰 INSIGHT）、`tushare`（Tushare Pro）。
 stream 仅 `yinhe` / `insight`。
 
 ## 数据源与目标表
@@ -33,6 +33,7 @@ stream 仅 `yinhe` / `insight`。
 | yinhe | calendar, hist_code_list, backward_factor, kline_day, kline_min1 | `meta.instruments` / `meta.symbol_map` / `meta.trading_calendar` / `market.{stock,etf,index}_bar_1d` |
 | ricequant | instruments, calendar, bars_1d | 同上 |
 | insight | basic_info, trading_days, kline_day | 同上；实时 → `realtime.tick_buffer` |
+| tushare | instruments, calendar, daily, adj_factor, stk_limit, suspend_d, index_daily, fut_daily | `meta.*` / `market.{stock,index,future}_bar_1d` |
 
 **单表单一来源**：数据库内同一张目标表只能由一个 provider 写入，由 `ops.table_ownership` 登记并在入库/实时写库前强制校验。详见 [docs/conventions/provider-ownership.md](docs/conventions/provider-ownership.md)。
 
@@ -63,8 +64,8 @@ getrich own    list | set <target> <provider> <channel> | release <target>
 ```
 src/getrich_data/
   common/     共享内核：config, logging, paths, parquet, db, contracts, quality, ownership, migrate
-  raw/        下载层（yinhe / ricequant / insight），SDK → parquet
-  ingest/     入库层（yinhe / ricequant / insight），parquet → PG
+  raw/        下载层（yinhe / ricequant / insight / tushare），SDK → parquet
+  ingest/     入库层（yinhe / ricequant / insight / tushare），parquet → PG
   stream/     实时层（yinhe / insight），行情流 → PG
 db/
   ddl/        建库 DDL（00–70，按序执行）

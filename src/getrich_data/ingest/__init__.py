@@ -13,7 +13,7 @@ from getrich_data.ingest.base import IngestContext, IngestResult
 
 log = get_logger("ingest.runner")
 
-PROVIDERS = ("yinhe", "ricequant", "insight")
+PROVIDERS = ("yinhe", "ricequant", "insight", "tushare")
 
 
 def _registry_groups(provider: str) -> tuple[dict[str, Any], dict[str, list[str]]]:
@@ -23,6 +23,8 @@ def _registry_groups(provider: str) -> tuple[dict[str, Any], dict[str, list[str]
         from getrich_data.ingest.ricequant import GROUPS, REGISTRY
     elif provider == "insight":
         from getrich_data.ingest.insight import GROUPS, REGISTRY
+    elif provider == "tushare":
+        from getrich_data.ingest.tushare import GROUPS, REGISTRY
     else:
         raise ValueError(f"未知 provider: {provider}")
     return REGISTRY, GROUPS

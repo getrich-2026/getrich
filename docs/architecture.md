@@ -10,7 +10,7 @@
 | `stream` | 实时 | 行情流 → `realtime.tick_buffer` | 是 |
 | `db` | 库管理 | DDL / 迁移 / 归档 | — |
 
-**层优先、源其次**：顶层按职责分层，每层内部再按 provider（yinhe/ricequant/insight）切分。
+**层优先、源其次**：顶层按职责分层，每层内部再按 provider（yinhe/ricequant/insight/tushare）切分。
 新增数据源 = 在 raw/ingest 各加一个纵切片；改某层逻辑 = 只动一个横切片。
 
 ## 数据流
@@ -19,6 +19,7 @@
 AmazingData(银河)  → raw/yinhe     → /opt/raw_parquet/yinhe/*     → ingest/yinhe     → PostgreSQL
 rqdatac(米筐)      → raw/ricequant → /opt/raw_parquet/ricequant/* → ingest/ricequant → PostgreSQL
 INSIGHT(华泰)      → raw/insight   → /opt/raw_parquet/insight/*   → ingest/insight   → PostgreSQL
+Tushare Pro       → raw/tushare   → /opt/raw_parquet/tushare/*   → ingest/tushare   → PostgreSQL
 INSIGHT/银河 实时   → stream/<provider> ───────────────────────────────────────────→ realtime.tick_buffer
 ```
 

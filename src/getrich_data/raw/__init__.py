@@ -14,7 +14,7 @@ from getrich_data.raw.base import RawContext
 
 log = get_logger("raw.runner")
 
-PROVIDERS = ("yinhe", "ricequant", "insight")
+PROVIDERS = ("yinhe", "ricequant", "insight", "tushare")
 
 
 def _registry(provider: str) -> dict[str, Any]:
@@ -24,6 +24,8 @@ def _registry(provider: str) -> dict[str, Any]:
         from getrich_data.raw.ricequant import REGISTRY
     elif provider == "insight":
         from getrich_data.raw.insight import REGISTRY
+    elif provider == "tushare":
+        from getrich_data.raw.tushare import REGISTRY
     else:
         raise ValueError(f"未知 provider: {provider}")
     return REGISTRY
@@ -56,6 +58,10 @@ def _build_client(provider: str, cfg: Config) -> Any:
             username=pconf.get("username", ""),
             password=pconf.get("password", ""),
         )
+    if provider == "tushare":
+        from getrich_data.raw.tushare import TushareProClient
+
+        return TushareProClient(token=pconf.get("token", ""))
     raise ValueError(f"未知 provider: {provider}")
 
 

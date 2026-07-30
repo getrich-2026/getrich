@@ -62,3 +62,49 @@ def test_insight_fetch_flow(tmp_raw_root, fake_insight):
     kday = read_parquet_if_exists(
         tmp_raw_root.code_month_file("insight", "kline_day", "600000.SH", "2024-01"))
     assert kday is not None and len(kday) == 2
+
+
+def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):
+    """Tushare 按月分区抓取：只有有数据的月份落盘，空月份不产生文件。"""
+    from getrich_data.raw.tushare import REGISTRY
+
+    ctx = _ctx(tmp_raw_root)
+    # start_date 收窄到 2024-01，避免测试遍历十余年的月份
+    ctx.start_date = 20240101
+
+    REGISTRY["instruments"](fake_tushare, ctx).fetch("init")
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    for ds in ("daily", "adj_factor", "stk_limit", "suspend_d", "index_daily", "fut_daily"):
+        REGISTRY[ds](fake_tushare, ctx).fetch("init")
+
+    inst = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "instruments", "stock"))
+    assert inst is not None and set(inst["ts_code"]) == {"600000.SH", "000001.SZ"}
+    fut = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "instruments", "future"))
+    assert fut is not None and "CU2401.SHF" in set(fut["ts_code"])
+
+    cal = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "calendar", "SSE"))
+    assert cal is not None and len(cal) == 3
+
+    # 逐日数据集按 YYYY-MM 分区
+    daily = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "daily", "2024-01"))
+    assert daily is not None and len(daily) == 4  # 2 codes x 2 days
+    # Fake 只在 2024-01 有数据，后续月份不应留下空文件
+    months = sorted(p.stem for p in tmp_raw_root.dataset_dir("tushare", "daily").glob("*.parquet"))
+    assert months == ["2024-01"]
+
+
+def test_tushare_update_refetches_newest_month(tmp_raw_root, fake_tushare):
+    """update 模式必须重抓最新的已有月份——当月数据还在增长，已落盘的一定不完整。"""
+    from getrich_data.raw.tushare import REGISTRY
+
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    fetcher = REGISTRY["daily"](fake_tushare, ctx)
+
+    months = [ym for ym, _, _ in fetcher._months_to_fetch("init")]
+    assert months[0] == "2024-01" and len(months) > 1
+
+    fetcher.fetch("init")
+    # 落盘后只剩 2024-01 一个文件，它同时是「最新已有月份」，应被重抓
+    again = [ym for ym, _, _ in fetcher._months_to_fetch("update")]
+    assert "2024-01" in again

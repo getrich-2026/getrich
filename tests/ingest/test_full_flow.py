@@ -128,3 +128,73 @@ def test_ricequant_and_insight_flow(pg_conn, tmp_raw_root, fake_ricequant, fake_
     IREG["symbol_map"](pg_conn, fctx).run()
     IREG["index_bar_1d"](pg_conn, fctx).run()
     assert _count(pg_conn, "market.index_bar_1d") == 2
+
+
+def _run_tushare_raw(paths, fake_tushare):
+    from getrich_data.raw.tushare import REGISTRY
+
+    ctx = _raw_ctx(paths)
+    ctx.start_date = 20240101
+    for name in ("instruments", "calendar", "daily", "adj_factor",
+                 "stk_limit", "suspend_d", "index_daily", "fut_daily"):
+        REGISTRY[name](fake_tushare, ctx).fetch("init")
+
+
+def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
+    _run_tushare_raw(tmp_raw_root, fake_tushare)
+    ctx = IngestContext(paths=tmp_raw_root)
+
+    from getrich_data.ingest.tushare import GROUPS, REGISTRY
+
+    for name in GROUPS["all"]:
+        REGISTRY[name](pg_conn, ctx).run()
+
+    # 2 stock + 1 index + 1 future
+    assert _count(pg_conn, "meta.instruments") == 4
+    assert _count(pg_conn, "meta.symbol_map") == 4
+    assert _count(pg_conn, "meta.trading_calendar") == 6   # 3 cal_date x 2 exch
+    assert _count(pg_conn, "market.stock_bar_1d") == 4     # 2 codes x 2 days
+    assert _count(pg_conn, "market.index_bar_1d") == 2
+    assert _count(pg_conn, "market.future_bar_1d") == 2
+
+    with pg_conn.cursor() as cur:
+        # 单位换算落库正确：vol 1000 手 → 100000 股；amount 10500 千元 → 10500000 元
+        cur.execute(
+            "SELECT volume, amount, adj_factor, limit_up, trading_status, source "
+            "FROM market.stock_bar_1d b JOIN meta.instruments i USING (instrument_id) "
+            "WHERE i.symbol = '600000.SH' AND b.dt = DATE '2024-01-02'"
+        )
+        volume, amount, adj, limit_up, status, source = cur.fetchone()
+        assert float(volume) == 1000.0 * 100
+        assert float(amount) == 10500.0 * 1000
+        assert float(adj) == 1.25
+        assert float(limit_up) == 10.78
+        assert status == "HALTED"      # Fake 让 600000.SH 首日停牌
+        assert source == "tushare"
+
+        # 期货：amount 万元 → 元；vol/oi 保持手
+        cur.execute(
+            "SELECT volume, amount, open_interest, settle FROM market.future_bar_1d LIMIT 1"
+        )
+        volume, amount, oi, settle = cur.fetchone()
+        assert float(volume) == 5000.0
+        assert float(amount) == 34250.0 * 10000
+        assert float(oi) == 12000.0
+        assert float(settle) == 68400.0
+
+        # 交易日历：next_trading_day 由 is_open 推导，非交易日不作为后继
+        cur.execute(
+            "SELECT next_trading_day FROM meta.trading_calendar "
+            "WHERE exchange = 'XSHG' AND trading_day = DATE '2024-01-02'"
+        )
+        assert cur.fetchone()[0].isoformat() == "2024-01-03"
+
+        # 代码归一化：交易所后缀映射为 canonical
+        cur.execute("SELECT exchange FROM meta.instruments WHERE symbol = 'CU2401.SHF'")
+        assert cur.fetchone()[0] == "SHFE"
+        cur.execute("SELECT exchange FROM meta.instruments WHERE symbol = '000001.SZ'")
+        assert cur.fetchone()[0] == "XSHE"
+
+    owners = {o.target: o.provider for o in OwnershipManager(pg_conn).list_all()}
+    assert owners["market.stock_bar_1d"] == "tushare"
+    assert owners["market.future_bar_1d"] == "tushare"

@@ -49,6 +49,16 @@ providers:
     username_env: INSIGHT_USER
     password_env: INSIGHT_PASSWORD
 
+  tushare:
+    token_env: TUSHARE_TOKEN
+    rate_limit:
+      # Tushare 按积分分级限频，超限直接抛异常。1.5s 对应约 40 次/分钟，
+      # 低积分账号需调大。
+      sleep_between_requests_sec: 1.5
+      max_retries: 5
+      retry_backoff_base_sec: 3.0
+    start_date: 20130101        # 全量起点，int8
+
 # ---- 抓取/入库开关（哪些 fetcher / importer 启用）----
 # 详见 docs/layers/*.md
 enabled:
@@ -56,7 +66,10 @@ enabled:
     yinhe: [calendar, hist_code_list, backward_factor, kline_day, kline_min1]
     ricequant: [instruments, calendar, bars_1d]
     insight: [basic_info, trading_days, kline_day]
+    tushare: [instruments, calendar, daily, adj_factor, stk_limit, suspend_d, index_daily, fut_daily]
   ingest:
     yinhe: [calendar, symbol_map, instruments, bars_1d]
     ricequant: [instruments, calendar, bars_1d]
     insight: [instruments, calendar, bars_1d]
+    # 顺序有依赖：instruments -> symbol_map -> *_bar_1d
+    tushare: [instruments, symbol_map, calendar, stock_bar_1d, index_bar_1d, future_bar_1d]
