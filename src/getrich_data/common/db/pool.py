@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import psycopg
+from psycopg.conninfo import make_conninfo
 
 
 @dataclass
@@ -36,9 +37,19 @@ class PgConfig:
         )
 
     def conninfo(self) -> str:
-        return (
-            f"host={self.host} port={self.port} dbname={self.dbname} "
-            f"user={self.user} password={self.password}"
+        """构造 libpq 连接串。
+
+        必须用 ``make_conninfo`` 而不是 f-string 拼接：keyword=value 格式里，
+        含空格 / 单引号 / 反斜杠的值需要转义。手工拼接时密码含空格会直接
+        ProgrammingError，含反斜杠更糟——会被**静默**解析成另一个值
+        （``a\\b`` → ``a\b``），表现为莫名其妙的认证失败。
+        """
+        return make_conninfo(
+            host=self.host,
+            port=self.port,
+            dbname=self.dbname,
+            user=self.user,
+            password=self.password,
         )
 
 

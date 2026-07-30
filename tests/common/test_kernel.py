@@ -57,3 +57,18 @@ def test_quality_checks():
 
     empty = check_dataframe(pd.DataFrame(), dataset="t", required_columns=["a"])
     assert "空数据集" in empty.issues
+
+
+def test_conninfo_escapes_special_characters():
+    """连接串必须正确转义。
+
+    手工拼 keyword=value 时：密码含空格会 ProgrammingError；含反斜杠会被
+    **静默**改写成另一个值，只表现为认证失败，极难排查。
+    """
+    from psycopg.conninfo import conninfo_to_dict
+
+    from getrich_data.common.db.pool import PgConfig
+
+    for pw in ("simple", "my pass", "it's", "a\\b", "p@ss:w/rd", ""):
+        cfg = PgConfig(host="h", port=5432, dbname="d", user="u", password=pw)
+        assert conninfo_to_dict(cfg.conninfo()).get("password", "") == pw, f"密码 {pw!r} 被改写"
