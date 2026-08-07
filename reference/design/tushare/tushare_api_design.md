@@ -376,6 +376,59 @@ df['is_one_word_dn'] = ((df['high'] - df['down_limit']).abs() < tol) & (df['vol'
 
 ---
 
+### 3.7 每日指标 `daily_basic`
+
+**文档**：https://tushare.pro/document/2?doc_id=32  
+**接口**：`pro.daily_basic()`
+
+每日市场交易指标，含估值（市值/市盈率/市净率）与股本数据，是 getrich-design 表接口篇 `fundamental.valuation_1d`（G3）的估值数据源。每个交易日 **15:00–17:00** 更新当日数据。
+
+#### 输入参数
+
+| 参数 | 类型 | 必选 | 说明 |
+|------|------|------|------|
+| ts_code | str | 否 | 股票代码（与 trade_date 二选一） |
+| trade_date | str | 否 | 交易日期（与 ts_code 二选一） |
+| start_date | str | 否 | 开始日期（YYYYMMDD） |
+| end_date | str | 否 | 结束日期（YYYYMMDD） |
+
+> 单次最多返回 6000 行，可循环调取；需 2000 积分（无总量限制需 5000）。
+
+#### 输出字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| ts_code | str | TS 股票代码 |
+| trade_date | str | 交易日期 |
+| close | float | 当日收盘价 |
+| turnover_rate | float | 换手率（%） |
+| turnover_rate_f | float | 换手率（自由流通股，%） |
+| volume_ratio | float | 量比 |
+| pe / pe_ttm | float | 市盈率 / TTM 市盈率（亏损为 NULL） |
+| pb | float | 市净率 |
+| ps / ps_ttm | float | 市销率 / TTM 市销率 |
+| dv_ratio / dv_ttm | float | 股息率（%） |
+| total_share | float | 总股本（**万股**） |
+| float_share | float | 流通股本（**万股**） |
+| free_share | float | 自由流通股本（**万**） |
+| total_mv | float | 总市值（**万元**） |
+| circ_mv | float | 流通市值（**万元**） |
+| limit_status | int | 收盘涨跌状态：0 平盘 / 1 上涨（不含涨停）/ 2 涨停（不含一字）/ 3 一字涨停 / 4 下跌（不含跌停）/ 5 跌停（不含一字）/ 6 一字跌停 |
+
+> **单位换算（T1 已决，getrich-design 表接口篇 §9）**：`total_mv`/`circ_mv` 万元 → 元（×10000），`total_share`/`float_share`/`free_share` 万股 → 股（×10000），换算在 ingest 层完成（见 integration_plan §6.2）；canonical `market.stock_daily_basic` 与 `fundamental.valuation_1d` 均以**元**入库。
+
+#### 示例
+
+```python
+# 获取某日全市场估值/市值
+df = pro.daily_basic(trade_date='20240102')
+
+# 获取单只股票历史估值
+df = pro.daily_basic(ts_code='600000.SH', start_date='20231201', end_date='20240102')
+```
+
+---
+
 ## 4. 财务数据（三大报表）
 
 > **重要说明**：

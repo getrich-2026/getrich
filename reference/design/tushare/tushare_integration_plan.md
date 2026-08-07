@@ -34,6 +34,7 @@ Tushare Pro 作为第 4 个数据 provider 接入 `getrich-database`（已有 yi
 | Tushare 接口 | 目标表 | 现 owner | 备注 |
 |---|---|---|---|
 | `daily` | `market.stock_bar_1d` | yinhe | 单位换算（§6.2） |
+| `daily_basic` | `market.stock_daily_basic` | tushare | 估值/股本（getrich-design G3 数据源）；`total_mv`/`circ_mv` 万元→元、股本万股→股（§6.2）；入库单位为元，T1 已决。**owner 澄清**：该表 DDL 现位于 `db/ddl/60_insight.sql`，但 insight 侧从未实现该表写入（无 importer、`INSIGHT_DATA_DEV_Reference.md` 也未映射到此表名），此前「现 owner: insight」系笔误，已订正为 tushare；DDL 文件归属/是否迁移**待定**，具体实现方式后续设计 |
 | `index_daily` | `market.index_bar_1d` | yinhe | |
 | `fund_daily` | `market.etf_bar_1d` | yinhe | 仅 ETF 子集 |
 | `fut_daily` | `market.future_bar_1d` | —（未填） | 含 `open_interest/settle/pre_settle` |
@@ -211,6 +212,8 @@ Tushare 代码形如 `600000.SH` / `000001.SZ` / `430047.BJ`，与 yinhe/insight
 ### 6.2 单位换算（D8，⚠️ 实现前待办）
 Tushare 原始单位：`vol=手`（1 手=100 股）、`amount=千元`、`pct_chg=%`。canonical 行情表 `volume BIGINT`、`amount NUMERIC(24,4)`。
 
+`daily_basic` 的换算（getrich-design 表接口篇 T1 已决，2026-08-05）：`total_mv`/`circ_mv` 原始单位为**万元 → 元（×10000）**，`total_share`/`float_share`/`free_share` 原始单位为**万股 → 股（×10000）**；换算在 ingest 层完成，canonical `market.stock_daily_basic` 与 `fundamental.valuation_1d` 均以**元**入库，计算层不再临时乘除。
+
 **写 canonical 表时严格换算对齐到既有 provider 口径；raw parquet 保留原始值不动。**
 
 > ⚠️ **实现前必须先核对 yinhe 现有 `volume/amount` 的实际单位**（代码与文档均未注明，见 `AGENTS.md`「不得静默改单位」），据此定换算系数，禁止凭猜测写死系数。换算规则在 ingest 显式实现并加列注释。
@@ -290,3 +293,4 @@ enabled:
 3. **积分档限流**：`rate_limit` 需按实际 Tushare 账号积分档调参，避免触发风控。
 4. **财报核心列选取**：P1 实现时按接口字段确定哪些进实体列、哪些只留 JSONB。
 5. 默认项（D9）若需调整（依赖版本、token 变量名、限流策略），在 P0 前提出。
+6. **`market.stock_daily_basic` DDL 归属待定**：表定义现位于 `db/ddl/60_insight.sql`（历史命名，insight 从未实现该表），owner 已订正为 tushare（§3.1），但 DDL 是否迁移到新文件、走 `ops.table_ownership` 何时 claim，实现阶段再设计，此处仅记录不一致。

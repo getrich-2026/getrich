@@ -29,6 +29,7 @@
 | 涨跌停价 | `stk_limit(start_date, end_date)` | stk_limit/\<YYYY-MM\> |
 | 停复牌 | `suspend_d(start_date, end_date)` | suspend_d/\<YYYY-MM\> |
 | 指数日线 | `index_daily(start_date, end_date)` | index_daily/\<YYYY-MM\> |
+| 每日指标 | `daily_basic(start_date, end_date)` | daily_basic/\<YYYY-MM\> |
 | 期货日线 | `fut_daily(start_date, end_date)` | fut_daily/\<YYYY-MM\> |
 
 `stock_basic` 默认只返回上市中(L)的股票；退市(D)与暂停上市(P)必须显式拉取，
@@ -62,6 +63,7 @@ Tushare 的交易所后缀**与通行简称不一致**，必须显式映射，�
 | 接口 | vol | amount |
 |---|---|---|
 | `daily` / `index_daily` | 手 → 股（×100） | 千元 → 元（×1000）|
+| `daily_basic` | 股本：万股 → 股（×10000） | 市值 `total_mv`/`circ_mv`：万元 → 元（×10000）|
 | `fut_daily` | 手（保持） | 万元 → 元（×10000）|
 
 期货的 `vol` / `oi` 保持「手」——折算成基础单位需要合约乘数，
@@ -118,6 +120,7 @@ Tushare 的交易所后缀**与通行简称不一致**，必须显式映射，�
 | symbol_map | `meta.symbol_map` |
 | calendar | `meta.trading_calendar` |
 | stock_bar_1d | `market.stock_bar_1d` |
+| daily_basic | `market.stock_daily_basic` |
 | index_bar_1d | `market.index_bar_1d` |
 | future_bar_1d | `market.future_bar_1d` |
 
