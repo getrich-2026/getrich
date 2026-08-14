@@ -1,1 +1,0 @@
---8<-- "backtest/docs/42-benchmark-attribution.md"

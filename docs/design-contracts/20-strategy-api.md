@@ -1,1 +1,0 @@
---8<-- "backtest/docs/20-strategy-api.md"

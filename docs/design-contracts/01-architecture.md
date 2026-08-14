@@ -1,1 +1,0 @@
---8<-- "backtest/docs/01-architecture.md"

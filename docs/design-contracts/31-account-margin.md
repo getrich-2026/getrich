@@ -1,1 +1,0 @@
---8<-- "backtest/docs/31-account-margin.md"

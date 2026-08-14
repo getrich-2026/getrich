@@ -1,1 +1,0 @@
---8<-- "backtest/docs/32-risk-control.md"

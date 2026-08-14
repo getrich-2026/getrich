@@ -1,1 +1,0 @@
---8<-- "backtest/docs/52-report-visualization.md"

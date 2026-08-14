@@ -1,1 +1,0 @@
---8<-- "backtest/docs/43-stress-test.md"
