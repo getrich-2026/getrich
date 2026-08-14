@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!-- 服务器时区：平台铁律 Asia/Shanghai。
+         不依赖容器 TZ 环境变量隐式传递，显式写死避免夜盘跨日数据错一天。 -->
+    <timezone>Asia/Shanghai</timezone>
+
+    <logger>
+        <!-- 日志级别: trace, debug, information, warning, error -->
+        <level>information</level>
+
+        <!-- 单个日志文件最大大小 (100MB) -->
+        <size>100M</size>
+
+        <!-- 保留最近 10 个日志文件 -->
+        <count>10</count>
+
+        <!-- 日志格式 -->
+        <formatting>
+            <type>json</type>
+            <names>
+                <date_time>timestamp</date_time>
+                <level>level</level>
+                <logger_name>logger</logger_name>
+                <message>message</message>
+            </names>
+        </formatting>
+    </logger>
+
+    <!-- system.*_log 表统一保留 7 天。
+         TTL 只在建表时生效：若表已存在且配置变更，ClickHouse 会把旧表重命名后重建，
+         旧表仍占磁盘，需要手动 DROP。 -->
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <ttl>event_date + INTERVAL 7 DAY</ttl>
+    </query_log>
+
+    <!-- metric_log 与 asynchronous_metric_log 写入频率最高，是磁盘占用的主要来源 -->
+    <metric_log>
+        <database>system</database>
+        <table>metric_log</table>
+        <ttl>event_date + INTERVAL 7 DAY</ttl>
+    </metric_log>
+
+    <asynchronous_metric_log>
+        <database>system</database>
+        <table>asynchronous_metric_log</table>
+        <ttl>event_date + INTERVAL 7 DAY</ttl>
+    </asynchronous_metric_log>
+
+    <trace_log>
+        <database>system</database>
+        <table>trace_log</table>
+        <ttl>event_date + INTERVAL 7 DAY</ttl>
+    </trace_log>
+
+    <part_log>
+        <database>system</database>
+        <table>part_log</table>
+        <ttl>event_date + INTERVAL 7 DAY</ttl>
+    </part_log>
+</clickhouse>

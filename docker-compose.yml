@@ -1,85 +1,103 @@
-version: "3.9"
-
-# GetRich 平台完整开发栈
-# 用法：
-#   docker compose up -d              # 起所有服务
-#   docker compose logs -f ch redis   # tail 日志
-#   docker compose down -v            # 关 + 清数据卷
-#   docker compose exec postgres psql -U quant getrich
-
+# Local infrastructure only. Copy .env.example to .env before running Compose.
+# Python applications run from the uv workspace on the host.
 services:
   postgres:
-    image: postgres:16
-    container_name: getrich-postgres
+    image: timescale/timescaledb:2.28.3-pg17-oss
+    container_name: ${POSTGRES_CONTAINER_NAME:-getrich-pg17}
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: quant
-      POSTGRES_PASSWORD: devpass
-      POSTGRES_DB: getrich
+      POSTGRES_USER: ${PG_USER:-quant}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?Set PG_PASSWORD in .env}
+      POSTGRES_DB: ${PG_DB:-getrich}
+      TZ: ${TZ:-Asia/Shanghai}
+    # 全部参数见 config/postgres/postgresql.conf
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
     ports:
-      - "5432:5432"
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${PG_PORT:-5432}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_DIR:-./.docker/postgres/data}:/var/lib/postgresql/data
+      - ${POSTGRES_LOG_DIR:-./.docker/postgres/logs}:/var/log/postgresql
+      - ./config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    shm_size: 1gb
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U quant -d getrich"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
+      start_period: 10s
+    networks:
+      - quant_network
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.3
-    container_name: getrich-clickhouse
+    image: clickhouse/clickhouse-server:26.3
+    container_name: ${CLICKHOUSE_CONTAINER_NAME:-getrich-ch26}
+    restart: unless-stopped
     environment:
-      CLICKHOUSE_DB: getrich
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: devpass
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-getrich}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-quant}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "8123:8123"   # HTTP
-      - "9000:9000"   # native
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_PORT:-8123}:8123"
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_INTERSERVER_PORT:-9009}:9009"
     volumes:
-      - clickhouse-data:/var/lib/clickhouse
+      - ${CLICKHOUSE_DATA_DIR:-./.docker/clickhouse/data}:/var/lib/clickhouse
+      - ${CLICKHOUSE_LOG_DIR:-./.docker/clickhouse/logs}:/var/log/clickhouse-server
+      - ./config/clickhouse/logger.xml:/etc/clickhouse-server/config.d/logger.xml:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
-      interval: 5s
+      test:
+        - CMD-SHELL
+        - >-
+          clickhouse-client
+          --user "$$CLICKHOUSE_USER"
+          --password "$$CLICKHOUSE_PASSWORD"
+          --database "$$CLICKHOUSE_DB"
+          --query "SELECT 1"
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
+      start_period: 20s
+    networks:
+      - quant_network
 
   redis:
-    image: redis:7
-    container_name: getrich-redis
+    image: redis:8.2.8
+    container_name: ${REDIS_CONTAINER_NAME:-getrich-redis82}
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      # 容量上限按机器规格调整；策略为 noeviction，写满即报错（见 config/redis/redis.conf）
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-2gb}
+      TZ: ${TZ:-Asia/Shanghai}
+    command:
+      - /bin/sh
+      - -c
+      - exec redis-server /usr/local/etc/redis/redis.conf --requirepass "$$REDIS_PASSWORD" --maxmemory "$$REDIS_MAXMEMORY"
     ports:
-      - "6379:6379"
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
-      - redis-data:/data
+      - ${REDIS_DATA_DIR:-./.docker/redis/data}:/data
+      - ${REDIS_LOG_DIR:-./.docker/redis/logs}:/var/log/redis
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 10s
+      timeout: 5s
       retries: 5
+      start_period: 5s
+    networks:
+      - quant_network
 
-  # 一次性初始化：跑 migration 后退出
-  # 用法：docker compose run --rm migrate
-  migrate:
-    profiles: ["migrate"]
-    build:
-      context: .
-      dockerfile: Dockerfile
-    depends_on:
-      postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-    env_file: .env.local
-    command: >
-      sh -c "uv run python -m getrich.migrations.cli postgres &&
-             uv run python -m getrich.migrations.cli clickhouse &&
-             echo 'Migrations applied successfully'"
-
-volumes:
-  postgres-data:
-  clickhouse-data:
-  redis-data:
+networks:
+  quant_network:
+    name: ${DOCKER_NETWORK_NAME:-quant_network}
+    driver: bridge
