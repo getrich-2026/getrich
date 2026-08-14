@@ -12,8 +12,9 @@ dist
 dist-ssr
 *.local
 
-.agent/
-.claude/
+# .agent/ 是三个 harness 共享的跨会话状态，需要提交（见 .agent/brain/DECISIONS.md D-011）
+# 只忽略个人本地覆盖，团队共享的 .claude/settings.json 需要提交
+.claude/settings.local.json
 
 # Editor directories and files
 .vscode/*
@@ -67,7 +68,9 @@ pip-delete-this-directory.txt
 
 # Unit test / coverage reports
 htmlcov/
-frontend/coverage/        # vitest --coverage output (text + html + coverage-final.json)
+# vitest --coverage 输出（text + html + coverage-final.json）
+# 注意：.gitignore 不支持行尾注释，注释必须独占一行
+apps/backtest-web/coverage/
 .tox/
 .nox/
 .coverage
@@ -79,6 +82,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.ruff_cache/
 cover/
 
 # Translations
@@ -150,8 +154,11 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation
+# Generated static-site output
 /site
+
+# Local Docker bind-mount data
+/.docker/
 
 # mypy
 .mypy_cache/
@@ -167,7 +174,6 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-.claude/
 .antigravitycli/
 
 # --- Secrets / local config (Round #1195 A-2) ---
