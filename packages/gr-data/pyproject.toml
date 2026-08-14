@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gr-data"
+version = "0.1.2"
+description = "GetRich shared configuration and database clients"
+requires-python = ">=3.10"
+dependencies = [
+    "akshare",
+    "clickhouse-connect",
+    "duckdb",
+    "pandas",
+    "polars",
+    "psycopg[binary,pool]>=3.2",
+    "pyarrow",
+    "python-dotenv",
+    "pyyaml",
+    "rich",
+    "rqdatac",
+    "tqdm",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["getrich.config*", "getrich.libs*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+getrich = ["py.typed"]

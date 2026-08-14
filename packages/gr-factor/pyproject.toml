@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gr-factor"
+version = "0.1.2"
+description = "GetRich factor research and option analytics"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "plotly",
+    "py-vollib",
+    "pyecharts",
+    "scikit-learn",
+    "scipy",
+    "seaborn",
+    "statsmodels",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["getrich.optionLib*"]
+namespaces = true
+

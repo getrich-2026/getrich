@@ -1,95 +1,33 @@
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "getrich"
+name = "getrich-workspace"
 version = "0.1.2"
-description = "量化投研系统 - 模块化设计的多品种投研交易平台"
+description = "GetRich monorepo workspace"
 readme = "README.md"
 authors = [{ name = "GetRich Team", email = "linnan@nebulastar.com.cn" }]
 license = { text = "MIT" }
 requires-python = ">=3.10"
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Financial and Insurance Industry",
-    "Topic :: Office/Business :: Financial :: Investment",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-]
-keywords = [
-    "quantitative trading",
-    "futures",
-    "options",
-    "financial",
-    "trading system",
-]
-
-# 项目依赖
 dependencies = [
-    "duckdb",
-    "akshare",
-    "clickhouse-connect",
-    "python-dotenv",
-    "matplotlib",
-    "plotly",
-    "numpy",
-    "pandas",
-    "polars",
-    "pyarrow",
-    "py_vollib",
-    "pyyaml",
-    "python-dateutil",
-    "rich",
-    "scikit-learn",
-    "scipy",
-    "seaborn",
-    "statsmodels",
-    "tqdm",
-    "rqdatac",
-    "fastapi>=0.115,<0.141",
-    "uvicorn[standard]>=0.30",
-    "pydantic>=2.7,<3",
-    "psycopg[binary,pool]>=3.2",
-    "orjson>=3.10",
-    "bcrypt>=4.0",
-    "celery[redis]>=5.4",
-    "redis>=5.0",
-    "bleach>=6.3.0",
-    "prometheus_client>=0.20",
+    "gr-agent",
+    "gr-api",
+    "gr-backtest",
+    "gr-data",
+    "gr-factor",
+    "gr-signal",
 ]
 
+[tool.uv]
+package = false
 
-[project.scripts]
-getrich-migrate = "getrich.migrations.cli:main"
+[tool.uv.sources]
+gr-agent = { workspace = true }
+gr-api = { workspace = true }
+gr-backtest = { workspace = true }
+gr-data = { workspace = true }
+gr-factor = { workspace = true }
+gr-signal = { workspace = true }
 
-
-[project.optional-dependencies]
-dev = [
-    "mypy",
-    "pandas-stubs",
-    "pytest",
-    "ruff",
-    "flower>=2.0",
-]
-
-[tool.setuptools]
-zip-safe = false
-include-package-data = true
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["getrich*", "getrich_backtest*"]
-exclude = ["tests*", "reference*", "docs*"]
-
-[tool.setuptools.package-data]
-"getrich.config" = ["*.yml"]
-"getrich.apps.data.table" = ["*.sql"]
+[tool.uv.workspace]
+members = ["packages/*"]
 
 [tool.ruff]
 # 代码每行最大长度
@@ -133,10 +71,14 @@ lines-after-imports = 2
 # 测试配置
 minversion = "7.0"
 # 自动发现测试文件
-testpaths = ["tests"]
+testpaths = [
+    "packages/gr-backtest/tests",
+    "packages/gr-factor/tests",
+]
 # Round #1203 (E-1): two distinct test trees share base names
 # (``test_backtest_run.py`` and ``test_metrics.py`` exist in BOTH
-# ``tests/getrich_backtest/`` and ``tests/getrich/apps/web/``). The
+# ``packages/gr-backtest/tests/getrich_backtest/`` and
+# ``packages/gr-backtest/tests/getrich/apps/web/``). The
 # default ``prepend`` import mode re-uses the first-seen module on
 # later collection, which raises ``import file mismatch`` and
 # crashes the test run. The ``importlib`` mode imports each test
@@ -153,9 +95,8 @@ testpaths = ["tests"]
 # -ra: 显示跳过/失败的原因
 # --durations=10: 列出最慢的 10 个测试 (用于性能优化)
 # --no-cov-on-fail: 如果测试失败不要被覆盖率覆盖输出淹没
-# --cov=<packages>: 默认开 coverage 但只在终端打印 (--cov-report=term-missing)，
-# CI 用 ``--cov-fail-under=`` 单独强制阈值；本地不加 -no-cov 是
-# 不阻断的。``--cov`` 默认关闭在 ``addopts`` 里，由 ``measure_coverage.sh`` 启用。
+# CI 通过显式的 ``--cov`` 与 ``--cov-fail-under`` 参数启用覆盖率门禁；
+# 本地默认测试不计算覆盖率。
 addopts = "-v -ra --durations=10 --import-mode=importlib"
 # 过滤器：将特定警告视为错误 (严格模式)
 filterwarnings = ["ignore::DeprecationWarning"]
@@ -281,16 +222,13 @@ exclude = [
 
 [dependency-groups]
 dev = [
-    "griffe-inherited-docstrings>=1.1.3",
+    "flower>=2.0",
     "httpx>=0.28.1",
-    "mkdocs-autorefs>=1.4.4",
-    "mkdocs-git-revision-date-localized-plugin>=1.5.3",
-    "mkdocs-include-markdown-plugin>=7.3.0",
-    "mkdocs-material>=9.7.6",
-    "mkdocs-minify-plugin>=0.8.0",
-    "mkdocstrings-python>=2.0.4",
-    "pymdown-extensions>=10",
+    "mypy",
+    "pandas-stubs",
+    "pytest",
     "pytest-cov>=6.0.0",
+    "ruff",
     # ``tomllib`` is stdlib in 3.11+; the CI matrix still
     # includes 3.10, so we keep ``tomli`` as the fallback for
     # the test that reads pyproject.toml.

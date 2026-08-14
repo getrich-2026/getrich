@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gr-api"
+version = "0.1.2"
+description = "GetRich FastAPI application"
+requires-python = ">=3.10"
+dependencies = [
+    "bcrypt>=4.0",
+    "bleach>=6.3.0",
+    "fastapi>=0.115,<0.141",
+    "gr-backtest",
+    "gr-data",
+    "orjson>=3.10",
+    "prometheus-client>=0.20",
+    "psycopg[binary,pool]>=3.2",
+    "pydantic>=2.7,<3",
+    "uvicorn[standard]>=0.30",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["getrich.apps.web*"]
+namespaces = true
