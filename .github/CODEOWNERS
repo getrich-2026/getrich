@@ -1,0 +1,26 @@
+# Repository-wide fallback owner.
+#
+# GetRich is a monorepo, so GitHub permissions remain repository-wide while
+# review ownership is assigned by path. When organization teams are created,
+# replace the owner on the relevant line with a visible team such as
+# @getrich-2026/<team-slug>. Every listed user or team must have write access.
+* @neolin0629
+
+# Protect repository automation and ownership rules.
+/.github/ @neolin0629
+
+# Python workspace packages.
+/packages/gr-data/ @johnnysiit
+/packages/gr-factor/ @neolin0629
+/packages/gr-signal/ @neolin0629
+/packages/gr-backtest/ @neolin0629
+/packages/gr-api/ @neolin0629
+/packages/gr-agent/ @neolin0629
+
+# Frontend applications.
+/apps/web/ @ciciqio
+/apps/backtest-web/ @MillerQuant
+
+# Repository-level workspace contracts.
+/pyproject.toml @neolin0629
+/uv.lock @neolin0629

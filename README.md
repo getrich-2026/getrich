@@ -117,6 +117,7 @@ export default defineConfig([
 | Strategy Service | /apps/strategy | 本地模式：连接远程 CH 回测；生产模式：Docker 运行实时计算。 | Python, NumPy, Talib |
 | Gateway Service | /apps/gateway | 统一后端网关。处理 REST API (历史查询) 和 WebSocket (实时推送)。 | Python FastAPI, Redis-py |
 | Web Frontend | /apps/web | 用户交互界面。K线展示、信号订阅、仪表盘。 | React, Next.js, Tailwind, Lightweight-Charts |
+| Backtest Frontend | /apps/backtest-web | 回测任务、参数扫描、Walk-Forward 与结果分析界面。 | React, TypeScript, Vite |
 
 ## 2.3. 技术栈选型 (Tech Stack)
 - 编程语言: Python 3.12+ (后端/策略), TypeScript (前端)
@@ -128,45 +129,42 @@ export default defineConfig([
 
 ## 3. 环境与配置 (Environment Setup) [重要]
 
-由于采用外部数据源模式，正确配置环境变量至关重要。
+数据库容器和 Python 应用共用根目录的 `.env` 配置。
 
 ### 3.1 配置文件 (.env)
 
-请复制 .env.example 为 .env（此文件不应提交 Git），并根据运行环境修改：
-```ini
-# .env 示例
+复制配置模板并更换三个数据库密码（`.env` 已被 Git 忽略）：
 
-# --- 数据库配置 (核心) ---
-# [场景 A: 本地开发] 填写 Ubuntu 虚拟机的局域网 IP (例如 192.168.50.10)
-# [场景 B: 服务器部署] 填写宿主机 IP (例如 172.17.0.1) 或保持 VM 局域网 IP
-CLICKHOUSE_HOST=192.168.x.x
-CLICKHOUSE_PORT=8123
-CLICKHOUSE_USER=default
-CLICKHOUSE_PASSWORD=your_password
-CLICKHOUSE_DB=default
-
-# --- Redis 配置 ---
-# 生产环境下 Redis 运行在 Docker 容器名为 "redis" 的主机上
-# 本地开发若无 Docker Redis，可填 localhost
-REDIS_HOST=redis
-REDIS_PORT=6379
+```bash
+cp .env.example .env
+openssl rand -hex 24
 ```
 
-### 3.2 开发工作流 (Workflow)
+数据库端口默认只在 `127.0.0.1` 发布（`DOCKER_BIND_HOST`，见下节）。服务器如需
+使用 `/opt/getrich` 持久化目录，修改部署目录 `.env` 中的 `POSTGRES_DATA_DIR`、
+`CLICKHOUSE_DATA_DIR`、`CLICKHOUSE_LOG_DIR` 和 `REDIS_DATA_DIR` 即可。
 
-1. Local Dev (个人电脑):
+### 3.2 本地基础设施
 
-    - 修改本地 .env 指向虚拟机 IP。
-    - 使用 Jupyter 或 Python 脚本连接远程 ClickHouse 进行策略研发。
-    - 禁止在本地长时间运行实时写入脚本（避免数据污染），仅做回测和代码调试。
-    - 代码 Commit & Push 到 Git。
+本地 PostgreSQL、ClickHouse 和 Redis 的编排文件已从仓库移出，统一维护在
+`/Volumes/myssd/getrich-docker/`（仓库内不再保留 `docker-compose.yml`）：
 
-2. Server Deploy (Ubuntu VM):
-    - SSH 登入虚拟机。
-    - git pull 拉取最新代码。
-    - 修改服务器端的 .env (通常只需配置一次)。
-    - docker-compose up -d --build 重启服务。
-  
+- TimescaleDB `2.28.3-pg17-oss`
+- ClickHouse `26.3`
+- Redis `8.2.8`
+
+```bash
+cd /Volumes/myssd/getrich-docker
+docker compose config --quiet
+docker compose up -d
+docker compose ps
+docker compose down
+```
+
+部署目录内的 `README.md` 有完整说明（日志轮转、SSH 隧道访问、生产注意事项）。
+Python 服务通过 uv workspace 在宿主机运行，前端分别在 `apps/web` 和
+`apps/backtest-web` 中运行。生产部署方案尚未在本仓库固化。
+
 ## 4. 数据库设计 (ClickHouse Schema)
 所有涉及存储的代码必须遵循以下 Schema 定义。
 
@@ -319,50 +317,47 @@ class BaseStrategy(ABC):
 
 ## 6. 项目目录结构 (Repo Structure)
 ```
-getrich-monorepo/
+getrich/
+├── packages/
+│   ├── gr-data/          # 共享配置与数据库客户端（06.06 前）
+│   ├── gr-factor/        # 因子计算
+│   ├── gr-signal/        # 信号模块占位项目（仅 pyproject.toml）
+│   ├── gr-backtest/      # 回测引擎及 06.06 后新增后端代码
+│   ├── gr-api/           # FastAPI 接口（06.06 前）
+│   └── gr-agent/         # Agent 占位项目（仅 pyproject.toml）
 ├── apps/
-│   ├── data/            # 数据入库服务 (Ingestion)
-│   ├── strategy/        # 策略引擎 (Strategy Engine)
-│   ├── gateway/         # 后端 API & WS (FastAPI)
-│   └── web/             # 前端 (React)
-├── libs/                # 共享库
-│   ├── db/              # ClickHouse 连接客户端 (含 env 读取)
-│   ├── messaging/       # Redis 封装
-│   └── strategy_core/   # 策略基类定义
-├── deploy/
-│   └── docker-compose.yml
-├── .env.example         # 环境变量模板
-├── pyproject.toml       # Python 依赖管理 (Poetry)
-└── README.md            # 本文档
+│   ├── web/              # 主前端
+│   └── backtest-web/     # 回测前端（暂不部署）
+├── scripts/              # 仓库检查工具
+└── pyproject.toml        # uv workspace 根配置
+```
+
+> 本地数据库与 Redis 的编排文件已移至 `/Volumes/myssd/getrich-docker/`（见 3.2 节）。
 ```
 
 ## 7. 启动指南 (Quick Start)
 
-前置条件
- - Server: Ubuntu 虚拟机已安装 ClickHouse，并配置 users.xml 允许 ```<ip>::/0``` 访问。
- - Local: 已安装 Docker, Python 3.11+。
+前置条件：Python 3.10+、uv、Node.js 和 Docker Desktop。
 
-步骤 1: 环境配置
-```
-# 复制配置模板
+```bash
+# 安装 Python workspace 依赖
+uv sync --frozen --all-packages
+
+# 首次使用时创建本地配置并修改密码
 cp .env.example .env
 
-# 编辑 .env (本地开发填 VM IP，服务器填宿主机 IP)
-vim .env 
-```
+# 启动本地基础设施（编排文件在 /Volumes/myssd/getrich-docker/，见 3.2 节）
+docker compose -f /Volumes/myssd/getrich-docker/docker-compose.yml up -d
 
-步骤 2: 启动业务服务
-```
-# 启动 Redis 及业务容器 (Data/Strategy/Gateway/Web)
-# 注意：此命令不会启动 ClickHouse，因为假定它已在外部运行
-docker-compose up -d --build
+# 初始化数据库
+uv run getrich-migrate postgres
+uv run getrich-migrate clickhouse
 
-# 查看日志确保连接成功
-docker-compose logs -f strategy-service
-```
+# 启动后端 API（默认 http://localhost:8001）
+uv run uvicorn getrich.apps.web.main:app --reload --port 8001
 
-步骤 3: 初始化数据库 (仅首次)
-```
-# 在本地或服务器运行一次即可
-python apps/data/scripts/init_db.py
+# 另开终端启动主前端（http://localhost:3000）
+cd apps/web
+npm install
+npm run dev -- --host localhost --port 3000
 ```

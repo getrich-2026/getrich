@@ -1,0 +1,60 @@
+name: Backtest frontend
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "apps/backtest-web/**"
+      - ".github/workflows/backtest-web.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "apps/backtest-web/**"
+      - ".github/workflows/backtest-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/backtest-web
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/backtest-web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Test with coverage
+        run: npm run test:cov
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-backtest-web
+          path: apps/backtest-web/coverage
+          retention-days: 3
+          if-no-files-found: warn
+
+      - name: Build
+        run: npm run build

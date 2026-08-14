@@ -1,154 +1,98 @@
-# Dependabot configuration for the GetRich platform.
-#
-# Why Dependabot (not Renovate)
-# -----------------------------
-# Dependabot ships natively in GitHub; we don't need an extra
-# bot account, an extra PAT, or a third-party dashboard. The
-# config below covers the three update sources we use:
-#
-#   1. pip (Python deps in pyproject.toml / uv.lock)
-#   2. npm (frontend deps in frontend/package.json + lockfile)
-#   3. github-actions (the 8+ actions pinned in .github/workflows/)
-#
-# Update policy
-# -------------
-# - Weekly, on Mondays at 09:00 Asia/Shanghai. Monday batches
-#   ride into the Tuesday stand-up so the team can triage
-#   together.
-# - Grouped: all patch updates for the SAME ecosystem land in
-#   ONE PR, so reviewers see the diff as a single coherent
-#   change. Minor updates for the same DIRECTORY are also
-#   grouped. Major-version bumps are isolated (one PR per
-#   package) so a CVEs-style "drop everything and merge" PR
-#   can move fast.
-# - 10 PR cap per ecosystem per run; the oldest get deferred
-#   to the next Monday. 5 is usually plenty, but uv / npm
-#   weekly throughput is bursty and we'd rather have
-#   back-pressure than a 200-PR pile.
-# - Target branch: `dev` (not `main`). Production releases
-#   cherry-pick from dev.
-# - Commit message prefix includes the ecosystem so the
-#   history is greppable: `deps(pip):`, `deps(frontend):`,
-#   `ci(actions):`.
-# - Reviewers: defaults to CODEOWNERS at the repo level.
-#   No `assignees`/`reviewers` here — keeping the PR list
-#   team-agnostic so a single maintainer can clear the queue.
-# - `rebase-strategy: auto` means Dependabot rebases open
-#   PRs onto the latest dev so a stuck PR doesn't rot.
-
 version: 2
 
-# Apply common settings to every update.
+# Version updates target the default development branch. Security updates
+# continue to follow GitHub's repository security settings.
 updates:
-  # ---------------------------------------------------------------
-  # 1. Python (uv / pip)
-  # ---------------------------------------------------------------
-  - package-ecosystem: "pip"
+  # The root uv workspace owns the shared uv.lock and all package manifests.
+  - package-ecosystem: "uv"
     directory: "/"
-    # Monday 09:00 Asia/Shanghai = Monday 01:00 UTC. We
-    # use the explicit UTC form because Dependabot's
-    # timezone field is documented but flaky in practice.
+    target-branch: "dev"
     schedule:
       interval: "weekly"
       day: "monday"
-      time: "01:00"
-      timezone: "UTC"
-    # 10 PR cap; oldest get deferred.
-    open-pull-requests-limit: 10
-    # Group patch updates (1.2.3 → 1.2.4) across the whole
-    # pyproject.toml. A single PR keeps review overhead low.
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
     groups:
-      python-patch:
+      uv-minor-patch:
         applies-to: version-updates
         patterns: ["*"]
         update-types: ["minor", "patch"]
-      python-major:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["major"]
-    # Tell Dependabot about uv.lock so it bumps the lockfile
-    # in the same PR, not just pyproject.toml.
-    # (As of 2024, Dependabot auto-detects uv.lock + pip-tools
-    # managed lockfiles.)
-    labels:
-      - "deps"
-      - "python"
-    commit-message:
-      prefix: "deps(pip)"
-      prefix-development: "deps(pip-dev)"
-      include: "scope"
-    # Allow Dependabot to push to the branch (needed for
-    # auto-rebase).
-    allow:
-      - dependency-name: "*"
-        dependency-type: "direct"
-      - dependency-name: "*"
-        dependency-type: "indirect"
-
-  # ---------------------------------------------------------------
-  # 2. npm (frontend)
-  # ---------------------------------------------------------------
-  - package-ecosystem: "npm"
-    directory: "/frontend"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "01:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 10
-    # Group patch + minor into one PR per directory; isolate
-    # major bumps so a React 19 → 20 migration can be reviewed
-    # on its own.
-    groups:
-      frontend-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-      frontend-major:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["major"]
-    # Vite plugin ecosystem has frequent major bumps; isolate
-    # them so the build doesn't break in a single sweeping PR.
     ignore:
-      # We pin Node 20 LTS (see .github/workflows/ci.yml);
-      # the engines field in package.json enforces it.
       - dependency-name: "*"
-        # update-types not given → ignore all update types
-        # (placeholder; we don't actually want to ignore
-        # everything, so this is removed via the next entry).
-    labels:
-      - "deps"
-      - "frontend"
+        update-types: ["version-update:semver-major"]
     commit-message:
-      prefix: "deps(frontend)"
-      include: "scope"
+      prefix: "deps(uv)"
 
-  # ---------------------------------------------------------------
-  # 3. GitHub Actions
-  # ---------------------------------------------------------------
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  # Main product frontend. Keep it separate from the backtest frontend because
+  # they intentionally use different Vite and TypeScript major versions.
+  - package-ecosystem: "npm"
+    directory: "/apps/web"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
-      day: "monday"
-      time: "01:00"
-      timezone: "UTC"
-    # GitHub Actions rarely see weekly major-version churn
-    # (most actions stay on v4 for 18+ months). Cap PRs at 3.
+      day: "tuesday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 3
     groups:
-      actions-minor:
+      web-minor-patch:
         applies-to: version-updates
         patterns: ["*"]
         update-types: ["minor", "patch"]
-      actions-major:
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "deps(web)"
+
+  # Backtest frontend.
+  - package-ecosystem: "npm"
+    directory: "/apps/backtest-web"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      backtest-web-minor-patch:
         applies-to: version-updates
         patterns: ["*"]
-        update-types: ["major"]
-    labels:
-      - "deps"
-      - "ci"
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "deps(backtest-web)"
+
+  # Action major upgrades are reviewed manually because they can change the
+  # runner runtime or permissions model.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "ci(actions)"
-      include: "scope"
