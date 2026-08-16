@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from gr_data.common import contracts
 from gr_data.common.parquet import last_index_date, read_parquet_if_exists, write_parquet
 from gr_data.common.quality import check_dataframe
-from gr_data.common.retry import chunk_date_range, chunk_list, to_int_date, today_int
+from gr_data.common.retry import (
+    PermanentError,
+    chunk_date_range,
+    chunk_list,
+    retry_call,
+    to_int_date,
+    today_int,
+)
 
 
 def test_contracts_assets():
@@ -71,3 +79,38 @@ def test_conninfo_escapes_special_characters():
     for pw in ("simple", "my pass", "it's", "a\\b", "p@ss:w/rd", ""):
         cfg = PgConfig(host="h", port=5432, dbname="d", user="u", password=pw)
         assert conninfo_to_dict(cfg.conninfo()).get("password", "") == pw, f"密码 {pw!r} 被改写"
+
+
+# ---------------------------------------------------------------- retry 语义
+
+
+def test_retry_call_does_not_retry_permanent_error() -> None:
+    """配置类错误（缺 token、缺 SDK）必须立刻失败，不能退避重试。
+
+    重试 5 次要白等约 45 秒，真正的原因还会被一串重试日志淹没；
+    定时任务上每个数据集都白等一轮，问题会被拖到很久之后才发现。
+    """
+    calls = {"n": 0}
+
+    def always_permanent() -> None:
+        calls["n"] += 1
+        raise PermanentError("缺少 token")
+
+    with pytest.raises(PermanentError):
+        retry_call(always_permanent, max_retries=5, backoff_base=0)
+
+    assert calls["n"] == 1, "PermanentError 被重试了"
+
+
+def test_retry_call_still_retries_transient_error() -> None:
+    """网络抖动等临时故障仍要重试，第三次成功。"""
+    calls = {"n": 0}
+
+    def flaky() -> str:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise ConnectionError("网络抖动")
+        return "ok"
+
+    assert retry_call(flaky, max_retries=5, backoff_base=0) == "ok"
+    assert calls["n"] == 3

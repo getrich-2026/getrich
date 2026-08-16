@@ -21,6 +21,7 @@ from typing import Any, Protocol
 
 import pandas as pd
 
+from gr_data.common.retry import PermanentError
 from gr_data.logging import get_logger
 
 
@@ -60,7 +61,7 @@ class AmazingDataClient:
                 # 保持一致便于与厂商示例代码对照。
                 import AmazingData as ad  # type: ignore  # noqa: N813
             except ImportError as e:  # pragma: no cover - 依赖真实环境
-                raise RuntimeError("未安装 AmazingData SDK。请安装银河量化 SDK 后重试。") from e
+                raise PermanentError("未安装 AmazingData SDK。请安装银河量化 SDK 后重试。") from e
             ad.login(
                 username=self._username,
                 password=self._password,

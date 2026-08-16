@@ -12,9 +12,9 @@
 CREATE SCHEMA IF NOT EXISTS app;
 
 CREATE TABLE IF NOT EXISTS app.orders (
-    id              VARCHAR(64)     PRIMARY KEY,                   -- UUID
+    id              UUID            PRIMARY KEY,
     order_no        VARCHAR(64)     NOT NULL UNIQUE,               -- human-readable order number
-    user_id         VARCHAR(64)     NOT NULL,                      -- FK to users.id
+    user_id         UUID            NOT NULL,                      -- FK to app.users.id
     status          VARCHAR(16)     NOT NULL DEFAULT 'pending',    -- pending | paid | failed | refunded
     subtotal        DECIMAL(20,4)   NOT NULL DEFAULT 0,
     total           DECIMAL(20,4)   NOT NULL DEFAULT 0,            -- total amount
@@ -33,9 +33,9 @@ COMMENT ON TABLE app.orders IS
 
 CREATE TABLE IF NOT EXISTS app.order_items (
     id              VARCHAR(64)     PRIMARY KEY,                   -- UUID
-    order_id        VARCHAR(64)     NOT NULL REFERENCES app.orders(id),
+    order_id        UUID            NOT NULL REFERENCES app.orders(id),
     item_type       VARCHAR(32)     NOT NULL,                      -- 'strategy_subscription' | 'strategy_payg'
-    item_id         VARCHAR(64),                                   -- FK to strategies.id (nullable for non-strategy items)
+    item_id         UUID,                                          -- FK to app.strategies.id（非策略商品为空）
     item_name       VARCHAR(255)    NOT NULL,
     unit_price      DECIMAL(20,4)   NOT NULL DEFAULT 0,
     quantity        INT             NOT NULL DEFAULT 1,

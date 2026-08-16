@@ -20,7 +20,7 @@ CREATE SCHEMA IF NOT EXISTS app;
 
 -- Mapping table: strategy UUID → sub-account ID in live_account_state
 CREATE TABLE IF NOT EXISTS app.strategy_sub_account_mapping (
-    strategy_id     VARCHAR(64)  NOT NULL PRIMARY KEY,
+    strategy_id     UUID         NOT NULL PRIMARY KEY,
     sub_account_id  INT          NOT NULL,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()

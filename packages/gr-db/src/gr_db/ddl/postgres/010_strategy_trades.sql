@@ -10,9 +10,9 @@
 CREATE SCHEMA IF NOT EXISTS app;
 
 CREATE TABLE IF NOT EXISTS app.strategy_trades (
-    id              VARCHAR(64)     PRIMARY KEY,        -- UUID v4
-    strategy_id     VARCHAR(64)     NOT NULL,           -- FK to strategies.id
-    signal_id       VARCHAR(64),                        -- nullable FK to signals.id (null for backtest fills)
+    id              UUID            PRIMARY KEY,
+    strategy_id     UUID            NOT NULL,           -- FK to app.strategies.id
+    signal_id       UUID,                               -- FK to app.signals.id（回测成交为空）
     symbol          VARCHAR(32)     NOT NULL,
     action          VARCHAR(8)      NOT NULL,           -- 'buy' | 'sell'
     quantity        DECIMAL(20,8)   NOT NULL,           -- executed qty

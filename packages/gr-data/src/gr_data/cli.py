@@ -138,7 +138,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = load_config(args.config)
     _configure_logging_from(cfg)
-    return args.func(args, cfg)
+    try:
+        return args.func(args, cfg)
+    except RuntimeError as exc:
+        # 缺凭证／缺供应商 SDK 是**预期内**的配置问题，不是程序缺陷：
+        # 打一行可执行的提示就够了，甩一整页 traceback 只会淹没真正的原因。
+        # 其他异常照常抛出，保留完整栈便于排查。
+        log.error("%s", exc)
+        print(f"错误: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

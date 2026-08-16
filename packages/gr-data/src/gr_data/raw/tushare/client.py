@@ -32,6 +32,8 @@ from typing import Any, Protocol
 
 import pandas as pd
 
+from gr_data.common.retry import PermanentError
+
 
 # 各接口单次返回上限。Tushare 未在响应中给出截断标志，只能靠行数推断，
 # 因此这里必须与官方文档保持一致；调小是安全的，调大会导致漏数据。
@@ -70,14 +72,14 @@ class TushareProClient:
     def _sdk(self) -> Any:
         if self._pro is None:
             if not self._token.strip():
-                raise RuntimeError(
+                raise PermanentError(
                     "缺少 Tushare token，请设置环境变量 TUSHARE_TOKEN "
                     "并在 config.yaml 的 providers.tushare.token_env 中引用。"
                 )
             try:
                 import tushare as ts  # type: ignore
             except ImportError as e:  # pragma: no cover - 依赖真实 SDK
-                raise RuntimeError("未安装 tushare SDK。") from e
+                raise PermanentError("未安装 tushare SDK。") from e
             self._pro = ts.pro_api(self._token)
         return self._pro
 

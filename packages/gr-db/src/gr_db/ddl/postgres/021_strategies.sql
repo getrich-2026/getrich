@@ -12,7 +12,7 @@
 CREATE SCHEMA IF NOT EXISTS app;
 
 CREATE TABLE IF NOT EXISTS app.strategies (
-    id                      VARCHAR(64)     PRIMARY KEY,                   -- UUID
+    id                      UUID            PRIMARY KEY,
     strategy_code           VARCHAR(64)     NOT NULL UNIQUE,               -- human-readable code (e.g. STR_IF_001)
     name                    VARCHAR(255)    NOT NULL,
     summary                 TEXT,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS app.strategies (
     pub_status              VARCHAR(16)     DEFAULT 'published',           -- 'draft' | 'published' | 'archived'
     backtest_start          DATE,                                          -- backtest range start
     backtest_end            DATE,                                          -- backtest range end
-    author_id               VARCHAR(64),                                   -- FK to users.id
+    author_id               UUID,                                          -- FK to app.users.id
     web                     BOOLEAN         DEFAULT TRUE,                  -- visible on web
     published_at            TIMESTAMPTZ,
     created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
