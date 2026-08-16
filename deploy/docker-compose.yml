@@ -1,5 +1,6 @@
-# Local infrastructure only. Copy .env.example to .env before running Compose.
-# Python applications run from the uv workspace on the host.
+# GetRich 基础设施部署模板。
+# 不要在 GetRich 仓库内直接启动；请把 deploy/ 中的文件复制到仓库外的部署目录根后再运行。
+# Python 应用仍通过 uv workspace 在宿主机运行。
 services:
   postgres:
     image: timescale/timescaledb:2.28.3-pg17-oss

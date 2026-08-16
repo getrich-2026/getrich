@@ -157,8 +157,8 @@ venv.bak/
 # Generated static-site output
 /site
 
-# Local Docker bind-mount data
-/.docker/
+# Docker bind-mount data must never enter the repository
+.docker/
 
 # mypy
 .mypy_cache/

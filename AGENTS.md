@@ -13,6 +13,7 @@ apps/web              主前端（Vite 7 + React 19 + TypeScript 5.9）
 apps/backtest-web     回测前端
 packages/gr-{agent,api,backtest,data,factor,signal}
                       uv workspace 成员，各自有 pyproject.toml / src / tests
+deploy/               数据库基础设施部署模板，不在仓库内实例化
 scripts/              仅存 lint_migrations.py
 archive/              历史脚手架，删除前必须得到明确确认
 .agent/brain/         跨会话开发进度（见第 7 节）
@@ -21,8 +22,8 @@ archive/              历史脚手架，删除前必须得到明确确认
 - Python 3.10+，首行 `from __future__ import annotations`；依赖统一用 `uv` 管理，不用 pip。
 - 数据处理优先 Polars / DuckDB；pandas 只留给小数据和兼容场景。
 - 后端服务用 FastAPI。
-- **数据库单独部署，不随应用一起构建**：仓库根的 `docker-compose.yml` + `config/` 只定义 PostgreSQL、ClickHouse、Redis 三个基础设施服务，是可复现的**定义**；实际运行实例（真实 `.env`、数据卷、运维脚本）在仓库外的本机部署目录，不进 git。仓库内不维护应用的 Dockerfile 或 systemd unit。
-- 改动 `docker-compose.yml` 或 `config/` 后，需手动同步到部署目录再重启容器。
+- **数据库单独部署，不随应用一起构建**：`deploy/docker-compose.yml` + `deploy/config/` 只定义 PostgreSQL、ClickHouse、Redis 三个基础设施服务，是可复现的部署模板；GetRich 仓库内不创建 Docker 实例。真实 `.env`、数据卷、日志和运维脚本全部放在仓库外的部署目录，不进 git。仓库内不维护应用的 Dockerfile 或 systemd unit。
+- 不要在 GetRich 仓库内执行 `docker compose up`、`down` 或 `restart`。改动 `deploy/` 后，需将其中的文件同步到仓库外的部署目录根，不保留外层 `deploy/`，再从部署目录校验和重启容器。
 
 ## 2. 数据库职责划分（铁律）
 
@@ -76,10 +77,11 @@ archive/              历史脚手架，删除前必须得到明确确认
 ## 6. 常用命令
 
 ```bash
-# 基础设施：启动本地 PostgreSQL / ClickHouse / Redis
-cp .env.example .env        # 首次，然后填入本机密码
-docker compose up -d
-docker compose config --quiet   # 校验编排文件
+# 应用配置：只填写已有数据库服务的连接信息
+cp .env.example .env
+
+# 基础设施模板：只做静态校验，不在仓库内启动容器
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
 
 # 后端：启动 FastAPI 开发服务器
 # 注意必须显式 --env-file，原因见 .agent/brain/DECISIONS.md

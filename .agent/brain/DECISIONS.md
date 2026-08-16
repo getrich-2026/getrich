@@ -177,3 +177,46 @@ FATAL: could not open log file "/var/log/postgresql/postgresql-....log": Permiss
 **约束**：
 - 在 Linux 部署时，所有手工创建的 bind-mount 日志目录都要 `chown` 成容器内对应 uid（PG=70）。macOS Docker Desktop 会自动 remap 属主，**不会暴露这个问题**，本地测通不代表服务器能跑。
 - 只要 `logging_collector = on`，日志目录写不了就是启动致命错误，不是降级警告。
+
+## D-016 基础设施定义统一放入 deploy，仓库内不实例化 Docker
+
+**时间**：2026-08-16 · 修订 D-012 的仓库路径和使用方式
+
+根级 `docker-compose.yml` 和通用名称 `config/` 容易让人误以为 GetRich 应用会在仓库内创建数据库实例，也会与未来的应用配置目录混淆。因此，所有数据库基础设施定义统一收进 `deploy/`：
+
+| 位置 | 内容 | 用途 |
+|---|---|---|
+| `deploy/docker-compose.yml` | 固定版本的 PostgreSQL／TimescaleDB、ClickHouse、Redis 编排 | 部署模板 |
+| `deploy/config/` | 三个数据库的运行配置 | 部署模板 |
+| `deploy/.env.example` | 容器、端口、数据卷和部署密码占位符 | 复制到外部部署目录后使用 |
+| 根 `.env.example` | 应用连接和运行配置 | GetRich 应用使用 |
+| 仓库外部署目录 | 真实 `.env`、数据卷、日志、备份和运维脚本 | 实际运行实例 |
+
+**约束**：
+
+- 不在 GetRich 仓库内执行 `docker compose up`、`down` 或 `restart`，也不在仓库内保存运行数据。
+- `deploy/` 必须整体复制或同步到仓库外的部署目录，Compose 命令只从部署目录运行。
+- 仓库内允许用 `deploy/.env.example` 执行 `docker compose config --quiet` 静态校验；这不会创建容器。
+- 同步模板时不得覆盖部署目录中的真实 `.env`、数据卷或主机专属运维配置。
+- 根 `.env` 只服务 GetRich 应用；容器名称、数据卷路径、端口发布和 Redis 内存上限属于部署侧配置。
+
+## D-017 deploy 同步到外部部署目录时不保留外层目录
+
+**时间**：2026-08-16 · 修订 D-016 的复制表述
+
+外部部署目录本身就是 Compose 项目根，因此同步的是 `deploy/` **目录中的文件**，不是 `deploy/` 目录本身。以 `/opt/getrich-docker` 为例，同步后的结构是：
+
+```text
+/opt/getrich-docker/
+├── docker-compose.yml
+├── .env.example
+└── config/
+```
+
+而不是 `/opt/getrich-docker/deploy/`。
+
+**约束**：同步命令必须保持目录内容平铺到外部部署目录根。例如 `rsync` 源路径使用末尾 `/`：
+
+```bash
+rsync -av --exclude '.env' --exclude '.docker/' deploy/ /opt/getrich-docker/
+```

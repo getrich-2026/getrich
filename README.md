@@ -129,41 +129,29 @@ export default defineConfig([
 
 ## 3. 环境与配置 (Environment Setup) [重要]
 
-数据库容器和 Python 应用共用根目录的 `.env` 配置。
+数据库基础设施在仓库外独立部署。GetRich 根目录的 `.env` 只保存应用运行配置和已有数据库服务的连接信息，不负责创建容器。
 
 ### 3.1 配置文件 (.env)
 
-复制配置模板并更换三个数据库密码（`.env` 已被 Git 忽略）：
+复制应用配置模板，并填写实际数据库服务的连接信息（`.env` 已被 Git 忽略）：
 
 ```bash
 cp .env.example .env
-openssl rand -hex 24
 ```
 
-数据库端口默认只在 `127.0.0.1` 发布（`DOCKER_BIND_HOST`，见下节）。服务器如需
-使用 `/opt/getrich` 持久化目录，修改部署目录 `.env` 中的 `POSTGRES_DATA_DIR`、
-`CLICKHOUSE_DATA_DIR`、`CLICKHOUSE_LOG_DIR` 和 `REDIS_DATA_DIR` 即可。
+如果数据库运行在其他服务器，应修改 `PG_HOST`、`CLICKHOUSE_HOST`、Redis URL 和对应端口。真实密码不得提交到仓库。
 
 ### 3.2 本地基础设施
 
-本地 PostgreSQL、ClickHouse 和 Redis 的编排文件已从仓库移出，统一维护在
-`/Volumes/myssd/getrich-docker/`（仓库内不再保留 `docker-compose.yml`）：
+`deploy/` 保存 PostgreSQL、ClickHouse 和 Redis 的部署模板：
 
 - TimescaleDB `2.28.3-pg17-oss`
 - ClickHouse `26.3`
 - Redis `8.2.8`
 
-```bash
-cd /Volumes/myssd/getrich-docker
-docker compose config --quiet
-docker compose up -d
-docker compose ps
-docker compose down
-```
+仓库内只对这些文件进行版本控制，**不在 GetRich 目录创建 Docker 实例**。使用时把 `deploy/` 中的文件复制到仓库外的部署目录根，不保留外层 `deploy/`，然后创建部署专用 `.env`，再从部署目录运行 Compose。具体边界、同步方法和运维提醒见 `deploy/README.md`。
 
-部署目录内的 `README.md` 有完整说明（日志轮转、SSH 隧道访问、生产注意事项）。
-Python 服务通过 uv workspace 在宿主机运行，前端分别在 `apps/web` 和
-`apps/backtest-web` 中运行。生产部署方案尚未在本仓库固化。
+Python 服务通过 uv workspace 在宿主机运行，前端分别在 `apps/web` 和 `apps/backtest-web` 中运行。
 
 ## 4. 数据库设计 (ClickHouse Schema)
 所有涉及存储的代码必须遵循以下 Schema 定义。
@@ -328,16 +316,17 @@ getrich/
 ├── apps/
 │   ├── web/              # 主前端
 │   └── backtest-web/     # 回测前端（暂不部署）
+├── deploy/               # 数据库基础设施部署模板（不在仓库内实例化）
 ├── scripts/              # 仓库检查工具
 └── pyproject.toml        # uv workspace 根配置
 ```
 
-> 本地数据库与 Redis 的编排文件已移至 `/Volumes/myssd/getrich-docker/`（见 3.2 节）。
+> 数据库与 Redis 的运行实例位于仓库外；仓库中的 `deploy/` 只保存部署模板（见 3.2 节）。
 ```
 
 ## 7. 启动指南 (Quick Start)
 
-前置条件：Python 3.10+、uv、Node.js 和 Docker Desktop。
+前置条件：Python 3.10+、uv、Node.js，以及可访问的 PostgreSQL、ClickHouse 和 Redis 服务。
 
 ```bash
 # 安装 Python workspace 依赖
@@ -346,15 +335,12 @@ uv sync --frozen --all-packages
 # 首次使用时创建本地配置并修改密码
 cp .env.example .env
 
-# 启动本地基础设施（编排文件在 /Volumes/myssd/getrich-docker/，见 3.2 节）
-docker compose -f /Volumes/myssd/getrich-docker/docker-compose.yml up -d
-
 # 初始化数据库
-uv run getrich-migrate postgres
-uv run getrich-migrate clickhouse
+uv run --env-file .env getrich-migrate postgres
+uv run --env-file .env getrich-migrate clickhouse
 
 # 启动后端 API（默认 http://localhost:8001）
-uv run uvicorn getrich.apps.web.main:app --reload --port 8001
+uv run --env-file .env uvicorn getrich.apps.web.main:app --reload --port 8001
 
 # 另开终端启动主前端（http://localhost:3000）
 cd apps/web
