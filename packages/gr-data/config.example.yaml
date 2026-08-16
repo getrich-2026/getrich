@@ -28,7 +28,10 @@ providers:
     start_date: null            # 可选全局下限，int8，如 20130101
 
   ricequant:
-    license_env: RQ_LICENSE     # 或用 username_env/password_env
+    # 变量名与 settings.py 的 RiceQuantConfig 保持一致；
+    # 曾经这里写 RQ_LICENSE 而 settings 读 RICEQUANT_API_KEY，两套名字
+    # 导致采集层拿不到 license，rqdatac.init() 静默退化成无凭证初始化。
+    license_env: RICEQUANT_API_KEY   # 或改用 username_env/password_env
     username_env: null
     password_env: null
     market: cn
