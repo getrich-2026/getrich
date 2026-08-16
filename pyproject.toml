@@ -71,16 +71,22 @@ lines-after-imports = 2
 "__init__.py" = ["F401"]
 # FastAPI 路由的 Depends() 在函数签名中是标准模式
 "**/routers/*.py" = ["B008"]
+# 期权定价/希腊字母计算沿用金融数学的标准记号：S=标的价、K=行权价、
+# T=到期时间、C/P=看涨看跌价格。改成小写反而与教科书和论文对不上，
+# 复核公式时更容易出错，因此这一层豁免 PEP8 命名检查。
+"packages/gr-factor/src/gr_factor/*.py" = ["N803", "N806", "NPY002"]
 
 [tool.pytest.ini_options]
 # 测试配置
 minversion = "7.0"
 # 自动发现测试文件
 testpaths = [
+    "packages/gr-api/tests",
     "packages/gr-backtest/tests",
     "packages/gr-data/tests",
     "packages/gr-db/tests",
     "packages/gr-factor/tests",
+    "packages/gr-signal/tests",
 ]
 # 数据层用例的自定义标记（原 getrich-database 的 pytest 配置，随合并迁入）
 markers = [
@@ -139,10 +145,12 @@ filterwarnings = ["ignore::DeprecationWarning"]
 # EXCLUDE tests/ (that's not source) and apps/data/ (data tables,
 # not logic).
 source = [
+    "gr_api",
+    "gr_backtest",
     "gr_data",
     "gr_db",
-    "getrich",
-    "getrich_backtest",
+    "gr_factor",
+    "gr_signal",
 ]
 # Branch coverage is required for the engine (lots of if/else in
 # execution / account / portfolio). Without it, a 100% line-coverage
@@ -150,13 +158,12 @@ source = [
 branch = true
 # Use source= layout, not auto, so we don't accidentally measure
 # test fixtures that happen to import getrich.
-source_pkgs = ["gr_data", "gr_db", "getrich", "getrich_backtest"]
+source_pkgs = ["gr_api", "gr_backtest", "gr_data", "gr_db", "gr_factor", "gr_signal"]
 
 [tool.coverage.report]
 # Skip these as "not source" (they're not libraries we ship):
 #   - tests/                     (test code; covered by definition)
-#   - getrich.migrations.*       (Alembic / SQL migration scripts)
-#   - getrich.apps.data.table    (large auto-generated SQL)
+#   - gr_db.ddl                  (SQL DDL，不是 Python 逻辑)
 exclude_lines = [
     # Standard "skip me" comments (mirrors coverage's defaults but
     # spelled out so future maintainers know what's expected).

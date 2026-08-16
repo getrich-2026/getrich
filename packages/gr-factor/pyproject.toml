@@ -22,6 +22,5 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["getrich.optionLib*"]
-namespaces = true
+include = ["gr_factor*"]
 

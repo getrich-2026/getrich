@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from getrich.apps.web.errors import BadRequest
-from getrich.apps.web.services.admin_import import (
+from gr_api.errors import BadRequest
+from gr_api.services.admin_import import (
     _derive_daily_return_payload,
     _parse_csv_rows,
 )
@@ -16,8 +16,7 @@ class AdminImportServiceTest(unittest.TestCase):
 
     def test_parse_csv_rows_strips_utf8_bom_and_cell_whitespace(self) -> None:
         rows = _parse_csv_rows(
-            "\ufeffstrategy_code,trade_date,daily_return\n"
-            " STR_A_TREND_001 , 2026-05-29 , 0.0041 \n"
+            "\ufeffstrategy_code,trade_date,daily_return\n STR_A_TREND_001 , 2026-05-29 , 0.0041 \n"
         )
 
         self.assertEqual(rows[0]["strategy_code"], "STR_A_TREND_001")

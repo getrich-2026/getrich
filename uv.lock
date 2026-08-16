@@ -1213,6 +1213,7 @@ source = { editable = "packages/gr-api" }
 dependencies = [
     { name = "bcrypt" },
     { name = "bleach" },
+    { name = "celery", extra = ["redis"] },
     { name = "fastapi" },
     { name = "gr-backtest" },
     { name = "gr-data" },
@@ -1220,53 +1221,8 @@ dependencies = [
     { name = "prometheus-client" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "bcrypt", specifier = ">=4.0" },
-    { name = "bleach", specifier = ">=6.3.0" },
-    { name = "fastapi", specifier = ">=0.115,<0.141" },
-    { name = "gr-backtest", editable = "packages/gr-backtest" },
-    { name = "gr-data", editable = "packages/gr-data" },
-    { name = "orjson", specifier = ">=3.10" },
-    { name = "prometheus-client", specifier = ">=0.20" },
-    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
-    { name = "pydantic", specifier = ">=2.7,<3" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
-]
-
-[[package]]
-name = "gr-backtest"
-version = "0.1.2"
-source = { editable = "packages/gr-backtest" }
-dependencies = [
-    { name = "bcrypt" },
-    { name = "bleach" },
-    { name = "celery", extra = ["redis"] },
-    { name = "clickhouse-connect" },
-    { name = "duckdb" },
-    { name = "fastapi" },
-    { name = "gr-data" },
-    { name = "matplotlib" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "orjson" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "plotly" },
-    { name = "polars" },
-    { name = "prometheus-client" },
-    { name = "psycopg", extra = ["binary", "pool"] },
-    { name = "pyarrow" },
-    { name = "pydantic" },
-    { name = "python-dateutil" },
     { name = "redis" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "starlette" },
-    { name = "statsmodels" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1275,26 +1231,54 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=4.0" },
     { name = "bleach", specifier = ">=6.3.0" },
     { name = "celery", extras = ["redis"], specifier = ">=5.4" },
-    { name = "clickhouse-connect" },
-    { name = "duckdb" },
     { name = "fastapi", specifier = ">=0.115,<0.141" },
+    { name = "gr-backtest", editable = "packages/gr-backtest" },
+    { name = "gr-data", editable = "packages/gr-data" },
+    { name = "orjson", specifier = ">=3.10" },
+    { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.7,<3" },
+    { name = "redis", specifier = ">=5.0" },
+    { name = "starlette" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
+]
+
+[[package]]
+name = "gr-backtest"
+version = "0.1.2"
+source = { editable = "packages/gr-backtest" }
+dependencies = [
+    { name = "duckdb" },
+    { name = "gr-data" },
+    { name = "matplotlib" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "plotly" },
+    { name = "polars" },
+    { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "pyarrow" },
+    { name = "python-dateutil" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "statsmodels" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "duckdb" },
     { name = "gr-data", editable = "packages/gr-data" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "orjson", specifier = ">=3.10" },
     { name = "pandas" },
     { name = "plotly" },
     { name = "polars" },
-    { name = "prometheus-client", specifier = ">=0.20" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "pyarrow" },
-    { name = "pydantic", specifier = ">=2.7,<3" },
     { name = "python-dateutil" },
-    { name = "redis", specifier = ">=5.0" },
     { name = "scipy" },
-    { name = "starlette" },
     { name = "statsmodels" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 
 [[package]]
@@ -1391,6 +1375,24 @@ requires-dist = [
 name = "gr-signal"
 version = "0.1.2"
 source = { editable = "packages/gr-signal" }
+dependencies = [
+    { name = "gr-backtest" },
+    { name = "gr-data" },
+    { name = "polars" },
+    { name = "prometheus-client" },
+    { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "redis" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gr-backtest", editable = "packages/gr-backtest" },
+    { name = "gr-data", editable = "packages/gr-data" },
+    { name = "polars" },
+    { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
+    { name = "redis", specifier = ">=5.0" },
+]
 
 [[package]]
 name = "h11"

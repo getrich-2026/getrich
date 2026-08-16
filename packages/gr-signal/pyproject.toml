@@ -5,9 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gr-signal"
 version = "0.1.2"
-description = "GetRich signal workspace placeholder"
+description = "GetRich 实盘信号生产与交易执行：broker、实盘 runner、风控、调度与信号/成交落库"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "gr-backtest",
+    "gr-data",
+    "polars",
+    "prometheus-client>=0.20",
+    "psycopg[binary,pool]>=3.2",
+    "redis>=5.0",
+]
 
-[tool.setuptools]
-py-modules = []
+[project.scripts]
+gr-signal = "gr_signal.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["gr_signal*"]

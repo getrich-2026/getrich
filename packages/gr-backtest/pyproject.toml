@@ -5,40 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gr-backtest"
 version = "0.1.2"
-description = "GetRich backtesting engine"
+description = "GetRich 回测引擎：纯 Python 库，不含任何 Web / 实盘 / 调度代码"
 requires-python = ">=3.10"
 dependencies = [
-    "bcrypt>=4.0",
-    "bleach>=6.3.0",
-    "celery[redis]>=5.4",
-    "clickhouse-connect",
     "duckdb",
-    "fastapi>=0.115,<0.141",
     "gr-data",
     "matplotlib",
     "numpy",
-    "orjson>=3.10",
     "pandas",
     "plotly",
     "polars",
-    "prometheus-client>=0.20",
     "psycopg[binary,pool]>=3.2",
-    "pydantic>=2.7,<3",
     "pyarrow",
     "python-dateutil",
-    "redis>=5.0",
     "scipy",
     "statsmodels",
-    "starlette",
-    "uvicorn[standard]>=0.30",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = [
-    "getrich_backtest*",
-    "getrich.apps.strategy*",
-    "getrich.apps.web*",
-    "getrich.apps.worker*",
-]
-namespaces = true
+include = ["gr_backtest*"]

@@ -5,11 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gr-api"
 version = "0.1.2"
-description = "GetRich FastAPI application"
+description = "GetRich FastAPI 应用：给前端提供查询接口，并承载回测作业队列与 Celery worker"
 requires-python = ">=3.10"
 dependencies = [
     "bcrypt>=4.0",
     "bleach>=6.3.0",
+    "celery[redis]>=5.4",
     "fastapi>=0.115,<0.141",
     "gr-backtest",
     "gr-data",
@@ -17,10 +18,14 @@ dependencies = [
     "prometheus-client>=0.20",
     "psycopg[binary,pool]>=3.2",
     "pydantic>=2.7,<3",
+    "redis>=5.0",
+    "starlette",
     "uvicorn[standard]>=0.30",
 ]
 
+[project.scripts]
+gr-worker = "gr_api.worker.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["getrich.apps.web*"]
-namespaces = true
+include = ["gr_api*"]
