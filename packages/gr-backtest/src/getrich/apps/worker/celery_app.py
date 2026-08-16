@@ -4,7 +4,7 @@ The Celery app is the broker-facing surface: clients call
 ``app.send_task("backtest.run_job", args=[job_id])`` to enqueue, and
 ``celery -A getrich.apps.worker.celery_app worker`` to consume.
 
-Configuration is sourced from :class:`getrich.config.settings.WorkerConfig`:
+Configuration is sourced from :class:`gr_data.config.settings.WorkerConfig`:
 
 * ``GETRICH_WORKER_BACKEND=celery`` must be set on both the API process
   (so the dispatcher takes the celery branch) and the worker process
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from celery import Celery
 
-from getrich.config.settings import settings
+from gr_data.config.settings import settings
 
 
 def make_celery_app() -> Celery:

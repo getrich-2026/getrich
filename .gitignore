@@ -187,3 +187,28 @@ cython_debug/
 # Allow committing the example / template variants
 !.env.example
 !.env.template
+
+# --- gr-data 数据层（随 getrich-database 合并迁入）---
+# 供应商配置含凭证变量名与本机路径，不进 git（config.example.yaml 才是模板）
+config.yaml
+config.local.yaml
+*.secret.*
+
+# raw 层 parquet 落在 /opt/raw_parquet（仓库外），任何数据文件都不提交
+*.parquet
+*.arrow
+*.feather
+*.csv
+*.tsv
+*.jsonl
+*.xlsx
+*.xls
+!packages/gr-data/reference/design/*.csv
+
+# 供应商 SDK wheel 需手动安装，不提交
+*.whl
+_sdk_cache/
+_sync_status.json
+
+# 含真实 RiceQuant license key，绝不提交（design 仓同样 gitignore 此文件）
+packages/gr-data/reference/design/ricequant/config.md

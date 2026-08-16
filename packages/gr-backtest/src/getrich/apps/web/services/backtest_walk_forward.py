@@ -344,7 +344,7 @@ async def _fetch_walk_forward(
     # the (sync-shaped) read function.
     from psycopg import AsyncConnection  # noqa: F401  (typing only)
 
-    from getrich.libs.postgres import pg_pool
+    from gr_data.db import pg_pool
 
     async with pg_pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(sql, {"walk_forward_id": walk_forward_id})

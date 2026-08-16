@@ -14,7 +14,7 @@ import polars as pl
 
 from getrich.apps.strategy.errors import LiveDataError
 from getrich.apps.web.metrics import LIVE_DATA_LOAD_SECONDS
-from getrich.libs.clickhouse.pool import ClickHouseConnectionPool
+from gr_data.db.clickhouse.pool import ClickHouseConnectionPool
 from getrich_backtest.data.schema import validate_bar_schema
 from getrich_backtest.strategy.context import (
     AccountView,

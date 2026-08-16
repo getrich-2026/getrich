@@ -16,7 +16,7 @@ from getrich.apps.web.pagination import PageParams
 from getrich.apps.web.routers.backtest_runs import router
 from getrich.apps.web.services import backtest_run
 from getrich.apps.web.services.backtest_run import ArtifactFileContent
-from getrich.config.settings import BacktestStorageConfig
+from gr_data.config.settings import BacktestStorageConfig
 
 
 _TZ = ZoneInfo("Asia/Shanghai")

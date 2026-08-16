@@ -15,7 +15,7 @@ from getrich.apps.web.auth import create_token
 from getrich.apps.web.deps import get_db, request_id
 from getrich.apps.web.errors import BadRequest, Unauthorized
 from getrich.apps.web.response import success
-from getrich.config import settings
+from gr_data.config import settings
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])

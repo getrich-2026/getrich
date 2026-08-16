@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from getrich.libs.postgres.pool import PgConnectionPool, pg_pool
+from gr_data.db.pool import PgConnectionPool, pg_pool
 from getrich_backtest.metrics import BacktestMetrics
 from getrich_backtest.result import BacktestResult, CombinedResult
 from getrich_backtest.runconfig import RunConfig

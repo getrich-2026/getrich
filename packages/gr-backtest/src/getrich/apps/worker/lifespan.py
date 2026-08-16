@@ -43,7 +43,7 @@ import sys
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from getrich.libs.postgres import pg_pool
+from gr_data.db import pg_pool
 
 
 logger = logging.getLogger(__name__)

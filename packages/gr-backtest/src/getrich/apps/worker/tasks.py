@@ -46,7 +46,7 @@ from getrich.apps.worker.lifespan import (
     init_cancel_listener,
     init_pg_pool,
 )
-from getrich.config.settings import make_pg_dsn, settings
+from gr_data.config.settings import make_pg_dsn, settings
 from getrich_backtest.job_persistence import PgBacktestJobStore
 
 

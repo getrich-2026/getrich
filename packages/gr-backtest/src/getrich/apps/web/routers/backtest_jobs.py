@@ -16,7 +16,7 @@ from getrich.apps.web.schemas.backtest import (
     WalkForwardRunRequest,
 )
 from getrich.apps.web.services import backtest_job as job_svc
-from getrich.config.settings import settings
+from gr_data.config.settings import settings
 
 
 if TYPE_CHECKING:

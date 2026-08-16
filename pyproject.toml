@@ -32,6 +32,9 @@ members = ["packages/*"]
 [tool.ruff]
 # 代码每行最大长度
 line-length = 100
+# gr-data/reference/ 是厂商资料与被 raw/ 层取代的历史脚本，不是可运行源码，
+# 阶段 6 会整体移出到 getrich-design 仓，这里先不纳入 lint。
+exclude = ["packages/gr-data/reference"]
 # 目标 Python 版本
 target-version = "py310"
 
@@ -73,7 +76,13 @@ minversion = "7.0"
 # 自动发现测试文件
 testpaths = [
     "packages/gr-backtest/tests",
+    "packages/gr-data/tests",
     "packages/gr-factor/tests",
+]
+# 数据层用例的自定义标记（原 getrich-database 的 pytest 配置，随合并迁入）
+markers = [
+    "live_sdk: 需要真实供应商 SDK 与凭证，默认 skip",
+    "integration: 需要可用的 PostgreSQL（docker），不可用时 skip",
 ]
 # Round #1203 (E-1): two distinct test trees share base names
 # (``test_backtest_run.py`` and ``test_metrics.py`` exist in BOTH
@@ -127,6 +136,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 # EXCLUDE tests/ (that's not source) and apps/data/ (data tables,
 # not logic).
 source = [
+    "gr_data",
     "getrich",
     "getrich_backtest",
 ]
@@ -136,7 +146,7 @@ source = [
 branch = true
 # Use source= layout, not auto, so we don't accidentally measure
 # test fixtures that happen to import getrich.
-source_pkgs = ["getrich", "getrich_backtest"]
+source_pkgs = ["gr_data", "getrich", "getrich_backtest"]
 
 [tool.coverage.report]
 # Skip these as "not source" (they're not libraries we ship):

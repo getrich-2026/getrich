@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from getrich.apps.web.deps import get_db, require_user
 from getrich.apps.web.response import register_exception_handlers
 from getrich.apps.web.routers.backtest_runs import backtest_storage_dep, router
-from getrich.config.settings import BacktestStorageConfig
+from gr_data.config.settings import BacktestStorageConfig
 
 
 _TZ = ZoneInfo("Asia/Shanghai")

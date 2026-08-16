@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from getrich.libs.postgres.pool import PgConnectionPool, pg_pool
+from gr_data.db.pool import PgConnectionPool, pg_pool
 
 
 if TYPE_CHECKING:
@@ -792,7 +792,7 @@ def sync_is_cancelled_status(job_id: str, *, conninfo: str) -> bool:
         The ``backtest_jobs.job_id`` to probe.
     conninfo : str
         A libpq DSN (e.g. from
-        :func:`getrich.config.settings.make_pg_dsn`).
+        :func:`gr_data.config.settings.make_pg_dsn`).
 
     Returns
     -------

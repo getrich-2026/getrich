@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
-from getrich.libs.postgres.pool import PgConnectionPool, pg_pool
+from gr_data.db.pool import PgConnectionPool, pg_pool
 from getrich_backtest.strategy.context import AccountView, PositionView
 
 

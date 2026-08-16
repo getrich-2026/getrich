@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import sys
 
-from getrich.config.settings import load_settings
+from gr_data.config.settings import load_settings
 
 
 def main() -> None:

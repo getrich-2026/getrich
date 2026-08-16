@@ -65,8 +65,8 @@ from getrich.apps.web.services import (
     backtest_walk_forward as wf_svc,
 )
 from getrich.apps.web.services.job_listener import BacktestJobListener
-from getrich.config import settings
-from getrich.libs.postgres import pg_pool
+from gr_data.config import settings
+from gr_data.db import pg_pool
 
 
 @asynccontextmanager

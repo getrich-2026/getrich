@@ -16,7 +16,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from getrich.libs.postgres.pool import PgConnectionPool, pg_pool
+from gr_data.db.pool import PgConnectionPool, pg_pool
 
 
 if TYPE_CHECKING:

@@ -13,8 +13,8 @@ from getrich.apps.web.deps import get_db, page_dep, request_id, require_user
 from getrich.apps.web.pagination import make_pagination
 from getrich.apps.web.response import success
 from getrich.apps.web.services import backtest_run as backtest_run_svc
-from getrich.config import settings
-from getrich.config.settings import BacktestStorageConfig
+from gr_data.config import settings
+from gr_data.config.settings import BacktestStorageConfig
 
 
 if TYPE_CHECKING:

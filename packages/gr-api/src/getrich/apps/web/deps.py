@@ -14,8 +14,8 @@ from getrich.apps.web.pagination import (
     PageParams,
     make_page_params,
 )
-from getrich.config import settings
-from getrich.libs.postgres import pg_pool
+from gr_data.config import settings
+from gr_data.db import pg_pool
 
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ async def get_current_user(request: Request) -> str | None:
     token = _extract_bearer_token(request)
     if token:
         from getrich.apps.web.auth import verify_token
-        from getrich.config import settings
+        from gr_data.config import settings
 
         try:
             payload = verify_token(token, settings.web.jwt_secret)

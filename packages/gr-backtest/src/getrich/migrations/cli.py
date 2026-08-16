@@ -25,7 +25,7 @@ import logging
 import sys
 from pathlib import Path
 
-from getrich.config import settings
+from gr_data.config import settings
 
 from .executors import (
     ClickHouseMigrationExecutor,

@@ -5,27 +5,33 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gr-data"
 version = "0.1.2"
-description = "GetRich shared configuration and database clients"
+description = "GetRich 数据层：配置、数据库客户端，以及外部数据接入（raw → ingest → PostgreSQL/TimescaleDB，含 stream 实时层）"
 requires-python = ">=3.10"
 dependencies = [
     "akshare",
     "clickhouse-connect",
     "duckdb",
-    "pandas",
+    "pandas>=2.0",
     "polars",
     "psycopg[binary,pool]>=3.2",
-    "pyarrow",
-    "python-dotenv",
-    "pyyaml",
+    "pyarrow>=14",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0",
     "rich",
     "rqdatac",
     "tqdm",
+    "tushare>=1.4",
 ]
+
+# 供应商 SDK 不在 PyPI / 需凭证与专用 wheel，按需手动安装：
+#   ricequant: rqdatac    yinhe: AmazingData    insight: insight_python
+# tushare 在 PyPI 上有发布，已列入主依赖，无需手动安装。
+[project.scripts]
+gr-data = "gr_data.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["getrich.config*", "getrich.libs*"]
-namespaces = true
+include = ["gr_data*"]
 
 [tool.setuptools.package-data]
-getrich = ["py.typed"]
+gr_data = ["py.typed"]

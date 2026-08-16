@@ -28,7 +28,7 @@ from getrich.apps.strategy.account_loader import AccountStateLoader
 from getrich.apps.strategy.live_runner import LiveSignalRunner
 from getrich.apps.strategy.registry import get_registry
 from getrich.apps.strategy.signal_writer import PgSignalWriter
-from getrich.libs.postgres.pool import pg_pool
+from gr_data.db.pool import pg_pool
 from getrich_backtest import get_shanghai_tz
 from getrich_backtest.calendar import DEFAULT_FUTURES_SESSIONS
 

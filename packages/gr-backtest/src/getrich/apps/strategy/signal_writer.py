@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from getrich.apps.strategy.errors import SignalWriteError
 from getrich.apps.web.metrics import LIVE_SIGNALS_PERSISTED_TOTAL
-from getrich.libs.postgres.pool import PgConnectionPool, pg_pool
+from gr_data.db.pool import PgConnectionPool, pg_pool
 from getrich_backtest.live.signal import Signal
 
 

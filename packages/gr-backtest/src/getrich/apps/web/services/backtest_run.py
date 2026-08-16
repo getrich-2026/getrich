@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from psycopg import AsyncConnection
 
     from getrich.apps.web.pagination import PageParams
-    from getrich.config.settings import BacktestStorageConfig
+    from gr_data.config.settings import BacktestStorageConfig
 
 
 async def _assert_run_owner(db: AsyncConnection, run_id: str, user_id: str) -> None:

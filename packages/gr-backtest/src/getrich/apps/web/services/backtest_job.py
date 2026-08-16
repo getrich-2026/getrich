@@ -370,7 +370,7 @@ async def run_job_synchronously(job_id: str) -> dict[str, Any]:
     is threaded into the runner so its per-trial cancel probe can
     observe DB-side ``status='cancelled'`` writes from any process.
     """
-    from getrich.config.settings import make_pg_dsn, settings
+    from gr_data.config.settings import make_pg_dsn, settings
 
     row = await _STORE.get_job(job_id, user_id=_SYSTEM_USER_ID)
     if row is None:

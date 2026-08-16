@@ -9,7 +9,7 @@ import pytest
 
 from getrich.apps.strategy import PgSignalWriter, SignalWriteError
 from getrich.apps.strategy.signal_writer import _to_params
-from getrich.libs.postgres.pool import PgConnectionPool
+from gr_data.db.pool import PgConnectionPool
 from getrich_backtest import get_shanghai_tz
 from getrich_backtest.live import Signal
 

@@ -1,6 +1,6 @@
 """Smoke tests for the Celery app factory.
 
-The Celery app is mostly a thin config wrapper around ``getrich.config.settings``.
+The Celery app is mostly a thin config wrapper around ``gr_data.config.settings``.
 These tests assert the three public surfaces:
 
 * The three ``run_job`` tasks are registered under their stable names
@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from getrich.apps.worker import celery_app
-from getrich.config.settings import settings as app_settings
+from gr_data.config.settings import settings as app_settings
 
 
 @pytest.fixture(autouse=True)

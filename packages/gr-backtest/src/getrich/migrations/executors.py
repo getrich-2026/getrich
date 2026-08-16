@@ -12,7 +12,7 @@ calls three methods on the executor:
   failure rolls back both the schema change and the bookkeeping row.
 
 The PostgreSQL executor uses :mod:`psycopg` (sync, not the async pool
-in ``getrich.libs.postgres.pool``) because migrations are a one-off
+in ``gr_data.db.pool``) because migrations are a one-off
 CLI operation, not a per-request hot path. Sync avoids the need for
 ``asyncio.run`` plumbing inside the CLI.
 

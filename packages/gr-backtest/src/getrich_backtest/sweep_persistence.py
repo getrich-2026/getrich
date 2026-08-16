@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from getrich.libs.postgres.pool import PgConnectionPool, pg_pool
+from gr_data.db.pool import PgConnectionPool, pg_pool
 from getrich_backtest.persistence import PgBacktestResultStore
 from getrich_backtest.sweep import SweepResult, SweepTrialResult
 from getrich_backtest.time import get_shanghai_tz

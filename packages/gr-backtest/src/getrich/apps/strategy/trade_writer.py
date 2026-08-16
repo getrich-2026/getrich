@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from getrich.apps.strategy.errors import SignalWriteError
-from getrich.libs.postgres.pool import PgConnectionPool, pg_pool
+from gr_data.db.pool import PgConnectionPool, pg_pool
 from getrich_backtest.execution import Fill
 from getrich_backtest.types import Side
 

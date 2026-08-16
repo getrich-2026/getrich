@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING
 
 import psycopg
 
-from getrich.config.settings import make_pg_dsn, settings
+from gr_data.config.settings import make_pg_dsn, settings
 
 
 if TYPE_CHECKING:
