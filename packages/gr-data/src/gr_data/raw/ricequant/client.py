@@ -18,6 +18,8 @@ from typing import Any, Protocol
 
 import pandas as pd
 
+from gr_data.common.retry import PermanentError
+
 
 # 米筐 asset -> all_instruments type
 RQ_TYPE_MAP = {
@@ -68,13 +70,21 @@ class RqdatacClient:
             try:
                 import rqdatac  # type: ignore
             except ImportError as e:  # pragma: no cover
-                raise RuntimeError("未安装 rqdatac SDK。") from e
+                raise PermanentError("未安装 rqdatac SDK。") from e
             if self._license:
                 rqdatac.init("license", self._license)
             elif self._username and self._password:
                 rqdatac.init(self._username, self._password)
             else:
-                rqdatac.init()
+                # 不退化成无凭证的 rqdatac.init()：那样既不报错也不提示，
+                # 表现成「配了 key 但取数失败」，极难定位。曾因 config.yaml 写
+                # license_env: RQ_LICENSE 而环境变量叫 RICEQUANT_API_KEY，
+                # 名字对不上就静默走到这一支（见 DECISIONS.md D-023）。
+                raise PermanentError(
+                    "缺少米筐凭证：请设置环境变量 RICEQUANT_API_KEY，"
+                    "并确认 config.yaml 的 providers.ricequant.license_env 指向同一个变量名"
+                    "（或改用 username_env / password_env）。"
+                )
             self._rq = rqdatac
         return self._rq
 
