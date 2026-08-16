@@ -104,7 +104,7 @@ def test_create_job_writes_retry_overrides_when_provided() -> None:
     )
 
     sql, params = cursor.statements[0]
-    assert "INSERT INTO backtest_jobs" in sql
+    assert "INSERT INTO backtest.backtest_jobs" in sql
     # INSERT column list must include the new fields.
     assert "retry_base_seconds" in sql
     assert "retry_cap_seconds" in sql
@@ -245,7 +245,7 @@ def test_create_job_writes_request_hash_when_provided() -> None:
     )
 
     sql, params = cursor.statements[0]
-    assert "INSERT INTO backtest_jobs" in sql
+    assert "INSERT INTO backtest.backtest_jobs" in sql
     assert "request_hash" in sql
     assert params["request_hash"] == h
 

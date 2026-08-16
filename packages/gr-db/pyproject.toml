@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gr-db"
+version = "0.1.2"
+description = "GetRich 数据库定义与迁移：全部 DDL 的唯一真源，PostgreSQL + ClickHouse 迁移执行器"
+requires-python = ">=3.10"
+dependencies = [
+    "clickhouse-connect",
+    "gr-data",
+    "psycopg[binary,pool]>=3.2",
+]
+
+[project.scripts]
+gr-db = "gr_db.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["gr_db*"]
+
+[tool.setuptools.package-data]
+gr_db = ["ddl/postgres/*.sql", "ddl/clickhouse/*.sql", "ddl/upgrade/*.sql"]

@@ -524,7 +524,7 @@ class PgBacktestJobStore:
         where_sql = " AND ".join(conds)
         sql = f"""
             SELECT *, COUNT(*) OVER() AS _total
-            FROM backtest_jobs
+            FROM backtest.backtest_jobs
             WHERE {where_sql}
             ORDER BY created_at DESC, job_id DESC
             LIMIT %(limit)s OFFSET %(offset)s
@@ -587,7 +587,7 @@ def _now_shanghai() -> datetime:
 
 
 _INSERT_JOB_SQL = """
-INSERT INTO backtest_jobs (
+INSERT INTO backtest.backtest_jobs (
     job_id, job_type, ref_id, status, request_json, request_hash, progress,
     max_attempts, user_id,
     retry_base_seconds, retry_cap_seconds, retry_jitter_pct,
@@ -606,7 +606,7 @@ WITH candidate AS (
            error_message, attempt, max_attempts, next_retry_at,
            retry_base_seconds, retry_cap_seconds, retry_jitter_pct,
            created_at, started_at, completed_at, updated_at
-    FROM backtest_jobs
+    FROM backtest.backtest_jobs
     WHERE job_type = %(job_type)s
       AND (
           (status = 'queued'
@@ -630,7 +630,7 @@ FROM candidate
 """
 
 _MARK_RUNNING_SQL = """
-UPDATE backtest_jobs
+UPDATE backtest.backtest_jobs
 SET status = 'running',
     started_at = NOW(),
     updated_at = NOW()
@@ -639,7 +639,7 @@ WHERE job_id = %(job_id)s
 """
 
 _RESET_RUNNING_SQL = """
-UPDATE backtest_jobs
+UPDATE backtest.backtest_jobs
 SET status = 'running',
     started_at = NOW(),
     updated_at = NOW()
@@ -648,7 +648,7 @@ WHERE job_id = %(job_id)s
 """
 
 _UPDATE_PROGRESS_SQL = """
-UPDATE backtest_jobs
+UPDATE backtest.backtest_jobs
 SET progress = %(progress)s,
     updated_at = NOW()
 WHERE job_id = %(job_id)s
@@ -656,7 +656,7 @@ WHERE job_id = %(job_id)s
 """
 
 _MARK_COMPLETED_SQL = """
-UPDATE backtest_jobs
+UPDATE backtest.backtest_jobs
 SET status = 'completed',
     progress = 100,
     completed_at = NOW(),
@@ -666,7 +666,7 @@ WHERE job_id = %(job_id)s
 """
 
 _MARK_FAILED_SQL = """
-UPDATE backtest_jobs
+UPDATE backtest.backtest_jobs
 SET status = 'failed',
     error_message = %(error_message)s,
     completed_at = NOW(),
@@ -676,7 +676,7 @@ WHERE job_id = %(job_id)s
 """
 
 _MARK_CANCELLED_SQL = """
-UPDATE backtest_jobs
+UPDATE backtest.backtest_jobs
 SET status = 'cancelled',
     completed_at = NOW(),
     updated_at = NOW()
@@ -693,7 +693,7 @@ SELECT job_id, job_type, ref_id, status, request_json, progress,
        error_message, attempt, max_attempts, next_retry_at, user_id,
        retry_base_seconds, retry_cap_seconds, retry_jitter_pct,
        created_at, started_at, completed_at, updated_at
-FROM backtest_jobs
+FROM backtest.backtest_jobs
 WHERE job_id = %(job_id)s
   AND (
       %(user_id)s::text = '*'
@@ -707,7 +707,7 @@ SELECT job_id, job_type, ref_id, status, request_json, request_hash, progress,
        error_message, attempt, max_attempts, next_retry_at, user_id,
        retry_base_seconds, retry_cap_seconds, retry_jitter_pct,
        created_at, started_at, completed_at, updated_at
-FROM backtest_jobs
+FROM backtest.backtest_jobs
 WHERE ref_id = %(ref_id)s
   AND (
       %(user_id)s::text = '*'
@@ -719,7 +719,7 @@ LIMIT 1
 
 
 _MARK_RETRY_SQL = """
-UPDATE backtest_jobs
+UPDATE backtest.backtest_jobs
 SET status = 'queued',
     progress = 0,
     error_message = %(error_message)s,
@@ -737,7 +737,7 @@ SELECT job_id, job_type, ref_id, status, request_json, request_hash, progress,
        error_message, attempt, max_attempts, next_retry_at, user_id,
        retry_base_seconds, retry_cap_seconds, retry_jitter_pct,
        created_at, started_at, completed_at, updated_at
-FROM backtest_jobs
+FROM backtest.backtest_jobs
 WHERE request_json->>'_idempotency_key' = %(key)s
   AND (
       %(user_id)s::text = '*'
@@ -810,7 +810,7 @@ def sync_is_cancelled_status(job_id: str, *, conninfo: str) -> bool:
     try:
         with psycopg.connect(conninfo, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT status FROM backtest_jobs WHERE job_id = %s",
+                "SELECT status FROM backtest.backtest_jobs WHERE job_id = %s",
                 (job_id,),
             )
             row = cur.fetchone()

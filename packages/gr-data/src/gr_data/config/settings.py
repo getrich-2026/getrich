@@ -397,11 +397,15 @@ class PostgresConfig:
 
     @classmethod
     def from_env(cls, strict: bool) -> PostgresConfig:
-        host = _get_env("PG_HOST", "100.80.19.6") or "100.80.19.6"
+        # 默认值必须是「本机可用」的中性值，与 .env.example 对齐。
+        # 这里原先写死的是某台机器的内网 IP（100.80.19.6）和库名 goldmine，
+        # 新克隆在没有 .env 时会去连别人的主机，报一个和真实原因无关的
+        # 连接错误。同类问题见 ClickHouseConfig 的 host 默认值。
+        host = _get_env("PG_HOST", "localhost") or "localhost"
         port_str = _get_env("PG_PORT", "5432")
         user = _get_env("PG_USER", "quant") or "quant"
         password = _get_env("PG_PASSWORD", "") or ""
-        database = _get_env("PG_DB", "goldmine") or "goldmine"
+        database = _get_env("PG_DB", "getrich") or "getrich"
 
         if not password:
             _warn("PG_PASSWORD is not set", strict)
@@ -582,7 +586,11 @@ def load_settings(env_file: str | None = None) -> Settings:
         target_env = Path(env_file) if env_file else find_or_create_env_file()
 
         if target_env.exists():
-            load_dotenv(dotenv_path=target_env, override=True)
+            # override=False：**真实环境变量优先于 .env 文件**。
+            # 反过来（override=True）会让 `PG_PORT=55433 gr-db migrate` 这类
+            # 一次性覆盖、CI 注入和容器环境变量全部失效 —— 命令看起来跑了，
+            # 实际连的还是 .env 里那个库。
+            load_dotenv(dotenv_path=target_env, override=False)
 
     # Determine mode
     app_env = _get_env("APP_ENV", "dev")

@@ -112,7 +112,7 @@ def test_create_job_persists_max_attempts() -> None:
     )
 
     sql, params = cursor.statements[0]
-    assert "INSERT INTO backtest_jobs" in sql
+    assert "INSERT INTO backtest.backtest_jobs" in sql
     assert "max_attempts" in sql
     # ``max_attempts`` is bound by name in the INSERT.
     assert params["max_attempts"] == 5

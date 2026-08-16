@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MIGRATIONS_DIR = REPO_ROOT / "packages/gr-backtest/migrations"
+MIGRATIONS_DIR = REPO_ROOT / "packages/gr-db/src/gr_db/ddl"
 
 Rule = tuple[str, re.Pattern[str]]
 
@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     selected = ("ch", "pg") if args.db == "all" else (args.db,)
     paths = {
         "ch": sorted((MIGRATIONS_DIR / "clickhouse").glob("*.sql")),
-        "pg": sorted(MIGRATIONS_DIR.glob("*.sql")),
+        "pg": sorted((MIGRATIONS_DIR / "postgres").glob("*.sql")),
     }
     total = 0
     for database in selected:

@@ -11,6 +11,7 @@ dependencies = [
     "gr-api",
     "gr-backtest",
     "gr-data",
+    "gr-db",
     "gr-factor",
     "gr-signal",
 ]
@@ -23,6 +24,7 @@ gr-agent = { workspace = true }
 gr-api = { workspace = true }
 gr-backtest = { workspace = true }
 gr-data = { workspace = true }
+gr-db = { workspace = true }
 gr-factor = { workspace = true }
 gr-signal = { workspace = true }
 
@@ -77,6 +79,7 @@ minversion = "7.0"
 testpaths = [
     "packages/gr-backtest/tests",
     "packages/gr-data/tests",
+    "packages/gr-db/tests",
     "packages/gr-factor/tests",
 ]
 # 数据层用例的自定义标记（原 getrich-database 的 pytest 配置，随合并迁入）
@@ -137,6 +140,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 # not logic).
 source = [
     "gr_data",
+    "gr_db",
     "getrich",
     "getrich_backtest",
 ]
@@ -146,7 +150,7 @@ source = [
 branch = true
 # Use source= layout, not auto, so we don't accidentally measure
 # test fixtures that happen to import getrich.
-source_pkgs = ["gr_data", "getrich", "getrich_backtest"]
+source_pkgs = ["gr_data", "gr_db", "getrich", "getrich_backtest"]
 
 [tool.coverage.report]
 # Skip these as "not source" (they're not libraries we ship):

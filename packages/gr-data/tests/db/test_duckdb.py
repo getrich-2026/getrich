@@ -26,7 +26,6 @@ from pathlib import Path
 import pandas as pd
 import polars as pl
 import pytest
-
 from gr_data.db.duckdb import QuantDuckDB
 
 

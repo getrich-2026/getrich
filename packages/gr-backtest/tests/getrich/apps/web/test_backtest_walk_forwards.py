@@ -343,7 +343,7 @@ def test_get_oos_equity_curve_returns_window_tagged_points() -> None:
     points = _run(backtest_walk_forward.get_oos_equity_curve(conn, "wf-1", user_id="user-1"))
 
     sql, params = cursor.executed[1]
-    assert "JOIN backtest_equity_points" in sql
+    assert "JOIN backtest.backtest_equity_points" in sql
     assert params == {"walk_forward_id": "wf-1"}
     assert points[0]["walk_forward_id"] == "wf-1"
     assert points[0]["window_index"] == 0

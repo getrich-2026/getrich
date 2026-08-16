@@ -63,7 +63,7 @@ async def _seeded_job() -> dict[str, Any]:
     # Best-effort cleanup
     try:
         with psycopg.connect(_conninfo(), autocommit=True) as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM backtest_jobs WHERE job_id = %s", (job_id,))
+            cur.execute("DELETE FROM backtest.backtest_jobs WHERE job_id = %s", (job_id,))
     except Exception:  # noqa: BLE001
         pass
 

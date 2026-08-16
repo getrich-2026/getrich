@@ -102,7 +102,7 @@ def test_create_job_inserts_queued_row_and_returns_uuid() -> None:
     assert len(job_id) == 32  # uuid4().hex
     assert conn.commits == 1
     sql, params = cursor.statements[0]
-    assert "INSERT INTO backtest_jobs" in sql
+    assert "INSERT INTO backtest.backtest_jobs" in sql
     assert params["job_type"] == "backtest"
     assert params["ref_id"] == "run-1"
     assert json.loads(params["request_json"]) == {"x": 1}
@@ -175,7 +175,7 @@ def test_claim_next_queued_returns_row_and_marks_running() -> None:
     assert claimed["job_id"] == "abc"
     assert claimed["status"] == "running"
     assert "FOR UPDATE SKIP LOCKED" in cursor.statements[0][0]
-    assert "UPDATE backtest_jobs" in cursor.statements[1][0]
+    assert "UPDATE backtest.backtest_jobs" in cursor.statements[1][0]
     assert conn.commits == 0
 
 
@@ -189,7 +189,7 @@ def test_claim_next_queued_returns_none_when_empty() -> None:
     assert claimed is None
     assert "FOR UPDATE SKIP LOCKED" in cursor.statements[0][0]
     # No follow-up UPDATE should be issued.
-    assert not any("UPDATE backtest_jobs" in sql for sql, _ in cursor.statements[1:])
+    assert not any("UPDATE backtest.backtest_jobs" in sql for sql, _ in cursor.statements[1:])
 
 
 def test_claim_next_queued_rejects_invalid_job_type() -> None:

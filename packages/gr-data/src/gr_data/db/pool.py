@@ -46,7 +46,10 @@ class PgConnectionPool:
             max_size=cfg.max_size,
             kwargs={
                 "row_factory": dict_row,
-                "options": "-c timezone=Asia/Shanghai -c search_path=frontend",
+                # search_path 覆盖业务主库（app）与参考／行情数据（market、meta），
+                # 让不带前缀的业务查询照常工作。回测产物在 backtest schema，
+                # 相关 SQL 一律显式写 backtest. 前缀，不依赖这里的顺序。
+                "options": "-c timezone=Asia/Shanghai -c search_path=app,market,meta,public",
             },
             open=False,
         )

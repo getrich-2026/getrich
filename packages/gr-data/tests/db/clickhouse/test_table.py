@@ -23,7 +23,6 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-
 from gr_data.db.clickhouse.table import ClickHouseTable
 
 

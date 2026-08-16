@@ -68,7 +68,7 @@ class PgSweepResultStore:
                     _sweep_params(result, search_spec or {}, search_type, user_id),
                 )
                 await cur.execute(
-                    "DELETE FROM backtest_sweep_trials WHERE sweep_id = %(sweep_id)s",
+                    "DELETE FROM backtest.backtest_sweep_trials WHERE sweep_id = %(sweep_id)s",
                     {"sweep_id": result.sweep_id},
                 )
 
@@ -147,7 +147,7 @@ class PgSweepResultStore:
         where = "WHERE " + " AND ".join(conds) if conds else ""
         sql = f"""
             SELECT *, COUNT(*) OVER() AS _total
-            FROM backtest_sweeps
+            FROM backtest.backtest_sweeps
             {where}
             ORDER BY created_at DESC
             LIMIT %(limit)s OFFSET %(offset)s
@@ -196,7 +196,7 @@ class PgSweepResultStore:
         where = " AND ".join(conds)
         sql = f"""
             SELECT *, COUNT(*) OVER() AS _total
-            FROM backtest_sweep_trials
+            FROM backtest.backtest_sweep_trials
             WHERE {where}
             ORDER BY trial_index
             LIMIT %(limit)s OFFSET %(offset)s
@@ -412,7 +412,7 @@ def _decimal_or_none(value: object) -> Decimal | None:
 
 
 _UPSERT_SWEEP_SQL = """
-INSERT INTO backtest_sweeps (
+INSERT INTO backtest.backtest_sweeps (
     sweep_id, search_type, search_spec, select_metric, maximize, status,
     total_trials, completed_trials, failed_trials, best_trial_id, best_run_id,
     best_metric_value, summary_json, user_id, created_at, completed_at, updated_at
@@ -444,7 +444,7 @@ ON CONFLICT (sweep_id) DO UPDATE SET
 
 _SELECT_SWEEP_SQL = """
 SELECT *
-FROM backtest_sweeps
+FROM backtest.backtest_sweeps
 WHERE sweep_id = %(sweep_id)s
   AND (
       %(user_id)s::text IS NULL
@@ -453,7 +453,7 @@ WHERE sweep_id = %(sweep_id)s
 """
 
 _INSERT_TRIAL_SQL = """
-INSERT INTO backtest_sweep_trials (
+INSERT INTO backtest.backtest_sweep_trials (
     trial_id, sweep_id, run_id, trial_index, params, param_fingerprint,
     status, error_message, select_metric_value, metrics_json, created_at,
     completed_at, updated_at

@@ -33,9 +33,6 @@ dependencies = [
     "uvicorn[standard]>=0.30",
 ]
 
-[project.scripts]
-getrich-migrate = "getrich.migrations.cli:main"
-
 [tool.setuptools.packages.find]
 where = ["src"]
 include = [
@@ -43,7 +40,5 @@ include = [
     "getrich.apps.strategy*",
     "getrich.apps.web*",
     "getrich.apps.worker*",
-    "getrich.libs*",
-    "getrich.migrations*",
 ]
 namespaces = true

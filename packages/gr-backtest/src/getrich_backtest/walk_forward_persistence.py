@@ -66,7 +66,7 @@ class PgWalkForwardResultStore:
                 )
                 await cur.execute(
                     """
-                    DELETE FROM backtest_walk_forward_windows
+                    DELETE FROM backtest.backtest_walk_forward_windows
                     WHERE walk_forward_id = %(walk_forward_id)s
                     """,
                     {"walk_forward_id": result.walk_forward_id},
@@ -114,7 +114,7 @@ class PgWalkForwardResultStore:
                 await cur.execute(
                     """
                     SELECT *
-                    FROM backtest_walk_forwards
+                    FROM backtest.backtest_walk_forwards
                     WHERE walk_forward_id = %(walk_forward_id)s
                     """,
                     {"walk_forward_id": walk_forward_id},
@@ -151,7 +151,7 @@ class PgWalkForwardResultStore:
         where = "WHERE " + " AND ".join(conds) if conds else ""
         sql = f"""
             SELECT *, COUNT(*) OVER() AS _total
-            FROM backtest_walk_forwards
+            FROM backtest.backtest_walk_forwards
             {where}
             ORDER BY created_at DESC
             LIMIT %(limit)s OFFSET %(offset)s
@@ -201,7 +201,7 @@ class PgWalkForwardResultStore:
         where = " AND ".join(conds)
         sql = f"""
             SELECT *, COUNT(*) OVER() AS _total
-            FROM backtest_walk_forward_windows
+            FROM backtest.backtest_walk_forward_windows
             WHERE {where}
             ORDER BY window_index
             LIMIT %(limit)s OFFSET %(offset)s
@@ -272,8 +272,8 @@ class PgWalkForwardResultStore:
                         e.gross_exposure,
                         e.row_json,
                         e.created_at
-                    FROM backtest_walk_forward_windows w
-                    JOIN backtest_equity_points e
+                    FROM backtest.backtest_walk_forward_windows w
+                    JOIN backtest.backtest_equity_points e
                         ON e.run_id = w.validation_run_id
                     WHERE w.walk_forward_id = %(walk_forward_id)s
                       AND w.validation_run_id IS NOT NULL
@@ -499,7 +499,7 @@ def _decimal_or_none(value: object) -> Decimal | None:
 
 
 _UPSERT_WALK_FORWARD_SQL = """
-INSERT INTO backtest_walk_forwards (
+INSERT INTO backtest.backtest_walk_forwards (
     walk_forward_id, search_type, search_spec, select_metric, maximize, refit,
     status, total_windows, completed_windows, failed_windows,
     mean_validation_metric, summary_json, created_at, completed_at, updated_at
@@ -526,7 +526,7 @@ ON CONFLICT (walk_forward_id) DO UPDATE SET
 """
 
 _INSERT_WINDOW_SQL = """
-INSERT INTO backtest_walk_forward_windows (
+INSERT INTO backtest.backtest_walk_forward_windows (
     walk_forward_id, window_index, train_start, train_end, val_start, val_end,
     status, error_message, train_sweep_id, best_trial_id, best_run_id,
     validation_run_id, best_params, train_metric_value, validation_metric_value,

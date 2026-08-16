@@ -180,7 +180,7 @@ class PgBacktestResultStore:
                 await cur.execute(
                     """
                     SELECT *
-                    FROM backtest_runs
+                    FROM backtest.backtest_runs
                     WHERE run_id = %(run_id)s
                     """,
                     {"run_id": run_id},
@@ -223,7 +223,7 @@ class PgBacktestResultStore:
         where = "WHERE " + " AND ".join(conds) if conds else ""
         sql = f"""
             SELECT *, COUNT(*) OVER() AS _total
-            FROM backtest_runs
+            FROM backtest.backtest_runs
             {where}
             ORDER BY created_at DESC
             LIMIT %(limit)s OFFSET %(offset)s
@@ -265,7 +265,7 @@ class PgBacktestResultStore:
                 await cur.execute(
                     f"""
                     SELECT *
-                    FROM backtest_equity_points
+                    FROM backtest.backtest_equity_points
                     WHERE {where}
                     ORDER BY dt
                     """,
@@ -284,10 +284,10 @@ class PgBacktestResultStore:
 
     async def _delete_children(self, cur: Any, run_id: str) -> None:
         for table in (
-            "backtest_metrics",
-            "backtest_equity_points",
-            "backtest_final_positions",
-            "backtest_artifacts",
+            "backtest.backtest_metrics",
+            "backtest.backtest_equity_points",
+            "backtest.backtest_final_positions",
+            "backtest.backtest_artifacts",
         ):
             await cur.execute(f"DELETE FROM {table} WHERE run_id = %(run_id)s", {"run_id": run_id})
 
@@ -521,7 +521,7 @@ def _artifact_rows(
 
 
 _UPSERT_RUN_SQL = """
-INSERT INTO backtest_runs (
+INSERT INTO backtest.backtest_runs (
     run_id, strategy_id, strategy_name, strategy_names, config_fingerprint,
     config, symbols, freq, start_at, end_at, initial_cash, final_cash,
     final_equity, benchmark_final_equity, status, error_message, created_at,
@@ -554,7 +554,7 @@ ON CONFLICT (run_id) DO UPDATE SET
 """
 
 _UPSERT_RUNNING_SQL = """
-INSERT INTO backtest_runs (
+INSERT INTO backtest.backtest_runs (
     run_id, strategy_id, strategy_name, strategy_names, config_fingerprint,
     config, symbols, freq, start_at, end_at, initial_cash, status,
     error_message, created_at, completed_at, updated_at
@@ -582,7 +582,7 @@ ON CONFLICT (run_id) DO UPDATE SET
 """
 
 _UPSERT_FAILED_SQL = """
-INSERT INTO backtest_runs (
+INSERT INTO backtest.backtest_runs (
     run_id, strategy_id, strategy_name, strategy_names, config_fingerprint,
     config, symbols, freq, start_at, end_at, initial_cash, status,
     error_message, created_at, completed_at, updated_at
@@ -610,7 +610,7 @@ ON CONFLICT (run_id) DO UPDATE SET
 """
 
 _INSERT_METRICS_SQL = """
-INSERT INTO backtest_metrics (
+INSERT INTO backtest.backtest_metrics (
     run_id, total_return, log_return, annualized_return,
     annualized_volatility, sharpe_ratio, sortino_ratio, calmar_ratio,
     max_drawdown, max_drawdown_duration, total_fees, total_turnover,
@@ -627,7 +627,7 @@ INSERT INTO backtest_metrics (
 """
 
 _INSERT_EQUITY_SQL = """
-INSERT INTO backtest_equity_points (
+INSERT INTO backtest.backtest_equity_points (
     run_id, strategy_name, dt, cash, equity, trading_pnl, mtm_pnl,
     total_fees, gross_exposure, row_json
 ) VALUES (
@@ -638,12 +638,12 @@ INSERT INTO backtest_equity_points (
 """
 
 _INSERT_POSITION_SQL = """
-INSERT INTO backtest_final_positions (run_id, symbol, qty, position_json)
+INSERT INTO backtest.backtest_final_positions (run_id, symbol, qty, position_json)
 VALUES (%(run_id)s, %(symbol)s, %(qty)s, %(position_json)s::jsonb)
 """
 
 _INSERT_ARTIFACT_SQL = """
-INSERT INTO backtest_artifacts (id, run_id, artifact_type, uri, checksum, meta)
+INSERT INTO backtest.backtest_artifacts (id, run_id, artifact_type, uri, checksum, meta)
 VALUES (%(id)s, %(run_id)s, %(artifact_type)s, %(uri)s, %(checksum)s, %(meta)s::jsonb)
 """
 

@@ -5,7 +5,6 @@
     gr-data raw <provider> [--mode init|update] [--only a,b]
     gr-data ingest <provider> [--only a,b] [--force-ownership]
     gr-data stream <provider> [--symbols ...]          # 长驻，需真实 SDK
-    gr-data db migrate | status
     gr-data own list | set <target> <provider> <channel> | release <target>
 
 provider ∈ {yinhe, ricequant, insight, tushare}（stream 仅 yinhe/insight）。
@@ -72,16 +71,6 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
-def cmd_db(args: argparse.Namespace, cfg: Config) -> int:
-    from gr_data.common import migrate as mig
-
-    with connect(_pg(cfg)) as conn:
-        res = mig.migrate(conn) if args.action == "migrate" else mig.status(conn)
-    for r in res:
-        print(f"  {r.file_name}: {r.action}")
-    return 0
-
-
 def cmd_own(args: argparse.Namespace, cfg: Config) -> int:
     from gr_data.common.ownership import OwnershipManager
 
@@ -132,9 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--symbols", help="逗号分隔的订阅标的")
     st.set_defaults(func=cmd_stream)
 
-    db = sub.add_parser("db", help="数据库迁移/状态")
-    db.add_argument("action", choices=["migrate", "status"])
-    db.set_defaults(func=cmd_db)
+    # 建库与迁移不在这里 —— DDL 的唯一真源是 gr-db，用 `gr-db migrate`。
 
     own = sub.add_parser("own", help="表归属管理")
     own.add_argument("action", choices=["list", "set", "release"])

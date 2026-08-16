@@ -213,7 +213,7 @@ def test_cancel_job_returns_refreshed_detail() -> None:
 
     # The store's _run dispatches multiple SELECT/UPDATE statements through the
     # same cursor; we just verify the latest one is the cancellation SQL.
-    assert any("UPDATE backtest_jobs" in sql and "cancelled" in sql for sql, _ in cursor.executed)
+    assert any("UPDATE backtest.backtest_jobs" in sql and "cancelled" in sql for sql, _ in cursor.executed)
     # The second ``fetchone`` returns the refreshed row.
     assert data["status"] == "cancelled"
 

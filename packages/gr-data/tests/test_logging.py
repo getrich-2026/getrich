@@ -15,7 +15,6 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-
 from gr_data.logging import Logger
 
 

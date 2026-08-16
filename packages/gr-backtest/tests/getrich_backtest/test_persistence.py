@@ -224,13 +224,13 @@ def test_save_result_executes_upsert_delete_insert_commit() -> None:
 
     statements = "\n".join(sql for sql, _ in conn.cursor_obj.statements)
     many = "\n".join(sql for sql, _ in conn.cursor_obj.executemany_calls)
-    assert "INSERT INTO backtest_runs" in statements
-    assert "DELETE FROM backtest_metrics" in statements
-    assert "DELETE FROM backtest_equity_points" in statements
-    assert "INSERT INTO backtest_metrics" in statements
-    assert "INSERT INTO backtest_equity_points" in many
-    assert "INSERT INTO backtest_final_positions" in many
-    assert "INSERT INTO backtest_artifacts" in many
+    assert "INSERT INTO backtest.backtest_runs" in statements
+    assert "DELETE FROM backtest.backtest_metrics" in statements
+    assert "DELETE FROM backtest.backtest_equity_points" in statements
+    assert "INSERT INTO backtest.backtest_metrics" in statements
+    assert "INSERT INTO backtest.backtest_equity_points" in many
+    assert "INSERT INTO backtest.backtest_final_positions" in many
+    assert "INSERT INTO backtest.backtest_artifacts" in many
     assert conn.commits == 1
 
 
@@ -241,7 +241,7 @@ def test_save_result_with_external_conn_does_not_commit() -> None:
     _run(store.save_result(_sample_result(), conn=conn))
 
     assert conn.commits == 0
-    assert any("INSERT INTO backtest_runs" in sql for sql, _ in conn.cursor_obj.statements)
+    assert any("INSERT INTO backtest.backtest_runs" in sql for sql, _ in conn.cursor_obj.statements)
 
 
 def test_mark_running_upserts_running_status_without_child_writes() -> None:
@@ -251,7 +251,7 @@ def test_mark_running_upserts_running_status_without_child_writes() -> None:
     _run(store.mark_running(_sample_result().config))
 
     statements = "\n".join(sql for sql, _ in conn.cursor_obj.statements)
-    assert "INSERT INTO backtest_runs" in statements
+    assert "INSERT INTO backtest.backtest_runs" in statements
     assert "backtest_metrics" not in statements
     assert conn.cursor_obj.statements[0][1]["status"] == "running"
     assert conn.commits == 1

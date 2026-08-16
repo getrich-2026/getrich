@@ -14,8 +14,9 @@ PgConnectionPool is a thin wrapper over
   and forces ``application_name=getrich-web``.
 - The pool kwargs set ``row_factory=dict_row`` and
   force the session timezone to ``Asia/Shanghai`` plus a
-  ``search_path=frontend`` — both are project invariants
-  declared in CLAUDE.md §3.1.
+  ``search_path=app,market,meta,public`` —— 时区是 AGENTS.md §3.1 的
+  项目铁律；search_path 覆盖业务主库与行情／参考数据，回测产物在
+  ``backtest`` schema，由 SQL 显式加前缀，不靠 search_path。
 
 These tests mock ``psycopg_pool.AsyncConnectionPool``
 itself, so no live Postgres is required.
@@ -27,9 +28,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from psycopg.rows import dict_row
-
 from gr_data.db.pool import PgConnectionPool
+from psycopg.rows import dict_row
 
 
 pytestmark = pytest.mark.anyio
@@ -175,12 +175,14 @@ async def test_init_creates_pool_with_expected_dsn_and_kwargs() -> None:
 
     inner = kwargs["kwargs"]
     assert inner["row_factory"] is dict_row
-    # The project mandates the +08:00 timezone and the
-    # `frontend` schema search_path. The full options
-    # string is encoded into a single `-c ...` flag pair.
+    # 时区是铁律；search_path 必须覆盖 app（业务）与 market/meta（行情、参考）。
     opts = inner["options"]
     assert "timezone=Asia/Shanghai" in opts
-    assert "search_path=frontend" in opts
+    assert "search_path=app,market,meta,public" in opts
+    # frontend schema 已被 app + backtest 取代，不该再出现。
+    assert "frontend" not in opts
+    # backtest 不进 search_path：回测 SQL 一律显式写 backtest. 前缀。
+    assert "backtest" not in opts
 
     fake_pool.open.assert_awaited_once_with(wait=True)
 

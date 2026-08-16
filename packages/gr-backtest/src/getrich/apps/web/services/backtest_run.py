@@ -35,7 +35,7 @@ async def _assert_run_owner(db: AsyncConnection, run_id: str, user_id: str) -> N
     """Raise ``NotFound`` if ``run_id`` is missing or not owned by ``user_id``."""
     async with db.cursor() as cur:
         await cur.execute(
-            "SELECT user_id FROM backtest_runs WHERE run_id = %(run_id)s",
+            "SELECT user_id FROM backtest.backtest_runs WHERE run_id = %(run_id)s",
             {"run_id": run_id},
         )
         row = await cur.fetchone()
@@ -85,7 +85,7 @@ async def list_runs(
             completed_at,
             updated_at,
             COUNT(*) OVER() AS _total
-        FROM backtest_runs
+        FROM backtest.backtest_runs
         WHERE {where_sql}
         ORDER BY created_at DESC, run_id DESC
         LIMIT %(limit)s OFFSET %(offset)s
@@ -128,7 +128,7 @@ async def get_run(
             created_at,
             completed_at,
             updated_at
-        FROM backtest_runs
+        FROM backtest.backtest_runs
         WHERE run_id = %(run_id)s
     """
     async with db.cursor() as cur:
@@ -169,7 +169,7 @@ async def get_equity_curve(
             gross_exposure,
             row_json,
             created_at
-        FROM backtest_equity_points
+        FROM backtest.backtest_equity_points
         WHERE {where_sql}
         ORDER BY dt ASC, strategy_name ASC
     """
@@ -208,7 +208,7 @@ async def get_metrics(
             trading_days_per_year,
             metrics_json,
             created_at
-        FROM backtest_metrics
+        FROM backtest.backtest_metrics
         WHERE run_id = %(run_id)s
     """
     async with db.cursor() as cur:
@@ -235,7 +235,7 @@ async def get_positions(
             qty,
             position_json,
             created_at
-        FROM backtest_final_positions
+        FROM backtest.backtest_final_positions
         WHERE run_id = %(run_id)s
         ORDER BY symbol ASC
     """
@@ -262,7 +262,7 @@ async def get_artifacts(
             checksum,
             meta,
             created_at
-        FROM backtest_artifacts
+        FROM backtest.backtest_artifacts
         WHERE run_id = %(run_id)s
         ORDER BY artifact_type ASC, id ASC
     """
@@ -295,7 +295,7 @@ async def get_artifact(
             checksum,
             meta,
             created_at
-        FROM backtest_artifacts
+        FROM backtest.backtest_artifacts
         WHERE run_id = %(run_id)s
           AND id = %(artifact_id)s
     """

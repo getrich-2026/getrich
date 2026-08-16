@@ -228,14 +228,14 @@ def test_save_sweep_result_upserts_parent_trials_and_completed_runs() -> None:
 
     statements = "\n".join(sql for sql, _ in conn.cursor_obj.statements)
     many = "\n".join(sql for sql, _ in conn.cursor_obj.executemany_calls)
-    assert "INSERT INTO backtest_sweeps" in statements
-    assert "DELETE FROM backtest_sweep_trials" in statements
-    assert "INSERT INTO backtest_sweep_trials" in many
-    assert statements.count("INSERT INTO backtest_runs") == 2
-    assert "INSERT INTO backtest_equity_points" in many
+    assert "INSERT INTO backtest.backtest_sweeps" in statements
+    assert "DELETE FROM backtest.backtest_sweep_trials" in statements
+    assert "INSERT INTO backtest.backtest_sweep_trials" in many
+    assert statements.count("INSERT INTO backtest.backtest_runs") == 2
+    assert "INSERT INTO backtest.backtest_equity_points" in many
     assert conn.commits == 1
 
-    sweep_params = _first_params_for_sql(conn.cursor_obj, "INSERT INTO backtest_sweeps")
+    sweep_params = _first_params_for_sql(conn.cursor_obj, "INSERT INTO backtest.backtest_sweeps")
     assert sweep_params["best_trial_id"] == "sweep-persist-trial-0001"
     assert sweep_params["best_run_id"] == "sweep-persist-run-0001"
     assert sweep_params["best_metric_value"] == Decimal("0.05")
@@ -259,7 +259,7 @@ def test_save_sweep_result_with_external_conn_does_not_commit() -> None:
     _run(store.save_sweep_result(_sample_sweep(), conn=conn))
 
     assert conn.commits == 0
-    assert any("INSERT INTO backtest_sweeps" in sql for sql, _ in conn.cursor_obj.statements)
+    assert any("INSERT INTO backtest.backtest_sweeps" in sql for sql, _ in conn.cursor_obj.statements)
 
 
 def test_save_sweep_result_can_skip_backtest_result_persistence() -> None:
@@ -269,8 +269,8 @@ def test_save_sweep_result_can_skip_backtest_result_persistence() -> None:
     _run(store.save_sweep_result(_sample_sweep(), save_backtest_results=False))
 
     statements = "\n".join(sql for sql, _ in conn.cursor_obj.statements)
-    assert "INSERT INTO backtest_sweeps" in statements
-    assert "INSERT INTO backtest_runs" not in statements
+    assert "INSERT INTO backtest.backtest_sweeps" in statements
+    assert "INSERT INTO backtest.backtest_runs" not in statements
     assert conn.commits == 1
 
 

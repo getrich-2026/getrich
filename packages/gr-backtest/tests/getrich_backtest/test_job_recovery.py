@@ -210,7 +210,7 @@ def test_claim_returns_was_recovered_true_for_running_row() -> None:
     assert claimed["max_attempts"] == 3
     # The post-claim UPDATE should have been issued against the row.
     assert len(cursor.statements) >= 2
-    assert "UPDATE backtest_jobs" in cursor.statements[1][0]
+    assert "UPDATE backtest.backtest_jobs" in cursor.statements[1][0]
 
 
 def test_claim_returns_none_when_no_candidate() -> None:

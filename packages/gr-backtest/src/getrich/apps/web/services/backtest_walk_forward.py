@@ -66,7 +66,7 @@ async def _assert_walk_forward_owner(
     """Raise ``NotFound`` if the study is missing or not owned by ``user_id``."""
     async with db.cursor() as cur:
         await cur.execute(
-            "SELECT user_id FROM backtest_walk_forwards "
+            "SELECT user_id FROM backtest.backtest_walk_forwards "
             "WHERE walk_forward_id = %(walk_forward_id)s",
             {"walk_forward_id": walk_forward_id},
         )
@@ -113,7 +113,7 @@ async def list_walk_forwards(
             completed_at,
             updated_at,
             COUNT(*) OVER() AS _total
-        FROM backtest_walk_forwards
+        FROM backtest.backtest_walk_forwards
         WHERE {where_sql}
         ORDER BY created_at DESC, walk_forward_id DESC
         LIMIT %(limit)s OFFSET %(offset)s
@@ -157,7 +157,7 @@ async def get_walk_forward(
             created_at,
             completed_at,
             updated_at
-        FROM backtest_walk_forwards
+        FROM backtest.backtest_walk_forwards
         WHERE walk_forward_id = %(walk_forward_id)s
     """
     async with db.cursor() as cur:
@@ -334,7 +334,7 @@ async def _fetch_walk_forward(
             created_at,
             completed_at,
             updated_at
-        FROM backtest_walk_forwards
+        FROM backtest.backtest_walk_forwards
         WHERE walk_forward_id = %(walk_forward_id)s
     """
     # The store has a ``get_walk_forward`` method but the service
@@ -427,7 +427,7 @@ async def list_windows(
             completed_at,
             updated_at,
             COUNT(*) OVER() AS _total
-        FROM backtest_walk_forward_windows
+        FROM backtest.backtest_walk_forward_windows
         WHERE {where_sql}
         ORDER BY window_index ASC
         LIMIT %(limit)s OFFSET %(offset)s
@@ -463,8 +463,8 @@ async def get_oos_equity_curve(
             e.gross_exposure,
             e.row_json,
             e.created_at
-        FROM backtest_walk_forward_windows w
-        JOIN backtest_equity_points e
+        FROM backtest.backtest_walk_forward_windows w
+        JOIN backtest.backtest_equity_points e
             ON e.run_id = w.validation_run_id
         WHERE w.walk_forward_id = %(walk_forward_id)s
           AND w.validation_run_id IS NOT NULL

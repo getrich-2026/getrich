@@ -28,7 +28,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from gr_data.db.clickhouse.pool import (
     ClickHouseConnectionPool,
     PooledConnection,

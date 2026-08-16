@@ -265,14 +265,14 @@ def test_save_walk_forward_result_upserts_parent_windows_and_child_results() -> 
 
     statements = "\n".join(sql for sql, _ in conn.cursor_obj.statements)
     many = "\n".join(sql for sql, _ in conn.cursor_obj.executemany_calls)
-    assert "INSERT INTO backtest_walk_forwards" in statements
-    assert "DELETE FROM backtest_walk_forward_windows" in statements
-    assert "INSERT INTO backtest_walk_forward_windows" in many
-    assert "INSERT INTO backtest_sweeps" in statements
-    assert statements.count("INSERT INTO backtest_runs") == 3
+    assert "INSERT INTO backtest.backtest_walk_forwards" in statements
+    assert "DELETE FROM backtest.backtest_walk_forward_windows" in statements
+    assert "INSERT INTO backtest.backtest_walk_forward_windows" in many
+    assert "INSERT INTO backtest.backtest_sweeps" in statements
+    assert statements.count("INSERT INTO backtest.backtest_runs") == 3
     assert conn.commits == 1
 
-    parent_params = _first_params_for_sql(conn.cursor_obj, "INSERT INTO backtest_walk_forwards")
+    parent_params = _first_params_for_sql(conn.cursor_obj, "INSERT INTO backtest.backtest_walk_forwards")
     assert parent_params["walk_forward_id"] == "wf-persist"
     assert parent_params["completed_windows"] == 1
     assert parent_params["failed_windows"] == 1
@@ -300,7 +300,7 @@ def test_save_walk_forward_result_with_external_conn_does_not_commit() -> None:
     _run(store.save_walk_forward_result(_sample_walk_forward(), conn=conn))
 
     assert conn.commits == 0
-    assert any("INSERT INTO backtest_walk_forwards" in sql for sql, _ in conn.cursor_obj.statements)
+    assert any("INSERT INTO backtest.backtest_walk_forwards" in sql for sql, _ in conn.cursor_obj.statements)
 
 
 def test_save_walk_forward_result_can_skip_child_result_persistence() -> None:
@@ -310,9 +310,9 @@ def test_save_walk_forward_result_can_skip_child_result_persistence() -> None:
     _run(store.save_walk_forward_result(_sample_walk_forward(), save_child_results=False))
 
     statements = "\n".join(sql for sql, _ in conn.cursor_obj.statements)
-    assert "INSERT INTO backtest_walk_forwards" in statements
-    assert "INSERT INTO backtest_sweeps" not in statements
-    assert "INSERT INTO backtest_runs" not in statements
+    assert "INSERT INTO backtest.backtest_walk_forwards" in statements
+    assert "INSERT INTO backtest.backtest_sweeps" not in statements
+    assert "INSERT INTO backtest.backtest_runs" not in statements
     assert conn.commits == 1
 
 
@@ -440,7 +440,7 @@ def test_get_oos_equity_curve_returns_window_tagged_frame() -> None:
     frame = _run(store.get_oos_equity_curve("wf-persist", conn=conn))
 
     sql, params = cursor.statements[0]
-    assert "JOIN backtest_equity_points" in sql
+    assert "JOIN backtest.backtest_equity_points" in sql
     assert params == {"walk_forward_id": "wf-persist"}
     record = frame.to_dicts()[0]
     assert record["walk_forward_id"] == "wf-persist"

@@ -470,16 +470,21 @@ def pg_dsn():
 
 @pytest.fixture
 def pg_conn(pg_dsn):
-    """已应用全部 DDL 的干净连接。"""
+    """已应用全部 DDL 的干净连接。
+
+    DDL 的唯一真源在 gr-db（``gr_db.POSTGRES_DDL_DIR``）。测试依赖 gr-db 是
+    有意为之：让 ingest 用例跑在与生产完全相同的建库脚本上，避免测试自带一份
+    会漂移的简化 schema。
+    """
     import psycopg
-    from gr_data.common import migrate as mig
+    from gr_db import migrate_postgres
 
     conn = psycopg.connect(
         f"host={pg_dsn['host']} port={pg_dsn['port']} dbname={pg_dsn['dbname']} "
         f"user={pg_dsn['user']} password={pg_dsn['password']}",
         autocommit=False,
     )
-    mig.migrate(conn)
+    migrate_postgres(conn)
     # 每个测试前清空业务数据，保证隔离（容器为 session 级，importer 会 commit）。
     with conn.cursor() as cur:
         cur.execute(

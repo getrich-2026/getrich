@@ -21,6 +21,7 @@ members = [
     "gr-api",
     "gr-backtest",
     "gr-data",
+    "gr-db",
     "gr-factor",
     "gr-signal",
 ]
@@ -1159,6 +1160,7 @@ dependencies = [
     { name = "gr-api" },
     { name = "gr-backtest" },
     { name = "gr-data" },
+    { name = "gr-db" },
     { name = "gr-factor" },
     { name = "gr-signal" },
 ]
@@ -1182,6 +1184,7 @@ requires-dist = [
     { name = "gr-api", editable = "packages/gr-api" },
     { name = "gr-backtest", editable = "packages/gr-backtest" },
     { name = "gr-data", editable = "packages/gr-data" },
+    { name = "gr-db", editable = "packages/gr-db" },
     { name = "gr-factor", editable = "packages/gr-factor" },
     { name = "gr-signal", editable = "packages/gr-signal" },
 ]
@@ -1330,6 +1333,23 @@ requires-dist = [
     { name = "rqdatac" },
     { name = "tqdm" },
     { name = "tushare", specifier = ">=1.4" },
+]
+
+[[package]]
+name = "gr-db"
+version = "0.1.2"
+source = { editable = "packages/gr-db" }
+dependencies = [
+    { name = "clickhouse-connect" },
+    { name = "gr-data" },
+    { name = "psycopg", extra = ["binary", "pool"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "clickhouse-connect" },
+    { name = "gr-data", editable = "packages/gr-data" },
+    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
 ]
 
 [[package]]

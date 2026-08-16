@@ -79,7 +79,7 @@ def test_make_pg_dsn_without_password() -> None:
     assert dsn == "postgresql://quant@db.example.com:5432/goldmine"
 
 
-# ---------------------------------------------------------------- #1143 ClickHouse config defaults (Round #1143 regression test)
+# -------------------------------------------- ClickHouse 默认值回归（Round #1143）
 
 
 def test_clickhouse_default_host_is_localhost(monkeypatch: object) -> None:
