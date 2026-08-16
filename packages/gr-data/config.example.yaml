@@ -1,28 +1,16 @@
 # GetRich 数据接入层配置样例
 # 复制为 config.yaml 并填入真实值（config.yaml 已被 .gitignore 忽略）。
-# 凭证优先从环境变量读取，配置里只写「环境变量名」，不写明文密钥。
+#
+# 这里只放**结构化的采集参数**：抓取范围、限频、启用哪些 fetcher/importer。
+# 数据库连接与日志配置统一在仓库根的 .env（PG_HOST / PG_PASSWORD / LOG_LEVEL …），
+# 不要在这里再写一份 —— 两份配置用的还是不同的环境变量名（PGHOST vs PG_HOST），
+# 会让 CLI 和应用连到不同的库上。
+# 凭证一律只写「环境变量名」，不写明文密钥。
 
 # ---- 全局 ----
 paths:
   # raw 层 parquet 落地根目录（仓库外）。
   raw_root: /opt/raw_parquet
-
-logging:
-  level: INFO            # DEBUG | INFO | WARNING | ERROR
-  dir: logs             # 日志目录（相对 cwd 或绝对路径）
-  json: false           # true=结构化 JSON 行，false=人读文本
-  console: true
-
-# ---- PostgreSQL / TimescaleDB ----
-postgres:
-  host: ${PGHOST}
-  port: 5432
-  dbname: getrich
-  user: ${PGUSER}
-  password_env: PGPASSWORD   # 从该环境变量读取密码
-  min_size: 1
-  max_size: 8
-  statement_timeout_ms: 60000
 
 # ---- 数据源 ----
 providers:

@@ -93,28 +93,11 @@ markers = [
     "live_sdk: 需要真实供应商 SDK 与凭证，默认 skip",
     "integration: 需要可用的 PostgreSQL（docker），不可用时 skip",
 ]
-# Round #1203 (E-1): two distinct test trees share base names
-# (``test_backtest_run.py`` and ``test_metrics.py`` exist in BOTH
-# ``packages/gr-backtest/tests/getrich_backtest/`` and
-# ``packages/gr-backtest/tests/getrich/apps/web/``). The
-# default ``prepend`` import mode re-uses the first-seen module on
-# later collection, which raises ``import file mismatch`` and
-# crashes the test run. The ``importlib`` mode imports each test
-# file as a separately-named module
-# (``getrich.apps.web.test_metrics`` vs
-# ``getrich_backtest.test_metrics``), so the collision goes away
-# without renaming any file. Pytest 9.x does NOT honour a
-# ``import_mode`` config key (only the CLI flag), so we put it in
-# ``addopts`` instead. Verified locally:
-#   1862 tests collected (was 0 with 2 collection errors)
-#   1892 passed, 5 skipped (PG-integration guarded by env)
-# 默认参数：
-# -v: 详细输出
-# -ra: 显示跳过/失败的原因
-# --durations=10: 列出最慢的 10 个测试 (用于性能优化)
-# --no-cov-on-fail: 如果测试失败不要被覆盖率覆盖输出淹没
-# CI 通过显式的 ``--cov`` 与 ``--cov-fail-under`` 参数启用覆盖率门禁；
-# 本地默认测试不计算覆盖率。
+# 用 importlib 导入模式：不同包的测试目录里存在同名文件
+# （例如 gr-api 与 gr-backtest 各有 test_metrics.py）。默认的 prepend 模式
+# 会把先看到的模块复用给后来者，报 "import file mismatch" 并中断整轮收集。
+# importlib 模式给每个测试文件独立的模块名，冲突自然消失，且无需改文件名。
+# pytest 9.x 不认配置文件里的 import_mode 键（只认命令行），所以放在 addopts。
 addopts = "-v -ra --durations=10 --import-mode=importlib"
 # 过滤器：将特定警告视为错误 (严格模式)
 filterwarnings = ["ignore::DeprecationWarning"]

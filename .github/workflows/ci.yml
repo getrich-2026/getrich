@@ -59,15 +59,14 @@ jobs:
       - name: Install workspace
         run: uv sync --frozen --all-packages
 
+      # 2026-08-16 起 Ruff 已清零（此前有 362 个既有问题），因此去掉
+      # continue-on-error，让新引入的问题真正阻塞 CI。
+      # 测试代码在各包的 packages/*/tests 下，没有顶层 tests 目录。
       - name: Ruff lint
-        # Temporary code baseline: report existing findings without
-        # blocking unrelated workspace and dependency fixes.
-        continue-on-error: true
-        run: uv run --frozen ruff check packages scripts tests
+        run: uv run --frozen ruff check packages scripts
 
       - name: Ruff format
-        continue-on-error: true
-        run: uv run --frozen ruff format --check packages scripts tests
+        run: uv run --frozen ruff format --check packages scripts
 
       - name: Migration topology lint
         run: uv run --frozen python scripts/lint_migrations.py --db all
@@ -160,10 +159,10 @@ jobs:
         run: uv sync --frozen --all-packages
 
       - name: Apply PostgreSQL migrations
-        run: uv run --frozen python -m getrich.migrations.cli postgres
+        run: uv run --frozen gr-db migrate --target pg
 
       - name: Apply ClickHouse migrations
-        run: uv run --frozen python -m getrich.migrations.cli clickhouse
+        run: uv run --frozen gr-db migrate --target ch
 
       - name: Run tests
         if: ${{ !matrix.coverage }}
@@ -173,8 +172,12 @@ jobs:
         if: matrix.coverage
         run: |
           uv run --frozen pytest \
-            --cov=getrich \
-            --cov=getrich_backtest \
+            --cov=gr_api \
+            --cov=gr_backtest \
+            --cov=gr_data \
+            --cov=gr_db \
+            --cov=gr_factor \
+            --cov=gr_signal \
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-fail-under=75

@@ -401,9 +401,9 @@ class PgBarLoader:
             b_xdy         -> pre_factor    逆推累积除权因子 = 前复权
             f_xdy         -> post_factor   顺推累积除权因子 = 后复权
 
-        ``b_xdy``／``f_xdy`` 的复权方向来自厂商文档，不是推断：见
-        ``packages/gr-data/reference/design/insight/INSIGHT_DATA_DEV_Reference.md``
-        §3.2 ——「``b_xdy`` 逆推累积除权因子（前复权，最新价系数=1）」、
+        ``b_xdy``／``f_xdy`` 的复权方向来自厂商文档，不是推断：见 getrich-design 仓
+        ``dataapi/legacy/insight/architecture-overview.md`` §3.2 ——
+        「``b_xdy`` 逆推累积除权因子（前复权，最新价系数=1）」、
         「``f_xdy`` 顺推累计除权因子（后复权，最早价系数=1）」。
         搞反方向会让整段历史价格系统性偏移，且回测不会报错。
         """

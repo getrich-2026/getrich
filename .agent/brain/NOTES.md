@@ -6,68 +6,77 @@
 
 ---
 
-## 进行中
+## 刚完成：monorepo 结构化重构
 
-- **AI 指令文件重构（2026-08-14）**：`AGENTS.md` 改为唯一真源，`CLAUDE.md` 瘦成 `@AGENTS.md` 导入入口；`.agent/brain/` 拆成 `NOTES.md`（状态快照）+ `DECISIONS.md`（只增不改）+ `archive/`；`.agent/` 从 `.gitignore` 移出准备提交。原 249 行 NOTES.md 归档在 `archive/2026-08-11_12-monorepo-refactor-log.md`。
-- **数据库部署模板归入 `deploy/`（2026-08-16）**：`deploy/docker-compose.yml`、`deploy/config/` 和 `deploy/.env.example` 只保存可复现定义；GetRich 仓库内不实例化 Docker。同步时将 `deploy/` 中的文件放到外部部署目录根，不保留外层 `deploy/`。真实 `.env`、数据、日志和运维脚本只存在于仓库外的部署目录，见 `DECISIONS.md` D-016、D-017。
-- **应用与部署环境变量分离（2026-08-16）**：根 `.env.example` 只保留应用连接和运行配置；部署侧的容器名称、端口、数据目录和资源上限移到 `deploy/.env.example`。本机根 `.env` 已删除非敏感的 Docker 专用键，真实连接密码未改动。
-- **基础设施配置状态**：Redis 使用 `noeviction` + `REDIS_MAXMEMORY`（D-013）、关闭 RDB 双写；ClickHouse 固定时区并为 5 张 `system.*_log` 表设置 7 天 TTL；PostgreSQL 用 `include_if_exists` 继承 timescaledb-tune 调优（D-014）。
-- **同步状态**：
+推翻了 2026-06-06 按「文件进入 git 的时间」切包的方案（D-002），按职责重新划分。
 
-  | 环境 | compose | config/ | 服务已重启 | 状态 |
-  |---|---|---|---|---|
-  | 仓库 `deploy/` | 新 | 新 | — | 部署模板真源，不创建实例 |
-  | 本机部署目录 | 新 ✅ | 新 ✅ | ✅ | 三服务 healthy；本次目录整理未同步或重启 |
-  | `greencloud:/opt/getrich-docker` | **旧** ❌ | 新 ✅ | ❌ | **PG 崩溃重启中**，见下 |
+- **六个包各有独立顶层 import 名**，`getrich.*` 命名空间包已废除（D-018）。
+  规则：发行名 = 目录名 = `gr-x`，import 名 = `gr_x`。
+- **依赖方向单向**：`gr-data ← gr-db`，`gr-data ← gr-backtest ← gr-signal ← gr-api`。
+  六个包都能单独 `uv run --isolated --with ./packages/<pkg>` 安装并 import。
+  `test_package_boundaries.py` 用 AST 静态扫描守住这条边界。
+- **`getrich-database` 已 subtree 合并**进 `packages/gr-data`（51 个提交历史保留，D-022）。
+  源仓库应转为只读，不要再往那边提交。
+- **`gr-db` 收口全部 DDL**：33 个 PG 文件 + 1 个 CH 文件，checksum 记账（D-021）。
+- **schema 重划**：`frontend` → `app`（22 张业务表）+ `backtest`（10 张回测产物表）（D-020）。
+- **行情主存改为 PostgreSQL/TimescaleDB**，ClickHouse 收窄为只放因子时序（D-019）。
+- Ruff 从既有的 362 个问题清到 **0**。
 
-  - 本机重建时踩到：`docker compose up -d` 不会重建 ClickHouse（service 定义没变，检测不到 bind-mount 文件内容变化），只改 `logger.xml` 时必须显式 `docker compose restart clickhouse`。
-- **`dev-refactor` 分支有大量未提交改动**：删除了 `docs/`、`backtest/docs/`、`Dockerfile`、`MANIFEST.in`、`GEMINI.md`、`components.json`、`.github/workflows/docs.yml` 等。提交前需整体过一遍。
+## 当前基线
 
-## greencloud 服务器待办（用户手动处理）
+| 项 | 状态 |
+|---|---|
+| `uv run pytest` | **2220 passed, 1 failed, 17 skipped** |
+| `uv run ruff check packages/ scripts/` | 通过 |
+| `uv run ruff format --check` | 通过 |
+| 六个包单独安装 import | 全部通过 |
 
-远端 `/opt/getrich-docker/`，Linux（getrich.jp）。`config/` 已同步（旧配置备份在 `config.bak-20260814-233723`），其余未做：
+唯一失败是**接手前就存在**的 `TestBlackLitterman::test_mixed_scores_long_short`
+（权重方向问题），不是本次重构引入的。
 
-1. **修 PG 崩溃循环**（根因见 D-015，与配置内容无关）：
-   `sudo chown 70:70 /opt/getrich-docker/.docker/postgres/logs`
-2. **同步部署模板** —— 将仓库 `deploy/docker-compose.yml` 和 `deploy/config/` 的内容同步到远端部署目录根。远端仍是 2026-08-12 旧版，导致 PostgreSQL 配置完全不生效，Redis 配置也只生效一半。
-3. **重启使配置生效**：同步 compose 后 `docker compose up -d`；若只改 config 则 `docker compose restart clickhouse redis`。
-4. 可选：远端 `.env` 补 `REDIS_MAXMEMORY=2gb`（compose 有默认值兜底，不加也能跑）。
+## 已验证（真实环境，非 mock）
 
-## 已知失败基线
+在 PG 17 + TimescaleDB 容器上实测过：
 
-下面这些是**接手前就存在**的失败，用来区分「我改坏的」和「本来就坏的」。修复前不要把它们当成自己引入的回归。
+- `gr-db migrate --target pg` 建出 7 个 schema、21 个 hypertable，重跑幂等。
+- 模拟旧 `frontend` 布局的库跑 `ddl/upgrade/001_frontend_to_app_backtest.sql`，数据无损。
+- `import gr_backtest` → `PgBarLoader` 读 `market.stock_bar_1d` → 回测 → HTML 报告
+  → 落库 `backtest` schema，全链路通。
+- `uvicorn gr_api.main:app` 起得来，4 个安全头齐全；`/v1/strategies`、
+  `/v1/strategies/{code}`、`equity-curve`、`signals`、`categories` 全部 200 并返回真实数据。
+- `apps/web` 的 `npm run dev` 正常启动，入口与三个页面模块编译零错误。
 
-| 位置 | 现象 | 数量 |
-|---|---|---|
-| `apps/web` | ESLint 既有错误 | 45 |
-| `apps/web` | `tsconfig.app.json` 的 `ignoreDeprecations` 值不兼容，`npm run build` 失败 | 1 |
-| `apps/backtest-web` | 缺 `src/lib/utils`、`src/lib/sanitize`，`npm run build` 报 TS2307 | 8 |
-| `apps/backtest-web` | 缺 ESLint 插件文件，lint 失败 | — |
-| `packages/` | Ruff 既有问题（CI 暂为 `continue-on-error`） | 362 |
-| `gr-backtest` | `TestBlackLitterman.test_mixed_scores_long_short` 失败，单独复跑仍失败 | 1 |
-| pytest | 未 await coroutine warning | 若干 |
+## 未验证
+
+- **ClickHouse 侧没有实测**：本机没起 CH 容器，`ddl/clickhouse/001_factors_long.sql`
+  只过了解析级测试，没在真实 CH 上跑过 `gr-db migrate --target ch`。
+- **银河与 Tushare 的真实接口没跑通**：根 `.env` 里没有 `TUSHARE_TOKEN`／`YINHE_*`，
+  银河 SDK（`AmazingData`）也未安装。只验证了缺凭证时会**立刻**报出该设哪个变量
+  （不重试、不静默降级）。配好凭证后的验证命令见 `packages/gr-data/README.md`。
+- `deploy/` 只做过 Compose 静态解析；本机与 greencloud 的部署目录未同步。
 
 ## P0
 
-- [ ] **推翻 2026-06-06 的包切分**，按职责边界重新划分 —— 见 `DECISIONS.md` D-002。这是当前最大的结构债。
-- [ ] 修复 `find_project_root()` 命中 `packages/gr-data/pyproject.toml` 的问题（D-003）。修好前启动服务必须带 `--env-file .env`。
-- [ ] 解除 `gr-signal` 对 `getrich.apps.web.metrics`、`gr-data` 对 `getrich.libs.logging` 的反向 import（D-004），再收紧包依赖边界。
-- [ ] 修 `apps/backtest-web` 缺失的 `src/lib/utils` 与 `src/lib/sanitize`。
-- [ ] 清理 `apps/web` 的 45 个 ESLint 错误和 `tsconfig.app.json` 构建失败。
-- [ ] Ruff 362 个问题清理完后，移除 CI 里的 `continue-on-error`。
-- [ ] 更新 `.github/workflows/`、`.pre-commit-config.yaml`、`reinstall.sh` / `reinstall.bat` 里残留的旧路径。
-- [ ] README 仍有 2025 年的旧架构和数据表设计，需重写；`.env.example` 按当前 workspace 重新核对。
+- [ ] **轮换 RiceQuant license key**：`packages/gr-data/reference/design/ricequant/config.md`
+      含明文 license key，随 subtree 合并进了 git 历史。文件已从索引移除并加进
+      `.gitignore`，但**历史里仍在**，必须视为已泄漏并轮换。该文件目前只留在本机磁盘上，
+      请自行转移到密码管理器后删除。
+- [ ] 配好 `TUSHARE_TOKEN` 后跑一遍 `gr-data raw/ingest tushare`，确认真实链路。
+- [ ] 起一个 ClickHouse 容器，验证 `gr-db migrate --target ch`。
 
 ## P1
 
-- [ ] 把 `getrich_backtest.data` 的 PIT 契约抽入 `gr-data`，因子评估与归因抽入 `gr-factor`。
-- [ ] 为 `gr-factor` 建立首批独立测试。
-- [ ] 修 Black-Litterman 权重方向失败，处理未 await coroutine warnings。
-- [ ] 评估是否恢复 `getrich.__version__` 兼容入口（当前 namespace package 不提供根级快捷导出）。
+- [ ] 修 Black-Litterman 权重方向失败（既有基线）。
+- [ ] `gr-factor` 至今没有测试；`NPY002`（legacy `np.random`）因此暂时豁免，
+      补上测试后再改成 `np.random.Generator`（会改变随机数流）。
+- [ ] `market` 表缺 `oi`（持仓量）列，期货策略用不了；`PgBarLoader` 现在请求 `oi` 会显式报错。
+- [ ] gr-data schema 里没有公司行为（分红送转）表，`load_corp_actions()` 显式报错。
+- [ ] `apps/backtest-web` 暂停维护：缺 `src/lib/utils`、`src/lib/sanitize`，`npm run build` 报 8 个 TS2307。
+- [ ] `apps/web` 45 个既有 ESLint 错误、`tsconfig.app.json` 的 `ignoreDeprecations` 导致 `npm run build` 失败（`npm run dev` 不受影响）。
 - [ ] `polars==1.41.0` 与 `polars-runtime-32==1.41.0` 已被 yanked，需评估升级。
-- [ ] 评估 `archive/root-web-scaffold/` 保留期限 —— 删除前必须明确确认（D-010）。
-
-## 待验证
-
-- `deploy/` 只做过 Compose 静态解析；容器运行状态由仓库外的部署目录独立验证。
-- 本机未装 psql / redis-cli / clickhouse-client，`db.sh` 只做过假客户端冒烟测试，真实连接未验证。
+- [ ] 评估 `archive/root-web-scaffold/` 与 `packages/gr-db/archive/legacy-sql/` 的保留期限
+      —— 删除前必须明确确认（D-010）。
+- [ ] `gr-agent` 仍是空占位包（只有 `pyproject.toml`，`py-modules = []`）。
+      要么明确它的职责并写代码，要么删掉 —— 空包会让 workspace 成员列表产生误导。
+- [ ] CI（`.github/workflows/`）仍按旧包名与旧路径写，需要跟着改；Ruff 已清零，
+      可以去掉 `continue-on-error`。

@@ -2,12 +2,13 @@
 
 只增不改。每条记录**决策本身 + 理由 + 对后续开发的约束**，不写施工流水账（那是 `git log` 的事）。
 当前状态和未决 TODO 在 `NOTES.md`。2026-08-11／12 那轮 monorepo 重构的完整施工日志归档在 `archive/`。
+被后续决策推翻或修复的条目**不删除**，在标题下方标注「已被 D-0xx 推翻／已修复」，保留原文以便理解当时的判断。
 
 ---
 
 ## D-001 monorepo 采用 uv workspace + PEP 420 namespace package
 
-**时间**：2026-08-11
+**时间**：2026-08-11 · **已被 D-018 推翻（2026-08-16）：命名空间包已废除，改为每包独立顶层 import 名**
 
 根项目为 uv workspace，成员是 `packages/gr-{agent,api,backtest,data,factor,signal}`，每个成员有独立 `pyproject.toml` / `src` / `tests`。`getrich` 与 `getrich.apps` 是 PEP 420 namespace package，没有顶层 `__init__.py`。
 
@@ -28,7 +29,7 @@
 
 ## D-003 配置根目录推导会命中错误的 pyproject.toml
 
-**时间**：2026-08-12
+**时间**：2026-08-12 · **已修复（2026-08-16）：`find_project_root()` 改为查找含 `[tool.uv.workspace]` 的 pyproject.toml，不再需要显式 `--env-file`**
 
 monorepo 迁移后，`find_project_root()` 会先命中 `packages/gr-data/pyproject.toml`，而不是 workspace 根，导致应用自动加载配置时读不到根 `.env`，回测 artifact 默认路径也变成 `packages/gr-data/tmp/artifacts`。
 
@@ -40,7 +41,7 @@ uv run --env-file .env uvicorn getrich.apps.web.main:app --reload
 
 ## D-004 `gr-data` 对 `gr-backtest` 存在隐式反向依赖
 
-**时间**：2026-08-12
+**时间**：2026-08-12 · **已解除（2026-08-16，见 D-018）：日志实现收归 `gr_data.logging`，`LIVE_*` 指标收归 `gr_signal.metrics`**
 
 `gr-data` 的旧 ClickHouse 类导入 `getrich.libs.logging`，而该模块现在由 `gr-backtest` 承接。workspace 整体安装能跑，但**单独安装 `gr-data` 会失败**。
 
@@ -83,7 +84,7 @@ CI 拆成 `ci.yml`（Python）、`web.yml`、`backtest-web.yml` 三个路径过�
 
 ## D-009 `gr-signal` / `gr-agent` 是仅含元数据的占位包
 
-**时间**：2026-08-12
+**时间**：2026-08-12 · **部分过期（2026-08-16）：`gr-signal` 现在承载实盘信号与交易执行源码，不再是占位包；`gr-agent` 仍是空占位。下划线 import 名的约定被 D-018 推广到全部包**
 
 两者用 `py-modules = []` 显式声明为只有元数据的可构建项目，不提供任何 `getrich.*` 兼容 import。
 
@@ -220,3 +221,161 @@ FATAL: could not open log file "/var/log/postgresql/postgresql-....log": Permiss
 ```bash
 rsync -av --exclude '.env' --exclude '.docker/' deploy/ /opt/getrich-docker/
 ```
+
+## D-018 废除 `getrich.*` 命名空间包，每个包独立顶层 import 名
+
+**时间**：2026-08-16 · **推翻 D-001**
+
+D-001 让 `getrich` / `getrich.apps` 做 PEP 420 命名空间包，结果 `gr-api` 和 `gr-backtest`
+同时往 `getrich/apps/web/` 里装文件（前者出 `main.py` 和一半路由，后者出另一半路由和
+`middleware.py`）。表现是：workspace 整体装能跑，**单独装任何一个包都跑不起来**，
+包边界名存实亡。`gr-data` 反向 import `getrich.libs.logging`（D-004）是同一个病。
+
+**现在的规则**：发行名 = 目录名 = `gr-x`，import 名 = `gr_x`，连字符与下划线一一对应。
+
+| 目录 | import |
+|---|---|
+| `packages/gr-data` | `gr_data` |
+| `packages/gr-db` | `gr_db` |
+| `packages/gr-backtest` | `gr_backtest` |
+| `packages/gr-signal` | `gr_signal` |
+| `packages/gr-api` | `gr_api` |
+| `packages/gr-factor` | `gr_factor` |
+
+依赖方向单向：`gr-data ← gr-db`，`gr-data ← gr-backtest ← gr-signal ← gr-api`；
+`gr-factor` 独立。
+
+**约束**：
+- 不要再创建 `getrich.*` 或任何跨包共享的命名空间包。
+- 新增跨包 import 前先确认方向；`packages/gr-backtest/tests/gr_backtest/test_package_boundaries.py`
+  会用 AST 静态扫描拦截反向依赖（比 `import` 后查属性更严，能发现藏在函数体里的延迟 import）。
+- 判断某个模块该放哪，看它**被谁调用**：`LIVE_*` 指标只被实盘用，就该在 `gr-signal`；
+  `StrategyRegistryError` 由引擎的注册表抛出，就该在 `gr_backtest.exceptions`。
+
+**踩坑**：改完代码后 `uv run --isolated --with ./packages/gr-signal` 仍报旧的
+`ModuleNotFoundError`。原因是 `packages/*/build/lib/` 和 `src/*.egg-info/` 里有
+setuptools 的旧产物，构建时会优先用 `build/lib/` 的内容，`uv cache clean` 也清不掉。
+**改包结构后必须删掉 `build/` 与 `*.egg-info/` 再验证**，否则测的是上一版代码。
+
+## D-019 行情主存定为 PostgreSQL/TimescaleDB，ClickHouse 收窄为因子时序
+
+**时间**：2026-08-16
+
+此前两套行情存储并存且互相冲突：`getrich-database` 把 K 线建在 PG/TimescaleDB
+（`market.*_bar_*`，`instrument_id` 外键），而 `AGENTS.md` §2 写的是 ClickHouse，
+`gr-backtest` 也有 CH 的 `md_bars_1m`／`md_bars_1d`。更糟的是 `PgBarLoader` 读的
+`md_bars_{asset}_{freq}` 表**在任何迁移文件里都不存在** —— 那条路径是死代码，
+mock 测试却一直是绿的。
+
+**决策**：以数据接入层为准，行情主存是 PostgreSQL/TimescaleDB。删除 CH 的 `md_bars_*`，
+CH 只留 `factors_long`。
+
+**引擎侧适配**（canonical 列名不变，映射发生在 loader 边界）：
+
+| `market.*_bar_*` | 引擎 canonical |
+|---|---|
+| `instrument_id`（外键） | `symbol`（JOIN `meta.instruments`） |
+| `dt`（日线 `DATE`／分钟线 `TIMESTAMPTZ`） | `dt`（统一 Asia/Shanghai aware） |
+| `amount` ÷ `volume` | `vwap` |
+| `b_xdy`／`f_xdy` | `pre_factor`／`post_factor` |
+
+**约束**：
+- 日线 `dt` 是 `DATE`，与 `timestamptz` 比较时按会话时区解释。读取必须显式写
+  `dt::timestamp AT TIME ZONE 'Asia/Shanghai'`，否则边界日期会随连接配置整体错一天。
+- `b_xdy` = 前复权、`f_xdy` = 后复权，取自厂商文档（getrich-design
+  `dataapi/legacy/insight/architecture-overview.md` §3.2），**不是推断**。搞反方向会让
+  整段历史价格系统性偏移，而且回测不会报错。
+- `market` 表目前**没有** `oi`（持仓量），也没有公司行为表。`PgBarLoader` 请求这两者时
+  显式抛 `DataLoadError`，**不要改成填默认值** —— 期货策略拿到全 0 的持仓量、
+  或拿不到除权信息，都会算出看起来正常但完全错误的结果。
+
+## D-020 `frontend` schema 拆成 `app` + `backtest`，并修正 id 类型不一致
+
+**时间**：2026-08-16
+
+`frontend` 这个 schema 名装的其实是后端业务表（用户、策略、信号、订单）和回测产物，
+名不副实。现拆为 `app`（22 张业务表）+ `backtest`（10 张回测产物表），与
+`meta`／`market`／`ops`／`realtime`／`staging` 并列。
+
+拆分过程中发现一个**更严重的既有缺陷**：`app.strategies.id` 声明为 `VARCHAR(64)`
+（注释却写着 `-- UUID`），而引用它的 9 张表全部用 `UUID`。于是
+`/v1/strategies`、`/v1/signals` 在**全新建的库上恒 500**：
+
+```
+operator does not exist: uuid = character varying
+```
+
+`orders.id`／`orders.user_id`／`strategy_trades.*`／`strategy_sub_account_mapping.strategy_id`
+有同样的问题。已统一改为 `UUID`（与被引用主键对齐，也与注释一致）。
+
+**约束**：
+- 连接池 `search_path = app,market,meta,public`；`backtest` **不在** search_path 里，
+  回测 SQL 一律显式写 `backtest.` 前缀。
+- 新增引用其它表的 id 列时，**类型必须与被引用主键一致**。这类不一致在 mock 测试下
+  完全看不出来，只有在真库上跑真实查询才会暴露 —— 改 DDL 后要在真实 PG 上验证一次。
+- 已有实例升级走 `packages/gr-db/src/gr_db/ddl/upgrade/001_frontend_to_app_backtest.sql`
+  （已在模拟旧布局的库上验证过数据无损），新库直接跑主 DDL。
+
+## D-021 `gr-db` 统一 DDL，迁移记账用 checksum 而非前缀
+
+**时间**：2026-08-16
+
+此前有两套互不相识的迁移系统：`getrich.migrations`（`NNN_*.sql`，按前缀记账，
+PG+CH 双执行器）和 `getrich_data.common.migrate`（`db/ddl/*.sql`，按 checksum 记在
+`ops.schema_migrations`）。现全部收进 `packages/gr-db`。
+
+合并取两边各自的长处：保留前者的 `MigrationExecutor` Protocol 注入设计（import 时不依赖
+`psycopg`／`clickhouse_connect`，无需真库即可测），记账语义取后者的 **file_name + checksum**。
+
+**为什么必须是 checksum**：只记前缀检测不到「文件已应用、之后又被改过」，
+库结构会和仓库里的 DDL 静默分叉，而且分叉之后没有任何信号。checksum 变了就重新应用，
+因此**所有 DDL 必须幂等**（`CREATE ... IF NOT EXISTS`／`ADD COLUMN IF NOT EXISTS`）。
+
+**约束**：
+- DDL 全部 schema 全限定（写 `app.users`，不要靠 `search_path`）。迁移连接刻意把
+  `search_path` 设成 `pg_catalog, public` —— 靠 search_path 隐式定位正是旧 `frontend`
+  方案的坑，换个连接就把表建到别的 schema 去了。
+- 文件前缀必须**连续**，runner 会拒绝跳号（防止漏文件）。
+- CH 执行器的 `command()` 一次只吃一条语句，多表 DDL 必须先切分；不切分的话第二张表
+  会被**静默忽略**，建库时看不出错，直到运行期报 "table doesn't exist"。
+- DDL 是 package-data，路径基于 `gr_db.__file__` 定位，`pip install` 后也能建库，
+  不依赖仓库布局。
+
+## D-022 `getrich-database` 已合并进 `gr-data`，源仓库转只读
+
+**时间**：2026-08-16
+
+用 `git subtree add` 合并，51 个提交的历史与 blame 全部保留。设计文档按 getrich-design
+仓 `CLAUDE.md` §2 的约定迁到该仓 `data-platform/`，重复文件已去重
+（insight／ricequant 文档与设计仓逐字节相同；tushare 取了内容更新的一版）。
+
+**约束**：
+- 不要再往 `getrich-database` 提交任何东西，那边已是只读存档。
+- 数据接入的口径约定压进了 `AGENTS.md` §3.4，运行手册在 `packages/gr-data/README.md`，
+  设计文档在 getrich-design 仓。三者不要互相复制。
+
+**踩到的坑（凭证泄漏）**：`reference/design/ricequant/config.md` 含明文 license key，
+在源仓库里是被跟踪的，subtree 合并后**进了本仓 git 历史**。已从索引移除并加进
+`.gitignore`，但历史里仍在，必须当作已泄漏处理并轮换。
+**合并外部仓库前先扫一遍对方仓库里有没有凭证**，`.gitignore` 只挡未来的提交，挡不住历史。
+
+## D-023 配置来源统一到根 `.env`，`.env` 不再覆盖真实环境变量
+
+**时间**：2026-08-16
+
+两个独立缺陷：
+
+1. `settings.load_settings()` 原来用 `load_dotenv(..., override=True)`，`.env` 文件会
+   **盖掉真实环境变量**。结果 `PG_PORT=55433 gr-db migrate` 这类一次性覆盖、CI 注入、
+   容器环境变量全部失效 —— 命令看起来跑了，实际连的还是 `.env` 里那个库。已改为
+   `override=False`（12-factor 的正常方向：环境变量优先）。
+2. `config.yaml` 里另有一份 `postgres` 段，用的还是 `PGHOST`／`PGPASSWORD`，
+   与应用侧的 `PG_HOST`／`PG_PASSWORD` 是**两套变量名**，同一个仓库里 CLI 和服务
+   可能连到不同的库。已删除该段，`gr-data` CLI 改读 `settings`。
+
+`config.yaml` 现在只放结构化的采集参数（抓取范围、限频、启用哪些 fetcher/importer）。
+
+**另外修掉的默认值缺陷**：`PG_HOST` 默认值写死了某台机器的内网 IP（`100.80.19.6`）、
+`PG_DB` 默认 `goldmine`，新克隆在没有 `.env` 时会去连别人的主机，报一个和真实原因
+无关的连接错误。这与 Round #1143 修过的 ClickHouse 默认值是同一类问题。
+**默认值必须是本机可用的中性值**（`localhost`），且与 `.env.example` 一致。

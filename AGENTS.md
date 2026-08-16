@@ -10,14 +10,35 @@
 
 ```
 apps/web              主前端（Vite 7 + React 19 + TypeScript 5.9）
-apps/backtest-web     回测前端
-packages/gr-{agent,api,backtest,data,factor,signal}
-                      uv workspace 成员，各自有 pyproject.toml / src / tests
+apps/backtest-web     回测前端（暂停维护，待 API 稳定后重做）
+packages/gr-data      配置、数据库连接、外部数据接入（raw → ingest → PG）
+packages/gr-db        全部 DDL 与迁移，数据库结构的唯一真源
+packages/gr-backtest  回测引擎（纯库，不含 Web / 实盘 / 调度）
+packages/gr-signal    实盘信号生产与交易执行
+packages/gr-api       FastAPI 应用 + 回测作业队列 + Celery worker
+packages/gr-factor    期权与因子分析
+packages/gr-agent     空占位包（只有 pyproject.toml，尚无源码）
 deploy/               数据库基础设施部署模板，不在仓库内实例化
 scripts/              仅存 lint_migrations.py
 archive/              历史脚手架，删除前必须得到明确确认
 .agent/brain/         跨会话开发进度（见第 7 节）
 ```
+
+**命名规则：发行名 = 目录名 = `gr-x`，import 名 = `gr_x`**，连字符与下划线一一对应，
+看目录就知道 import 什么。**不要再用 `getrich.*` 命名空间包** —— 它曾导致两个包往同一
+目录装文件、单个包装不起来（见 `DECISIONS.md` D-018）。
+
+依赖方向单向，不得出现反向 import：
+
+```
+gr-data  ←──  gr-db
+   ↑
+   └──  gr-backtest  ←──  gr-signal  ←──  gr-api
+gr-factor（独立）
+```
+
+`packages/gr-backtest/tests/gr_backtest/test_package_boundaries.py` 会用静态扫描守住
+这条边界，新增跨包 import 前先确认方向。
 
 - Python 3.10+，首行 `from __future__ import annotations`；依赖统一用 `uv` 管理，不用 pip。
 - 数据处理优先 Polars / DuckDB；pandas 只留给小数据和兼容场景。
@@ -29,10 +50,34 @@ archive/              历史脚手架，删除前必须得到明确确认
 
 | 数据库 | 存储实体 | 约束 |
 |---|---|---|
-| **PostgreSQL**（`getrich` 库） | 策略元数据、实盘信号、用户订阅、账户资产快照、支付账单、交易订单、系统配置 | 业务与事务的唯一主库。需要事务安全、主外键约束或 `ON CONFLICT` 原子 UPSERT 的数据，必须且仅能写这里 |
-| **ClickHouse** | 分钟线／日线 OHLCV、Tick 逐笔、因子时序输出 | 只做大批量写入和按 symbol／时间范围的分析查询。持久化表必须用 `MergeTree` 系列引擎，强制配置 `PARTITION BY`、`ORDER BY`、`TTL` |
+| **PostgreSQL / TimescaleDB**（`getrich` 库） | **行情主存**（OHLCV、复权因子、估值）+ 业务主库（策略、信号、用户、订单、订阅）+ 回测产物 | 唯一权威存储。行情用 TimescaleDB 超表；需要事务、主外键约束或 `ON CONFLICT` UPSERT 的数据只能写这里 |
+| **ClickHouse** | **仅因子时序输出**（`factors_long`） | 只做大批量写入和按 factor／symbol／时间范围的分析查询。持久化表必须用 `MergeTree` 系列，强制配置 `PARTITION BY`、`ORDER BY`、`TTL` |
 | **DuckDB** | ad-hoc 一次性分析、回测中间数据、本地 Parquet 报表 | 只作内存临时计算层，不做任何业务的终态存储 |
-| **Redis** | 消息分发、tick 缓存、跨进程状态、分布式锁、限流 | 永不作为最终存储，关键数据必须周期性落 PG／CH；历史数据和关系数据都不进 Redis |
+| **Redis** | 消息分发、tick 缓存、跨进程状态、分布式锁、限流 | 永不作为最终存储，关键数据必须周期性落 PG；历史数据和关系数据都不进 Redis |
+
+**行情是 PostgreSQL 不是 ClickHouse。** 早期版本把 K 线放在 ClickHouse
+（`md_bars_1m`／`md_bars_1d`），与数据接入层的 `market.*_bar_*` 并存且互相冲突；
+现已统一到 PostgreSQL/TimescaleDB，CH 的行情表已删除（见 `DECISIONS.md` D-019）。
+
+### PostgreSQL schema 划分
+
+| schema | 内容 | 归属包 |
+|---|---|---|
+| `meta` | 合约、代码映射、交易日历 | gr-data |
+| `market` | 行情主存：`<asset>_bar_<freq>`、复权因子、估值 | gr-data |
+| `realtime` | 实时 tick 缓冲 | gr-data |
+| `staging` | 入库中转 | gr-data |
+| `ops` | ETL 作业、数据质量、表归属、迁移记账 | gr-data / gr-db |
+| `app` | 业务主库：用户、策略、信号、订单、订阅 | gr-api |
+| `backtest` | 回测产物：run / metrics / equity / sweep / walk-forward / jobs | gr-backtest / gr-api |
+
+- **全部 DDL 的唯一真源是 `packages/gr-db/src/gr_db/ddl/`**，不要在别处建表。
+  DDL 必须**幂等**（`CREATE ... IF NOT EXISTS`）且**schema 全限定**（写 `app.users`，
+  不要依赖 `search_path`）。迁移按 `file_name + checksum` 记账在 `ops.schema_migrations`。
+- 连接池 `search_path = app,market,meta,public`；`backtest` **不在** search_path 里，
+  回测相关 SQL 一律显式写 `backtest.` 前缀。
+- 引用其它表的 id 列，类型必须与被引用主键一致。曾因 `strategies.id` 是 VARCHAR 而
+  引用方是 UUID，导致整个策略／信号接口在全新库上恒 500（`DECISIONS.md` D-020）。
 
 **绝对禁止**在 ClickHouse 中执行事务更新或行级频繁删除。
 
@@ -42,8 +87,9 @@ archive/              历史脚手架，删除前必须得到明确确认
 
 - 平台主时区 `Asia/Shanghai (UTC+8)`。
 - PostgreSQL 在 `pool.py` 初始化时已强制 `SET timezone='Asia/Shanghai'`，所有写入的 timestamp 必须显式处理时区。
-- ClickHouse 行情表及因子表的时间字段必须用 `DateTime64(3, 'Asia/Shanghai')`。写入 `Date`／`Date32` 前，必须在 Python 端转成 aware datetime 再用 `.astimezone(tz).date()` 提取，防止 UTC 偏移导致日期错一天。
-- 含跨日夜盘（21:00 至次日 02:30）的时序数据必须统一用 `DateTime64`，**绝对禁止**用 `Date` 区分。
+- ClickHouse 因子表的时间字段必须用 `DateTime64(3, 'Asia/Shanghai')`。
+- PostgreSQL 行情表：分钟线 `dt` 用 `TIMESTAMPTZ`，日线 `dt` 用 `DATE`。**读日线时必须显式钉住时区**（`dt::timestamp AT TIME ZONE 'Asia/Shanghai'`）—— `DATE` 与 `timestamptz` 比较会按会话时区解释，不钉住就随连接配置漂移，边界日期整体错一天。
+- 含跨日夜盘（21:00 至次日 02:30）的时序数据必须带时区，**绝对禁止**只用 `Date` 区分。
 - datetime 全部 timezone-aware 或全部 naive，不混用。
 
 ### 3.2 列名与精度
@@ -59,6 +105,40 @@ archive/              历史脚手架，删除前必须得到明确确认
 - 必须计入滑点、手续费、资金约束、保证金与爆仓风险，不假设无限资金零成本。
 - 上线顺序：历史回测 → 模拟盘 → 小资金实盘，不跳级。
 - 因子公式、复权规则、数据字段、行情商 API 一律不臆造，不确定就要文档。
+
+### 3.4 数据接入约定（gr-data）
+
+**时间语义**：列名必须能区分三类时间，否则下游 join 会引入前视泄漏。
+`dt`（bar 事件时间）／`trading_day`（交易日）是 event time；供应商发布时间若有需
+显式另行命名；`updated_at` 是写库时间。raw 层保留源字段原义，ingest 层显式映射，
+绝不静默改写。供应商常用 int8 日期（`20240102`），统一走 `gr_data.common.retry`
+的 `to_int_date` / `int_to_date` 转换。
+
+**代码归一化**：`meta.instruments.symbol` 存带交易所后缀的完整代码（`600000.SH`），
+`exchange` 用 canonical 码（`XSHG`/`XSHE`）。跨源对齐通过 `meta.symbol_map`
+（`(source, source_symbol) → instrument_id`）。映射规则显式写在
+`ingest/<provider>/symbols.py`，不静默改写代码格式。注意 tushare 的
+`BJ→XBSE`，以及期货后缀与通行简称不同（`SHF→SHFE`、`ZCE→CZCE`、`CFX→CFFEX`、`GFE→GFEX`）。
+
+**单表单一来源（铁律）**：数据库内同一张目标表只能由一个 provider 写入，登记在
+`ops.table_ownership`，ingest／stream 写库前校验。转移归属必须显式走
+`gr-data own release/set` —— 不同源的单位口径与复权规则可能不同，混写会让同一张表
+出现两套口径且事后无法分辨。
+
+**parquet 落地**：根目录 `$RAW_PARQUET_ROOT`（仓库外）。布局
+`<root>/<provider>/<dataset>/...`，路径解析统一走 `common/paths.py::RawPaths`，
+禁止散落硬编码。一律 zstd 压缩；**原子写**（先写 `*.tmp-<uuid>`，再 `os.replace()`）；
+追加按时间索引去重（新数据胜出）。
+
+**日志**：统一 `gr_data.logging.get_logger(name)`，**禁止 `print()` 做运行日志**。
+日志须能还原「处理了哪个 provider / dataset / 范围 / 目标」；**不记录密钥或完整 payload**。
+
+**命名**：行情表 `<asset>_bar_<freq>`（asset ∈ stock/etf/index/future/option，
+freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `common/contracts`，
+与 `gr-db` 的 DDL 严格对齐，改一边必须同步另一边。
+
+**重试语义**：缺凭证、缺 SDK 这类确定性失败抛 `PermanentError`，`retry_call`
+不退避重试 —— 重试注定失败还要白等数十秒，真正原因会被重试日志淹没。
 
 ## 4. 后端编码规范
 
@@ -83,11 +163,21 @@ cp .env.example .env
 # 基础设施模板：只做静态校验，不在仓库内启动容器
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
 
-# 后端：启动 FastAPI 开发服务器
-# 注意必须显式 --env-file，原因见 .agent/brain/DECISIONS.md
-uv run --env-file .env uvicorn getrich.apps.web.main:app --reload --host 0.0.0.0 --port 8000
+# 建库 / 迁移（DDL 唯一真源是 gr-db）
+uv run gr-db migrate --target all          # pg | ch | all
+uv run gr-db status                        # 只看磁盘上有哪些 DDL
+uv run gr-db migrate --target pg --dry-run
 
-# 全量测试（testpaths = packages/gr-backtest/tests + packages/gr-factor/tests）
+# 数据接入
+uv run gr-data raw tushare --mode update   # 抓取落 parquet
+uv run gr-data ingest tushare              # 归一化入库
+uv run gr-data own list                    # 表归属
+
+# 后端：启动 FastAPI 开发服务器
+# find_project_root() 已修好，不再需要显式 --env-file（D-003）
+uv run uvicorn gr_api.main:app --reload --host 0.0.0.0 --port 8000
+
+# 全量测试（testpaths 覆盖全部六个包）
 uv run pytest -v
 
 # 单包测试
@@ -96,6 +186,7 @@ uv run pytest packages/gr-backtest/tests -v
 # 静态检查与格式化
 uv run ruff check packages/ scripts/
 uv run ruff format --check packages/ scripts/
+uv run python scripts/lint_migrations.py   # DDL 安全模式检查
 uv run basedpyright packages/gr-backtest/src   # 若已安装
 
 # 依赖
@@ -130,7 +221,7 @@ npm run lint     # ESLint
 - 不静默变更架构、依赖、凭证、数据路径、公开 API、表结构 —— 这几类必须先说。
 - **绝对禁止**输出或提交真实凭证、token、私钥，以及本地 `.env` 里的真实值。
 - **绝对禁止**用 `git reset --hard` 等 destructive 命令修改未提交的工作区代码。
-- **绝对禁止**在 `apps/web/main.py::create_app()` 中移除 `SecurityHeadersMiddleware` —— 这是协议级 XSS 兜底（`Content-Security-Policy` / `X-Frame-Options` / `nosniff` / `Referrer-Policy`），也是 OWASP 推荐做法。新增路由或中间件时，测试必须用 `TestClient` 验证响应仍带这 4 个头。
+- **绝对禁止**在 `packages/gr-api/src/gr_api/main.py::create_app()` 中移除 `SecurityHeadersMiddleware` —— 这是协议级 XSS 兜底（`Content-Security-Policy` / `X-Frame-Options` / `nosniff` / `Referrer-Policy`），也是 OWASP 推荐做法。新增路由或中间件时，测试必须用 `TestClient` 验证响应仍带这 4 个头。
 - **绝对禁止**未经 DOMPurify 或等效清洗就用 `dangerouslySetInnerHTML` 渲染用户内容。
 - 超过 100,000 行的数据集**绝对禁止**存普通 CSV，必须用 Parquet（`zstd` 压缩）。
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from gr_data.config import settings
 from gr_data.config.pipeline import Config, load_config
 from gr_data.db.sync import PgConfig, connect
 from gr_data.logging import configure_logging, get_logger
@@ -24,17 +25,30 @@ log = get_logger("cli")
 
 
 def _configure_logging_from(cfg: Config) -> None:
-    lg = cfg.section("logging")
+    """日志配置来自 settings（根 .env），不从 config.yaml 读。"""
+    del cfg  # 保留签名，配置来源已统一到 settings
     configure_logging(
-        level=lg.get("level", "INFO"),
-        log_dir=lg.get("dir") if lg.get("dir") else None,
-        json_format=bool(lg.get("json", False)),
-        console=bool(lg.get("console", True)),
+        level=settings.logging.level,
+        log_dir=str(settings.logging.file_path.parent) if settings.logging.file_path else None,
     )
 
 
 def _pg(cfg: Config) -> PgConfig:
-    return PgConfig.from_dict(cfg.section("postgres"))
+    """PostgreSQL 连接来自 settings（根 .env 的 PG_*）。
+
+    以前这里读 config.yaml 的 postgres 段，而那份配置用的是 PGHOST/PGPASSWORD，
+    与应用侧的 PG_HOST/PG_PASSWORD 是两套变量名 —— 同一个仓库里 CLI 和服务
+    可能连到不同的库上。现在统一走 settings，config.yaml 只管采集参数。
+    """
+    del cfg
+    pg = settings.postgres
+    return PgConfig(
+        host=pg.host,
+        port=pg.port,
+        dbname=pg.database,
+        user=pg.user,
+        password=pg.password,
+    )
 
 
 def _split(val: str | None) -> list[str] | None:
@@ -94,7 +108,7 @@ def cmd_stream(args: argparse.Namespace, cfg: Config) -> int:
     print(
         "stream 为长驻实时进程，需注入已登录的供应商 SDK。"
         "请在部署脚本中构造 handler、claim_ownership 后驱动 bridge/PgTickWriter。"
-        "详见 docs/layers/stream.md。"
+        "详见 getrich-design 仓的 data-platform/architecture.md（stream 层）。"
     )
     return 0
 
