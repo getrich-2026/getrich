@@ -1,0 +1,1646 @@
+openapi: 3.0.3
+info:
+  title: GetRich 策略与信号 API
+  description: |
+    GetRich 平台策略 + 信号模块后端接口规范。
+    - 基础 URL：https://api.getrich.millerquant.com/v1
+    - 时间格式：ISO 8601（如 2026-04-15T09:30:00+08:00）
+    - 日期格式：YYYY-MM-DD
+    - 金额精度：4 位小数
+    - 收益率精度：4 位小数（展示时 ×100 转为百分比）
+  version: "1.1"
+  contact:
+    name: MillerQuant
+    email: dev@millerquant.com
+
+servers:
+  - url: https://api.getrich.millerquant.com/v1
+    description: 生产环境
+  - url: https://api-dev.getrich.millerquant.com/v1
+    description: 开发环境
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    StrategyId:
+      name: strategy_id
+      in: path
+      required: true
+      description: 策略 UUID 或 strategy_code（如 STR_FUT_001）
+      schema:
+        type: string
+      example: STR_FUT_001
+
+    SignalId:
+      name: signal_id
+      in: path
+      required: true
+      description: 信号 UUID 或 signal_code（如 SIG_20260415_001）
+      schema:
+        type: string
+      example: SIG_20260415_001
+
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: 页码，从 1 开始
+
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: 每页数量，上限 100
+
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          type: object
+        timestamp:
+          type: integer
+          example: 1744694400
+        request_id:
+          type: string
+          format: uuid
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+        has_more:
+          type: boolean
+
+    PerformanceSummary:
+      type: object
+      properties:
+        annualized_return:
+          type: number
+          format: float
+          example: 0.1710
+        max_drawdown:
+          type: number
+          format: float
+          example: -0.1190
+        sharpe_ratio:
+          type: number
+          format: float
+          example: 1.85
+        win_rate:
+          type: number
+          format: float
+          example: 0.6250
+        total_trades:
+          type: integer
+          example: 156
+        recent_1m_return:
+          type: number
+          format: float
+          example: 0.0234
+        ytd_return:
+          type: number
+          format: float
+          example: 0.0812
+
+    StrategyBrief:
+      type: object
+      properties:
+        id:
+          type: string
+          example: STR_FUT_001
+        name:
+          type: string
+          example: 股指期货跨期套利
+        description:
+          type: string
+        category:
+          type: object
+          properties:
+            id:
+              type: string
+              example: CAT_ARB
+            name:
+              type: string
+              example: 套利策略
+        asset_class:
+          type: string
+          enum: [stock, future, option, equity, fx, crypto, mixed]
+        market:
+          type: string
+          enum: [cn, hk, us]
+          example: cn
+        risk_level:
+          type: string
+          enum: [low, medium, high]
+        status:
+          type: string
+          enum: [active, paused, archived]
+        cover_image:
+          type: string
+          format: uri
+        tags:
+          type: array
+          items:
+            type: string
+        performance:
+          $ref: '#/components/schemas/PerformanceSummary'
+        subscriber_count:
+          type: integer
+          example: 1258
+        is_subscribed:
+          type: boolean
+        subscription_price:
+          type: object
+          properties:
+            monthly:
+              type: number
+              example: 99.00
+            yearly:
+              type: number
+              example: 899.00
+        last_signal_time:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SignalBrief:
+      type: object
+      properties:
+        id:
+          type: string
+          example: SIG_20260415_001
+        strategy:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+        signal_type:
+          type: string
+          enum: [entry, exit, adjust, alert]
+        action:
+          type: string
+          enum: [buy, sell, hold, close]
+        direction:
+          type: string
+          enum: [long, short]
+          nullable: true
+        symbol:
+          type: string
+          example: IF2506
+        symbol_name:
+          type: string
+          example: 沪深300股指期货2506
+        exchange:
+          type: string
+          example: CFFEX
+        trigger_price:
+          type: number
+          format: float
+        target_price:
+          type: number
+          format: float
+          nullable: true
+        stop_loss_price:
+          type: number
+          format: float
+          nullable: true
+        confidence:
+          type: number
+          format: float
+          example: 0.85
+        urgency:
+          type: string
+          enum: [low, normal, high, critical]
+        reason:
+          type: string
+        trigger_time:
+          type: string
+          format: date-time
+        is_read:
+          type: boolean
+        is_executed:
+          type: boolean
+        status:
+          type: string
+          enum: [active, expired, cancelled]
+
+    SignalSettings:
+      type: object
+      properties:
+        push_enabled:
+          type: boolean
+        channels:
+          type: object
+          properties:
+            app_push:
+              type: boolean
+            sms:
+              type: boolean
+            email:
+              type: boolean
+            wechat_service:
+              type: boolean
+            websocket:
+              type: boolean
+        global_settings:
+          type: object
+          properties:
+            confidence_threshold:
+              type: number
+              format: float
+              example: 0.60
+            urgency_filter:
+              type: array
+              items:
+                type: string
+                enum: [low, normal, high, critical]
+            quiet_hours:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                start:
+                  type: string
+                  example: "22:00"
+                end:
+                  type: string
+                  example: "08:30"
+            trading_hours_only:
+              type: boolean
+        strategy_overrides:
+          type: array
+          items:
+            type: object
+            properties:
+              strategy_id:
+                type: string
+              push_enabled:
+                type: boolean
+              confidence_threshold:
+                type: number
+              notify_entry_only:
+                type: boolean
+
+  responses:
+    Unauthorized:
+      description: 未授权（Token 无效或已过期）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+          example:
+            code: 1002
+            message: 未授权，请重新登录
+            data: null
+
+    Forbidden:
+      description: 权限不足（需升级会员）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+          example:
+            code: 1003
+            message: 权限不足，请升级会员
+            data: null
+
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+          example:
+            code: 1004
+            message: 资源不存在
+            data: null
+
+# ============================================================
+# Paths
+# ============================================================
+paths:
+
+  # ---- 策略分类 ----
+  /strategies/categories:
+    get:
+      tags: [策略模块]
+      summary: 获取策略分类列表
+      description: 返回所有策略分类，含分类 ID、名称、图标、策略数量。结果 Redis 缓存 1 小时。无需登录。
+      operationId: listStrategyCategories
+      security: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          categories:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                  example: CAT_TREND
+                                name:
+                                  type: string
+                                  example: 趋势跟踪
+                                description:
+                                  type: string
+                                icon_url:
+                                  type: string
+                                  format: uri
+                                strategy_count:
+                                  type: integer
+              example:
+                code: 0
+                message: success
+                data:
+                  categories:
+                    - id: CAT_TREND
+                      name: 趋势跟踪
+                      description: 基于价格趋势与动量的策略
+                      icon_url: https://cdn.getrich.com/icons/trend.svg
+                      strategy_count: 18
+                    - id: CAT_ARB
+                      name: 套利策略
+                      description: 跨期、跨品种、期现套利
+                      icon_url: https://cdn.getrich.com/icons/arb.svg
+                      strategy_count: 8
+
+  # ---- 策略列表 ----
+  /strategies:
+    get:
+      tags: [策略模块]
+      summary: 获取策略列表
+      description: |
+        支持多维过滤 + 排序 + 关键词搜索（pg_trgm 模糊匹配）。
+        - 匿名用户可查看列表，但 is_subscribed 字段始终为 false。
+        - 批量调用 frontend.can_access_strategies_bulk() 判断访问权限，避免 N+1。
+      operationId: listStrategies
+      security: []
+      parameters:
+        - name: category_id
+          in: query
+          schema:
+            type: string
+          example: CAT_ARB
+          description: 策略分类 ID
+        - name: asset_class
+          in: query
+          schema:
+            type: string
+            enum: [stock, future, option, all]
+          description: 资产类别，默认 all
+        - name: risk_level
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, all]
+          description: 风险等级，默认 all
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [annualized_return, sharpe, max_drawdown, subscribers, newest]
+            default: sharpe
+          description: 排序字段
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+          description: 排序方向
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: 搜索关键词（匹配名称、标签、描述）
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, all]
+            default: active
+          description: 策略状态筛选
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          list:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/StrategyBrief'
+                          pagination:
+                            $ref: '#/components/schemas/Pagination'
+                          filters_summary:
+                            type: object
+                            properties:
+                              total_strategies:
+                                type: integer
+                              by_asset_class:
+                                type: object
+                                additionalProperties:
+                                  type: integer
+                          order:
+                            type: object
+                            properties:
+                              field:
+                                type: string
+                                example: sharpe
+                              direction:
+                                type: string
+                                example: desc
+              example:
+                code: 0
+                message: success
+                data:
+                  list:
+                    - id: STR_FUT_001
+                      name: 股指期货跨期套利
+                      asset_class: future
+                      market: cn
+                      risk_level: medium
+                      subscriber_count: 1258
+                      is_subscribed: false
+                      subscription_price:
+                        monthly: 99.00
+                        yearly: 899.00
+                      performance:
+                        annualized_return: 0.1710
+                        max_drawdown: -0.1190
+                        sharpe_ratio: 1.85
+                        win_rate: 0.6250
+                  pagination:
+                    page: 1
+                    page_size: 20
+                    total: 66
+                    total_pages: 4
+                    has_more: true
+                  order:
+                    field: sharpe
+                    direction: desc
+
+  # ---- 策略详情 ----
+  /strategies/{strategy_id}:
+    get:
+      tags: [策略模块]
+      summary: 获取策略详情
+      description: |
+        策略详情页核心接口。
+        - detail_html 仅在 frontend.can_access_content() = true 时返回完整内容，否则返回 null。
+        - 登录用户附带 is_subscribed 和 subscription_info。
+      operationId: getStrategy
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  id: STR_FUT_001
+                  name: 股指期货跨期套利
+                  description: 基于 IF/IH/IC 不同月份合约价差的统计套利策略
+                  detail_html: "<div>详细介绍...</div>"
+                  category:
+                    id: CAT_ARB
+                    name: 套利策略
+                  asset_class: future
+                  market: cn
+                  risk_level: medium
+                  status: active
+                  tags: [股指期货, 跨期套利, 统计套利]
+                  creator:
+                    id: AU_001
+                    name: MillerQuant 研究团队
+                    avatar: https://cdn.getrich.com/avatar/mq_team.jpg
+                    bio: 专注期货量化策略研究
+                  performance:
+                    total_return: 0.5610
+                    annualized_return: 0.1710
+                    max_drawdown: -0.1190
+                    sharpe_ratio: 1.85
+                    sortino_ratio: 2.63
+                    win_rate: 0.6250
+                    total_trades: 156
+                  backtest_period:
+                    start: "2020-01-01"
+                    end: "2026-04-14"
+                  subscriber_count: 1258
+                  is_subscribed: true
+                  subscription_info:
+                    subscription_id: SUB_001
+                    plan_type: yearly
+                    start_date: "2026-01-01"
+                    expire_date: "2026-12-31"
+                    auto_renew: true
+                  subscription_price:
+                    monthly: 99.00
+                    yearly: 899.00
+                  published_at: "2020-03-15T10:00:00+08:00"
+                  updated_at: "2026-04-15T08:00:00+08:00"
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ---- 净值曲线 ----
+  /strategies/{strategy_id}/equity-curve:
+    get:
+      tags: [策略模块]
+      summary: 获取策略净值曲线
+      description: |
+        数据源：strategy_equity_curve 表。
+        - period 与 start_date/end_date 二选一，自定义日期优先。
+        - 需 frontend.can_access_content() 通过才返回完整数据。
+      operationId: getEquityCurve
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [1m, 3m, 6m, 1y, 3y, all]
+            default: all
+          description: 预设时间区间
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 自定义开始日期（优先于 period）
+          example: "2023-01-01"
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 自定义结束日期
+          example: "2026-04-14"
+        - name: include_benchmark
+          in: query
+          schema:
+            type: boolean
+            default: true
+          description: 是否包含基准曲线
+        - name: include_drawdown
+          in: query
+          schema:
+            type: boolean
+            default: true
+          description: 是否包含回撤曲线
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  strategy_id: STR_FUT_001
+                  period:
+                    start: "2020-01-01"
+                    end: "2026-04-14"
+                  equity_curve:
+                    - date: "2020-01-02"
+                      nav: 1.0012
+                      cumulative_return: 0.0012
+                      daily_return: 0.0012
+                      position_ratio: 0.65
+                  benchmark_curve:
+                    - date: "2020-01-02"
+                      nav: 1.0008
+                  drawdown_curve:
+                    - date: "2020-01-02"
+                      drawdown: 0.0
+                  total_points: 1540
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ---- 月度收益 ----
+  /strategies/{strategy_id}/monthly-returns:
+    get:
+      tags: [策略模块]
+      summary: 获取月度收益矩阵
+      description: 前端渲染为年 × 月热力图。数据源：strategy_monthly_returns 表。
+      operationId: getMonthlyReturns
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  strategy_id: STR_FUT_001
+                  matrix:
+                    - year: 2024
+                      months: [0.032, -0.015, 0.041, 0.018, -0.008, 0.025, 0.012, -0.021, 0.035, 0.028, -0.005, 0.019]
+                      yearly_return: 0.168
+                    - year: 2025
+                      months: [0.021, 0.015, -0.012, 0.038, 0.009, -0.003, 0.027, 0.014, 0.031, -0.011, 0.022, 0.016]
+                      yearly_return: 0.175
+                    - year: 2026
+                      months: [0.028, 0.019, 0.025, null, null, null, null, null, null, null, null, null]
+                      yearly_return: 0.074
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---- 回测报告 ----
+  /strategies/{strategy_id}/backtest-report:
+    get:
+      tags: [策略模块]
+      summary: 获取策略回测报告
+      description: 包含汇总统计、风险分析、交易统计、逐年绩效。
+      operationId: getBacktestReport
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  strategy_id: STR_FUT_001
+                  summary:
+                    backtest_start: "2020-01-01"
+                    backtest_end: "2026-04-14"
+                    initial_capital: 1000000
+                    final_capital: 1561000
+                    total_return: 0.5610
+                    annualized_return: 0.1710
+                    max_drawdown: -0.1190
+                    max_drawdown_start: "2022-03-15"
+                    max_drawdown_end: "2022-06-20"
+                    max_drawdown_recovery: "2022-09-10"
+                    sharpe_ratio: 1.85
+                  risk_analysis:
+                    var_95: -0.0250
+                    cvar_95: -0.0320
+                    beta: 0.15
+                    alpha: 0.1450
+                    max_single_day_loss: -0.0385
+                    max_single_day_gain: 0.0420
+                  trade_analysis:
+                    total_trades: 156
+                    win_rate: 0.6250
+                    avg_trade_return: 0.0036
+                    avg_holding_days: 3.2
+                    profit_factor: 1.78
+                  annual_performance:
+                    - year: 2024
+                      return: 0.168
+                      max_drawdown: -0.075
+                      sharpe: 1.88
+                      trades: 24
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ---- 历史交易记录 ----
+  /strategies/{strategy_id}/trades:
+    get:
+      tags: [策略模块]
+      summary: 获取策略历史交易记录
+      description: 基于 entry/exit 信号对计算交易结果，分页返回。
+      operationId: listStrategyTrades
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 开始日期
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 结束日期
+        - name: action
+          in: query
+          schema:
+            type: string
+            enum: [all, buy, sell]
+            default: all
+          description: 操作方向筛选
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum: [all, win, loss]
+            default: all
+          description: 交易结果筛选
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  list:
+                    - trade_id: TRD_001
+                      entry_signal_id: SIG_20260410_001
+                      exit_signal_id: SIG_20260412_002
+                      symbol: IF2506
+                      direction: long
+                      entry_price: 3620.00
+                      entry_time: "2026-04-10T09:35:00+08:00"
+                      exit_price: 3680.00
+                      exit_time: "2026-04-12T14:30:00+08:00"
+                      quantity: 1
+                      pnl: 18000.00
+                      return_pct: 0.0166
+                      holding_days: 2
+                  pagination:
+                    page: 1
+                    page_size: 20
+                    total: 156
+                    total_pages: 8
+                    has_more: true
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---- 策略下的信号列表 ----
+  /strategies/{strategy_id}/signals:
+    get:
+      tags: [策略模块]
+      summary: 获取策略历史信号列表
+      description: 返回指定策略的历史信号，登录用户附带 is_read/is_executed。
+      operationId: listStrategySignals
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [entry, exit, adjust, alert, all]
+            default: all
+          description: 信号类型筛选
+        - name: action
+          in: query
+          schema:
+            type: string
+            enum: [buy, sell, hold, close, all]
+            default: all
+          description: 操作方向筛选
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, expired, cancelled, all]
+            default: all
+          description: 信号状态筛选
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  list:
+                    - id: SIG_20260415_001
+                      signal_type: entry
+                      action: buy
+                      symbol: IF2506
+                      trigger_price: 3650.00
+                      confidence: 0.85
+                      urgency: high
+                      trigger_time: "2026-04-15T09:31:00+08:00"
+                      is_read: false
+                      is_executed: false
+                      status: active
+                  pagination:
+                    page: 1
+                    page_size: 20
+                    total: 89
+                    total_pages: 5
+                    has_more: true
+
+  # ---- 订阅策略 ----
+  /strategies/{strategy_id}/subscribe:
+    post:
+      tags: [策略模块 - 订阅]
+      summary: 订阅策略
+      description: |
+        创建订单及订阅记录（初始 status=pending_payment）。
+        支付成功后由 webhook 回调更新 status=active。
+        同一策略同一用户只能存在一条 active 订阅（部分唯一索引保证）。
+      operationId: subscribeStrategy
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_type, payment_source]
+              properties:
+                plan_type:
+                  type: string
+                  enum: [monthly, yearly]
+                  description: 订阅周期
+                  example: yearly
+                auto_renew:
+                  type: boolean
+                  default: true
+                  description: 是否自动续费
+                payment_source:
+                  type: string
+                  enum: [wechat, alipay, bank, apple_pay, stripe]
+                  description: 支付方式
+                  example: wechat
+            example:
+              plan_type: yearly
+              auto_renew: true
+              payment_source: wechat
+      responses:
+        "200":
+          description: 订单创建成功，等待支付
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  subscription_id: SUB_002
+                  status: pending_payment
+                  plan_type: yearly
+                  start_date: "2026-04-15"
+                  expire_date: "2027-04-15"
+                  payment:
+                    order_id: ORD_20260415_001
+                    amount: 899.00
+                    payment_source: wechat
+                    expire_time: "2026-04-15T11:30:00+08:00"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ---- 取消订阅 ----
+  /strategies/{strategy_id}/unsubscribe:
+    post:
+      tags: [策略模块 - 订阅]
+      summary: 取消订阅策略
+      description: |
+        标记订阅为 cancelled，不退款，当期有效期内仍可继续访问。
+        auto_renew 同步置 false。
+      operationId: unsubscribeStrategy
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: 取消原因（可选）
+                  example: 不再需要该策略
+            example:
+              reason: 不再需要该策略
+      responses:
+        "200":
+          description: 取消成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  strategy_id: STR_FUT_001
+                  status: cancelled
+                  access_until: "2026-12-31"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ---- 订阅状态查询 ----
+  /strategies/{strategy_id}/subscription:
+    get:
+      tags: [策略模块 - 订阅]
+      summary: 查询策略订阅状态
+      description: 返回当前用户对该策略的最新有效订阅信息。
+      operationId: getStrategySubscription
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  is_subscribed: true
+                  subscription_id: SUB_001
+                  status: active
+                  plan_type: yearly
+                  start_date: "2026-01-01"
+                  expire_date: "2026-12-31"
+                  auto_renew: true
+                  subscription_price:
+                    monthly: 99.00
+                    yearly: 899.00
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---- 策略维度推送设置 ----
+  /strategies/{strategy_id}/signal-settings:
+    get:
+      tags: [策略模块 - 推送设置]
+      summary: 获取策略维度推送配置（覆盖全局）
+      operationId: getStrategySignalSettings
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  strategy_id: STR_FUT_001
+                  enabled: true
+                  channels:
+                    app_push: true
+                    wechat_service: true
+                  urgency_filter: [normal, high, critical]
+                  confidence_threshold: 0.50
+                  notify_entry_only: false
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [策略模块 - 推送设置]
+      summary: 更新策略维度推送配置
+      description: 支持部分更新，仅传需修改的字段。
+      operationId: updateStrategySignalSettings
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                channels:
+                  type: object
+                  properties:
+                    app_push:
+                      type: boolean
+                    sms:
+                      type: boolean
+                    email:
+                      type: boolean
+                    wechat_service:
+                      type: boolean
+                    websocket:
+                      type: boolean
+                urgency_filter:
+                  type: array
+                  items:
+                    type: string
+                    enum: [low, normal, high, critical]
+                confidence_threshold:
+                  type: number
+                  format: float
+                  minimum: 0
+                  maximum: 1
+                notify_entry_only:
+                  type: boolean
+            example:
+              enabled: true
+              urgency_filter: [high, critical]
+              confidence_threshold: 0.70
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  strategy_id: STR_FUT_001
+                  updated: true
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ====================================================
+  # 信号模块
+  # ====================================================
+
+  /signals:
+    get:
+      tags: [信号模块]
+      summary: 获取用户信号流（跨策略聚合）
+      description: |
+        聚合当前用户所有已订阅策略的信号，按发布时间倒序排列。
+        - is_read/is_executed 字段需登录后才有意义。
+        - 匿名用户可查看 access_tier=0 的公开信号。
+      operationId: listSignals
+      security: []
+      parameters:
+        - name: strategy_id
+          in: query
+          schema:
+            type: string
+          description: 筛选指定策略（单个）
+        - name: strategy_ids
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+          description: 筛选多个策略（逗号分隔）
+        - name: signal_type
+          in: query
+          schema:
+            type: string
+            enum: [entry, exit, adjust, alert, all]
+            default: all
+          description: 信号类型
+        - name: action
+          in: query
+          schema:
+            type: string
+            enum: [buy, sell, hold, close, all]
+            default: all
+          description: 操作方向
+        - name: asset_class
+          in: query
+          schema:
+            type: string
+            enum: [stock, future, option, all]
+            default: all
+          description: 资产类别
+        - name: is_read
+          in: query
+          schema:
+            type: boolean
+          description: 是否已读（不传则不过滤）
+        - name: confidence_min
+          in: query
+          schema:
+            type: number
+            format: float
+            minimum: 0
+            maximum: 1
+          description: 最低置信度筛选
+          example: 0.60
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 开始日期
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 结束日期
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  list:
+                    - id: SIG_20260415_001
+                      strategy:
+                        id: STR_FUT_001
+                        name: 股指期货跨期套利
+                      signal_type: entry
+                      action: buy
+                      direction: long
+                      symbol: IF2506
+                      symbol_name: 沪深300股指期货2506
+                      exchange: CFFEX
+                      trigger_price: 3650.00
+                      target_price: 3700.00
+                      stop_loss_price: 3620.00
+                      confidence: 0.85
+                      urgency: high
+                      reason: "IF 当月-次月价差偏离 2σ，触发均值回归开仓"
+                      trigger_time: "2026-04-15T09:31:00+08:00"
+                      is_read: false
+                      is_executed: false
+                      status: active
+                  pagination:
+                    page: 1
+                    page_size: 20
+                    total: 89
+                    total_pages: 5
+                    has_more: true
+                  unread_count: 12
+
+  /signals/unread-summary:
+    get:
+      tags: [信号模块]
+      summary: 获取未读信号统计
+      description: |
+        返回当前用户的未读信号汇总：总数 + 按策略分组 + 按紧急度分组。
+        结果 Redis 缓存 60s。
+      operationId: getUnreadSummary
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  total_unread: 12
+                  by_strategy:
+                    - strategy_id: STR_FUT_001
+                      strategy_name: 股指期货跨期套利
+                      unread_count: 5
+                      latest_signal_time: "2026-04-15T09:31:00+08:00"
+                    - strategy_id: STR_OPT_001
+                      strategy_name: 50ETF 波动率套利
+                      unread_count: 3
+                      latest_signal_time: "2026-04-15T09:35:00+08:00"
+                  by_urgency:
+                    critical: 1
+                    high: 3
+                    normal: 6
+                    low: 2
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /signals/{signal_id}:
+    get:
+      tags: [信号模块]
+      summary: 获取信号详情
+      description: |
+        包含信号全量信息、触发时刻行情快照、历史类似信号表现、关联信号、用户状态。
+        访问控制由 frontend.can_access_content() 决定。
+      operationId: getSignal
+      parameters:
+        - $ref: '#/components/parameters/SignalId'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  id: SIG_20260415_001
+                  strategy:
+                    id: STR_FUT_001
+                    name: 股指期货跨期套利
+                    category: 套利策略
+                    risk_level: medium
+                  signal_type: entry
+                  action: buy
+                  direction: long
+                  symbol: IF2506
+                  symbol_name: 沪深300股指期货2506
+                  exchange: CFFEX
+                  trigger_price: 3650.00
+                  target_price: 3700.00
+                  stop_loss_price: 3620.00
+                  suggested_quantity: 1
+                  position_pct: 0.15
+                  confidence: 0.85
+                  urgency: high
+                  reason: "IF 当月-次月价差偏离 2σ，触发均值回归开仓"
+                  reason_detail:
+                    spread_current: 12.4
+                    spread_mean: 5.2
+                    z_score: 2.0
+                    trigger_rule: "z_score > 2.0 且持仓量放大"
+                  trigger_time: "2026-04-15T09:31:00+08:00"
+                  status: active
+                  expired_at: "2026-04-15T15:00:00+08:00"
+                  market_snapshot:
+                    symbol: IF2506
+                    snapshot_time: "2026-04-15T09:31:00+08:00"
+                    open: 3645.00
+                    high: 3658.00
+                    low: 3640.00
+                    close: 3650.00
+                    volume: 25680
+                    open_interest: 124500
+                    indicators:
+                      ma5: 3642.00
+                      ma20: 3618.00
+                      rsi_14: 62.3
+                      atr_14: 35.6
+                  historical_performance:
+                    similar_signals_count: 23
+                    win_rate: 0.7391
+                    avg_return: 0.0185
+                    avg_holding_days: 2.8
+                  user_state:
+                    is_read: true
+                    read_at: "2026-04-15T09:32:00+08:00"
+                    is_executed: false
+                    executed_price: null
+                    note: null
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /signals/{signal_id}/read:
+    post:
+      tags: [信号模块]
+      summary: 标记信号已读
+      description: |
+        INSERT INTO user_signal_reads ON CONFLICT DO NOTHING（幂等）。
+        成功后失效 Redis sig:unread:{user_id} 缓存。
+      operationId: markSignalRead
+      parameters:
+        - $ref: '#/components/parameters/SignalId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: 无需请求体，可省略
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  signal_id: SIG_20260415_001
+                  is_read: true
+                  read_at: "2026-04-15T09:32:00+08:00"
+                  remaining_unread: 11
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /signals/{signal_id}/execute:
+    post:
+      tags: [信号模块]
+      summary: 记录信号执行反馈
+      description: |
+        INSERT ... ON CONFLICT DO UPDATE（幂等，可多次更新）。
+        自动计算滑点（executed_price - trigger_price）。
+      operationId: executeSignal
+      parameters:
+        - $ref: '#/components/parameters/SignalId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                executed_price:
+                  type: number
+                  format: float
+                  description: 实际执行价格
+                  example: 3652.00
+                executed_quantity:
+                  type: integer
+                  description: 实际执行数量
+                  example: 1
+                executed_at:
+                  type: string
+                  format: date-time
+                  description: 执行时间（不传则取当前时间）
+                note:
+                  type: string
+                  description: 执行备注
+                  example: 按触发价入场，小幅滑点
+            example:
+              executed_price: 3652.00
+              executed_quantity: 1
+              note: 按触发价入场，小幅滑点
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  signal_id: SIG_20260415_001
+                  is_executed: true
+                  executed_price: 3652.00
+                  executed_at: "2026-04-15T09:33:00+08:00"
+                  slippage: 2.00
+                  slippage_pct: 0.0005
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ====================================================
+  # 用户模块
+  # ====================================================
+
+  /user/signal-settings:
+    get:
+      tags: [用户模块]
+      summary: 获取全局信号推送配置
+      description: 返回用户全局推送设置 + 各策略的覆盖配置列表。
+      operationId: getSignalSettings
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  push_enabled: true
+                  channels:
+                    app_push: true
+                    sms: false
+                    email: true
+                    wechat_service: true
+                    websocket: true
+                  global_settings:
+                    confidence_threshold: 0.60
+                    urgency_filter: [normal, high, critical]
+                    quiet_hours:
+                      enabled: true
+                      start: "22:00"
+                      end: "08:30"
+                    trading_hours_only: true
+                  strategy_overrides:
+                    - strategy_id: STR_FUT_001
+                      push_enabled: true
+                      confidence_threshold: 0.50
+                      notify_entry_only: false
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [用户模块]
+      summary: 更新全局信号推送配置
+      description: 支持部分更新，仅传需修改的字段（PATCH 语义）。
+      operationId: updateSignalSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignalSettings'
+            example:
+              push_enabled: true
+              channels:
+                sms: true
+                email: false
+              global_settings:
+                confidence_threshold: 0.70
+                urgency_filter: [high, critical]
+                quiet_hours:
+                  enabled: false
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  updated: true
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /user/orders:
+    get:
+      tags: [用户模块]
+      summary: 获取用户订单列表
+      description: 分页返回当前用户的全部订单，含订单行项目。
+      operationId: listOrders
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, paid, cancelled, refunded, all]
+            default: all
+          description: 订单状态筛选
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  list:
+                    - order_id: ORD_20260415_001
+                      status: paid
+                      total_amount: 899.00
+                      payment_source: wechat
+                      created_at: "2026-04-15T10:00:00+08:00"
+                      paid_at: "2026-04-15T10:02:30+08:00"
+                      items:
+                        - item_type: strategy_subscription
+                          item_id: STR_FUT_001
+                          item_name: 股指期货跨期套利（年订阅）
+                          plan_type: yearly
+                          amount: 899.00
+                  pagination:
+                    page: 1
+                    page_size: 20
+                    total: 5
+                    total_pages: 1
+                    has_more: false
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ====================================================
+  # 支付回调（Webhook）
+  # ====================================================
+
+  /webhooks/payment:
+    post:
+      tags: [支付回调]
+      summary: 支付结果回调
+      description: |
+        由支付平台（微信/支付宝/银行）异步回调。
+        - 以 payment_ref 去重（幂等），重复回调直接返回 200。
+        - 验签：HMAC-SHA256（Header: X-Webhook-Signature）。
+        - 成功后：orders.status=paid，user_strategy_subscriptions.status=active，失效 Redis 权限缓存。
+      operationId: paymentWebhook
+      security:
+        - {}
+      parameters:
+        - name: X-Webhook-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+          description: HMAC-SHA256 签名（Hex 编码）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, payment_ref, status, amount, payment_source]
+              properties:
+                order_id:
+                  type: string
+                  description: 系统订单 ID
+                  example: ORD_20260415_001
+                payment_ref:
+                  type: string
+                  description: 第三方支付流水号（幂等键）
+                  example: "4200001234202604151234567890"
+                status:
+                  type: string
+                  enum: [success, failed, refunded]
+                  description: 支付结果
+                amount:
+                  type: number
+                  format: float
+                  description: 实际支付金额
+                  example: 899.00
+                payment_source:
+                  type: string
+                  enum: [wechat, alipay, bank, apple_pay, stripe]
+                paid_at:
+                  type: string
+                  format: date-time
+                  description: 支付完成时间
+            example:
+              order_id: ORD_20260415_001
+              payment_ref: "4200001234202604151234567890"
+              status: success
+              amount: 899.00
+              payment_source: wechat
+              paid_at: "2026-04-15T10:02:30+08:00"
+      responses:
+        "200":
+          description: 回调处理成功（含幂等重复回调）
+          content:
+            application/json:
+              example:
+                code: 0
+                message: success
+                data:
+                  order_id: ORD_20260415_001
+                  processed: true
+
+# ====================================================
+# Tags 分组
+# ====================================================
+tags:
+  - name: 策略模块
+    description: 策略列表、详情、时序数据
+  - name: 策略模块 - 订阅
+    description: 订阅 / 取消订阅 / 订阅状态查询
+  - name: 策略模块 - 推送设置
+    description: 策略维度的推送通知配置
+  - name: 信号模块
+    description: 信号流、详情、已读、执行反馈
+  - name: 用户模块
+    description: 用户全局推送设置、订单列表
+  - name: 支付回调
+    description: 第三方支付异步回调（Webhook）
