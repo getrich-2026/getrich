@@ -50,6 +50,7 @@ gr-factor（独立）
 - 后端服务用 FastAPI。
 - **数据库单独部署，不随应用一起构建**：`deploy/docker-compose.yml` + `deploy/config/` 只定义 PostgreSQL、ClickHouse、Redis 三个基础设施服务，是可复现的部署模板；GetRich 仓库内不创建 Docker 实例。真实 `.env`、数据卷、日志和运维脚本全部放在仓库外的部署目录，不进 git。仓库内不维护应用的 Dockerfile 或 systemd unit。
 - 不要在 GetRich 仓库内执行 `docker compose up`、`down` 或 `restart`。改动 `deploy/` 后，需将其中的文件同步到仓库外的部署目录根，不保留外层 `deploy/`，再从部署目录校验和重启容器。
+- **三个数据库的数据目录只能用 named volume，绝不 bind mount 宿主机目录。** bind mount 走虚拟机的文件共享层（VirtioFS），在 macOS 上会丢 POSIX 语义 —— PostgreSQL 曾因此在 autovacuum 里报 `could not open file`，整库不可用（见 `DECISIONS.md` D-029）。代价是数据不能从宿主机翻目录看，**备份必须走 `pg_dump` / `clickhouse-client` / `BGSAVE` 这类逻辑导出，不要拷贝数据目录文件**。日志目录可以继续 bind。
 
 ## 2. 数据库职责划分（铁律）
 

@@ -1,6 +1,9 @@
 # GetRich 基础设施部署模板。
 # 不要在 GetRich 仓库内直接启动；请把 deploy/ 中的文件复制到仓库外的部署目录根后再运行。
 # Python 应用仍通过 uv workspace 在宿主机运行。
+#
+# 【铁律】三个数据库的数据目录一律用 named volume，绝不 bind mount 宿主机目录。
+# 见文件末尾 volumes: 段的说明。日志目录可以继续 bind，方便宿主机直接查看。
 services:
   postgres:
     image: timescale/timescaledb:2.28.3-pg17-oss
@@ -19,7 +22,7 @@ services:
     ports:
       - "${DOCKER_BIND_HOST:-127.0.0.1}:${PG_PORT:-5432}:5432"
     volumes:
-      - ${POSTGRES_DATA_DIR:-./.docker/postgres/data}:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql/data
       - ${POSTGRES_LOG_DIR:-./.docker/postgres/logs}:/var/log/postgresql
       - ./config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     shm_size: 1gb
@@ -47,7 +50,7 @@ services:
       - "${DOCKER_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
       - "${DOCKER_BIND_HOST:-127.0.0.1}:${CLICKHOUSE_INTERSERVER_PORT:-9009}:9009"
     volumes:
-      - ${CLICKHOUSE_DATA_DIR:-./.docker/clickhouse/data}:/var/lib/clickhouse
+      - ch_data:/var/lib/clickhouse
       - ${CLICKHOUSE_LOG_DIR:-./.docker/clickhouse/logs}:/var/log/clickhouse-server
       - ./config/clickhouse/logger.xml:/etc/clickhouse-server/config.d/logger.xml:ro
     ulimits:
@@ -86,7 +89,7 @@ services:
     ports:
       - "${DOCKER_BIND_HOST:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
-      - ${REDIS_DATA_DIR:-./.docker/redis/data}:/data
+      - redis_data:/data
       - ${REDIS_LOG_DIR:-./.docker/redis/logs}:/var/log/redis
       - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     healthcheck:
@@ -102,3 +105,23 @@ networks:
   quant_network:
     name: ${DOCKER_NETWORK_NAME:-quant_network}
     driver: bridge
+
+# 数据库的数据目录必须走 named volume，不能 bind mount 宿主机目录。
+#
+# 原因（2026-08-17 在 macOS + Docker Desktop 上实测两次）：bind mount 走的是
+# 虚拟机的文件共享层（VirtioFS / gRPC-FUSE），它不保证 POSIX 语义。写入压力上来
+# 之后，容器内对刚创建的文件 open() 返回 ENOENT、mkdir() 返回 EEXIST，而宿主机上
+# 文件其实都在 —— PostgreSQL 在 autovacuum 里直接报 "could not open file
+# base/16384/27783"，整个库不可用（重启容器可恢复，但会反复发生）。
+# named volume 走的是虚拟机内的块设备 + ext4，POSIX 语义完整，不经过共享层。
+#
+# 注意：数据因此**不能**从宿主机直接翻目录看，备份必须走 pg_dump / clickhouse-client
+# / BGSAVE 这类逻辑导出，不要再拷贝数据目录文件。日志目录仍是 bind mount ——
+# 日志文件一天才创建一次，撞上共享层问题的概率极低，且丢日志不毁数据。
+volumes:
+  pg_data:
+    name: ${POSTGRES_VOLUME_NAME:-getrich_pg_data}
+  ch_data:
+    name: ${CLICKHOUSE_VOLUME_NAME:-getrich_ch_data}
+  redis_data:
+    name: ${REDIS_VOLUME_NAME:-getrich_redis_data}
