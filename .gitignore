@@ -43,8 +43,10 @@ downloads/
 eggs/
 .eggs/
 lib/
-!web/src/lib/
-!web/src/lib/**
+# 上面的 lib/ 是 Python 构建产物规则，会误伤前端源码目录。豁免路径必须带 apps/
+# 前缀 —— 带斜杠的 pattern 锚定在仓库根，monorepo 迁移后旧的 web/src/lib/ 不再匹配。
+!apps/*/src/lib/
+!apps/*/src/lib/**
 lib64/
 parts/
 sdist/
