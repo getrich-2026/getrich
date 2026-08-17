@@ -20,7 +20,7 @@ dependencies = [
     "pydantic>=2.7,<3",
     "redis>=5.0",
     "starlette",
-    "uvicorn[standard]>=0.30",
+    "uvicorn[standard]>=0.52.1",
 ]
 
 [project.scripts]
