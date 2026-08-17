@@ -379,3 +379,213 @@ PG+CH 双执行器）和 `getrich_data.common.migrate`（`db/ddl/*.sql`，按 ch
 `PG_DB` 默认 `goldmine`，新克隆在没有 `.env` 时会去连别人的主机，报一个和真实原因
 无关的连接错误。这与 Round #1143 修过的 ClickHouse 默认值是同一类问题。
 **默认值必须是本机可用的中性值**（`localhost`），且与 `.env.example` 一致。
+
+## D-024 选股信号（`pick` schema）落地：三处偏离设计文档的取舍
+
+**时间**：2026-08-17
+
+选股展示模块（`getrich-design/strategy-signal/`）的 P0 存储层落地为 `pick.batch` +
+`pick.item` 两张表（迁移 `034_pick.sql`）。设计文档写于 introspect 实际库之前，
+落地时有三处必须偏离，理由记在这里，免得后来者当成实现错误去「修正」：
+
+1. **`strategy_id` 用 UUID 而不是 `VARCHAR(32)`。** 文档 §3 把这条列为阻塞项，
+   要求落地前 introspect 确认 —— 实际 `app.strategies.id` 是 UUID（见
+   `021_strategies.sql`），对外展示与路由用 `strategy_code`。这与 D-020 踩过的坑
+   同源：引用别人主键时类型必须与被引用列一致，否则全新库上恒 500。
+2. **`import_job_id` 保留列但不建外键，`chk_batch_job` 不建。** 文档假设复用
+   `/v1/admin/imports` 的 `import_jobs` 表 —— 但**本仓根本没有那张表的 DDL**
+   （`services/admin_import.py` 引用它，`gr-db/ddl/` 里一行都没有，全新库上那套接口
+   必然报错）。P0 走函数 / CLI 导入，没有 job 可挂，硬建外键会让迁移直接失败。
+3. **`uploaded_by` 可空。** 文档写 `NOT NULL VARCHAR(32)`，但 CLI 导入没有登录用户。
+   改成可空 UUID 并外键到 `app.users(id)`。
+
+**策略类型判别选了「加列」而不是「用分类」**（文档 §3.3 的方案 B）：
+`app.strategies.strategy_kind`（`pick`/`timing`/`combo`，可空）。方案 A（用一个专门的
+`strategy_categories` 分类）零改动，但会把「策略类型」和「业务分类」焊死，将来选股
+再分子类（预增 / 双击）就打架。可空 + 选股接口只认 `strategy_kind='pick'`，
+所以没回填的存量策略不会误入选股列表。
+
+**两套交易所码是这块最容易静默出错的地方**：`pick.item.exchange` 存 `SSE/SZSE/BSE`
+（前端接口契约 `PickItem.exchange` 枚举定死），数据层 `meta.*` 用 canonical 码
+`XSHG/XSHE/XBSE`，且 `meta.instruments.symbol` 存的是**带后缀全码**（`600000.SH`）。
+拿 `SSE` + 不带后缀的 `600000` 去查 `meta.instruments`，SQL 不报错、只是查不到，
+表现为 `instrument_id` 整批 NULL、`holding_trading_days` 全部走自然日兜底。
+转换集中在 `gr_api/services/pick_symbols.py`，别在别处再写一份。
+
+**入池日推算的保守方向不可反转**：上一交易日没有 active 批次（漏传）或交易日历尚未
+ingest 时，`entry_date` **沿用不重置**。反过来（重置成今天）会静默破坏历史且不可恢复；
+沿用导致的偏差是「入池时间偏早」，可见、可解释、事后可修正。
+`product_entry_date` 的兜底值取 `entry_date` 而非 `trading_day` —— 取后者会在
+「首次入池 + 上传方给了更早的 entry_date」这个**每个基金经理首次接入的必经场景**下
+违反 `chk_item_prod_entry`，整批插入失败（文档附录 A.6 第 1 条）。
+
+## D-025 `gr-tools`：依赖图最底层的叶子包
+
+**时间**：2026-08-17
+
+从外部仓库 `lntools` 移植文件系统、多格式表格读取与人性化格式化三块能力，
+落成 `packages/gr-tools`。**它不许依赖任何一方包** ——
+`packages/gr-tools/tests/test_package_boundaries.py` 用 AST 静态扫描守这条线。
+一旦为了复用 `gr_data.logging` 而 import `gr_data`，依赖图就成环（gr-data 想用它的
+读文件能力时会互相 import），所以 gr-tools 内部一律用 stdlib `logging`。
+
+移植时刻意改掉的两处：默认引擎写死 `polars`（不再读 `~/.config` 里的全局配置文件，
+库不该依赖用户目录状态）；新增 `read_frame(..., all_string=True)`。
+
+**`all_string` 不是可选项，是导入路径的硬要求**：CSV 类型推断会把 `000001` 读成整数
+`1`，前导零丢掉后代码再也对不上，而且**全程不报错**，错误一路带进数据库。
+凡是读用户提供的证券代码 / 日期文件，一律 `all_string=True` 后由业务层显式解析。
+
+## D-026 选股读写路径的两处性能取舍
+
+**时间**：2026-08-17（在 10 策略 × 250 交易日 × 30 只 ≈ 7.9 万条 `pick.item` 上实测）
+
+**一、入池日推算不扫全量历史。** 原实现对每个分组键做
+`DISTINCT ON ... WHERE trading_day < 本期`，代价是 O(该策略全部历史)，而且
+symbol 与 product 各扫一遍 —— 每天导入一次，成本随年份线性上涨。
+
+现在分两条路：连续上传（上一交易日有 active 批次）时**只读上一期那一批**，
+一次索引扫描同时给出 symbol 与 product 两套索引；只有漏传 / 日历缺失才回退到
+扫历史找「最近一条」。两者结论完全等价 —— 正常路径下入池日只可能继承自上一
+交易日那期，更早的记录按规则本来就要重置为当天。
+
+实测：0.071 ms（扫 20 行）对 39.774 ms（扫 435 行），且前者不随历史增长。
+
+**二、个股反查的 `latest` CTE 必须按命中的策略收窄。** 原写法
+`SELECT strategy_id, MAX(trading_day) FROM pick.batch WHERE status='active' GROUP BY 1`
+会对整张 batch 表做聚合，代价随平台上**所有**策略的历史增长，而一次反查只需要
+命中的那几个策略。加 `AND b.strategy_id IN (SELECT strategy_id FROM runs)` 即可。
+
+**顺带记一笔量级**：这套接口的 SQL 执行时间在年度数据量下是 1–15 ms，
+**查询计划的生成时间反而更贵**（10–45 ms）。psycopg3 默认 `prepare_threshold=5`，
+同一条 SQL 在同一连接上跑够 5 次就会转成 prepared statement，规划开销随之摊掉 ——
+所以**不要为了「少拼几个 WHERE」把 SQL 拼成千变万化的字符串**，那会让每个变体
+都重新规划，反而比多写几个固定分支慢。
+
+## D-027 Black-Litterman：去掉不自洽的归一化，并记下两个待定的建模口径
+
+**时间**：2026-08-17
+
+`BlackLitterman._compute_posterior` 原来对先验和观点**分别**做归一化：
+
+```python
+pi_prior = pi_prior / pi_norm          # → L1 = 1，量级 O(1)
+q_vec = mu_scores / q_norm * pi_norm   # → L1 = pi_norm，量级 O(1e-5)
+```
+
+两次归一化互不自洽 —— Π 被拉到 O(1)，Q 却被压回原始 `pi_norm`（日收益量级）。
+后验里 `ts_inv @ Π` 因此恒定压过 `omega_inv @ Q` 约五个数量级，**观点的符号被
+完全抹掉**：`score=-1` 的标的照样拿到正的后验收益，长短仓完全反向。
+
+现在两者都保持各自的自然量纲，不做任何归一化。修完后验从 `[0.167, 0.167]`
+（观点消失）变成 `[+1.00, -0.99]`（观点符号保留）。
+
+**同时修掉的第二个缺陷**：`np.linalg.inv` 只在矩阵**恰好**奇异时抛
+`LinAlgError`。两只标的行情完全同步时协方差的行列式是 1e-26 这种量级，不触发
+异常，却让求逆结果变成纯数值噪声。伪逆也救不了 —— `pinv` 的输出恒落在协方差的
+行空间里（秩 1 时是 `span{[1,1]}`），和观点完全无关，归一化后得到 `[0.5, 0.5]`，
+两个方向相反的标的同号。所以判据改成**条件数**（`_MAX_COND = 1e12`，依据是
+float64 的相对精度 2.2e-16），退化时直接退回「按方向等权」，不拿噪声冒充最优解。
+
+**遗留两个待决口径，等定了方案再动**：
+
+1. **`tau` 目前是无效参数**。后验里 `(τΣ)⁻¹` 和 `Ω⁻¹ = 1/(diag(Σ)·τ)` 同时以
+   `1/τ` 缩放，τ 在 `(Σ⁻¹/τ + D/τ)⁻¹ (Σ⁻¹Π/τ + DQ/τ)` 里精确约掉，改两个数量级
+   得到的后验逐位相同。要让 τ 重新起作用必须换 Ω 的取法（Idzorek 置信度是常见
+   做法）。用例 `test_tau_currently_cancels_out` 钉住现状，改了 Ω 它会先失败。
+2. **score 被直接当预期收益用**（Q = score）。量纲上 `score=1` 等于「预期日收益
+   100%」，和 Π 的 O(1e-5) 差五个数量级，等于把观点的置信度隐式拉满。要不要在
+   Q 前面加一个标定系数（比如按截面波动率缩放），属于策略口径，需要先定。
+
+**测试层面的教训**：BL 原有 6 条用例**全部**用同一条价格序列喂两个标的，协方差
+秩为 1，走的都是退化分支 —— 真正的后验路径一条都没覆盖，符号错了三个月没人发现。
+新增 `test_view_sign_survives_posterior`（cond(Σ)≈1.7 的非退化数据）补上这条路径。
+**造测试数据时，「两个标的」必须真的不一样**，否则测的是 fallback 不是算法。
+
+## D-028 ClickHouse 迁移记账一直是空的：`command()` 拼 INSERT 绑不上参数
+
+**时间**：2026-08-17
+
+`ClickHouseMigrationExecutor.apply_one` 原来这样记账：
+
+```python
+self._client.command(
+    "INSERT INTO schema_migrations (file_name, checksum) VALUES",
+    parameters={"file_name": ..., "checksum": ...},
+)
+```
+
+这条 SQL 里**没有任何占位符**，`parameters` 无处可绑，ClickHouse 把它当成插入
+0 行并静默成功。结果 `getrich.schema_migrations` 恒为空，每次
+`gr-db migrate --target ch` 都把全部迁移重放一遍 —— 因为 DDL 都是
+`CREATE TABLE IF NOT EXISTS`，重放看起来完全正常，报的还是
+"applied 1 migration(s) successfully"。**幂等的 DDL 把记账失效这件事盖住了。**
+
+改成 `client.insert("schema_migrations", [[name, checksum]], column_names=[...])`。
+
+**这个 bug 被一条测试钉死过**：`test_clickhouse_apply_one_runs_sql_then_books`
+用 `MagicMock` 断言的正是那条坏 SQL 的字面量和 `parameters` 的内容 —— mock 不会
+告诉你 ClickHouse 收到之后插了 0 行。**断言「调了哪个 API、带了什么值」，
+不要断言 SQL 字符串的字面量**，后者只能证明代码没变，不能证明代码是对的。
+
+判断迁移是否幂等，**必须看第二次运行是不是 "already applied"**，
+不能只看第二次没报错。
+
+## D-029 数据库容器的数据目录改用 named volume，禁止 bind mount
+
+**时间**：2026-08-17
+
+`deploy/docker-compose.yml` 里 PostgreSQL / ClickHouse / Redis 的数据目录原来都 bind
+到宿主机（`./.docker/<svc>/data`）。在 macOS + Docker Desktop 上，bind mount 走的是
+虚拟机的文件共享层（VirtioFS / gRPC-FUSE），**它不保证 POSIX 语义**。写入压力上来后：
+
+```
+ERROR: could not create directory "base/16384": File exists
+ERROR: could not open file "base/16384/27783": No such file or directory
+   CONTEXT: while vacuuming index "uq_batch_active" of relation "pick.batch"
+```
+
+容器内对刚创建的 relfilenode `open()` 返回 ENOENT、`mkdir()` 返回 EEXIST，而**宿主机上
+文件都在**（`base/16384` 807 个文件俱全）。报错出现在 autovacuum 内部，与任何应用 SQL
+无关；宿主是 APFS，文件系统本身正常。当天复现两次，`docker restart` 后 WAL 自动恢复、
+数据无损，但会反复发生。
+
+改成 named volume（`getrich_pg_data` / `getrich_ch_data` / `getrich_redis_data`）。
+卷仍然物理落在同一块外置盘上（Docker 的 disk image 就在那儿），但数据库看到的是
+**虚拟机内的块设备 + ext4**，不经过文件共享层，POSIX 语义完整。
+
+**换来的代价，必须记住**：数据不能再从宿主机翻目录直接看，备份只能走 `pg_dump` /
+`clickhouse-client` / `BGSAVE` 这类逻辑导出，**不要再拷贝数据目录文件**。
+日志目录仍是 bind mount —— 日志文件一天才创建一次，撞上共享层问题的概率极低，
+且丢日志不毁数据，换来宿主机直接 `tail` 的便利。
+
+推论：**任何「打真库的测试失败」，先排除挂载问题再怀疑代码。** 判据是看
+`docker exec <c> ls <数据目录里报错的文件>` 与宿主机 `ls` 是否一致。
+
+## D-030 两条「声明了但从未生效」的配置与门禁
+
+**时间**：2026-08-17
+
+同一天撞到两个同类问题：配置项和测试门禁都写在文档里，看起来生效，实际从来没起作用。
+它们和 D-028（CH 记账 INSERT 绑不上参数）是同一个失败模式 —— **没有任何报错，
+只是静默地不干活**。
+
+**其一：`RAW_PARQUET_ROOT` 是死配置。** `AGENTS.md` §3.4 和 `.env.example` 都把它写成
+raw 层落地根目录的真源，但 `Config.raw_root` 只读 `config.yaml` 的 `paths.raw_root`，
+从没读过这个环境变量；而随包发布的 `config.example.yaml` 里该键恒等于
+`/opt/raw_parquet`。于是环境变量配了也没用，新机器一律撞 `/opt` 的权限错。
+已改成 **环境变量优先 > config.yaml > 默认值**，方向同 D-023。
+
+**其二：`_docker_available()` 被自己的探测命令挡住。** `packages/gr-data/tests/conftest.py`
+用 `docker info` + `timeout=10` 判断 docker 是否可用。`docker info` 要把镜像、容器、
+存储、插件全查一遍，在 Docker Desktop for Mac 上首次调用实测 **9.75 s**，正好卡在
+超时边界 —— 于是 5 个集成用例在 docker 完全健康的机器上被判成「docker 不可用」，
+长期静默跳过。换成 `docker version --format '{{.Server.Version}}'`（同样要求守护进程
+应答，实测稳定 0.2 s，快 50 倍），超时放宽到 20 s。改完 5 个用例全部真跑起来并通过。
+
+**通用教训**：
+1. **健康探测要用最轻的那条命令**，只需证明「服务在应答」，不要顺带拉全量状态。
+2. **skip 数量的变化和失败一样值得看**。本轮把「2323 passed / 25 skipped」推到
+   「2350 passed / 1 skipped」，多出来的 27 个用例不是新写的，是**本来就该跑但从没跑过的**
+   （5 个 docker 集成 + 11 个 tushare 真实接口 + 5 个 job 持久化 + 选股集成）。
+   CI 里只盯 failed 会让这类问题永远藏着。
