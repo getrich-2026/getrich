@@ -24,6 +24,7 @@ members = [
     "gr-db",
     "gr-factor",
     "gr-signal",
+    "gr-tools",
 ]
 
 [[package]]
@@ -1163,6 +1164,7 @@ dependencies = [
     { name = "gr-db" },
     { name = "gr-factor" },
     { name = "gr-signal" },
+    { name = "gr-tools" },
 ]
 
 [package.dev-dependencies]
@@ -1187,6 +1189,7 @@ requires-dist = [
     { name = "gr-db", editable = "packages/gr-db" },
     { name = "gr-factor", editable = "packages/gr-factor" },
     { name = "gr-signal", editable = "packages/gr-signal" },
+    { name = "gr-tools", editable = "packages/gr-tools" },
 ]
 
 [package.metadata.requires-dev]
@@ -1217,6 +1220,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "gr-backtest" },
     { name = "gr-data" },
+    { name = "gr-tools" },
     { name = "orjson" },
     { name = "prometheus-client" },
     { name = "psycopg", extra = ["binary", "pool"] },
@@ -1234,6 +1238,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<0.141" },
     { name = "gr-backtest", editable = "packages/gr-backtest" },
     { name = "gr-data", editable = "packages/gr-data" },
+    { name = "gr-tools", editable = "packages/gr-tools" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
@@ -1392,6 +1397,26 @@ requires-dist = [
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "redis", specifier = ">=5.0" },
+]
+
+[[package]]
+name = "gr-tools"
+version = "0.1.2"
+source = { editable = "packages/gr-tools" }
+dependencies = [
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pandas", specifier = ">=2.0" },
+    { name = "polars" },
+    { name = "pyarrow", specifier = ">=14" },
+    { name = "tqdm" },
 ]
 
 [[package]]

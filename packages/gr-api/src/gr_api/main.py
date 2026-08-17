@@ -53,6 +53,7 @@ from gr_api.routers import (
     backtest_sweeps as backtest_sweeps_router,
     backtest_walk_forwards as backtest_walk_forwards_router,
     payments as payments_router,
+    picks as picks_router,
     signal_settings as signal_settings_router,
     signals as signals_router,
     strategies as strategies_router,
@@ -193,6 +194,11 @@ def create_app() -> FastAPI:
     app.include_router(backtest_sweeps_router.router, prefix="/v1")
     app.include_router(backtest_walk_forwards_router.router, prefix="/v1")
     app.include_router(strategies_router.router, prefix="/v1")
+    # 选股展示：策略列表/详情/标的池走 pick.* 两张表，与择时策略的
+    # /v1/strategies 分开 —— 选股策略 P0 没有业绩数字，混在一起会让
+    # 前端拿到一堆 null 并误以为策略跑输了。
+    app.include_router(picks_router.strategies_router, prefix="/v1")
+    app.include_router(picks_router.picks_router, prefix="/v1")
     app.include_router(signals_router.router, prefix="/v1")
     app.include_router(subscriptions_router.router, prefix="/v1")
     app.include_router(signal_settings_router.router, prefix="/v1")
@@ -202,6 +208,7 @@ def create_app() -> FastAPI:
     # All endpoints guarded by ``require_admin`` — see
     # ``routers/admin_imports.py`` for the per-endpoint contract.
     app.include_router(admin_imports_router.router, prefix="/v1")
+    app.include_router(picks_router.admin_router, prefix="/v1")
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:

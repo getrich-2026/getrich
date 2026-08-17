@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gr-tools"
+version = "0.1.2"
+description = "GetRich 通用工具：文件系统、多格式表格读取、人性化格式化。不依赖任何一方包"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "polars",
+    "pyarrow>=14",
+    "tqdm",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["gr_tools*"]
+
+[tool.setuptools.package-data]
+gr_tools = ["py.typed"]

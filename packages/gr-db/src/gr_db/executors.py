@@ -165,9 +165,13 @@ class ClickHouseMigrationExecutor(MigrationExecutor):
             # command() 一次只接受一条语句，DDL 文件可能有多张表，需先切分。
             for statement in split_statements(migration.sql):
                 self._client.command(statement)
-            self._client.command(
-                "INSERT INTO schema_migrations (file_name, checksum) VALUES",
-                parameters={"file_name": migration.name, "checksum": migration.checksum},
+            # 必须走 insert()，不能用 command() 拼 "INSERT ... VALUES" —— 那条
+            # SQL 里没有占位符，parameters 无处可绑，ClickHouse 会当成插入 0 行
+            # 静默成功，记账表永远是空的，每次 migrate 都把全部迁移重放一遍。
+            self._client.insert(
+                "schema_migrations",
+                [[migration.name, migration.checksum]],
+                column_names=["file_name", "checksum"],
             )
         except Exception as exc:  # noqa: BLE001
             raise MigrationError(f"clickhouse migration {migration.name!r} failed: {exc}") from exc

@@ -19,11 +19,20 @@ from pathlib import Path
 import gr_backtest
 
 
-#: 引擎唯一允许依赖的一方包。gr-data 提供配置与数据库连接，位于更底层。
-ALLOWED_FIRST_PARTY = {"gr_data"}
+#: 引擎允许依赖的一方包。gr-data 提供配置与数据库连接，gr-tools 是无一方
+#: 依赖的通用工具叶子，两者都在引擎下层。
+ALLOWED_FIRST_PARTY = {"gr_data", "gr_tools"}
 
 #: 一方包全集；不在 ALLOWED 里的都算反向依赖。
-FIRST_PARTY = {"gr_api", "gr_backtest", "gr_data", "gr_db", "gr_factor", "gr_signal"}
+FIRST_PARTY = {
+    "gr_api",
+    "gr_backtest",
+    "gr_data",
+    "gr_db",
+    "gr_factor",
+    "gr_signal",
+    "gr_tools",
+}
 
 _SRC_ROOT = Path(gr_backtest.__file__).resolve().parent
 
