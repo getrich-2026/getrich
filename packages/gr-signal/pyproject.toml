@@ -11,7 +11,7 @@ dependencies = [
     "gr-backtest",
     "gr-data",
     "polars",
-    "prometheus-client>=0.20",
+    "prometheus-client>=0.26.0",
     "psycopg[binary,pool]>=3.2",
     "redis>=5.0",
 ]

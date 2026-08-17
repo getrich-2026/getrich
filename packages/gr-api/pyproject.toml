@@ -9,7 +9,7 @@ description = "GetRich FastAPI 应用：给前端提供查询接口，并承载�
 requires-python = ">=3.10"
 dependencies = [
     "bcrypt>=4.0",
-    "bleach>=6.3.0",
+    "bleach>=6.4.0",
     "celery[redis]>=5.4",
     "fastapi>=0.115,<0.141",
     "gr-backtest",
