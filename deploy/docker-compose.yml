@@ -106,18 +106,6 @@ networks:
     name: ${DOCKER_NETWORK_NAME:-quant_network}
     driver: bridge
 
-# 数据库的数据目录必须走 named volume，不能 bind mount 宿主机目录。
-#
-# 原因（2026-08-17 在 macOS + Docker Desktop 上实测两次）：bind mount 走的是
-# 虚拟机的文件共享层（VirtioFS / gRPC-FUSE），它不保证 POSIX 语义。写入压力上来
-# 之后，容器内对刚创建的文件 open() 返回 ENOENT、mkdir() 返回 EEXIST，而宿主机上
-# 文件其实都在 —— PostgreSQL 在 autovacuum 里直接报 "could not open file
-# base/16384/27783"，整个库不可用（重启容器可恢复，但会反复发生）。
-# named volume 走的是虚拟机内的块设备 + ext4，POSIX 语义完整，不经过共享层。
-#
-# 注意：数据因此**不能**从宿主机直接翻目录看，备份必须走 pg_dump / clickhouse-client
-# / BGSAVE 这类逻辑导出，不要再拷贝数据目录文件。日志目录仍是 bind mount ——
-# 日志文件一天才创建一次，撞上共享层问题的概率极低，且丢日志不毁数据。
 volumes:
   pg_data:
     name: ${POSTGRES_VOLUME_NAME:-getrich_pg_data}
