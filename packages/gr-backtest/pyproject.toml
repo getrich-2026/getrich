@@ -15,7 +15,7 @@ dependencies = [
     "pandas",
     "plotly",
     "polars",
-    "psycopg[binary,pool]>=3.2",
+    "psycopg[binary,pool]>=3.3.4",
     "pyarrow",
     "python-dateutil",
     "scipy",
