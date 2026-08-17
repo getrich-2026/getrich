@@ -23,10 +23,18 @@ class PageParams:
         return self.page_size
 
 
-def make_page_params(page: int = 1, page_size: int = DEFAULT_PAGE_SIZE) -> PageParams:
-    """规范化分页参数，clamp 到合法区间。"""
+def make_page_params(
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    max_page_size: int = MAX_PAGE_SIZE,
+) -> PageParams:
+    """规范化分页参数，clamp 到合法区间。
+
+    ``max_page_size`` 默认沿用全局上限 100；个别接口的契约上限更高
+    （选股标的池是 200，前端通常一次取全一整期），由调用方显式传入。
+    """
     page = max(1, page)
-    page_size = max(1, min(MAX_PAGE_SIZE, page_size))
+    page_size = max(1, min(max_page_size, page_size))
     return PageParams(page=page, page_size=page_size)
 
 

@@ -14,6 +14,7 @@ dependencies = [
     "fastapi>=0.115,<0.141",
     "gr-backtest",
     "gr-data",
+    "gr-tools",
     "orjson>=3.10",
     "prometheus-client>=0.20",
     "psycopg[binary,pool]>=3.2",
@@ -24,6 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
+gr-picks = "gr_api.picks_cli:main"
 gr-worker = "gr_api.worker.cli:main"
 
 [tool.setuptools.packages.find]

@@ -328,13 +328,20 @@ def test_ch_migrations_dir_exists_and_has_files() -> None:
 
 
 def test_pg_ddl_dir_is_contiguous_and_covers_all_schemas() -> None:
-    """PostgreSQL DDL 前缀连续，且七个 schema 全部被创建。"""
+    """PostgreSQL DDL 前缀从 001 起连续，且每个 schema 都有人创建。
+
+    不写死文件数量 —— 每加一个迁移就要改一次断言，改的人多半只是把数字 +1，
+    这个测试就退化成了噪音。真正的不变量是**前缀连续**（runner 拒绝跳号，
+    跳号意味着有文件没提交）和**schema 齐全**。
+    """
     found = discover_migrations(_PG_MIGRATIONS_DIR)
-    assert len(found) == 33, f"expected 33 PG DDL files, found {len(found)}"
-    assert [int(m.prefix) for m in found] == list(range(1, 34))
+    assert found, "PG DDL 目录是空的"
+    assert [int(m.prefix) for m in found] == list(range(1, len(found) + 1)), (
+        "PG DDL 前缀不连续：" + ", ".join(m.name for m in found)
+    )
 
     all_sql = "\n".join(m.sql for m in found)
-    for schema in ("meta", "market", "realtime", "staging", "ops", "app", "backtest"):
+    for schema in ("meta", "market", "realtime", "staging", "ops", "app", "backtest", "pick"):
         assert f"CREATE SCHEMA IF NOT EXISTS {schema}" in all_sql, f"schema {schema} 未创建"
     # frontend 已被 app / backtest 取代，任何 SQL 语句里都不该再出现。
     statements = "\n".join(

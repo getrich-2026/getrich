@@ -17,6 +17,7 @@ packages/gr-backtest  回测引擎（纯库，不含 Web / 实盘 / 调度）
 packages/gr-signal    实盘信号生产与交易执行
 packages/gr-api       FastAPI 应用 + 回测作业队列 + Celery worker
 packages/gr-factor    期权与因子分析
+packages/gr-tools     通用工具：文件系统、多格式表格读取、人性化格式化（无一方依赖的叶子）
 packages/gr-agent     空占位包（只有 pyproject.toml，尚无源码）
 deploy/               数据库基础设施部署模板，不在仓库内实例化
 scripts/              仅存 lint_migrations.py
@@ -31,14 +32,18 @@ archive/              历史脚手架，删除前必须得到明确确认
 依赖方向单向，不得出现反向 import：
 
 ```
+gr-tools（叶子，谁都能依赖，它谁也不依赖）
+   ↑
 gr-data  ←──  gr-db
    ↑
    └──  gr-backtest  ←──  gr-signal  ←──  gr-api
 gr-factor（独立）
 ```
 
-`packages/gr-backtest/tests/gr_backtest/test_package_boundaries.py` 会用静态扫描守住
-这条边界，新增跨包 import 前先确认方向。
+`packages/gr-backtest/tests/gr_backtest/test_package_boundaries.py` 与
+`packages/gr-tools/tests/test_package_boundaries.py` 会用静态扫描守住这条边界，
+新增跨包 import 前先确认方向。gr-tools 里出现任何一方包的 import 都会让依赖成环
+（gr-data 想用它的读文件能力时会互相 import），后一个测试专门挡这个。
 
 - Python 3.10+，首行 `from __future__ import annotations`；依赖统一用 `uv` 管理，不用 pip。
 - 数据处理优先 Polars / DuckDB；pandas 只留给小数据和兼容场景。
@@ -70,12 +75,17 @@ gr-factor（独立）
 | `ops` | ETL 作业、数据质量、表归属、迁移记账 | gr-data / gr-db |
 | `app` | 业务主库：用户、策略、信号、订单、订阅 | gr-api |
 | `backtest` | 回测产物：run / metrics / equity / sweep / walk-forward / jobs | gr-backtest / gr-api |
+| `pick` | 选股信号：上传批次 `batch` + 每日标的池快照 `item` | gr-api |
 
 - **全部 DDL 的唯一真源是 `packages/gr-db/src/gr_db/ddl/`**，不要在别处建表。
   DDL 必须**幂等**（`CREATE ... IF NOT EXISTS`）且**schema 全限定**（写 `app.users`，
   不要依赖 `search_path`）。迁移按 `file_name + checksum` 记账在 `ops.schema_migrations`。
-- 连接池 `search_path = app,market,meta,public`；`backtest` **不在** search_path 里，
-  回测相关 SQL 一律显式写 `backtest.` 前缀。
+- 连接池 `search_path = app,market,meta,public`；`backtest` 与 `pick` **不在** search_path 里，
+  相关 SQL 一律显式写 `backtest.` / `pick.` 前缀。
+- **两套交易所码不要混用**：`pick.item.exchange` 存 `SSE/SZSE/BSE`（前端接口契约定死的取值），
+  `meta.*` 用 canonical 码 `XSHG/XSHE/XBSE`。查 `meta.instruments` / `meta.trading_calendar`
+  前必须经 `gr_api/services/pick_symbols.py` 转换 —— 写错不报错，只会让
+  `instrument_id` 整批为 NULL、交易日历一条都查不到。
 - 引用其它表的 id 列，类型必须与被引用主键一致。曾因 `strategies.id` 是 VARCHAR 而
   引用方是 UUID，导致整个策略／信号接口在全新库上恒 500（`DECISIONS.md` D-020）。
 
@@ -173,12 +183,22 @@ uv run gr-data raw tushare --mode update   # 抓取落 parquet
 uv run gr-data ingest tushare              # 归一化入库
 uv run gr-data own list                    # 表归属
 
+# 选股标的池导入（CSV / Parquet；函数接口见 gr_api.services.pick_import.import_picks）
+uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-12 \
+    --file picks.csv --dry-run             # 预检不写库
+uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-12 \
+    --file picks.csv [--overwrite] [--allow-empty]
+
 # 后端：启动 FastAPI 开发服务器
 # find_project_root() 已修好，不再需要显式 --env-file（D-003）
 uv run uvicorn gr_api.main:app --reload --host 0.0.0.0 --port 8000
 
-# 全量测试（testpaths 覆盖全部六个包）
+# 全量测试（testpaths 覆盖全部七个有源码的包）
 uv run pytest -v
+
+# 打真库的集成用例（默认跳过）。选股模块用 30 天模拟数据跑「导入 → 读接口」全链路，
+# 模拟数据见 packages/gr-api/tests/fixture_picks.py，跑完自己清理。
+GETRICH_TEST_PG=1 uv run pytest packages/gr-api/tests/test_pick_pg_integration.py -v
 
 # 单包测试
 uv run pytest packages/gr-backtest/tests -v

@@ -204,6 +204,10 @@ config.local.yaml
 *.xlsx
 *.xls
 !packages/gr-data/reference/design/*.csv
+# 测试 fixture 是代码的一部分，必须提交。上面的 *.csv / *.parquet 是为 raw 层
+# 数据落地写的，会连测试用的小样本一起吞掉（选股 fixture 63k + 8k）。
+!packages/*/tests/fixtures/**/*.csv
+!packages/*/tests/fixtures/**/*.parquet
 
 # 供应商 SDK wheel 需手动安装，不提交
 *.whl
