@@ -402,8 +402,22 @@ _CONTAINER = f"getrich-test-pg-{uuid.uuid4().hex[:8]}"
 
 
 def _docker_available() -> bool:
+    """探测 docker 守护进程是否可用。
+
+    用 ``docker version`` 而不是 ``docker info``：后者要把镜像、容器、存储、
+    插件全查一遍，在 Docker Desktop for Mac 上首次调用实测 9.75 s，正好卡在
+    原来 ``timeout=10`` 的边界上 —— 于是这几个集成用例在 docker 明明健康的
+    机器上被**探测命令自己**判成「docker 不可用」，长期静默跳过。
+    ``docker version`` 同样要求守护进程应答（守护进程挂了它会失败），
+    但只回一个版本号，实测稳定在 0.2 s。超时也放宽到 20 s 留足余量。
+    """
     try:
-        subprocess.run(["docker", "info"], capture_output=True, timeout=10, check=True)
+        subprocess.run(
+            ["docker", "version", "--format", "{{.Server.Version}}"],
+            capture_output=True,
+            timeout=20,
+            check=True,
+        )
         return True
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
         return False

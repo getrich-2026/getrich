@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from gr_data.common.paths import DEFAULT_RAW_ROOT
 from gr_data.config.settings import find_project_root
 
 
@@ -88,7 +89,21 @@ class Config:
 
     @property
     def raw_root(self) -> Path:
-        return Path(self.get("paths", "raw_root", default="/opt/raw_parquet"))
+        """raw 层 parquet 落地根目录。
+
+        优先级：``RAW_PARQUET_ROOT`` 环境变量 > ``config.yaml`` 的
+        ``paths.raw_root`` > :data:`DEFAULT_RAW_ROOT`。
+
+        环境变量必须排第一：`AGENTS.md` §3.4 和 `.env.example` 都把
+        ``$RAW_PARQUET_ROOT`` 写成落地根目录的真源，但这里过去只读
+        ``config.yaml``，而随包发布的 ``config.example.yaml`` 里 ``raw_root``
+        恒等于 ``/opt/raw_parquet`` —— 于是环境变量**永远不生效**，配了也没用，
+        新机器上一律撞 `/opt` 的权限错。方向同 D-023：环境变量优先。
+        """
+        env_root = os.environ.get("RAW_PARQUET_ROOT", "").strip()
+        if env_root:
+            return Path(env_root)
+        return Path(self.get("paths", "raw_root", default=str(DEFAULT_RAW_ROOT)))
 
 
 def load_config(path: str | Path | None = None) -> Config:

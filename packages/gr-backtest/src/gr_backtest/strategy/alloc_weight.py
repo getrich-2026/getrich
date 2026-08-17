@@ -32,6 +32,31 @@ def _require_columns(df: pl.DataFrame, expected: list[str]) -> None:
         raise StrategyError(f"DataFrame missing required columns: {', '.join(missing)}")
 
 
+# 条件数超过这个阈值就认为协方差在双精度下已经不可逆。
+# 依据：float64 的相对精度约 2.2e-16，cond > 1e12 时求逆结果里已经没有几位有效数字。
+_MAX_COND = 1.0e12
+
+
+def _safe_inv(cov: np.ndarray) -> np.ndarray | None:
+    """求协方差的逆，病态时退化成伪逆。
+
+    ``np.linalg.inv`` 只在矩阵**恰好**奇异时才抛 ``LinAlgError``。两只标的行情
+    完全同步时，协方差的行列式是 1e-26 这种量级 —— 不触发异常，却让求逆结果
+    变成纯数值噪声，权重符号随机翻转。所以这里按条件数判定，不靠异常。
+    """
+    if not np.all(np.isfinite(cov)):
+        return None
+    try:
+        if float(np.linalg.cond(cov)) > _MAX_COND:
+            return np.linalg.pinv(cov)
+        return np.linalg.inv(cov)
+    except np.linalg.LinAlgError:
+        try:
+            return np.linalg.pinv(cov)
+        except np.linalg.LinAlgError:
+            return None
+
+
 # ---------------------------------------------------------------------------
 # ScoreWeight — linear score mapping
 # ---------------------------------------------------------------------------
@@ -694,6 +719,12 @@ class BlackLitterman:
         except np.linalg.LinAlgError:
             return self._fallback(remaining_symbols, dir_map)
 
+        # 协方差退化（标的行情完全同步 / 样本不足以支撑维度）时，均值方差本身
+        # 就没有唯一解 —— 伪逆的输出恒落在协方差的行空间里，和观点无关，得到的
+        # 权重是纯噪声。这种情况直接退回「按方向等权」，别拿数值噪声冒充最优解。
+        if not np.all(np.isfinite(cov)) or float(np.linalg.cond(cov)) > _MAX_COND:
+            return self._fallback(remaining_symbols, dir_map)
+
         # Score vector
         score_map: dict[str, float] = dict(scores.select(["symbol", "score"]).iter_rows())
         mu_scores = np.array(
@@ -736,9 +767,8 @@ class BlackLitterman:
         posterior_μ = posterior_μ / μ_norm
 
         if self.allow_short:
-            try:
-                cov_inv = np.linalg.inv(cov)
-            except np.linalg.LinAlgError:
+            cov_inv = _safe_inv(cov)
+            if cov_inv is None:
                 return self._fallback(remaining_symbols, dir_map)
             w_raw = cov_inv @ posterior_μ  # δ=1 since already scaled
             abs_sum = float(np.sum(np.abs(w_raw)))
@@ -785,22 +815,22 @@ class BlackLitterman:
         cov: np.ndarray,
         mu_scores: np.ndarray,
     ) -> np.ndarray | None:
-        """Compute Black-Litterman posterior expected returns."""
+        """Compute Black-Litterman posterior expected returns.
+
+        Π 与 Q 都保持各自的自然量纲，**不做任何归一化**。历史上这里对两者
+        分别归一化过，且两次归一化互不自洽 —— Π 被压到 L1=1（O(1)），Q 却被
+        压到 L1=`pi_norm`（日收益量级，O(1e-5)）。结果是 `ts_inv @ Π` 恒定压过
+        `omega_inv @ Q` 五个数量级，观点的符号被完全抹掉，score=-1 的标的照样
+        拿到正的后验收益。详见 DECISIONS.md D-027。
+        """
         n = len(mu_scores)
 
         # Prior: equal-weight implied equilibrium returns pi = delta * sigma * w_eq
         w_eq = np.ones(n) / n
         pi_prior = self.delta * cov @ w_eq
 
-        # Normalize prior to L1=1 so scores can be scaled compatibly
-        pi_norm = float(np.sum(np.abs(pi_prior)))
-        if pi_norm > 1e-16:
-            pi_prior = pi_prior / pi_norm
-
-        # Views: P = I, Q = mu_scores
-        # Normalize views to same L1 as prior
-        q_norm = float(np.sum(np.abs(mu_scores)))
-        q_vec = mu_scores / q_norm * pi_norm if q_norm > 1e-16 else mu_scores
+        # Views: P = I, Q = mu_scores（score 直接当预期收益用，口径见 D-027）
+        q_vec = np.asarray(mu_scores, dtype=float)
 
         # omega = diag(P @ Sigma @ P' * tau) — view uncertainty
         omega_diag = np.abs(np.diag(cov)) * self.tau
@@ -808,10 +838,10 @@ class BlackLitterman:
         omega_inv = np.diag(1.0 / omega_diag)
 
         # Posterior: E(R) = inv(inv(tau * Sigma) + W_inv) @ (inv(tau*Sigma) @ pi + W_inv @ q)
-        try:
-            ts_inv = (1.0 / max(self.tau, 1e-12)) * np.linalg.inv(cov)
-        except np.linalg.LinAlgError:
+        cov_inv = _safe_inv(cov)
+        if cov_inv is None:
             return None
+        ts_inv = (1.0 / max(self.tau, 1e-12)) * cov_inv
 
         m_mat = ts_inv + omega_inv
         rhs_vec = ts_inv @ pi_prior + omega_inv @ q_vec

@@ -332,32 +332,38 @@ def test_clickhouse_fetch_applied_empty_returns_empty_set() -> None:
     assert applied == {}
 
 
-def test_clickhouse_apply_one_runs_sql_then_books() -> None:
-    """`apply_one()` issues TWO `command()` calls: the migration
-    SQL, then the bookkeeping INSERT (with parameters)."""
+def test_clickhouse_apply_one_books_via_insert_not_command() -> None:
+    """记账必须走 ``client.insert()``，不能用 ``command()`` 拼 INSERT 语句。
+
+    这条曾经断言的是 ``command("INSERT INTO schema_migrations ... VALUES",
+    parameters={...})``。那条 SQL 里没有占位符，``parameters`` 无处可绑，
+    ClickHouse 把它当成插入 0 行并静默成功 —— 用 ``MagicMock`` 测当然过，
+    打真库时记账表恒为空，每次 ``gr-db migrate --target ch`` 都会把全部迁移
+    重放一遍。所以这里钉的是「调了 insert 且带上了两列的值」，
+    而不是某条 SQL 的字面量。
+    """
     client = MagicMock()
     exe = ClickHouseMigrationExecutor(client)
+    checksum = _sum("CREATE TABLE klines (x Int32);")
     migration = Migration(
         prefix="003",
         name="003_add_klines.sql",
         path=Path("003_add_klines.sql"),
         sql="CREATE TABLE klines (x Int32);",
-        checksum=_sum("CREATE TABLE klines (x Int32);"),
+        checksum=checksum,
     )
 
     _run(exe.apply_one(migration))
 
-    assert client.command.call_count == 2
-    # 1st call: migration SQL (positional arg)
-    # split_statements 去掉了结尾分号
+    # 迁移 SQL 走 command()，split_statements 去掉了结尾分号
+    assert client.command.call_count == 1
     assert client.command.call_args_list[0][0][0] == "CREATE TABLE klines (x Int32)"
-    # 2nd call: bookkeeping INSERT (with parameters kwarg)
-    args, kwargs = client.command.call_args_list[1]
-    assert "INSERT INTO schema_migrations" in args[0]
-    assert kwargs["parameters"] == {
-        "file_name": "003_add_klines.sql",
-        "checksum": _sum("CREATE TABLE klines (x Int32);"),
-    }
+
+    client.insert.assert_called_once()
+    args, kwargs = client.insert.call_args
+    assert args[0] == "schema_migrations"
+    assert args[1] == [["003_add_klines.sql", checksum]]
+    assert kwargs["column_names"] == ["file_name", "checksum"]
 
 
 def test_clickhouse_apply_one_splits_multi_statement_file() -> None:
@@ -379,10 +385,11 @@ def test_clickhouse_apply_one_splits_multi_statement_file() -> None:
 
     _run(exe.apply_one(migration))
 
-    # 2 条 DDL + 1 条记账
-    assert client.command.call_count == 3
+    # 2 条 DDL 走 command()，记账走 insert()
+    assert client.command.call_count == 2
     assert client.command.call_args_list[0][0][0] == "CREATE TABLE a (x Int32)"
     assert client.command.call_args_list[1][0][0] == "CREATE TABLE b (y Int32)"
+    client.insert.assert_called_once()
 
 
 def test_clickhouse_apply_one_wraps_exception_in_migration_error() -> None:

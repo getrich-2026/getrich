@@ -20,11 +20,19 @@ from gr_api.jobs.persistence import PgBacktestJobStore, sync_is_cancelled_status
 
 
 # Only run when the dev / CI Postgres is reachable.
-pytestmark = pytest.mark.skipif(
-    os.environ.get("GETRICH_TEST_PG") is None
-    and not os.path.exists(os.path.expanduser("~/.getrich/test_pg_available")),
-    reason="requires real PostgreSQL; set GETRICH_TEST_PG=1 to enable",
-)
+#
+# ``anyio`` is required, not optional: without it the ``async def`` tests below
+# are collected but never awaited — pytest reports "async def functions are not
+# natively supported" and, because the whole module is normally skipped, nobody
+# ever sees it. These cases silently never ran until 2026-08-17.
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.skipif(
+        os.environ.get("GETRICH_TEST_PG") is None
+        and not os.path.exists(os.path.expanduser("~/.getrich/test_pg_available")),
+        reason="requires real PostgreSQL; set GETRICH_TEST_PG=1 to enable",
+    ),
+]
 
 
 def _conninfo() -> str:
@@ -47,6 +55,11 @@ async def _seeded_job() -> dict[str, Any]:
     don't need to know the user_id at teardown time).
     """
     import psycopg
+    from gr_data.db import pg_pool
+
+    # ``PgBacktestJobStore`` 走的是全局异步连接池，池子没 init 过就直接
+    # RuntimeError。生产里由 FastAPI 的 lifespan 负责，用例得自己开关。
+    await pg_pool.init()
 
     store = PgBacktestJobStore()
     payload = {"strategy_name": "demo", "symbols": ["000001.SZ"]}
@@ -54,17 +67,22 @@ async def _seeded_job() -> dict[str, Any]:
         job_type="backtest",
         ref_id="ref-sync-probe",
         request_json=payload,
-        request_hash="h" * 64,
+        # 必须是合法的 sha256 十六进制串 —— 'h' 不是十六进制字符，
+        # persistence.create_job 会直接拒掉（这条在用例真正跑起来之前一直没暴露）。
+        request_hash="a" * 64,
         max_attempts=1,
         user_id="*",
     )
-    yield {"job_id": job_id, "ref_id": "ref-sync-probe"}
-    # Best-effort cleanup
     try:
-        with psycopg.connect(_conninfo(), autocommit=True) as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM backtest.backtest_jobs WHERE job_id = %s", (job_id,))
-    except Exception:  # noqa: BLE001
-        pass
+        yield {"job_id": job_id, "ref_id": "ref-sync-probe"}
+    finally:
+        # Best-effort cleanup
+        try:
+            with psycopg.connect(_conninfo(), autocommit=True) as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM backtest.backtest_jobs WHERE job_id = %s", (job_id,))
+        except Exception:  # noqa: BLE001
+            pass
+        await pg_pool.close()
 
 
 async def test_sync_probe_returns_false_for_queued_status(_seeded_job: dict[str, Any]) -> None:

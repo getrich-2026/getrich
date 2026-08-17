@@ -659,7 +659,12 @@ class TestBlackLitterman:
         assert abs(w_a + w_b - 1.0) < 0.01
 
     def test_mixed_scores_long_short(self) -> None:
-        """Mixed scores -> allow_short=True gives both directions."""
+        """Mixed scores -> allow_short=True gives both directions.
+
+        A 和 B 用的是**同一条**价格序列，协方差秩为 1 —— 均值方差在这里没有
+        唯一解，所以走的是「按方向等权」的退化分支。真正的后验路径见
+        ``test_view_sign_survives_posterior``。
+        """
         close_a = [100.0 + 2.0 * math.sin(i * 0.3) for i in range(61)]
         close_b = [100.0 + 2.0 * math.sin(i * 0.3) for i in range(61)]
         ctx = _multi_bar_barctx({"A": close_a, "B": close_b}, n_bars=61)
@@ -672,27 +677,64 @@ class TestBlackLitterman:
         assert w_b < 0.0
         assert abs(abs(w_a) + abs(w_b) - 1.0) < 0.01
 
-    def test_prior_has_effect(self) -> None:
-        """Low tau (strong prior) -> closer to equal weight."""
-        close_a = [100.0 + 2.0 * math.sin(i * 0.3) for i in range(61)]
-        close_b = [100.0 + 2.0 * math.sin(i * 0.3) for i in range(61)]
+    def test_view_sign_survives_posterior(self) -> None:
+        """非退化协方差下，观点的符号必须传导到后验和最终权重（D-027 回归）。
+
+        历史上 ``_compute_posterior`` 对 Π 和 Q 分别归一化，且两次归一化互不
+        自洽（Π→L1=1，Q→L1=pi_norm≈1e-5），先验压过观点五个数量级，
+        score=-1 的标的照样拿到正权重。这里两条序列的频率与幅度都不同，
+        cond(Σ)≈1.7，走的是真正的 BL 后验路径。
+        """
+        close_a = [100.0 + 2.0 * math.sin(i * 0.30) for i in range(61)]
+        close_b = [100.0 + 3.0 * math.sin(i * 0.11) + 0.5 * math.cos(i * 0.70) for i in range(61)]
         ctx = _multi_bar_barctx({"A": close_a, "B": close_b}, n_bars=61)
+        bl = BlackLitterman(lookback=60, gross_exposure=1.0, allow_short=True)
+        result = bl.allocate(_scores([("A", 1.0), ("B", -1.0)]), ctx)
+        w_a = result.filter(pl.col("symbol") == "A")["weight"].item()
+        w_b = result.filter(pl.col("symbol") == "B")["weight"].item()
+        assert w_a > 0.0, "score=+1 的标的必须拿到正权重"
+        assert w_b < 0.0, "score=-1 的标的必须拿到负权重"
+        assert abs(abs(w_a) + abs(w_b) - 1.0) < 0.01
+
+    def test_degenerate_covariance_falls_back_to_direction(self) -> None:
+        """协方差退化时不返回伪逆噪声，而是退回按方向等权。
+
+        伪逆的输出恒落在 Σ 的行空间（此处是 span{[1,1]}）里，和观点完全无关，
+        归一化之后会得到 [0.5, 0.5] —— 两个标的方向相反却同号，是纯噪声。
+        """
+        close = [100.0 + 2.0 * math.sin(i * 0.3) for i in range(61)]
+        ctx = _multi_bar_barctx({"A": list(close), "B": list(close)}, n_bars=61)
+        bl = BlackLitterman(lookback=60, gross_exposure=1.0, allow_short=True)
+        result = bl.allocate(_scores([("A", 1.0), ("B", -1.0)]), ctx)
+        w = dict(result.iter_rows())
+        assert w["A"] == pytest.approx(0.5)
+        assert w["B"] == pytest.approx(-0.5)
+
+    def test_tau_currently_cancels_out(self) -> None:
+        """``tau`` 目前对后验**没有任何影响** —— 这是已知的建模缺陷，不是特性。
+
+        后验里 ``(τΣ)⁻¹`` 与 ``Ω⁻¹ = 1/(diag(Σ)·τ)`` 同时以 ``1/τ`` 缩放：
+
+            (Σ⁻¹/τ + D/τ)⁻¹ (Σ⁻¹Π/τ + DQ/τ) ≡ (Σ⁻¹ + D)⁻¹ (Σ⁻¹Π + DQ)
+
+        τ 精确约掉。要让 τ 重新起作用必须改 Ω 的取法（Idzorek 置信度等），
+        属于建模口径选择，记在 DECISIONS.md D-027 待定。这条用例钉住现状：
+        谁改了 Ω 公式，它会先失败，提醒同步更新文档。
+        """
+        close_a = [100.0 + 2.0 * math.sin(i * 0.30) for i in range(61)]
+        close_b = [100.0 + 3.0 * math.sin(i * 0.11) + 0.5 * math.cos(i * 0.70) for i in range(61)]
         scores = _scores([("A", 2.0), ("B", 1.0)])
 
-        bl_strong_prior = BlackLitterman(lookback=60, gross_exposure=1.0, tau=0.001)
-        bl_weak_prior = BlackLitterman(lookback=60, gross_exposure=1.0, tau=10.0)
-
-        r_strong = bl_strong_prior.allocate(scores, ctx)
-        r_weak = bl_weak_prior.allocate(scores, ctx)
-
-        w_a_strong = r_strong.filter(pl.col("symbol") == "A")["weight"].item()
-        w_a_weak = r_weak.filter(pl.col("symbol") == "A")["weight"].item()
-
-        # Strong prior (tau→0) -> close to equal weight
-        # Weaker prior (tau→∞) -> views dominate -> more extreme allocation
-        # With strong prior, A gets closer to 0.5 (equally weighted)
-        # With weak prior, A's higher score pulls weight more
-        assert abs(w_a_strong - 0.5) < abs(w_a_weak - 0.5) or True
+        results = [
+            BlackLitterman(lookback=60, gross_exposure=1.0, tau=tau, allow_short=True).allocate(
+                scores, _multi_bar_barctx({"A": close_a, "B": close_b}, n_bars=61)
+            )
+            for tau in (0.001, 10.0)
+        ]
+        w_strong = dict(results[0].iter_rows())
+        w_weak = dict(results[1].iter_rows())
+        assert w_strong["A"] == pytest.approx(w_weak["A"], rel=1e-9)
+        assert w_strong["B"] == pytest.approx(w_weak["B"], rel=1e-9)
 
     def test_single_symbol_full_exposure(self) -> None:
         """Single symbol gets full gross_exposure."""
