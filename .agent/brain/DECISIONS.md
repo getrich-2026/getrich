@@ -6,14 +6,6 @@
 
 ---
 
-## D-001 monorepo 采用 uv workspace + PEP 420 namespace package
-
-**时间**：2026-08-11 · **已被 D-018 推翻（2026-08-16）：命名空间包已废除，改为每包独立顶层 import 名**
-
-根项目为 uv workspace，成员是 `packages/gr-{agent,api,backtest,data,factor,signal}`，每个成员有独立 `pyproject.toml` / `src` / `tests`。`getrich` 与 `getrich.apps` 是 PEP 420 namespace package，没有顶层 `__init__.py`。
-
-**约束**：不要给 `getrich` 或 `getrich.apps` 加 `__init__.py`，会阻断跨 package 的模块发现。
-
 ## D-002 2026-06-06 按时间切分包 —— 这次切分有问题，将被重构
 
 **时间**：2026-08-12 决策，2026-08-14 标记为待推翻
