@@ -9,7 +9,7 @@ endpoint and the most complex: 4 SELECTs in two cursor blocks:
      latest_snapshot ps` (the CTE that picks the latest row per
      strategy)
    - tags SELECT (sorted by name)
-   - creator SELECT (just `id` from `users`)
+   - creator SELECT (`id` + `name` from `users`)
 
 2. **Block 2** (only when `user_id` is given):
    - subscription SELECT (active + expire_date >= today)
@@ -146,8 +146,8 @@ def _main_row(
     }
 
 
-def _creator_row(*, user_id: str = "u-author-1") -> dict[str, Any]:
-    return {"id": user_id}
+def _creator_row(*, user_id: str = "u-author-1", name: str = "模拟作者") -> dict[str, Any]:
+    return {"id": user_id, "name": name}
 
 
 def _subscription_row(
@@ -222,7 +222,7 @@ async def test_get_strategy_detail_issues_main_tags_creator_queries() -> None:
     assert tags_params == ("strat-uuid-1",)
 
     creator_sql, creator_params = cursor.executed[2]
-    assert "SELECT id FROM users" in creator_sql
+    assert "SELECT id, name FROM users" in creator_sql
     assert "WHERE id = %s" in creator_sql
     assert creator_params == ("u-author-1",)
 
@@ -412,7 +412,7 @@ async def test_get_strategy_detail_creator_id_set_when_user_found() -> None:
     cursor = _FakeCursor()
     cursor.push_one(_main_row(author_id="u-author-42"))
     cursor.set_rows([])
-    cursor.push_one({"id": "u-author-42"})
+    cursor.push_one({"id": "u-author-42", "name": "模拟作者"})
     conn = _FakeConn(cursor)
 
     result = await get_strategy_detail(
@@ -422,7 +422,7 @@ async def test_get_strategy_detail_creator_id_set_when_user_found() -> None:
     )
 
     assert result["creator"]["id"] == "u-author-42"
-    assert result["creator"]["name"] == ""
+    assert result["creator"]["name"] == "模拟作者"
     assert result["creator"]["avatar"] == ""
     assert result["creator"]["bio"] == ""
 

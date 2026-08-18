@@ -259,9 +259,10 @@ async def get_strategy_detail(
         )
         tag_rows = await cur.fetchall()
 
-        # 创建者（users 表字段未知，取最小集，缺字段返回空串）
+        # 创建者。users 表只有 id / email / name（见 011_users.sql），
+        # avatar 与 bio 目前无处可取，先返回空串占位。
         await cur.execute(
-            "SELECT id FROM users WHERE id = %s",
+            "SELECT id, name FROM users WHERE id = %s",
             (row["author_id"],) if row else (None,),
         )
         creator_row = await cur.fetchone() if row else None
@@ -318,7 +319,7 @@ async def get_strategy_detail(
         "tags": [t["name"] for t in tag_rows],
         "creator": {
             "id": str(creator_row["id"]) if creator_row else "",
-            "name": "",
+            "name": (creator_row["name"] or "") if creator_row else "",
             "avatar": "",
             "bio": "",
         },
