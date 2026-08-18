@@ -2,9 +2,35 @@
 
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
-最后更新：2026-08-17 · 分支 `claude/getrich-strategy-signal-api-9496df`（worktree）
+最后更新：2026-08-18 · 分支 `dev`
 
 ---
+
+## 本地开发环境已跑起来（2026-08-18）
+
+前后端都在跑，本地 `getrich` 库已从零建好并灌入模拟数据：
+
+- **建库**：本地 PG 之前是空库，`uv run gr-db migrate --target pg` 一次建成 35 个迁移。
+  ClickHouse 与 Redis 当前没在监听，API 本身不依赖它们能起（Celery worker 需要）。
+- **服务**：`uv run uvicorn gr_api.main:app --reload --port 8001`（端口取根 `.env` 的
+  `WEB_PORT=8001`，**不是** AGENTS.md 示例里的 8000）+ `cd apps/web && npm run dev`（3000）。
+  `apps/web/node_modules` 原本不存在，已 `npm install`。
+- **前端走同源代理**：`vite.config.ts` 加了 `server.host='0.0.0.0'` +
+  `proxy: { '/v1': 'http://127.0.0.1:8001' }`，`apps/web/.env.local`（gitignore 内）里
+  `VITE_API_BASE_URL=/v1` 用相对路径。本机与外网 IP 访问都不必改这个值，也不触发 CORS，
+  因此根 `.env` 的 `WEB_CORS_ORIGINS` 不用为外网访问加条目。
+  `VITE_DEMO_USER_ID` 填 `demo@getrich.io` 的 id。
+- **模拟数据**：3 条 `STR_DEMO_*` 策略（1 选股 + 2 择时），选股那条挂着
+  `tests/fixtures/picks/` 的 30 天池子（29 批 / 560 条，漏传 07-14、空仓 07-28），
+  三条都有一年净值曲线 / 业绩快照 / 月度收益 / 成交流水 / 信号。
+  `meta.instruments` 已登记 fixture 的全部代码，`instrument_id` 映射 560/560 成功。
+  灌数据的脚本是一次性的，没进仓库；重灌按 `STR_DEMO_` 前缀清理后重跑即可。
+- **实测**：`/v1/strategies*` 的 9 个 GET + `/v1/pick-strategies*`、`/v1/picks*` 的
+  9 个 GET 全部 200，CORS 预检与 4 个安全头齐全。
+
+顺带修掉：`get_strategy_detail` 的 creator 只 `SELECT id FROM users`，`creator.name`
+恒为空串（`users.name` 明明存在，注释里写的「字段未知」在 011 建表后已过期）。
+`avatar` / `bio` 全仓无处可取，仍是空串占位。
 
 ## 刚完成：选股信号（个股推荐）导入 + 展示 API
 
