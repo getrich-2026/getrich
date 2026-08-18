@@ -1,46 +1,56 @@
 version: 2
 
-# Version updates target the default development branch. Security updates
-# continue to follow GitHub's repository security settings.
+# 更新节奏按重要度分三层：
+#   1. 安全漏洞  → 不在本文件配置。由仓库的 Dependabot security updates 开关驱动，
+#      发现即单独开 PR，不受下面的 schedule、cooldown、groups、
+#      open-pull-requests-limit 约束，也不会被合并进月度分组 PR。
+#   2. 普通依赖  → 每月一次，每个生态合并成一个 minor/patch PR。
+#   3. major 升级、以及暂停维护的子项目 → 人工升级，Dependabot 不管。
+#
+# 两条别踩的坑：
+#   - 不要加 target-branch。dev 已经是仓库默认分支，写了纯冗余，而且会让本文件的
+#     commit-message 等设置不再作用于安全更新 PR。
+#   - 不要给 groups 配 applies-to: security-updates，否则安全修复会被攒成一个 PR，
+#     违背「漏洞立即单独发」的初衷。
 updates:
-  # The root uv workspace owns the shared uv.lock and all package manifests.
+  # 根 uv workspace 持有共享的 uv.lock 和全部包 manifest。
   - package-ecosystem: "uv"
     directory: "/"
-    target-branch: "dev"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "09:00"
       timezone: "Asia/Shanghai"
+    # 发布不满 7 天的版本先晾着，下个月再说；该设置对安全更新无效。
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 5
+    # 每月只有一个分组 PR，上个月的没合就不再开新的，避免 PR 堆积。
+    open-pull-requests-limit: 1
     groups:
-      uv-minor-patch:
+      uv-monthly:
         applies-to: version-updates
         patterns: ["*"]
         update-types: ["minor", "patch"]
     ignore:
+      # version-update: 前缀限定只作用于版本更新。若某个漏洞修复必须跨 major，
+      # 安全更新 PR 仍会照常提出，不会被这条挡掉。
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "deps(uv)"
 
-  # Main product frontend. Keep it separate from the backtest frontend because
-  # they intentionally use different Vite and TypeScript major versions.
+  # 主前端。apps/backtest-web 暂停维护，其版本更新已改为人工升级，
+  # 故不在此登记；它的安全漏洞 PR 不受影响，照常自动提出。
   - package-ecosystem: "npm"
     directory: "/apps/web"
-    target-branch: "dev"
     schedule:
-      interval: "weekly"
-      day: "tuesday"
+      interval: "monthly"
       time: "09:00"
       timezone: "Asia/Shanghai"
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
-      web-minor-patch:
+      web-monthly:
         applies-to: version-updates
         patterns: ["*"]
         update-types: ["minor", "patch"]
@@ -50,44 +60,18 @@ updates:
     commit-message:
       prefix: "deps(web)"
 
-  # Backtest frontend.
-  - package-ecosystem: "npm"
-    directory: "/apps/backtest-web"
-    target-branch: "dev"
-    schedule:
-      interval: "weekly"
-      day: "wednesday"
-      time: "09:00"
-      timezone: "Asia/Shanghai"
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 3
-    groups:
-      backtest-web-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    commit-message:
-      prefix: "deps(backtest-web)"
-
-  # Action major upgrades are reviewed manually because they can change the
-  # runner runtime or permissions model.
+  # Actions 的 major 升级会改变 runner 运行时或权限模型，一律人工审。
   - package-ecosystem: "github-actions"
     directory: "/"
-    target-branch: "dev"
     schedule:
-      interval: "weekly"
-      day: "thursday"
+      interval: "monthly"
       time: "09:00"
       timezone: "Asia/Shanghai"
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
     groups:
-      actions-minor-patch:
+      actions-monthly:
         applies-to: version-updates
         patterns: ["*"]
         update-types: ["minor", "patch"]
