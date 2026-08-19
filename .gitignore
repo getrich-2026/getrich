@@ -15,6 +15,9 @@ dist-ssr
 # .agent/ 是三个 harness 共享的跨会话状态，需要提交（见 .agent/brain/DECISIONS.md D-011）
 # 只忽略个人本地覆盖，团队共享的 .claude/settings.json 需要提交
 .claude/settings.local.json
+# Claude Code 的临时 worktree：纯本地产物，不进版本库。
+# 它本身是独立 git 仓库，误 git add -A 会被当成 embedded repo 加进索引。
+.claude/worktrees/
 
 # Editor directories and files
 .vscode/*
