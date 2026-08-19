@@ -2,9 +2,25 @@
 
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
-最后更新：2026-08-18 · 分支 `dev`
+最后更新：2026-08-19 · 分支 `dev`
 
 ---
+
+## 进行中：前端工具链升级（分支 `worktree-upgrade-web-toolchain`，未合并）
+
+`apps/web` 已升到 **Vite 8.2.1（Rolldown）+ TypeScript 6.0.3 + React 19.2.8**，
+5 个 commit 分批提交，`npm run build` 与 dev/preview 全部实测通过，细节见 D-031。
+
+**没有合并进 `dev`，卡在一件事上**：CI 的 `npm run lint` 有 **44 个存量错误**
+（36 个 `no-explicit-any` + 7 个 `react-refresh/only-export-components` + 1 个
+`react-hooks/purity`），升级前后一字不差，属于既有技术债而非升级引入。
+要么先清掉这批债再合，要么明确接受 CI 的 lint 步骤继续红着合入 —— 待定。
+
+顺带修好的存量断裂（这些在 `dev` 上早就是坏的）：`tsconfig` 里非法的
+`"ignoreDeprecations": "6.0"` 让 `tsc -b` 长期失败；`src/components/ui/` 里 4 处
+Tailwind v4 的 `--spacing()` 语法在 v3 项目中输出成非法 CSS、规则从未生效。
+
+CI `.github/workflows/web.yml` 的 Node 已从 20 钉到 24。
 
 ## 本地开发环境已跑起来（2026-08-18）
 

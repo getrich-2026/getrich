@@ -581,3 +581,44 @@ raw 层落地根目录的真源，但 `Config.raw_root` 只读 `config.yaml` 的
    「2350 passed / 1 skipped」，多出来的 27 个用例不是新写的，是**本来就该跑但从没跑过的**
    （5 个 docker 集成 + 11 个 tushare 真实接口 + 5 个 job 持久化 + 选股集成）。
    CI 里只盯 failed 会让这类问题永远藏着。
+
+## D-031 前端工具链升到 Vite 8（Rolldown）/ TS 6.0，以及它顺手暴露的三类存量问题
+
+**时间**：2026-08-19
+
+`apps/web` 从 Vite 7.2 + TS 5.9 + React 19.2.0 升到 **Vite 8.2.1 + TS 6.0.3 +
+React 19.2.8**，分批提交（React → TS → Vite），每批都单独验证过。
+
+**升级本身要记住的三条硬约束**：
+
+1. **Vite 8 = Rolldown + lightningcss，esbuild 从依赖树里彻底消失。**
+   `@vitejs/plugin-react` 必须 ≥6（peer 写死 `vite ^8.0.0`），5.x 装不上。
+   构建耗时 22.9s → 4.6s，产物略小（js gzip 419.8 → 407.3 kB）。
+2. **`build.rollupOptions` 在 Vite 8 里改名 `build.rolldownOptions`**，分包选项也从
+   `manualChunks` 变成 `output.codeSplitting`。当前 config 没用到这些，但下次要做
+   代码分割时别照抄 Vite 7 的写法。
+3. **native config loader 不支持 `__dirname`**，要用 `import.meta.dirname`。
+   现在只是告警，未来大版本会变成默认值。
+
+**真正的教训：换构建器会把「一直存在但被静默放过」的问题一次性抖出来。** 这轮
+抖出三类，都不是升级引入的：
+
+- **无效 CSS 被 esbuild 放过、被 lightningcss 拒绝。** `src/components/ui/` 里
+  calendar / sidebar / toggle-group 用了 **Tailwind v4 的 `--spacing()` 函数，
+  而本项目是 Tailwind v3** —— v3 不认识它，原样输出成 `var(--spacing(4))` 这种非法
+  CSS。也就是说这 4 条规则**升级前就是死规则，页面上根本没生效**，只是没人报错。
+  推论：**shadcn/ui 组件是按 Tailwind v4 生成的，粘进 v3 项目时必须逐个查
+  `--spacing()` / `@theme` / oklch 这类 v4-only 语法**，不能假定能用。
+- **`"ignoreDeprecations": "6.0"` 在 TS 5.9 下是非法值（TS5103），`tsc -b` 第一步
+  就挂。** 这个值只有 TS ≥6.0 才接受。有人提前写进 tsconfig，导致 `npm run build`
+  在 dev 分支上长期失败 —— 而 CI 的 web workflow 只在 `apps/web/**` 变更时触发，
+  没人动前端就一直没人看见。
+- **lock 文件里的实际版本和 `package.json` 的范围不是一回事。** `typescript-eslint`
+  写的是 `^8.46.4`，lock 锁的是 8.52.0，其 peer 为 `typescript <6.0.0`。升 TS 6 后
+  lint 碰巧还能跑，但下一次 `npm install` 重新解析依赖就 ERESOLVE 直接失败。
+  **查兼容性要查 `npm ls` 的实际版本，不要查 `package.json` 的范围上界。**
+
+**遗留未处理**：`npm run lint` 有 **44 个存量错误**（36 个 `@typescript-eslint/no-explicit-any`
++ 7 个 `react-refresh/only-export-components` + 1 个 `react-hooks/purity`），
+与本次升级无关，升级前后数量一字不差。CI 的 ESLint 步骤因此仍是红的。
+其中 `any` 直接违反 `AGENTS.md` §5，需要单独一轮对着 `src/types/` 的后端契约来收。
