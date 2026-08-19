@@ -8,7 +8,7 @@ import EquityChart from '@/components/EquityChart'
 import MonthlyHeatmap from '@/components/MonthlyHeatmap'
 import SignalCard from '@/components/SignalCard'
 import { StrategyActionBar } from '@/components/BottomActionBar'
-import { api } from '@/lib/api'
+import { getStrategyDetail, getStrategySignals, getStrategyTrades } from '@/api/strategies'
 import type { StrategyDetail as StrategyDetailData, TradeRecord, SignalRecord } from '@/types/strategy'
 
 const tabs = ['策略说明', '回测报告', '历史交易', '最近信号']
@@ -26,13 +26,13 @@ export default function StrategyDetail() {
 
   const { data: strategy, isLoading: strategyLoading } = useQuery({
     queryKey: ['strategy', id],
-    queryFn: () => api.getStrategy(id!),
+    queryFn: () => getStrategyDetail(id!),
     enabled: !!id,
   })
 
   const { data: signalsData, isLoading: signalsLoading } = useQuery({
     queryKey: ['signals', id],
-    queryFn: () => api.getSignals(id!),
+    queryFn: () => getStrategySignals(id!),
     enabled: !!id,
   })
 
@@ -328,7 +328,7 @@ function BacktestTab({ strategy }: { strategy: StrategyDetailData }) {
 function TradesTab({ strategyId }: { strategyId: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ['trades', strategyId],
-    queryFn:  () => api.getTrades(strategyId),
+    queryFn:  () => getStrategyTrades(strategyId),
   })
 
   const list = data?.list ?? []

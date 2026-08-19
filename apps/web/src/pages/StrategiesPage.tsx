@@ -1,12 +1,12 @@
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import type { Strategy } from '@/types/strategy'
-import { api } from '@/lib/api'
+import { getStrategyList } from '@/api/strategies'
 
 export default function StrategiesPage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['strategies'],
-    queryFn: () => api.getStrategies({ page: 1, page_size: 20 }),
+    queryFn: () => getStrategyList({ page: 1, page_size: 20 }),
   })
 
   const strategies: Strategy[] = data?.list ?? []

@@ -5,7 +5,7 @@ import type { EChartsCoreOption } from 'echarts/core'
 import { HeatmapChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, VisualMapComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { api } from '@/lib/api'
+import { getMonthlyReturns } from '@/api/strategies'
 
 echarts.use([HeatmapChart, GridComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
 
@@ -57,13 +57,13 @@ export default function MonthlyHeatmap({ isLoading = false, strategyId }: Monthl
 
   const { data: monthlyData } = useQuery({
     queryKey: ['monthly-returns', strategyId],
-    queryFn:  () => api.getMonthlyReturns(strategyId!),
+    queryFn:  () => getMonthlyReturns(strategyId!),
     enabled:  !!strategyId,
   })
 
   // 预处理：把 rows → heatData + yAxisData，避免在 effect 里重复计算
   const { heatData, yAxisData, chartHeight } = useMemo(() => {
-    const rows = monthlyData?.rows ?? []
+    const rows = monthlyData?.matrix ?? []
     const yAxisData: string[] = []
     const heatData: {
       value: [number, number, number | null, string]
@@ -87,7 +87,7 @@ export default function MonthlyHeatmap({ isLoading = false, strategyId }: Monthl
       })
 
       // 年度列
-      const yearly = row.yearly != null ? +(row.yearly * 100).toFixed(2) : null
+      const yearly = row.yearly_return != null ? +(row.yearly_return * 100).toFixed(2) : null
       const yearCell: [number, number, number | null, string] = [12, yIdx, yearly, fmt(yearly)]
       heatData.push({
         value: yearCell,
@@ -214,7 +214,7 @@ export default function MonthlyHeatmap({ isLoading = false, strategyId }: Monthl
   }
 
   // ── 空态 ──
-  if (!monthlyData?.rows?.length) {
+  if (!monthlyData?.matrix?.length) {
     return (
       <div>
         <div className="flex items-center justify-between mb-4">

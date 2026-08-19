@@ -4,7 +4,7 @@ import * as echarts from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, DataZoomComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { api } from '@/lib/api'
+import { getEquityCurve } from '@/api/strategies'
 
 echarts.use([LineChart, GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, CanvasRenderer])
 
@@ -44,16 +44,18 @@ export default function EquityChart({ isLoading = false, strategyId }: EquityCha
 
   const { data: equityData } = useQuery({
     queryKey: ['equity-curve', strategyId],
-    queryFn: () => api.getEquityCurve(strategyId!),
+    queryFn: () => getEquityCurve(strategyId!),
     enabled: !!strategyId,
   })
 
   // 根据时间范围过滤数据
   const filteredData = useMemo(() => {
-    const dates: string[]    = equityData?.dates    ?? []
-    const nav: number[]      = equityData?.nav      ?? []
-    const benchmark: number[]= equityData?.benchmark ?? []
-    const drawdown: number[] = equityData?.drawdown  ?? []
+    // 后端返的是三条独立曲线（各自 [{date, ...}]），ECharts 要的是并列数组，
+    // 这层转换属于视图形状，放组件里而不是 api 层。
+    const dates: string[]     = equityData?.equity_curve.map(i => i.date)      ?? []
+    const nav: number[]       = equityData?.equity_curve.map(i => i.nav)       ?? []
+    const benchmark: number[] = equityData?.benchmark_curve.map(i => i.nav)    ?? []
+    const drawdown: number[]  = equityData?.drawdown_curve.map(i => i.drawdown) ?? []
 
     const startDate = getRangeStartDate(activeRange)
     if (!startDate || dates.length === 0) {

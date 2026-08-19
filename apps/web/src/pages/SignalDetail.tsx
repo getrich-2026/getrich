@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import Tag from '@/components/Tag'
 import { SignalActionBar } from '@/components/BottomActionBar'
-import { api } from '@/lib/api'
+import { getSignalDetail } from '@/api/signal'
 
 /* ---------- Page Component ---------- */
 
@@ -15,7 +15,7 @@ export default function SignalDetail() {
   // 判 !s 既能收窄又与「数据到达前显示骨架屏」的语义完全一致。
   const { data: s, isError } = useQuery({
     queryKey: ['signal', id],
-    queryFn: () => api.getSignal(id!),
+    queryFn: () => getSignalDetail(id!),
     enabled: !!id,
   })
 
