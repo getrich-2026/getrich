@@ -795,7 +795,7 @@ function ReportSection({ analysis, portfolioLen }: { analysis:AnalysisResult; po
 function ChatSection({ messages, input, setInput, onSend, onSuggest, isTyping, chatBoxRef }: {
   messages:ChatMessage[]; input:string; setInput:(v:string)=>void
   onSend:()=>void; onSuggest:(q:string)=>void
-  isTyping:boolean; chatBoxRef:React.RefObject<HTMLDivElement>
+  isTyping:boolean; chatBoxRef:React.RefObject<HTMLDivElement | null>
 }) {
   return (
     <div style={{ borderRadius:16, overflow:'hidden', background:'var(--gr-card)',

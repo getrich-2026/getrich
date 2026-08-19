@@ -3,8 +3,6 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 
 export default function StrategiesPage() {
-  const navigate = useNavigate()
-
   const { data, isLoading, isError } = useQuery({
     queryKey: ['strategies'],
     queryFn: () => api.getStrategies({ page: 1, page_size: 20 }),
