@@ -1,10 +1,13 @@
 import path from "path"
 import react from "@vitejs/plugin-react"
+import tailwindcss from "@tailwindcss/vite"
 import { defineConfig } from "vite"
 
 export default defineConfig({
   base: './',
-  plugins: [react()],
+  // Tailwind v4 走官方 Vite 插件而不是 PostCSS 插件：官方推荐路径，且能直接
+  // 用 Vite/Rolldown 的 CSS 管线，仓库里因此不再需要 postcss.config.js。
+  plugins: [tailwindcss(), react()],
   server: {
     port: 3000,
     // 监听全部网卡，外网可访问；只听 127.0.0.1 时远端连不上。

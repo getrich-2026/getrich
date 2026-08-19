@@ -121,7 +121,7 @@ function NewsCard({ news, delay }: { news: NewsItem; delay: number }) {
     >
       {/* Left accent bar - red for breaking, gray for normal */}
       <div
-        className="flex-shrink-0 w-[3px] rounded-full self-stretch mr-4 transition-colors duration-200"
+        className="shrink-0 w-[3px] rounded-full self-stretch mr-4 transition-colors duration-200"
         style={{
           background: news.isBreaking
             ? 'linear-gradient(to bottom, #E8473F, #F87171)'
@@ -151,7 +151,7 @@ function NewsCard({ news, delay }: { news: NewsItem; delay: number }) {
 
         {/* Title - black, not blue */}
         <h3
-          className="text-sm font-semibold leading-snug mb-1.5 group-hover:text-[var(--gr-blue)] transition-colors duration-150"
+          className="text-sm font-semibold leading-snug mb-1.5 group-hover:text-(--gr-blue) transition-colors duration-150"
           style={{ color: 'var(--gr-text)' }}
         >
           {news.title}
@@ -179,7 +179,7 @@ function NewsCard({ news, delay }: { news: NewsItem; delay: number }) {
               </span>
             ))}
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+          <div className="flex items-center gap-2 shrink-0 ml-4">
             <span className="text-[11px]" style={{ color: 'var(--gr-text-tertiary)' }}>
               {news.source}
             </span>
@@ -199,7 +199,7 @@ function NewsCard({ news, delay }: { news: NewsItem; delay: number }) {
 function NewsSkeleton() {
   return (
     <div className="flex gap-0">
-      <div className="flex-shrink-0 w-[3px] rounded-full self-stretch mr-4 skeleton" />
+      <div className="shrink-0 w-[3px] rounded-full self-stretch mr-4 skeleton" />
       <div className="flex-1 min-w-0 py-4 space-y-2" style={{ borderBottom: '1px solid var(--gr-border-light)' }}>
         <div className="flex gap-2">
           <div className="h-3 skeleton w-10" />

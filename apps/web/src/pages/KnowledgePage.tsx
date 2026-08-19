@@ -96,7 +96,7 @@ function ArticleCard({ article, delay }: { article: Article; delay: number }) {
         >
           {article.title}
         </h2>
-        <span className="text-xs flex-shrink-0 mt-0.5" style={{ color: 'var(--gr-text-tertiary)' }}>
+        <span className="text-xs shrink-0 mt-0.5" style={{ color: 'var(--gr-text-tertiary)' }}>
           {article.publishedAt}
         </span>
       </div>
@@ -135,7 +135,7 @@ function ArticleSkeleton() {
     >
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="h-4 skeleton w-full" />
-        <div className="h-3 skeleton w-20 flex-shrink-0" />
+        <div className="h-3 skeleton w-20 shrink-0" />
       </div>
       <div className="flex gap-2 mb-3">
         <div className="h-5 skeleton w-24" />

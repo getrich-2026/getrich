@@ -28,7 +28,7 @@ export default function StrategyCard({
 
   return (
     <div
-      className="rounded-[10px] p-4 cursor-pointer transition-colors duration-200 hover:bg-[var(--gr-card-hover)]"
+      className="rounded-[10px] p-4 cursor-pointer transition-colors duration-200 hover:bg-(--gr-card-hover)"
       style={{ backgroundColor: 'var(--gr-card-bg)' }}
       onClick={() => navigate(`/strategies/${id}`)}
     >

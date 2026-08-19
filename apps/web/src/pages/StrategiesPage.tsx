@@ -91,7 +91,7 @@ function StrategyCard({ strategy, delay }: { strategy: Strategy; delay: number }
 
   return (
     <div
-      className="flex-shrink-0 rounded-xl p-5 cursor-pointer card-shadow card-shadow-hover"
+      className="shrink-0 rounded-xl p-5 cursor-pointer card-shadow card-shadow-hover"
       style={{
         width: 280,
         background: 'var(--gr-card)',
@@ -106,7 +106,7 @@ function StrategyCard({ strategy, delay }: { strategy: Strategy; delay: number }
           {strategy.name}
         </h3>
         <span
-          className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ml-2"
+          className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ml-2"
           style={{ background: risk.bg, color: risk.text }}
         >
           {risk.label}
@@ -150,7 +150,7 @@ function StrategyCard({ strategy, delay }: { strategy: Strategy; delay: number }
 function StrategyCardSkeleton() {
   return (
     <div
-      className="flex-shrink-0 rounded-xl p-5 card-shadow"
+      className="shrink-0 rounded-xl p-5 card-shadow"
       style={{ width: 280, background: 'var(--gr-card)' }}
     >
       <div className="h-4 skeleton w-[70%] mb-3 rounded" />
@@ -190,7 +190,7 @@ function MyStrategyCard({ strategy, delay }: { strategy: Strategy; delay: number
             {strategy.asset_class}
           </p>
         </div>
-        <div className="flex gap-4 ml-4 flex-shrink-0 text-right">
+        <div className="flex gap-4 ml-4 shrink-0 text-right">
           <div>
             <div className="text-[10px] mb-0.5" style={{ color: 'var(--gr-text-tertiary)' }}>年化收益</div>
             <div

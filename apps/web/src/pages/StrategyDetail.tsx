@@ -63,7 +63,7 @@ export default function StrategyDetail() {
                 <div className="flex-1 min-w-0">
                   <button
                     onClick={() => navigate('/strategies')}
-                    className="flex items-center gap-1 mb-2 transition-colors duration-150 hover:text-[var(--gr-text)]"
+                    className="flex items-center gap-1 mb-2 transition-colors duration-150 hover:text-(--gr-text)"
                     style={{ color: 'var(--gr-text-secondary)', fontSize: '13px' }}
                   >
                     <ArrowLeft size={14} />
@@ -76,12 +76,12 @@ export default function StrategyDetail() {
                     {s.name}
                   </h1>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                   {s.is_subscribed ? (
                     <>
                       <Tag variant="green" size="lg">已订阅</Tag>
                       <button
-                        className="p-2 rounded-md hover:bg-[var(--gr-bg)] transition-colors"
+                        className="p-2 rounded-md hover:bg-(--gr-bg) transition-colors"
                         style={{ color: 'var(--gr-text-secondary)' }}
                       >
                         <Share2 size={16} />
@@ -96,7 +96,7 @@ export default function StrategyDetail() {
                         立即订阅
                       </button>
                       <button
-                        className="flex items-center gap-1 px-3 py-2 rounded-md text-xs font-medium hover:bg-[var(--gr-bg)] transition-colors"
+                        className="flex items-center gap-1 px-3 py-2 rounded-md text-xs font-medium hover:bg-(--gr-bg) transition-colors"
                         style={{ color: 'var(--gr-text-secondary)', border: '1px solid var(--gr-border)' }}
                       >
                         <Share2 size={14} />
@@ -474,7 +474,7 @@ function SignalsTab({
       })}
       <button
         onClick={onViewAll}
-        className="w-full text-center py-3 text-sm hover:text-[var(--gr-red)] transition-colors"
+        className="w-full text-center py-3 text-sm hover:text-(--gr-red) transition-colors"
         style={{ color: 'var(--gr-blue)' }}
       >
         查看全部信号 →

@@ -34,7 +34,7 @@ export function StrategyActionBar({
               已订阅至 {expireDate} · 自动续费已开启
             </span>
             <button
-              className="px-4 py-2 rounded-md text-xs font-medium transition-colors duration-150 hover:bg-[var(--gr-card-hover)]"
+              className="px-4 py-2 rounded-md text-xs font-medium transition-colors duration-150 hover:bg-(--gr-card-hover)"
               style={{
                 border: '1px solid var(--gr-border)',
                 color: 'var(--gr-text-secondary)',
@@ -159,7 +159,7 @@ export function SignalActionBar({
                   type="text"
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
-                  className="w-[120px] px-2 py-1.5 rounded-md text-right tabular text-sm font-medium outline-none focus:ring-1"
+                  className="w-[120px] px-2 py-1.5 rounded-md text-right tabular text-sm font-medium outline-hidden focus:ring-1"
                   style={{
                     border: '1px solid var(--gr-border)',
                     color: 'var(--gr-text)',
@@ -176,7 +176,7 @@ export function SignalActionBar({
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                   placeholder="可选"
-                  className="w-[160px] px-2 py-1.5 rounded-md text-sm outline-none focus:ring-1"
+                  className="w-[160px] px-2 py-1.5 rounded-md text-sm outline-hidden focus:ring-1"
                   style={{
                     border: '1px solid var(--gr-border)',
                     color: 'var(--gr-text)',

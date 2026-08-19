@@ -50,7 +50,7 @@ export default function SignalDetail() {
             <div className="fade-in">
               <button
                 onClick={() => navigate('/market')}
-                className="flex items-center gap-1 mb-3 transition-colors duration-150 hover:text-[var(--gr-text)]"
+                className="flex items-center gap-1 mb-3 transition-colors duration-150 hover:text-(--gr-text)"
                 style={{ color: 'var(--gr-text-secondary)', fontSize: '13px' }}
               >
                 <ArrowLeft size={14} />
@@ -173,7 +173,7 @@ export default function SignalDetail() {
               </div>
 
               <div className="rounded-lg p-4 flex items-center gap-3" style={{ background: 'var(--gr-blue-light)' }}>
-                <span className="text-[10px] font-semibold uppercase tracking-wide flex-shrink-0" style={{ color: 'var(--gr-blue)', letterSpacing: '0.05em' }}>触发规则</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide shrink-0" style={{ color: 'var(--gr-blue)', letterSpacing: '0.05em' }}>触发规则</span>
                 <div className="h-4 w-px" style={{ background: 'var(--gr-blue)', opacity: 0.3 }} />
                 <span className="text-sm font-medium" style={{ color: 'var(--gr-blue)' }}>{s.reason_detail?.trigger_rule}</span>
               </div>
@@ -253,7 +253,7 @@ export default function SignalDetail() {
               <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--gr-text)' }}>历史同类信号表现</h2>
 
               <div className="flex items-center gap-6 mb-5">
-                <div className="flex-shrink-0 relative" style={{ width: 140, height: 80 }}>
+                <div className="shrink-0 relative" style={{ width: 140, height: 80 }}>
                   <svg viewBox="0 0 140 80" className="w-full h-full">
                     <path d="M 10 70 A 60 60 0 0 1 130 70" fill="none" stroke="#E5E7EB" strokeWidth="10" strokeLinecap="round" />
                     <path
@@ -279,7 +279,7 @@ export default function SignalDetail() {
                   <div className="text-xs mt-1" style={{ color: 'var(--gr-text-secondary)' }}>基于 {s.historical_performance?.similar_signals_count} 次相似信号统计</div>
                 </div>
 
-                <div className="flex-shrink-0 text-right">
+                <div className="shrink-0 text-right">
                   <div className="text-[10px] font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--gr-text-tertiary)', letterSpacing: '0.05em' }}>平均持有</div>
                   <div className="text-2xl font-bold tabular" style={{ color: 'var(--gr-text)' }}>{s.historical_performance?.avg_holding_days}<span className="text-sm font-normal" style={{ color: 'var(--gr-text-tertiary)' }}>天</span></div>
                 </div>
