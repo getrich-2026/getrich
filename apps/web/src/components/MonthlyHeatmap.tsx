@@ -14,6 +14,14 @@ interface MonthlyHeatmapProps {
   strategyId?: string
 }
 
+// 热力图单元格：[月索引(12 表示年度列), 年索引, 百分比, 显示文本]
+type HeatCell = [number, number, number | null, string]
+
+// ECharts 把整个 data item 原样回传给 formatter，这里只声明用到的字段
+interface HeatmapParam {
+  data: { value: HeatCell }
+}
+
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const X_AXIS_DATA  = [...MONTH_LABELS, 'Year']
 const LEGEND_COLORS = ['#DC2626', '#F87171', '#FECACA', '#FFFFFF', '#BBF7D0', '#86EFAC', '#22C55E', '#16A34A']
@@ -128,8 +136,8 @@ export default function MonthlyHeatmap({ isLoading = false, strategyId }: Monthl
         inRange: { color: ['#DC2626', '#FFFFFF', '#16A34A'] },
       },
       tooltip: {
-        formatter: (params: any) => {
-          const d: [number, number, number | null, string] = params.data.value ?? params.data
+        formatter: (params: HeatmapParam) => {
+          const d: HeatCell = params.data.value
           const monthLabel = X_AXIS_DATA[d[0]]
           const yearLabel  = yAxisData[d[1]]
           if (d[0] === 12) {
@@ -170,7 +178,7 @@ export default function MonthlyHeatmap({ isLoading = false, strategyId }: Monthl
         data: heatData,
         label: {
           show: true,
-          formatter: (p: any) => (p.data.value ?? p.data)[3],
+          formatter: (p: HeatmapParam) => p.data.value[3],
         },
         itemStyle:  { borderWidth: 2, borderColor: '#fff', borderRadius: 4 },
         emphasis: {

@@ -6,21 +6,25 @@
 
 ---
 
-## 进行中：前端工具链升级（分支 `worktree-upgrade-web-toolchain`，未合并）
+## 前端工具链升级已完成（分支 `worktree-upgrade-web-toolchain`，待合并）
 
 `apps/web` 已升到 **Vite 8.2.1（Rolldown）+ TypeScript 6.0.3 + React 19.2.8**，
-5 个 commit 分批提交，`npm run build` 与 dev/preview 全部实测通过，细节见 D-031。
-
-**没有合并进 `dev`，卡在一件事上**：CI 的 `npm run lint` 有 **44 个存量错误**
-（36 个 `no-explicit-any` + 7 个 `react-refresh/only-export-components` + 1 个
-`react-hooks/purity`），升级前后一字不差，属于既有技术债而非升级引入。
-要么先清掉这批债再合，要么明确接受 CI 的 lint 步骤继续红着合入 —— 待定。
+分批提交。`npm run lint` 与 `npm run build` **均已全绿**，dev / preview / HMR /
+`/v1` 代理全部实测通过。工具链侧的坑见 D-031，接口契约侧的见 D-032。
+CI `.github/workflows/web.yml` 的 Node 已从 20 钉到 24。
 
 顺带修好的存量断裂（这些在 `dev` 上早就是坏的）：`tsconfig` 里非法的
 `"ignoreDeprecations": "6.0"` 让 `tsc -b` 长期失败；`src/components/ui/` 里 4 处
 Tailwind v4 的 `--spacing()` 语法在 v3 项目中输出成非法 CSS、规则从未生效。
 
-CI `.github/workflows/web.yml` 的 Node 已从 20 钉到 24。
+**清 44 个存量 lint 错误时挖出的真实契约错位**（已对着真库实测响应逐条核过，
+详见 D-032）：`src/types/strategy.ts` 的 `TradeRecord` 按「开平配对回合」写，
+后端返的其实是**单笔成交**；`Strategy` 列表项没有 `category`；`SignalDetail.tsx`
+有 4 块 UI 读的是后端从不返回的字段。类型已按后端订正，4 块 UI 改成占位符 +
+`TODO(后端)` 注释。
+
+**仍未解决 —— 见下方 P1**：`src/api/` 整层没人用；signal 的两个枚举实测值超出
+类型声明。
 
 ## 本地开发环境已跑起来（2026-08-18）
 
@@ -150,6 +154,21 @@ ClickHouse 迁移已验证；bind mount 一致性问题已按 D-029 根治。
 
 ## P1
 
+- [ ] **`apps/web/src/api/` 整层零引用**：`AGENTS.md` §5 要求接口函数走 `src/api/`
+      （axios + `client.ts`），但 5 个页面全部在用 `src/lib/api.ts` 的裸 `fetch` 封装，
+      `src/api/{client,strategies,signal,subscription}.ts` 没有任何 import。
+      两层的函数签名与返回壳还不一样（`lib` 剥到 `data`，`api` 保留 `ApiResponse`）。
+      要么把页面迁到 `src/api/`，要么删掉未用的那层，别让两套并存。
+- [ ] **signal 的两个枚举，实测值超出类型声明**（`src/types/`）：真库返回
+      `signal_type: "stock"`、`urgency: "normal"`，而类型里写的是
+      `'entry'|'exit'|'adjust'|'alert'` 和 `'critical'|'high'|'medium'|'low'`。
+      TS 拦不住，运行时会走进兜底分支（信号类型显示成「预警」、紧急度显示成「普通」）。
+      需要先确认 `signals.type` / `signals.urgency` 两列的真实取值域，再决定是改类型
+      还是改后端归一化。
+- [ ] **`/v1/signals/{id}` 缺 5 个前端已设计的字段**：`reason_detail.spread_std`、
+      `market_snapshot.basis`、`historical_performance.best_return` / `worst_return`、
+      顶层 `related_signals`。前端已改成占位符并留 `TODO(后端)` 注释，
+      补齐后按注释恢复即可。
 - [ ] **`import_jobs` / `import_job_errors` 两张表全仓没有 DDL**，
       `services/admin_import.py` 却在用 —— 全新库上 `/v1/admin/imports` 必然报错。
       同一模块的 `upsert_strategy()` 还往 `strategies.type` 写值，那列也不存在。

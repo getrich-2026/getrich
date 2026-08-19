@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import type { Strategy } from '@/types/strategy'
 import { api } from '@/lib/api'
 
 export default function StrategiesPage() {
@@ -8,7 +9,7 @@ export default function StrategiesPage() {
     queryFn: () => api.getStrategies({ page: 1, page_size: 20 }),
   })
 
-  const strategies: any[] = data?.list ?? []
+  const strategies: Strategy[] = data?.list ?? []
   const subscribed = strategies.filter(s => s.is_subscribed)
 
   return (
@@ -83,7 +84,7 @@ const riskColors: Record<string, { bg: string; text: string; label: string }> = 
   high:   { bg: '#FEF2F2', text: '#E8473F', label: '高风险' },
 }
 
-function StrategyCard({ strategy, delay }: { strategy: any; delay: number }) {
+function StrategyCard({ strategy, delay }: { strategy: Strategy; delay: number }) {
   const navigate = useNavigate()
   const risk = riskColors[strategy.risk_level] ?? riskColors.medium
   const perf = strategy.performance
@@ -165,7 +166,7 @@ function StrategyCardSkeleton() {
 
 /* ── My Strategy Card（已订阅） ── */
 
-function MyStrategyCard({ strategy, delay }: { strategy: any; delay: number }) {
+function MyStrategyCard({ strategy, delay }: { strategy: Strategy; delay: number }) {
   const navigate = useNavigate()
   const perf = strategy.performance
 
@@ -185,8 +186,8 @@ function MyStrategyCard({ strategy, delay }: { strategy: any; delay: number }) {
             {strategy.name}
           </h3>
           <p className="text-xs" style={{ color: 'var(--gr-text-tertiary)' }}>
-            {strategy.category?.name}
-            {strategy.asset_class ? ` · ${strategy.asset_class}` : ''}
+            {/* 列表接口不返回 category，只能显示 asset_class */}
+            {strategy.asset_class}
           </p>
         </div>
         <div className="flex gap-4 ml-4 flex-shrink-0 text-right">

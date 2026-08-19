@@ -9,6 +9,7 @@ import MonthlyHeatmap from '@/components/MonthlyHeatmap'
 import SignalCard from '@/components/SignalCard'
 import { StrategyActionBar } from '@/components/BottomActionBar'
 import { api } from '@/lib/api'
+import type { StrategyDetail as StrategyDetailData, TradeRecord, SignalRecord } from '@/types/strategy'
 
 const tabs = ['策略说明', '回测报告', '历史交易', '最近信号']
 
@@ -54,7 +55,7 @@ export default function StrategyDetail() {
 
         {/* ========== Section 1: Header ========== */}
         <div className="mb-5">
-          {loading ? (
+          {!s ? (
             <HeaderSkeleton />
           ) : (
             <div className="fade-in">
@@ -152,7 +153,7 @@ export default function StrategyDetail() {
           <MetricCard
             label="夏普比率"
             value={perf ? perf.sharpe_ratio.toFixed(2) : '-'}
-            color={perf?.sharpe_ratio >= 1 ? 'green' : 'neutral'}
+            color={(perf?.sharpe_ratio ?? 0) >= 1 ? 'green' : 'neutral'}
             tooltip="每单位风险所获得的超额回报"
             delay={100}
             isLoading={loading}
@@ -160,7 +161,7 @@ export default function StrategyDetail() {
           <MetricCard
             label="胜率"
             value={perf ? `${(perf.win_rate * 100).toFixed(2)}%` : '-'}
-            color={perf?.win_rate >= 0.5 ? 'green' : 'red'}
+            color={(perf?.win_rate ?? 0) >= 0.5 ? 'green' : 'red'}
             tooltip="盈利交易次数占总交易次数的比例"
             delay={150}
             isLoading={loading}
@@ -215,7 +216,7 @@ export default function StrategyDetail() {
           </div>
 
           <div className="p-5">
-            {loading ? (
+            {!s ? (
               <div className="space-y-3">
                 <div className="h-4 skeleton w-full" />
                 <div className="h-4 skeleton w-[90%]" />
@@ -271,26 +272,27 @@ function StrategyDescTab({ detailHtml }: { detailHtml: string }) {
 
 /* ---------- Tab: 回测报告 ---------- */
 
-function BacktestTab({ strategy }: { strategy: any }) {
+function BacktestTab({ strategy }: { strategy: StrategyDetailData }) {
   const perf   = strategy?.performance
   const period = strategy?.backtest_period
 
   return (
     <div>
       <div className="grid grid-cols-4 gap-4 mb-6">
-        {[
+        {/* 显式标注元素类型：只有「总收益率」带 color，不标注的话推导出的联合类型上没有该字段 */}
+        {([
           { label: '回测开始', value: period?.start ?? '-' },
           { label: '回测结束', value: period?.end ?? '-' },
           { label: '总收益率', value: perf ? `+${(perf.total_return * 100).toFixed(1)}%` : '-', color: 'var(--gr-green)' },
           { label: '总交易次数', value: perf ? `${perf.total_trades}次` : '-' },
-        ].map((item) => (
+        ] as { label: string; value: string; color?: string }[]).map((item) => (
           <div key={item.label} className="text-center">
             <div className="text-xs mb-1" style={{ color: 'var(--gr-text-tertiary)' }}>
               {item.label}
             </div>
             <div
               className="text-lg font-semibold tabular"
-              style={{ color: (item as any).color || 'var(--gr-text)' }}
+              style={{ color: item.color || 'var(--gr-text)' }}
             >
               {item.value}
             </div>
@@ -357,7 +359,7 @@ function TradesTab({ strategyId }: { strategyId: string }) {
       <table className="w-full text-sm">
         <thead>
           <tr style={{ borderBottom: '1px solid var(--gr-border)' }}>
-            {['时间', '合约', '方向', '开仓价', '平仓价', '盈亏'].map(h => (
+            {['时间', '合约', '方向', '成交价', '数量', '已实现盈亏'].map(h => (
               <th
                 key={h}
                 className="pb-2 text-xs font-medium text-left pr-4"
@@ -369,10 +371,10 @@ function TradesTab({ strategyId }: { strategyId: string }) {
           </tr>
         </thead>
         <tbody>
-          {list.map((t: any) => (
+          {list.map((t: TradeRecord) => (
             <tr key={t.id} style={{ borderBottom: '1px solid var(--gr-border)' }}>
               <td className="py-3 pr-4 text-xs" style={{ color: 'var(--gr-text-secondary)' }}>
-                {new Date(t.open_time ?? t.created_at).toLocaleDateString('zh-CN')}
+                {new Date(t.executed_at).toLocaleDateString('zh-CN')}
               </td>
               <td className="py-3 pr-4 font-medium" style={{ color: 'var(--gr-text)' }}>
                 {t.symbol}
@@ -381,28 +383,26 @@ function TradesTab({ strategyId }: { strategyId: string }) {
                 <span
                   className="px-2 py-0.5 rounded text-xs font-medium"
                   style={{
-                    background: t.direction === 'long'
+                    background: t.action === 'buy'
                       ? 'rgba(34,197,94,0.1)'
                       : 'rgba(239,68,68,0.1)',
-                    color: t.direction === 'long' ? '#16A34A' : '#DC2626',
+                    color: t.action === 'buy' ? '#16A34A' : '#DC2626',
                   }}
                 >
-                  {t.direction === 'long' ? '多' : '空'}
+                  {t.action === 'buy' ? '买入' : '卖出'}
                 </span>
               </td>
               <td className="py-3 pr-4 tabular" style={{ color: 'var(--gr-text)' }}>
-                {t.open_price ?? '-'}
+                {t.price.toFixed(2)}
               </td>
               <td className="py-3 pr-4 tabular" style={{ color: 'var(--gr-text)' }}>
-                {t.close_price ?? '-'}
+                {t.quantity}
               </td>
               <td
                 className="py-3 tabular font-medium"
-                style={{ color: (t.pnl ?? 0) >= 0 ? '#16A34A' : '#DC2626' }}
+                style={{ color: t.realized_pnl >= 0 ? '#16A34A' : '#DC2626' }}
               >
-                {t.pnl != null
-                  ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}`
-                  : '-'}
+                {`${t.realized_pnl >= 0 ? '+' : ''}${t.realized_pnl.toFixed(2)}`}
               </td>
             </tr>
           ))}
@@ -420,7 +420,7 @@ function SignalsTab({
   strategyName,
   onViewAll,
 }: {
-  signals: any[]
+  signals: SignalRecord[]
   isLoading: boolean
   strategyName: string
   onViewAll: () => void
@@ -445,7 +445,7 @@ function SignalsTab({
 
   return (
     <div>
-      {signals.map((sig: any) => {
+      {signals.map((sig: SignalRecord) => {
         // action: buy=做多 sell=做空 open=仅开仓标记（看 signal_type 兜底）
         const direction =
           sig.action === 'sell' ? 'short' :

@@ -13,6 +13,15 @@ interface EquityChartProps {
   strategyId?: string
 }
 
+// ECharts 的 tooltip formatter 入参是个很宽的联合类型，直接用会逼出一堆断言。
+// 这里只声明本图实际读到的字段，够用且不失真。
+interface AxisTooltipParam {
+  axisValue: string
+  seriesName: string
+  marker: string
+  value: number
+}
+
 const timeRanges = ['1M', '3M', '6M', '1Y', '3Y', 'ALL']
 
 function getRangeStartDate(range: string): Date | null {
@@ -144,11 +153,11 @@ export default function EquityChart({ isLoading = false, strategyId }: EquityCha
         padding: [12, 16],
         textStyle: { color: '#1A1D24', fontSize: 12 },
         extraCssText: 'box-shadow: 0 4px 12px rgba(0,0,0,0.08);',
-        formatter: (params: any) => {
+        formatter: (params: AxisTooltipParam[]) => {
           const date = params[0]?.axisValue ?? ''
           const lines = params
-            .filter((p: any) => p.seriesName !== '回撤')
-            .map((p: any) =>
+            .filter((p) => p.seriesName !== '回撤')
+            .map((p) =>
               `<div style="display:flex;justify-content:space-between;gap:24px;margin-top:4px">
                 <span style="color:#9CA3AF">${p.marker}${p.seriesName}</span>
                 <span style="font-weight:600">${Number(p.value).toFixed(4)}</span>
@@ -173,7 +182,7 @@ export default function EquityChart({ isLoading = false, strategyId }: EquityCha
         {
           name: '基准', type: 'line', data: benchmark,
           smooth: false, symbol: 'none',
-          lineStyle: { color: '#3B82F6', width: 1.5, type: [4, 2] as any },
+          lineStyle: { color: '#3B82F6', width: 1.5, type: [4, 2] },
           xAxisIndex: 0, yAxisIndex: 0,
         },
         {

@@ -13,9 +13,13 @@ export interface StrategyListParams {
   page_size?: number
 }
 
+// 对齐 gr_api.services.strategy.list_strategies 的返回项。
+// 注意列表项**没有** category —— 只有详情接口才带，别照着详情写。
 export interface Strategy {
   id: string
   name: string
+  description: string
+  cover_image: string
   asset_class: string
   market: string
   risk_level: string
@@ -223,21 +227,26 @@ export interface TradeListParams {
   page_size?: number
 }
 
+// 对齐 gr_api.services.strategy.list_trades 的返回项。
+// 后端返回的是**单笔成交（fill）**，不是开平配对后的回合（round trip）——
+// 因此没有 entry_price / exit_price / holding_days 这类字段，别按回合来写。
 export interface TradeRecord {
-  trade_id: string
-  entry_signal_id: string
-  exit_signal_id: string
+  id: string
+  strategy_id: string
+  signal_id: string | null
   symbol: string
-  /** tips: 文档未给出枚举值，根据 response 示例推断为 'long' | 'short'，联调时确认。*/
-  direction: 'long' | 'short'
-  entry_price: number
-  entry_time: string
-  exit_price: number
-  exit_time: string
+  action: string
   quantity: number
-  pnl: number
-  return_pct: number
-  holding_days: number
+  price: number
+  notional: number
+  fee: number
+  slippage: number
+  avg_cost: number | null
+  realized_pnl: number
+  cumulative_pnl: number | null
+  executed_at: string
+  bar_dt: string | null
+  tag: string
 }
 
 export interface TradeListData {

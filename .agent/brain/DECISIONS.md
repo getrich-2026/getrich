@@ -622,3 +622,48 @@ React 19.2.8**，分批提交（React → TS → Vite），每批都单独验证
 + 7 个 `react-refresh/only-export-components` + 1 个 `react-hooks/purity`），
 与本次升级无关，升级前后数量一字不差。CI 的 ESLint 步骤因此仍是红的。
 其中 `any` 直接违反 `AGENTS.md` §5，需要单独一轮对着 `src/types/` 的后端契约来收。
+
+## D-032 用 `any` 兜住的接口层，藏了三处真实的前后端契约错位
+
+**时间**：2026-08-19
+
+清理 `apps/web` 的 44 个存量 lint 错误（其中 36 个 `no-explicit-any`）时，把
+`src/lib/api.ts` 的 `request<any>` 换成 `src/types/` 里已有的真实类型，**一换就炸出
+83 个类型错误**。逐条对着 `gr_api/services/` 的源码和真库实测响应核过，结论是：
+类型没写错的地方，是**页面**在读后端从来不返回的字段。
+
+**错位一：`TradeRecord` 的粒度整个搞反了。** `src/types/strategy.ts` 按「开平配对
+后的回合」写（`entry_price` / `exit_price` / `holding_days` / `direction`），而
+`list_trades` 返回的是**单笔成交**（`action` / `price` / `quantity` / `realized_pnl` /
+`executed_at`）。页面读的 `open_price` / `close_price` / `open_time` 两边都不沾。
+已按后端订正类型，并把成交表格的列头从「开仓价 / 平仓价」改成「成交价 / 数量」。
+
+**错位二：列表项没有 `category`。** `list_strategies` 的返回项里没有 category
+（只有详情接口 join 了 `strategy_categories`），但 `MyStrategyCard` 在读
+`strategy.category?.name`。顺带发现类型漏了后端确实会返的 `description` 与
+`cover_image`。
+
+**错位三：`SignalDetail.tsx` 有 4 块 UI 读的是不存在的字段** ——
+`reason_detail.spread_std`、`market_snapshot.basis`、
+`historical_performance.best_return` / `worst_return`、顶层 `related_signals`。
+另有 `is_executed` 实际在 `user_state` 下、技术指标实际在 `market_snapshot.indicators`
+下（且是 `rsi_14` 不是 `rsi14`）。前两类是**页面按设计稿写、后端没实现**，
+已改成占位符 + `TODO(后端)` 注释保留布局；后两类是纯路径写错，已修正。
+
+**教训**：
+1. **`any` 不是「还没来得及写类型」，是「关掉了前后端契约的唯一一道检查」。**
+   这三处错位全都不会报错，只会在页面上渲染成空值、`undefined` 或 0，
+   看起来像「数据还没灌」。真正暴露它们的不是测试，是把 `any` 换成真类型。
+2. **写前端类型要对着后端 service 的 return 语句抄，不要对着设计稿或 openapi 草案抄。**
+   本仓库 `src/types/` 里带「tips: 文档未给出枚举值，根据 response 示例推断」这类
+   注释的字段，基本都是错的重灾区。
+3. **同一份类型收紧后要拿真库响应再验一遍**：本轮 `TradeRecord` / `Strategy` 改完，
+   是打真接口逐字段比对确认的，不是只靠 `tsc` 过了就算。
+
+**顺带的两条**：
+- `useQuery` 的 `isLoading` **不能收窄 `data` 的类型**，`{isLoading ? <Skeleton/> : <X/>}`
+  这种写法在 `data` 有真类型后会满屏 TS18048。改判 `!data` 即可，语义完全一致。
+- **shadcn/ui 生成的 `src/components/ui/` 不该手改**（`AGENTS.md` §5），
+  它天然会触发 `react-refresh/only-export-components`（组件文件同时导出 cva 常量）
+  和 `react-hooks/purity`（骨架屏用 `Math.random()`）。这两条规则已在
+  `eslint.config.js` 里**按目录**关闭，不是全局关 —— 自己写的组件仍受完整约束。

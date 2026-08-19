@@ -302,13 +302,15 @@ export default function PortfolioDiagnosisPage() {
                     background:'linear-gradient(135deg,#0a0f1e 0%,#0f2557 45%,#1a1145 80%,#0a0f1e 100%)',
                     padding:'40px 24px 36px' }}>
         {/* Glow orbs */}
-        {[
+        {/* 显式标注元素类型：三个光斑各自只给了 top/right/left/bottom 里的一部分 */}
+        {([
           { top:-100, right:-80,  w:380, h:380, bg:'rgba(99,102,241,0.18)', blur:80 },
           { top:10,   left:'40%', w:140, h:140, bg:'rgba(59,130,246,0.12)', blur:40 },
           { bottom:-80, left:60,  w:260, h:260, bg:'rgba(139,92,246,0.12)', blur:60 },
-        ].map((o,i) => (
+        ] as { top?:number|string; right?:number|string; left?:number|string; bottom?:number|string
+               w:number; h:number; bg:string; blur:number }[]).map((o,i) => (
           <div key={i} style={{ position:'absolute', borderRadius:'50%', pointerEvents:'none',
-                                top:o.top, right:(o as any).right, left:(o as any).left, bottom:(o as any).bottom,
+                                top:o.top, right:o.right, left:o.left, bottom:o.bottom,
                                 width:o.w, height:o.h, background:o.bg, filter:`blur(${o.blur}px)` }}/>
         ))}
 

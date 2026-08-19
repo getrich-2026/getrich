@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import Tag from '@/components/Tag'
-import SignalCard from '@/components/SignalCard'
 import { SignalActionBar } from '@/components/BottomActionBar'
 import { api } from '@/lib/api'
 
@@ -12,7 +11,9 @@ export default function SignalDetail() {
   const navigate = useNavigate()
   const { id } = useParams()
 
-  const { data: s, isLoading, isError } = useQuery({
+  // 各分块的加载态一律判 !s 而不是 isLoading —— isLoading 无法让 TS 收窄 s 的类型，
+  // 判 !s 既能收窄又与「数据到达前显示骨架屏」的语义完全一致。
+  const { data: s, isError } = useQuery({
     queryKey: ['signal', id],
     queryFn: () => api.getSignal(id!),
     enabled: !!id,
@@ -25,6 +26,9 @@ export default function SignalDetail() {
   // 目标/止损相对触发价的涨跌幅（%）
   const targetPct = s ? ((s.target_price   - s.trigger_price) / s.trigger_price * 100) : 0
   const stopPct   = s ? ((s.stop_loss_price - s.trigger_price) / s.trigger_price * 100) : 0
+
+  // 技术指标在 market_snapshot.indicators 下，不是 market_snapshot 的直属字段
+  const ind = s?.market_snapshot?.indicators
 
   if (isError) {
     return (
@@ -40,7 +44,7 @@ export default function SignalDetail() {
 
         {/* ========== Section 1: Signal Header ========== */}
         <div className="mb-5">
-          {isLoading ? (
+          {!s ? (
             <HeaderSkeleton />
           ) : (
             <div className="fade-in">
@@ -99,7 +103,7 @@ export default function SignalDetail() {
 
         {/* ========== Section 2: Price Panel ========== */}
         <div className="rounded-xl card-shadow mb-5 overflow-hidden" style={{ background: 'var(--gr-card)' }}>
-          {isLoading ? (
+          {!s ? (
             <div className="grid grid-cols-4">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="p-5 text-center" style={{ borderRight: i < 3 ? '1px solid var(--gr-border-light)' : 'none' }}>
@@ -110,12 +114,13 @@ export default function SignalDetail() {
             </div>
           ) : (
             <div className="grid grid-cols-4">
-              {[
+              {/* 显式标注元素类型：只有中间两项带 subColor */}
+              {([
                 { label: '触发价格', value: s.trigger_price.toFixed(2),   sub: null },
                 { label: '目标价格', value: s.target_price.toFixed(2),    sub: `+${targetPct.toFixed(2)}%`, subColor: 'var(--gr-green)' },
                 { label: '止损价格', value: s.stop_loss_price.toFixed(2), sub: `${stopPct.toFixed(2)}%`,   subColor: 'var(--gr-red)' },
                 { label: '建议仓位', value: `${Math.round(s.position_pct * 100)}%`, sub: `${s.suggested_quantity}手` },
-              ].map((item, i) => (
+              ] as { label: string; value: string; sub: string | null; subColor?: string }[]).map((item, i) => (
                 <div
                   key={item.label}
                   className="p-5 text-center"
@@ -128,7 +133,7 @@ export default function SignalDetail() {
                     {item.value}
                   </div>
                   {item.sub && (
-                    <div className="text-xs mt-1 tabular font-medium" style={{ color: (item as any).subColor || 'var(--gr-text-tertiary)' }}>
+                    <div className="text-xs mt-1 tabular font-medium" style={{ color: item.subColor || 'var(--gr-text-tertiary)' }}>
                       {item.sub}
                     </div>
                   )}
@@ -140,7 +145,7 @@ export default function SignalDetail() {
 
         {/* ========== Section 3: Trigger Reason ========== */}
         <div className="rounded-xl p-5 mb-5 card-shadow overflow-hidden" style={{ background: 'var(--gr-card)' }}>
-          {isLoading ? (
+          {!s ? (
             <ReasonSkeleton />
           ) : (
             <div className="fade-in">
@@ -151,7 +156,9 @@ export default function SignalDetail() {
                 {[
                   { label: '当前价差', value: s.reason_detail?.spread_current?.toFixed(1) },
                   { label: '历史均值', value: s.reason_detail?.spread_mean?.toFixed(1) },
-                  { label: '标准差',   value: s.reason_detail?.spread_std?.toFixed(1) },
+                  // TODO(后端): reason_detail 目前只返回 spread_current / spread_mean /
+                  // z_score / trigger_rule，没有 spread_std，补齐后改回真实值
+                  { label: '标准差',   value: undefined },
                   { label: 'Z-Score', value: s.reason_detail?.z_score?.toFixed(1) },
                 ].map((item) => (
                   <div key={item.label} className="rounded-lg p-3 text-center" style={{ background: 'var(--gr-bg)' }}>
@@ -176,7 +183,7 @@ export default function SignalDetail() {
 
         {/* ========== Section 4: Market Snapshot ========== */}
         <div className="rounded-xl p-5 mb-5 card-shadow overflow-hidden" style={{ background: 'var(--gr-card)' }}>
-          {isLoading ? (
+          {!s ? (
             <SnapshotSkeleton />
           ) : (
             <div className="fade-in">
@@ -186,13 +193,14 @@ export default function SignalDetail() {
               </div>
 
               <div className="grid grid-cols-4 gap-3 mb-4">
-                {[
+                {/* 显式标注元素类型：只有「收盘」那项带 bg */}
+                {([
                   { label: '开盘',       value: s.market_snapshot?.open?.toFixed(2),  color: 'var(--gr-text)' },
                   { label: '最高',       value: s.market_snapshot?.high?.toFixed(2),  color: 'var(--gr-red)' },
                   { label: '最低',       value: s.market_snapshot?.low?.toFixed(2),   color: 'var(--gr-green)' },
                   { label: '收盘（触发价）', value: s.market_snapshot?.close?.toFixed(2), color: 'var(--gr-red)', bg: '#FEF2F2' },
-                ].map((item) => (
-                  <div key={item.label} className="text-center rounded-lg py-4 px-2" style={{ background: (item as any).bg || 'var(--gr-bg)' }}>
+                ] as { label: string; value?: string; color: string; bg?: string }[]).map((item) => (
+                  <div key={item.label} className="text-center rounded-lg py-4 px-2" style={{ background: item.bg || 'var(--gr-bg)' }}>
                     <div className="text-[10px] font-medium uppercase tracking-wide mb-1.5" style={{ color: 'var(--gr-text-tertiary)', letterSpacing: '0.05em' }}>{item.label}</div>
                     <div className="text-xl font-bold tabular" style={{ color: item.color }}>{item.value ?? '-'}</div>
                   </div>
@@ -210,18 +218,17 @@ export default function SignalDetail() {
                 </div>
                 <div className="rounded-lg p-4 text-center" style={{ background: 'var(--gr-bg)' }}>
                   <div className="text-[10px] font-medium uppercase tracking-wide mb-1.5" style={{ color: 'var(--gr-text-tertiary)', letterSpacing: '0.05em' }}>基差</div>
-                  <div className="text-xl font-bold tabular" style={{ color: s.market_snapshot?.basis >= 0 ? 'var(--gr-red)' : 'var(--gr-green)' }}>
-                    {s.market_snapshot?.basis >= 0 ? '+' : ''}{s.market_snapshot?.basis?.toFixed(1)}
-                  </div>
+                  {/* TODO(后端): market_snapshot 没有 basis 字段，补齐后接真实值并恢复涨跌配色 */}
+                  <div className="text-xl font-bold tabular" style={{ color: 'var(--gr-text)' }}>-</div>
                 </div>
               </div>
 
               <div className="grid grid-cols-4 gap-3">
                 {[
-                  { label: 'MA5',  value: s.market_snapshot?.ma5?.toFixed(2),   trend: s.market_snapshot?.ma5 > s.market_snapshot?.ma20 ? 'up' : 'down' },
-                  { label: 'MA20', value: s.market_snapshot?.ma20?.toFixed(2),  trend: 'neutral' },
-                  { label: 'RSI',  value: s.market_snapshot?.rsi14?.toFixed(1), trend: s.market_snapshot?.rsi14 > 70 ? 'up' : s.market_snapshot?.rsi14 < 30 ? 'down' : 'neutral' },
-                  { label: 'ATR',  value: s.market_snapshot?.atr14?.toFixed(1), trend: 'neutral' },
+                  { label: 'MA5',  value: ind?.ma5?.toFixed(2),    trend: (ind?.ma5 ?? 0) > (ind?.ma20 ?? 0) ? 'up' : 'down' },
+                  { label: 'MA20', value: ind?.ma20?.toFixed(2),   trend: 'neutral' },
+                  { label: 'RSI',  value: ind?.rsi_14?.toFixed(1), trend: (ind?.rsi_14 ?? 0) > 70 ? 'up' : (ind?.rsi_14 ?? 0) < 30 ? 'down' : 'neutral' },
+                  { label: 'ATR',  value: ind?.atr_14?.toFixed(1), trend: 'neutral' },
                 ].map((item) => (
                   <div key={item.label} className="rounded-lg p-3 text-center" style={{ background: 'var(--gr-bg)' }}>
                     <div className="text-[10px] font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--gr-text-tertiary)', letterSpacing: '0.05em' }}>{item.label}</div>
@@ -239,7 +246,7 @@ export default function SignalDetail() {
 
         {/* ========== Section 5: Historical Performance ========== */}
         <div className="rounded-xl p-5 mb-5 card-shadow overflow-hidden" style={{ background: 'var(--gr-card)' }}>
-          {isLoading ? (
+          {!s ? (
             <PerfSkeleton />
           ) : (
             <div className="fade-in">
@@ -278,62 +285,20 @@ export default function SignalDetail() {
                 </div>
               </div>
 
-              <div className="h-px mb-4" style={{ background: 'var(--gr-border-light)' }} />
-
-              <div className="space-y-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--gr-text-tertiary)', letterSpacing: '0.05em' }}>最佳收益</span>
-                    <span className="text-sm font-bold tabular" style={{ color: 'var(--gr-green)' }}>+{((s.historical_performance?.best_return ?? 0) * 100).toFixed(2)}%</span>
-                  </div>
-                  <div className="h-2 rounded-full overflow-hidden" style={{ background: '#F0FDF4' }}>
-                    <div className="h-full rounded-full" style={{ width: '100%', background: '#22C55E' }} />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--gr-text-tertiary)', letterSpacing: '0.05em' }}>最差收益</span>
-                    <span className="text-sm font-bold tabular" style={{ color: 'var(--gr-red)' }}>{((s.historical_performance?.worst_return ?? 0) * 100).toFixed(2)}%</span>
-                  </div>
-                  <div className="h-2 rounded-full overflow-hidden" style={{ background: '#FEF2F2' }}>
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${Math.abs((s.historical_performance?.worst_return ?? 0) / (s.historical_performance?.best_return ?? 1)) * 100}%`,
-                        background: '#E8473F',
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
+              {/* TODO(后端): historical_performance 只返回 similar_signals_count / win_rate /
+                  avg_return / avg_holding_days，没有 best_return / worst_return。
+                  原设计在这里有一组「最佳收益 / 最差收益」进度条，后端补齐字段后恢复。 */}
             </div>
           )}
         </div>
 
-        {/* ========== Section 6: Related Signals ========== */}
-        <div className="rounded-xl p-5 card-shadow overflow-hidden" style={{ background: 'var(--gr-card)' }}>
-          {isLoading ? (
-            <div className="space-y-3">
-              <div className="h-4 skeleton w-28" />
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-16 skeleton rounded-lg" />
-              ))}
-            </div>
-          ) : (
-            <div className="fade-in">
-              <h2 className="text-lg font-semibold mb-3" style={{ color: 'var(--gr-text)' }}>同策略近期信号</h2>
-              <div>
-                {(s.related_signals ?? []).map((sig: any) => (
-                  <SignalCard key={sig.id} {...sig} />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        {/* ========== Section 6: Related Signals ==========
+            TODO(后端): /v1/signals/{id} 不返回 related_signals，这一整块原本恒为空列表。
+            后端补齐该字段（或改由 /v1/signals?strategy_id= 拉取）后恢复，
+            渲染用的 SignalCard 组件仍在。 */}
       </div>
 
-      <SignalActionBar isExecuted={s?.is_executed} triggerPrice={s?.trigger_price} />
+      <SignalActionBar isExecuted={s?.user_state?.is_executed ?? false} triggerPrice={s?.trigger_price} />
     </div>
   )
 }
