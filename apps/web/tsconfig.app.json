@@ -7,7 +7,7 @@
     "module": "ESNext",
     "types": ["vite/client"],
     "skipLibCheck": true,
-    "baseUrl": ".",
+    // 不写 baseUrl：TS 6.0 起废弃、7.0 失效；paths 按本文件所在目录解析。
     "paths": {
       "@/*": [
         "./src/*"

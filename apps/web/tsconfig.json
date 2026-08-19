@@ -9,7 +9,8 @@
     }
   ],
   "compilerOptions": {
-    "baseUrl": ".",
+    // 不写 baseUrl：TS 6.0 起它已废弃，7.0 会失效。paths 在缺省 baseUrl 时
+    // 按本文件所在目录解析，"./src/*" 的含义与原来完全一致。
     "paths": {
       "@/*": ["./src/*"]
     }
