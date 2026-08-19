@@ -9,7 +9,7 @@
 ## 1. 仓库结构与运行环境
 
 ```
-apps/web              主前端（Vite 7 + React 19 + TypeScript 5.9）
+apps/web              主前端（Vite 8 + React 19 + TypeScript 6 + Tailwind 4）
 apps/backtest-web     回测前端（暂停维护，待 API 稳定后重做）
 packages/gr-data      配置、数据库连接、外部数据接入（raw → ingest → PG）
 packages/gr-db        全部 DDL 与迁移，数据库结构的唯一真源
@@ -218,12 +218,17 @@ uv sync --frozen --all-packages
 ```
 
 ```bash
-# 前端
+# 前端（Node 要求 ^20.19.0 || >=22.12.0，Vite 8 的下限；CI 与本地都用 24）
 cd apps/web
-npm run dev      # Vite 开发服务
-npm run build    # 类型检查 + 生产打包
+npm ci           # 按 lock 装，CI 用的就是它；日常加依赖才用 npm install
+npm run dev      # Vite 开发服务（3000，/v1 代理到 gr-api）
+npm run build    # tsc -b && vite build
 npm run lint     # ESLint
+npm run preview  # 预览生产构建产物
 ```
+
+前端**没有测试框架**，`lint` + `build` 就是 CI 的全部门禁（`.github/workflows/web.yml`），
+两者当前都是绿的，**别把它们改红了再提交**。
 
 ## 7. 开发进度文档（`.agent/brain/`）
 

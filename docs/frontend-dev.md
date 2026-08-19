@@ -1,6 +1,6 @@
 # 前端启动指南（`apps/web`）
 
-Vite 7 + React 19 + TypeScript 5.9。本文只讲怎么把开发环境跑起来。
+Vite 8（Rolldown）+ React 19 + TypeScript 6 + Tailwind 4。本文只讲怎么把开发环境跑起来。
 编码规范在 `AGENTS.md` §5。
 
 ---
@@ -33,10 +33,14 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8001/health   # 期望
 
 ```bash
 cd apps/web
-npm install
+npm ci            # 按 package-lock 精确安装（CI 用的就是它）
 ```
 
-当前环境实测 Node v24.15.0 / npm 11.18.0。`package.json` 没写 `engines`，Node 20+ 即可。
+**Node 至少 `^20.19.0` 或 `>=22.12.0`** —— 这是 Vite 8 的硬性下限，低于它装不上。
+本地实测 Node v24.15.0 / npm 11.18.0，CI 也钉在 24，建议保持一致。
+`package.json` 自身没写 `engines`，约束来自 `vite` 与 `@vitejs/plugin-react`。
+
+> 日常新增依赖才用 `npm install`；复现构建、排查「本地能跑 CI 挂了」一律用 `npm ci`。
 
 ## 3. 环境变量
 
@@ -86,10 +90,12 @@ server: {
 其它命令：
 
 ```bash
-npm run lint      # ESLint
-npm run build     # tsc -b && vite build（当前失败，见 §6）
+npm run lint      # ESLint（当前 0 error）
+npm run build     # tsc -b && vite build（当前通过，约 3–5s）
 npm run preview   # 预览生产构建产物
 ```
+
+`lint` + `build` 就是 CI 的全部门禁（前端没有测试框架），两者现在都是绿的。
 
 ## 5. 外网访问
 
@@ -111,17 +117,59 @@ npm run preview   # 预览生产构建产物
 > ssh -L 3000:127.0.0.1:3000 user@<服务器 IP>    # 一个端口都不用开
 > ```
 
-## 6. 已知问题
+## 6. 样式：Tailwind 4 是 CSS-first
 
-- **`npm run build` 当前失败**：`tsconfig.app.json` 里 `"ignoreDeprecations": "6.0"` 在
-  TS 5.9 下非法（TS5103）。去掉那行后还会暴露 2 个既有类型错误
-  （`PortfolioDiagnosisPage.tsx` 的 `RefObject` 可空性、`StrategiesPage.tsx` 未使用的
-  `navigate`）。`npm run dev` 不走 `tsc`，**不受影响**。
-- **`npm run lint` 有 45 个既有错误**，都是历史遗留，不是新引入的。
+**仓库里没有 `tailwind.config.js`，也没有 `postcss.config.js`，这是对的，别加回去。**
+Tailwind 4 把配置搬进了 CSS，构建走 `vite.config.ts` 里的 `@tailwindcss/vite` 插件。
+
+要改主题（颜色、圆角、动画），改 `src/index.css`：
+
+```css
+@import 'tailwindcss';
+@import 'tw-animate-css';        /* 动画工具类，v3 的 tailwindcss-animate 已弃用 */
+
+@theme {
+  --color-primary: hsl(var(--primary));   /* 加颜色 → 加 --color-* */
+  --radius-lg: var(--radius);             /* 加圆角 → 加 --radius-* */
+}
+
+@layer base {
+  :root {
+    --primary: 228 14% 12%;               /* 项目自己的设计 token 仍写在这里 */
+    --gr-red: #E8473F;
+  }
+}
+```
+
+其它注意事项：
+
+- **不要再引入 `autoprefixer`**，v4 内置 lightningcss 自带前缀处理。
+- 从网上抄 Tailwind 3 的类名要当心几个重命名：`flex-shrink-0`→`shrink-0`、
+  `outline-none`→`outline-hidden`、`shadow-sm`→`shadow-xs`、`shadow`→`shadow-sm`、
+  `rounded-sm`→`rounded-xs`、`bg-[var(--x)]`→`bg-(--x)`。
+- `src/components/ui/` 由 shadcn CLI 托管，**不手改**。它本来就是按 v4 生成的，
+  现在项目终于和它对齐，用 CLI 加新组件不会再出 v4-only 语法编译不了的问题。
+
+迁移的完整记录见 `.agent/brain/DECISIONS.md` D-033。
+
+## 7. 已知问题
+
+- **接口契约与后端有系统性错位，部分尚未解决。** 最需要注意的是枚举取值域：
+  真库返回的 `signal_type: "stock"`、`urgency: "normal"` 都超出前端类型声明的
+  联合类型，**TypeScript 拦不住**，页面会静默走进兜底分支（显示成「预警」「普通」），
+  不报错但显示的是错的。全貌见 `.agent/brain/NOTES.md` 的
+  「⚠️ 待讨论：前后端接口契约的系统性错位」一章 —— 动接口相关代码前先读那一章。
+- **`/v1/signals/{id}` 缺 5 个前端已设计的字段**，对应 4 块 UI 现在是占位符，
+  源码里留了 `TODO(后端)` 注释，后端补齐后按注释恢复。
 - **`apps/backtest-web` 暂停维护**（缺 `src/lib/utils`、`src/lib/sanitize`），
-  等 API 稳定后重做，现在不用管它。
+  等 API 稳定后重做，现在不用管它。它的 `package.json` 里版本号虽然也是
+  Vite 8 / Tailwind 4 / TS 6（依赖机器人抬上去的），但**没有人跑过、更没做过迁移**，
+  别把它的状态当成「已升级完成」。
 
-## 7. 排查
+> 历史遗留的 `tsc` 失败与 45 个 lint 错误都已清零（见 `DECISIONS.md` D-031 / D-032），
+> 本节不再保留那些条目。
+
+## 8. 排查
 
 | 现象 | 原因与处理 |
 |---|---|
@@ -132,11 +180,23 @@ npm run preview   # 预览生产构建产物
 | 端口被占 | `ss -ltnp \| grep 3000` 找到进程，或改 `vite.config.ts` 的 `port` |
 | 外网连不上 | 确认 `host: '0.0.0.0'` 生效（看启动日志有没有 Network 行）+ 防火墙放行 |
 
-## 8. 接口速查
+## 9. 接口速查
 
-前端的接口函数都在 `src/api/`，走 `src/api/client.ts`（axios 实例，自动带
+前端的接口函数**全部**在 `src/api/`，走 `src/api/client.ts`（axios 实例，自动带
 `Authorization` 与开发期的 `X-User-Id` 头）。组件一律用 `@tanstack/react-query` 管理
 异步数据，**禁止** `useEffect` + `useState` 手写轮询或 inline `fetch`。
+
+分层职责，加接口时照着来：
+
+| 层 | 职责 |
+|---|---|
+| `src/api/client.ts` | 认证头、401 跳转、校验后端 `code`、剥 `{code,message,data}` 信封 |
+| `src/api/<domain>.ts` | 只发请求，返回 `Promise<T>`，`T` 就是后端的 `data` |
+| `src/types/<domain>.ts` | 类型定义，**照后端 service 的 return 语句写** |
+| 组件 | 用 react-query 调用；面向视图的形状转换写在这里，**不要写进 api 层** |
+
+> 曾经还有一套并行的 `src/lib/api.ts`（裸 `fetch`），与 `src/api/` 九个函数完全重复
+> 且两边都有 bug，已删除。**不要再另起第二套接口层**，原委见 `DECISIONS.md` D-034。
 
 后端接口文档：<http://127.0.0.1:8001/docs>
 
