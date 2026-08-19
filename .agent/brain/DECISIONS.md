@@ -609,6 +609,8 @@ React 19.2.8**，分批提交（React → TS → Vite），每批都单独验证
   CSS。也就是说这 4 条规则**升级前就是死规则，页面上根本没生效**，只是没人报错。
   推论：**shadcn/ui 组件是按 Tailwind v4 生成的，粘进 v3 项目时必须逐个查
   `--spacing()` / `@theme` / oklch 这类 v4-only 语法**，不能假定能用。
+  （**后续**：项目已于同日升到 Tailwind v4，根因消失，这 4 处已恢复成 shadcn
+  原始的 v4 写法。此条只作为「跨大版本粘贴生成代码」的教训保留，见 D-033。）
 - **`"ignoreDeprecations": "6.0"` 在 TS 5.9 下是非法值（TS5103），`tsc -b` 第一步
   就挂。** 这个值只有 TS ≥6.0 才接受。有人提前写进 tsconfig，导致 `npm run build`
   在 dev 分支上长期失败 —— 而 CI 的 web workflow 只在 `apps/web/**` 变更时触发，
@@ -618,10 +620,10 @@ React 19.2.8**，分批提交（React → TS → Vite），每批都单独验证
   lint 碰巧还能跑，但下一次 `npm install` 重新解析依赖就 ERESOLVE 直接失败。
   **查兼容性要查 `npm ls` 的实际版本，不要查 `package.json` 的范围上界。**
 
-**遗留未处理**：`npm run lint` 有 **44 个存量错误**（36 个 `@typescript-eslint/no-explicit-any`
-+ 7 个 `react-refresh/only-export-components` + 1 个 `react-hooks/purity`），
-与本次升级无关，升级前后数量一字不差。CI 的 ESLint 步骤因此仍是红的。
-其中 `any` 直接违反 `AGENTS.md` §5，需要单独一轮对着 `src/types/` 的后端契约来收。
+**当时的遗留（已在同日解决，见 D-032）**：`npm run lint` 有 44 个存量错误
+（36 个 `no-explicit-any` + 7 个 `react-refresh/only-export-components` +
+1 个 `react-hooks/purity`），与本次升级无关，升级前后数量一字不差。
+清理过程本身挖出了三处真实的前后端契约错位 —— 那才是重点，见 D-032。
 
 ## D-032 用 `any` 兜住的接口层，藏了三处真实的前后端契约错位
 
@@ -667,3 +669,96 @@ React 19.2.8**，分批提交（React → TS → Vite），每批都单独验证
   它天然会触发 `react-refresh/only-export-components`（组件文件同时导出 cva 常量）
   和 `react-hooks/purity`（骨架屏用 `Math.random()`）。这两条规则已在
   `eslint.config.js` 里**按目录**关闭，不是全局关 —— 自己写的组件仍受完整约束。
+
+## D-033 Tailwind 升到 v4：配置从 JS 搬进 CSS，构建从 PostCSS 换到 Vite 插件
+
+**时间**：2026-08-19
+
+`apps/web` 从 Tailwind 3.4.19 升到 **4.3.3**，用官方 codemod
+`npx @tailwindcss/upgrade` 迁移后逐条复核。
+
+**形态上的四点变化，新写代码要按新的来**：
+
+1. **没有 `tailwind.config.js` 了。** v4 是 CSS-first，主题定义写在
+   `src/index.css` 的 `@theme { --color-*: …; --radius-*: …; }` 里，
+   content 路径自动探测，不再需要声明。要加自定义色/圆角/动画，改 CSS 不改 JS。
+2. **没有 `postcss.config.js` 了。** 改用官方 `@tailwindcss/vite` 插件挂在
+   `vite.config.ts` 的 `plugins` 里。实测两条路径产出的 CSS 字节完全一致
+   （同一个内容哈希），但 Vite 插件是官方在 Vite 项目下的推荐路径。
+3. **`autoprefixer` 和 `postcss` 两个直接依赖删掉了。** v4 内置 lightningcss，
+   自带前缀处理。别再往回加。
+4. **动画插件换成 `tw-animate-css`**（v4 原生，`@import` 引入），
+   替掉 v3 的 `tailwindcss-animate`（`@plugin` 引入）。
+
+**类名重命名**（codemod 已全量改过，手写新代码注意）：
+`flex-shrink-0`→`shrink-0`、`outline-none`→`outline-hidden`、
+`shadow-sm`→`shadow-xs`、`shadow`→`shadow-sm`、`rounded-sm`→`rounded-xs`、
+`bg-[var(--x)]`→`bg-(--x)`、`[&_[data-x]]:…`→`in-data-[x]:…`。
+
+**踩坑一：codemod 会误伤「长得像类名的字符串」。** 它把 `pagination.tsx` 里
+shadcn 的 button variant 取值 `"outline"` 也改成了 `"outline-solid"`（那是组件
+prop，不是工具类），`tsc` 直接报 union 不匹配。**跑完 codemod 必须过一遍
+类型检查 + 通读 diff**，别看见「build 过了」就提交 —— 这次恰好类型能拦住，
+换成一个没有类型约束的 prop 就静默错了。
+
+**踩坑二：怎么验证「样式没丢」而不靠肉眼。** 环境里没有浏览器，用的办法是
+**比对「源码里用到的工具类」与「产物 CSS 里生成的选择器」两个集合**：
+1015 个候选 token 无一在产物中缺失（报出的 30 个都是 `data-slot` 取值、
+ECharts 内联样式串、`space-between` 这类 flex 关键字，本就不是工具类）。
+再单独验证颜色链路（`.border-border` → `var(--color-border)` →
+`hsl(var(--border))` → 实际值）和透明度修饰符（`color-mix`，含 srgb 回退）。
+**这套方法比截图更可靠，以后做 CSS 框架大版本升级可以复用。**
+
+**顺带的收获**：D-031 里记的那 4 处「Tailwind v4 `--spacing()` 语法在 v3 项目里
+输出成非法 CSS」，升到 v4 后**已恢复成 shadcn 原始写法**，产物确认编译成
+`calc(var(--spacing) * 8)` 这类合法 CSS。当初的 v3 折算是权宜之计，现在根因消失了。
+**推论：`src/components/ui/` 是按 Tailwind v4 生成的，本项目现在终于和它对齐了**，
+以后用 shadcn CLI 加组件不必再逐个排查 v4-only 语法。
+
+## D-034 两套 API 层合并：重复的那一份，和留下的那一份，都是错的
+
+**时间**：2026-08-19
+
+`apps/web` 长期并存两套接口层，本次合并到 `src/api/`，删除 `src/lib/api.ts`。
+
+**先说事实：9 个函数一个不落地完全重复**（`getStrategies`↔`getStrategyList`、
+`getStrategy`↔`getStrategyDetail`、`getTrades`↔`getStrategyTrades`、
+`getSignal`↔`getSignalDetail` …）。但重点不是重复，是**两边各自都有错**：
+
+- **`src/lib/api.ts`（5 个页面在用的那份）用裸 `fetch`，不发任何请求头。**
+  开发期 mock 认证靠 `X-User-Id`，缺了它后端认不出用户。实测同一接口
+  带头返回 `is_subscribed = [F,F,T]`、不带头 `[F,F,F]` ——
+  **首页「我的策略」板块因此恒为空**。这个 bug 存在了很久，没人发现，
+  因为它的表现是「暂未订阅任何策略」，和真的没订阅长得一模一样。
+- **`src/api/`（零引用的那份）类型是假的。** 拦截器 `return response.data`
+  已经剥掉了 Axios 外壳，调用方签名却还写着 `AxiosResponse<ApiResponse<T>>`，
+  照签名写 `res.data.data` 运行时恒为 `undefined`。而且它**不校验后端的 `code`
+  字段**，业务错误会被当成正常数据渲染成空白。
+
+**教训：「没人用的代码」不等于「无害的代码」。** 它零引用所以永远不会报错，
+于是错误的类型签名可以一直躺在那儿，等着某天有人照它写代码。
+删掉或用起来，二选一，别让它半死不活地挂着。
+
+**合并后的分层规矩（新增接口按这个写）**：
+
+```
+src/api/client.ts   axios 实例 + 拦截器：认证头、401 跳转、校验 code、剥信封
+src/api/<domain>.ts 接口函数，返回 Promise<T>，T 就是后端的 data
+src/types/<domain>.ts 与后端对齐的类型
+组件            只通过 react-query 调 src/api/*
+```
+
+三条硬约束：
+
+1. **`api` 层不做面向视图的形状转换。** 原来 `lib/api.ts` 的 `getEquityCurve`
+   把三条曲线压成并列数组喂 ECharts、`getMonthlyReturns` 重命名字段——
+   这类转换已下沉到 `EquityChart` / `MonthlyHeatmap` 组件内部。
+   **同一个接口出现两份互不兼容的返回类型，正是这次要消灭的东西。**
+2. **剥壳只在 `client.ts` 做一次。** 拦截器把 `response.data` 就地换成信封里的
+   `data` 并**仍然返回 `AxiosResponse`**（这样不必对 Axios 的类型撒谎），
+   再由 `http` 包装统一 `.then(r => r.data)`。全链路零 `as` 断言。
+3. **`code !== 0` 必须抛错**，不能当正常数据往下传。
+
+**代价要认**：产物 JS 1352 → 1390 kB（gzip 407 → 422）。axios 之前因为
+`src/api/` 无人引用被 tree-shaking 掉了，现在真正进包。这是走 `AGENTS.md` §5
+规定路径的成本，接受。

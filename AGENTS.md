@@ -157,12 +157,14 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 - 大批量写入优先 COPY 协议或 multi-values UPSERT（`ON CONFLICT DO UPDATE`）。
 - **绝对禁止**在没有 `try-except` 隔离的情况下在主线程中发起外部 API 调用或网络请求。
 
-## 5. 前端编码规范（React 19 + TypeScript 5.9）
+## 5. 前端编码规范（React 19 + TypeScript 6 + Vite 8 + Tailwind 4）
 
-- **禁止 `any`**：严格推导类型。对接无类型外部遗留包时必须附详细说明。API 类型放 `src/types/`，与后端 Pydantic schema 对齐。
-- **数据请求**：接口函数模块化写在 `src/api/`（走 `src/api/client.ts`），组件一律通过 `@tanstack/react-query` 的 `useQuery`／`useMutation` 管理异步数据与加载态。**禁止**组件内 `useEffect` + `useState` 手写轮询，禁止 inline `fetch`／`axios`。
+- **禁止 `any`**：严格推导类型。对接无类型外部遗留包时必须附详细说明。API 类型放 `src/types/`，**照后端 service 的 return 语句写，不要照设计稿或 openapi 草案写**（教训见 `DECISIONS.md` D-032）。
+- **数据请求**：接口函数模块化写在 `src/api/`（走 `src/api/client.ts`），组件一律通过 `@tanstack/react-query` 的 `useQuery`／`useMutation` 管理异步数据与加载态。**禁止**组件内 `useEffect` + `useState` 手写轮询，禁止 inline `fetch`／`axios`，**禁止再另起一套并行的接口层**（`src/lib/api.ts` 已因此删除，见 D-034）。
+  - 分层：`client.ts` 负责认证头／401／校验 `code`／剥信封；`src/api/<domain>.ts` 只发请求、返回 `Promise<T>`（`T` 即后端 `data`）；**面向视图的形状转换放组件里，不放 api 层**。
 - **表单校验**：`react-hook-form` + `zod`。
-- **UI 与图表**：优先用 `src/components/ui/`（shadcn/ui + Radix UI）+ Tailwind CSS 3，由 CLI 统一管理，不手改 UI 源码。时序／权益曲线用 `echarts`，其余常规图表用 `recharts`。
+- **UI 与图表**：优先用 `src/components/ui/`（shadcn/ui + Radix UI）+ **Tailwind CSS 4**，由 CLI 统一管理，不手改 UI 源码。时序／权益曲线用 `echarts`，其余常规图表用 `recharts`。
+  - Tailwind 4 是 **CSS-first**：主题写在 `src/index.css` 的 `@theme` 块，**没有 `tailwind.config.js`，也没有 `postcss.config.js`**（构建走 `@tailwindcss/vite` 插件）。不要再添加这两个文件，也不要重新引入 `autoprefixer`（v4 内置）。迁移细节见 D-033。
 - **XSS 防御**：渲染用户或作者提供的 HTML（如 `strategy.detail_html`）必须先过 DOMPurify 或等效方案再传给 `dangerouslySetInnerHTML`。后端同时用 Pydantic 长度限制和 bleach 归一化。
 
 ## 6. 常用命令

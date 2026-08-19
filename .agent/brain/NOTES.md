@@ -6,25 +6,118 @@
 
 ---
 
-## 前端工具链升级已完成（分支 `worktree-upgrade-web-toolchain`，待合并）
+## 前端工具链与结构整顿已完成
 
-`apps/web` 已升到 **Vite 8.2.1（Rolldown）+ TypeScript 6.0.3 + React 19.2.8**，
-分批提交。`npm run lint` 与 `npm run build` **均已全绿**，dev / preview / HMR /
-`/v1` 代理全部实测通过。工具链侧的坑见 D-031，接口契约侧的见 D-032。
+`apps/web` 现在是 **Vite 8.2.1（Rolldown）+ Tailwind 4.3.3（CSS-first）+
+TypeScript 6.0.3 + React 19.2.8**。`npm run lint` 与 `npm run build` 全绿，
+dev / preview / HMR / `/v1` 代理均实测通过。
 CI `.github/workflows/web.yml` 的 Node 已从 20 钉到 24。
+
+决策与踩坑分别见 **D-031**（Vite 8 = Rolldown）、**D-032**（`any` 掩盖的契约错位）、
+**D-033**（Tailwind v4 迁移）、**D-034**（两套 API 层合并）。
+
+结构上的两处整顿：
+
+- **Tailwind v4**：删掉 `tailwind.config.js` 与 `postcss.config.js`，主题写在
+  `src/index.css` 的 `@theme` 块里，构建走官方 `@tailwindcss/vite` 插件。
+  `autoprefixer` / `postcss` / `tailwindcss-animate` 三个直接依赖已移除
+  （v4 内置前缀处理；动画换成 v4 原生的 `tw-animate-css`）。
+- **API 层合并**：`src/lib/api.ts` 已删除，全部统一到 `src/api/`（AGENTS.md §5）。
+  两层原本 9 个函数完全重复，且**哪一边都不完全对**——细节见 D-034。
 
 顺带修好的存量断裂（这些在 `dev` 上早就是坏的）：`tsconfig` 里非法的
 `"ignoreDeprecations": "6.0"` 让 `tsc -b` 长期失败；`src/components/ui/` 里 4 处
-Tailwind v4 的 `--spacing()` 语法在 v3 项目中输出成非法 CSS、规则从未生效。
+Tailwind v4 的 `--spacing()` 语法在 v3 项目下输出成非法 CSS、规则从未生效
+（**升到 v4 后已按 shadcn 原样恢复成 v4 写法，产物确认为合法 CSS**）；
+`src/lib/api.ts` 不发 `X-User-Id` 头导致首页「我的策略」板块恒为空。
 
-**清 44 个存量 lint 错误时挖出的真实契约错位**（已对着真库实测响应逐条核过，
-详见 D-032）：`src/types/strategy.ts` 的 `TradeRecord` 按「开平配对回合」写，
-后端返的其实是**单笔成交**；`Strategy` 列表项没有 `category`；`SignalDetail.tsx`
-有 4 块 UI 读的是后端从不返回的字段。类型已按后端订正，4 块 UI 改成占位符 +
-`TODO(后端)` 注释。
+---
 
-**仍未解决 —— 见下方 P1**：`src/api/` 整层没人用；signal 的两个枚举实测值超出
-类型声明。
+# ⚠️ 待讨论：前后端接口契约的系统性错位
+
+**这一章是给团队讨论用的，不是已完成事项。** 下面每一条都已对着
+`packages/gr-api/src/gr_api/services/` 的源码 **和真库实测响应**逐字段核对过，
+不是猜测。前端侧已做了能做的订正，但**根因在于前端类型是照设计稿写的、
+没有一份双方共同认可的契约真源**，这个问题不解决还会继续复发。
+
+## 背景：问题是怎么暴露出来的
+
+`src/lib/api.ts` 过去所有接口都写 `request<any>`。把 `any` 换成 `src/types/` 里
+已有的真实类型后，**一次性炸出 83 个类型错误**。逐条核查后发现：类型没写错的地方，
+是**页面在读后端从来不返回的字段**。也就是说，`any` 不是「还没来得及写类型」，
+而是**关掉了前后端契约的唯一一道自动检查**——这些错位全都不会报错，
+只会在页面上渲染成空值、`undefined` 或 0，看起来像「数据还没灌」。
+
+## A. 前端类型写错 / 写漏（已按后端订正，仅供复核）
+
+| 位置 | 前端原来的写法 | 后端实际返回 |
+|---|---|---|
+| `TradeRecord` | 「开平配对回合」：`entry_price`/`exit_price`/`holding_days`/`direction` | **单笔成交**：`action`/`price`/`quantity`/`realized_pnl`/`executed_at`/`fee`/`slippage` |
+| `Strategy`（列表项） | 有 `category` | **没有** `category`（只有详情接口 join 了分类）；反而漏了确实会返的 `description`、`cover_image` |
+| `SignalDetail.tsx` | `s.is_executed` | 实际在 `s.user_state.is_executed` |
+| `SignalDetail.tsx` | `market_snapshot.ma5` / `rsi14` | 实际在 `market_snapshot.indicators` 下，且是 **`rsi_14`** 不是 `rsi14` |
+
+`TradeRecord` 这条最值得注意：**前端按「回合」建模、后端按「成交」建模**，
+这不是字段名笔误，是双方对同一个业务对象的粒度理解不一致。成交表格已按后端
+改成「成交价 / 数量 / 已实现盈亏」，但**产品上到底要不要展示配对后的回合，
+需要产品与后端一起定**。若要，得后端补一个回合聚合接口。
+
+## B. 后端缺字段：前端已按设计稿做了 UI，后端没实现
+
+`/v1/signals/{id}` 缺以下 5 个字段，涉及 4 块 UI。前端已改成占位符并留
+`TODO(后端)` 注释保留布局，**补齐后按注释恢复即可**：
+
+| 字段 | 前端用途 |
+|---|---|
+| `reason_detail.spread_std` | 「触发原因」四格里的「标准差」 |
+| `market_snapshot.basis` | 「触发时刻行情」里的「基差」卡片 |
+| `historical_performance.best_return` / `worst_return` | 「最佳收益 / 最差收益」两条进度条（整块已隐藏） |
+| `related_signals`（顶层） | 「同策略近期信号」整个 Section（已隐藏） |
+
+**需要决策**：这些是当初设计稿画了但后端没做，还是产品上已经砍掉？
+如果要做，`related_signals` 建议不要塞进详情接口，改由
+`/v1/signals?strategy_id=` 单独拉，避免详情接口越长越胖。
+
+## C. 枚举取值域对不上（**尚未修，风险最高**）
+
+真库实测返回的值**超出**前端类型声明的联合类型：
+
+| 字段 | 前端类型声明 | 真库实测值 |
+|---|---|---|
+| `signal_type` | `'entry' \| 'exit' \| 'adjust' \| 'alert'` | **`'stock'`** |
+| `urgency` | `'critical' \| 'high' \| 'medium' \| 'low'` | **`'normal'`** |
+
+TypeScript **拦不住这个**（类型是编译期的，后端返什么是运行时的）。后果是页面
+静默走进兜底分支：信号类型显示成「预警」、紧急度显示成「普通」，**不报错，
+但显示的是错的**。
+
+**需要后端确认** `signals.type` 与 `signals.urgency` 两列的真实取值域，再决定是
+改前端类型还是在后端做归一化。**在确认之前不要擅自改前端的联合类型**——
+现在的类型至少还标记着「设计意图」，改成实测值就把问题永久掩埋了。
+
+## D. 根因与建议（**这条最需要讨论**）
+
+前端 `src/types/` 是照设计稿 / openapi 草案写的，不是照后端实现写的。
+证据：类型文件里带「tips: 文档未给出枚举值，根据 response 示例推断」这类注释的
+字段，基本都是本次出错的重灾区。
+
+而后端这一侧同样没有可机读的契约：**55 条路由无一声明 `response_model`**，
+全部直接返 `dict`，`/openapi.json` 的响应 schema 是空的。也就是说
+**当前双方都没有契约真源**，只有各自的一份口头理解。
+
+可选方案（择一，需要团队定）：
+
+1. **后端出 OpenAPI，前端脚本生成类型**。FastAPI 自带 `/openapi.json`，
+   前端用 `openapi-typescript` 生成 `src/types/generated.ts` 并纳入 CI 检查。
+   一劳永逸，但要求后端的 response_model 认真写全（目前多数接口直接返 `dict`，
+   **schema 是空的，得先补**）。
+2. **维持手写类型，但加一道契约测试**：前端存一组真实响应样本，用
+   zod/valibot 在 CI 里校验样本与类型一致。成本低，但样本会过期。
+3. 维持现状，靠人工同步。**不推荐**——本次 83 个错误就是这么攒出来的。
+
+倾向方案 1，但前置条件是后端先补 `response_model`。
+
+---
 
 ## 本地开发环境已跑起来（2026-08-18）
 
@@ -154,21 +247,14 @@ ClickHouse 迁移已验证；bind mount 一致性问题已按 D-029 根治。
 
 ## P1
 
-- [ ] **`apps/web/src/api/` 整层零引用**：`AGENTS.md` §5 要求接口函数走 `src/api/`
-      （axios + `client.ts`），但 5 个页面全部在用 `src/lib/api.ts` 的裸 `fetch` 封装，
-      `src/api/{client,strategies,signal,subscription}.ts` 没有任何 import。
-      两层的函数签名与返回壳还不一样（`lib` 剥到 `data`，`api` 保留 `ApiResponse`）。
-      要么把页面迁到 `src/api/`，要么删掉未用的那层，别让两套并存。
-- [ ] **signal 的两个枚举，实测值超出类型声明**（`src/types/`）：真库返回
-      `signal_type: "stock"`、`urgency: "normal"`，而类型里写的是
-      `'entry'|'exit'|'adjust'|'alert'` 和 `'critical'|'high'|'medium'|'low'`。
-      TS 拦不住，运行时会走进兜底分支（信号类型显示成「预警」、紧急度显示成「普通」）。
-      需要先确认 `signals.type` / `signals.urgency` 两列的真实取值域，再决定是改类型
-      还是改后端归一化。
-- [ ] **`/v1/signals/{id}` 缺 5 个前端已设计的字段**：`reason_detail.spread_std`、
-      `market_snapshot.basis`、`historical_performance.best_return` / `worst_return`、
-      顶层 `related_signals`。前端已改成占位符并留 `TODO(后端)` 注释，
-      补齐后按注释恢复即可。
+- [ ] **前后端接口契约错位 —— 详见上方「⚠️ 待讨论」整章**，此处只列待办：
+      C 类枚举取值域（`signal_type` 实测 `stock`、`urgency` 实测 `normal`）**尚未修**，
+      需后端先确认取值域；B 类 5 个缺失字段待后端补；D 类契约真源方案待team定
+      （倾向让后端补 `response_model` 后由 OpenAPI 生成前端类型）。
+- [ ] **gr-api 的 55 条路由无一声明 `response_model`**（实测
+      `grep -rc response_model packages/gr-api/src/gr_api/routers/*.py` 全为 0），
+      全部直接返 `dict`，因此 `/openapi.json` 里响应 schema 是空的 ——
+      这是上面 D 类方案 1 的前置条件。
 - [ ] **`import_jobs` / `import_job_errors` 两张表全仓没有 DDL**，
       `services/admin_import.py` 却在用 —— 全新库上 `/v1/admin/imports` 必然报错。
       同一模块的 `upsert_strategy()` 还往 `strategies.type` 写值，那列也不存在。
