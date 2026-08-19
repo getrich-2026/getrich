@@ -15,7 +15,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      // 用 import.meta.dirname 而非 __dirname：Vite 8 的 native config loader
+      // （未来大版本的默认值）不支持 CJS 的 __dirname。
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
 })
