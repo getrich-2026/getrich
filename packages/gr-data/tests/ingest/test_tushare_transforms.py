@@ -721,3 +721,68 @@ def test_months_window_limits_what_is_read(tmp_raw_root, monkeypatch):
     assert len(build_with(None)) == 2  # 默认读全部，与加窗口前行为一致
     assert build_with(("2024-01",))["instrument_id"].tolist() == [42]
     assert build_with(("2024-02",))["instrument_id"].tolist() == [43]
+
+
+# --------------------------------------------------------------------------- #
+# 首日上市的 pre_close
+# --------------------------------------------------------------------------- #
+def test_first_listing_day_missing_pre_close_is_kept(tmp_raw_root, monkeypatch):
+    """标的首个交易日没有前收盘，留 NULL 而不是中断整批。
+
+    实测全量 2013-01~2026-08 共 12,806,285 行里有 236 行如此（0.0018%），
+    全部是北交所标的，且每一行都恰好落在该标的的首个交易日。
+    用 close 兜底会让当日涨跌幅凭空变成 0%，用 0 兜底则变成 −100%。
+    """
+    df = _daily_df()
+    df.loc[0, "ts_code"] = "920000.BJ"
+    df.loc[0, "pre_close"] = None
+    _write(tmp_raw_root, "daily", df)
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "920000.BJ", "trade_date": "20240102", "adj_factor": 1.0}]),
+    )
+
+    imp = _stock_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"920000.BJ": 42})
+    row = imp.build().iloc[0]
+
+    assert pd.isna(row["pre_close"])
+    # 同一行其余价格照常入库，不因为缺 pre_close 就丢整行
+    assert row["close"] == 10.5
+    assert row["open"] == 10.0
+
+
+@pytest.mark.parametrize("col", ["open", "high", "low", "close"])
+def test_missing_ohlc_still_aborts(tmp_raw_root, monkeypatch, col):
+    """OHLC 缺失仍然中断：当日有 bar 却没有成交价，那就是数据损坏。"""
+    df = _daily_df()
+    df.loc[0, col] = None
+    _write(tmp_raw_root, "daily", df)
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": 1.0}]),
+    )
+
+    imp = _stock_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    with pytest.raises(ValueError, match="非有限价格"):
+        imp.build()
+
+
+def test_nonpositive_pre_close_still_aborts(tmp_raw_root, monkeypatch):
+    """非正的 pre_close 不是「没有」，是「有但不可能」——必须中断。"""
+    df = _daily_df()
+    df.loc[0, "pre_close"] = 0.0
+    _write(tmp_raw_root, "daily", df)
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": 1.0}]),
+    )
+
+    imp = _stock_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    with pytest.raises(ValueError, match="非正价格"):
+        imp.build()

@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 
@@ -85,7 +87,7 @@ class _SymbolResolvingImporter(BaseImporter):
     PROVIDER = PROVIDER
 
     def _adapter(self) -> TushareAdapter:
-        return TushareAdapter(self.paths)
+        return TushareAdapter(self.paths, self.ctx.months)
 
     def _id_map(self) -> dict[str, int]:
         return resolve_by_symbol_map(self.conn, PROVIDER)
@@ -116,21 +118,56 @@ class _BaseBarsImporter(_SymbolResolvingImporter):
     NOT_NULL_COLUMNS = ("instrument_id", "dt", "trading_day")
     PRICE_COLUMNS = ("open", "high", "low", "close", "pre_close")
 
-    def _validate_prices(self, df: pd.DataFrame, source: str) -> None:
-        """严格校验：任一价格非有限或非正即抛错。
+    #: 允许缺失的价格列。``pre_close`` 是唯一一个：标的**首个交易日**没有前收盘，
+    #: 这是真实语义而不是数据损坏。实测全量 2013-01~2026-08 共 12,806,285 行，
+    #: 236 行 pre_close 为空（0.0018%），全部是北交所标的，且**每一行都恰好落在
+    #: 该标的在全量数据里的首个交易日**，一标的一行；open/high/low/close 无一为空。
+    #: 其余四列缺失仍然中断 —— 当日有 bar 却没有成交价，那就是数据损坏。
+    OPTIONAL_PRICE_COLUMNS = ("pre_close",)
 
-        只用于**股票**。股票只要当日有 bar，五个价格就必然齐全，缺失即数据损坏，
-        应当中断而不是入库。指数与期货不同——它们的价格缺失是常态（只发布收盘
-        点位的指数、无成交但有结算价的合约），那边走 ``_null_out_invalid``。
+    def _validate_prices(self, df: pd.DataFrame, source: str) -> None:
+        """严格校验：价格非正即抛错；除 ``pre_close`` 外缺失也抛错。
+
+        只用于**股票**。指数与期货不同 —— 它们的价格缺失是常态（只发布收盘点位的
+        指数、无成交但有结算价的合约），那边走 ``_null_out_invalid``。
+
+        ``pre_close`` 缺失时留 NULL 并记 `ops.data_quality_check`：它是首日上市的
+        固有属性，用 ``close`` 或 0 兜底会让当日涨跌幅凭空变成 0% 或 −100%。
+        注意**非正**的 pre_close 仍然是错误 —— 那不是「没有」，是「有但不可能」。
         """
-        cols = list(self.PRICE_COLUMNS)
-        values = df[cols].to_numpy(dtype=float)
-        if not np.isfinite(values).all():
-            raise ValueError(f"{source} 含非有限价格")
-        if (values <= 0).any():
+        required = [c for c in self.PRICE_COLUMNS if c not in self.OPTIONAL_PRICE_COLUMNS]
+        if not np.isfinite(df[required].to_numpy(dtype=float)).all():
+            raise ValueError(f"{source} 含非有限价格（{'/'.join(required)}）")
+
+        values = df[list(self.PRICE_COLUMNS)].to_numpy(dtype=float)
+        # nan_to_num 只是为了让缺失值不参与「非正」判定，不改动任何入库值
+        if (np.nan_to_num(values, nan=1.0) <= 0).any():
             raise ValueError(f"{source} 含非正价格")
         if (df["high"] < df["low"]).any():
             raise ValueError(f"{source} 含 high < low 的记录")
+
+        for col in self.OPTIONAL_PRICE_COLUMNS:
+            missing = int((~np.isfinite(df[col].to_numpy(dtype=float))).sum())
+            if missing:
+                self.log.warning("%s 有 %d 行缺少 %s（首日上市），留 NULL", source, missing, col)
+                self._record_missing_price(source, col, missing)
+
+    def _record_missing_price(self, source: str, column: str, rows: int) -> None:
+        """留痕：缺失是「继续跑但结果不完整」，日志一闪而过，只有落库才追得回来。"""
+        if self.conn is None:  # 单测里不带连接
+            return
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO ops.data_quality_check (rule, severity, detail) VALUES (%s, %s, %s)",
+                (
+                    f"tushare_{source}_missing_{column}",
+                    "info",
+                    json.dumps(
+                        {"rows": rows, "reason": "标的首个交易日无前收盘，属真实语义"},
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
 
 
 class StockBars1dImporter(_BaseBarsImporter):
