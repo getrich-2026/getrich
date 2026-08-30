@@ -987,3 +987,46 @@ At least one of [factorName,tradeDate] parameters must be provided     (covarian
 
 顺带一条：手上那份 2020-12-31 的样本 CSV **不是本账号权限内的数据**，
 它是供应商的演示样本。别拿它当「历史能取到 2020 年」的证据。
+
+## D-051 数据契约与 DDL 的一致性由 `gr-db docs` 在 CI 守卫
+
+`gr_data.common.contracts` 与 `gr-db` 的 DDL 原本分别维护，虽有「严格对齐」的约定，
+但没有自动验证，新增列后很容易只改一侧。现在 `gr-db docs` 反射活库 catalog，读取
+ingest 注册表和 `ops.table_ownership`，并在 `--fail-on-drift` 时将「契约列不存在」与
+「运行时归属 provider 不在注册表中」作为 error；CI 的全新迁移库执行此检查。
+
+多个 provider 可以声明同一张表作为可选接入能力，不能仅据此判定生产冲突；真正的单表
+写入方由运行时 `ops.table_ownership` 锁定。将未启用的 importer 当作 error 会让 CI 对
+合法的切换能力误报。
+
+DDL 注释门禁只检查相对 PR 基线新增或修改的建表迁移，并从整个迁移目录收集 `COMMENT ON`，
+这样后续迁移补的注释也有效；存量欠账不阻塞当前开发。新表除 `id`、`created_at`、
+`updated_at` 外的每个列都必须有明确注释。
+
+## D-052 zsh 的 `status` 是只读保留变量
+
+执行验证包装命令时不能将退出码写入 `status`；zsh 会报 `read-only variable: status`，
+即使前一条业务命令已经成功也会让整个 shell 返回失败。后续脚本统一使用任务专属名称，
+如 `dictionary_exit_code`，或直接以最后一条验证命令的退出码结束。
+
+## D-053 gr-db 只管理显式声明的业务 schema，不改 TimescaleDB 内部 catalog
+
+活库的 `pg_class` 同时会列出 `_timescaledb_catalog`、`_timescaledb_internal` 等扩展内部对象，
+以及可能由其它仓库迁移维护的 schema（当前为 `diag`）。这些对象不在
+`packages/gr-db/src/gr_db/ddl/` 的唯一真源中；给它们写 `COMMENT ON` 会把扩展实现细节或
+外部 schema 误纳入本仓迁移责任。
+
+数据字典与全量注释迁移只覆盖 gr-db 明确拥有的 11 个 schema：`app`、`backtest`、
+`classify`、`factor`、`fundamental`、`market`、`meta`、`ops`、`pick`、`realtime`、`staging`。
+当前 85 张表、1,048 个字段均有 catalog 注释；以后新字段仍由 DDL 注释门禁负责阻止遗漏。
+
+## D-054 DDL 注释门禁同时覆盖建表与后续新增列
+
+仅检查 `CREATE TABLE` 会留下一个直接绕过路径：迁移可先创建带完整注释的表，再通过
+`ALTER TABLE ... ADD COLUMN` 增加未经说明的业务字段。注释门禁现在会解析同一条 ALTER 的
+多个 `ADD COLUMN [IF NOT EXISTS]` 动作，并要求每个非豁免字段在整个迁移目录中存在
+`COMMENT ON COLUMN`；`id`、`created_at`、`updated_at` 保持自明字段豁免。
+
+数据字典的 PG 契约／归属校验只能在实际传入 PostgreSQL 连接时执行。ClickHouse-only 模式
+仍会列出 raw 数据集，但没有 PG catalog 作为比较基准时不能把它们判成漂移；否则
+`gr-db docs --target ch --fail-on-drift` 会产生错误的失败。

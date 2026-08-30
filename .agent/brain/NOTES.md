@@ -6,6 +6,16 @@
 
 ---
 
+## 刚完成：数据字典生成器与 DDL 注释门禁
+
+- `gr-db docs --target pg|ch|all` 生成活库数据字典；`--fail-on-drift` 校验 PG 契约与归属。
+- 注释门禁检查新增建表及 `ALTER TABLE ... ADD COLUMN`；真库 85 张表、1,048 个字段注释完整。
+- 只覆盖 gr-db 的 11 个业务 schema，排除 TimescaleDB 内部表与仓外 `diag`；`ch` 模式不执行 PG 漂移校验。
+- 匿名快照：`http://45.142.166.254:3000/data-dictionary.html`；更新命令：
+  `uv run gr-db docs --target pg --out apps/web/public/data-dictionary.html --fail-on-drift`。后续迁入登录态页面。
+
+---
+
 ## 进行中：tushare 全域 + datayes CNE6 数据接入（P0–P2 已完成）
 
 目标是把 `getrich-design/portfolio-analysis/`（持仓诊断）从「无数据可算」推到
