@@ -510,3 +510,116 @@ def test_index_no_adj_factor_no_limits(tmp_raw_root, monkeypatch):
     assert row["limit_up"] is None
     assert row["volume"] == 200000.0 * 100
     assert row["amount"] == 250000.0 * 1000
+
+
+# --------------------------------------------------------------------------- #
+# daily_basic → market.stock_daily_basic
+# --------------------------------------------------------------------------- #
+def _daily_basic_df():
+    return pd.DataFrame(
+        [
+            {
+                "ts_code": "600000.SH",
+                "trade_date": "20240102",
+                "close": 10.5,
+                "turnover_rate": 1.25,
+                "pe_ttm": 11.5,
+                "pb": 1.2,
+                "total_share": 100000.0,
+                "float_share": 80000.0,
+                "total_mv": 12000.0,
+                "circ_mv": 8000.0,
+                "limit_status": 0,
+            }
+        ]
+    )
+
+
+def _daily_basic_importer(tmp_raw_root, monkeypatch):
+    from gr_data.ingest.base import IngestContext
+    from gr_data.ingest.tushare.importers.market import DailyBasicImporter
+
+    imp = DailyBasicImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    return imp
+
+
+def test_daily_basic_market_cap_wan_yuan_to_yuan(tmp_raw_root, monkeypatch):
+    """万元 → 元（×10000）。期望值写死，不用被测代码的系数反算。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    row = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert row["total_market_cap"] == 120_000_000.0  # 12000 万元
+    assert row["float_market_cap"] == 80_000_000.0  # 8000 万元
+    assert row["close"] == 10.5
+    assert row["turnover_rate"] == 1.25  # 百分数，原样
+
+
+def test_daily_basic_payload_holds_only_unpromoted_fields(tmp_raw_root, monkeypatch):
+    """已提升为实体列的字段不得在 raw_payload 里重复出现。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    payload = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]["raw_payload"]
+
+    assert payload["pb"] == 1.2
+    assert payload["total_share"] == 100000.0  # 原值原名，raw_payload 不做换算
+    for promoted in ("close", "total_mv", "circ_mv", "turnover_rate", "ts_code", "trade_date"):
+        assert promoted not in payload
+
+
+def test_daily_basic_payload_nan_becomes_none(tmp_raw_root, monkeypatch):
+    """NaN 必须换成 None：json.dumps(nan) 产出 `NaN` 字面量，PG 的 jsonb 会拒收整批。"""
+    import json
+
+    from gr_data.ingest.base import _json_safe
+
+    df = _daily_basic_df()
+    df.loc[0, "pe_ttm"] = float("nan")
+    _write(tmp_raw_root, "daily_basic", df)
+
+    payload = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]["raw_payload"]
+    safe = _json_safe(payload)
+
+    assert safe["pe_ttm"] is None
+    assert "NaN" not in json.dumps(safe)
+
+
+# --------------------------------------------------------------------------- #
+# adj_factor → market.adj_factor_ts
+# --------------------------------------------------------------------------- #
+def _adj_factor_importer(tmp_raw_root, monkeypatch):
+    from gr_data.ingest.base import IngestContext
+    from gr_data.ingest.tushare.importers.market import AdjFactorTsImporter
+
+    imp = AdjFactorTsImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    return imp
+
+
+def test_adj_factor_ts_passthrough(tmp_raw_root, monkeypatch):
+    """复权因子不做任何缩放 —— 缩放会让整段历史价格系统性偏移且不报错。"""
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": 1.25}]),
+    )
+
+    row = _adj_factor_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert row["adj_factor"] == 1.25
+    assert row["instrument_id"] == 42
+    assert row["source"] == "tushare"
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan")])
+def test_adj_factor_ts_rejects_nonpositive(tmp_raw_root, monkeypatch, bad):
+    """非正/非有限因子必须中断，不能静默丢行。"""
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": bad}]),
+    )
+
+    with pytest.raises(ValueError, match="复权因子"):
+        _adj_factor_importer(tmp_raw_root, monkeypatch).build()

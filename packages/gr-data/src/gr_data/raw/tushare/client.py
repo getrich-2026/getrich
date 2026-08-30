@@ -45,6 +45,7 @@ DEFAULT_PAGE_LIMIT = 5000
 PAGE_LIMITS: dict[str, int] = {
     "daily": 6000,
     "adj_factor": 6000,
+    "daily_basic": 6000,
     "stk_limit": 5800,
     "suspend_d": 5000,
     "index_daily": 5000,

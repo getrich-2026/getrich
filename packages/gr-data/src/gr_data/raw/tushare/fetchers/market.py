@@ -52,6 +52,13 @@ INDEX_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,v
 FUT_DAILY_FIELDS = (
     "ts_code,trade_date,pre_close,pre_settle,open,high,low,close,settle,vol,amount,oi"
 )
+# 每日指标（估值 + 股本）。字段全取 —— 目标表只有几列对得上，其余进 raw_payload，
+# 少取一个字段就等于永久丢掉一段历史（这个接口不支持按字段回补）。
+DAILY_BASIC_FIELDS = (
+    "ts_code,trade_date,close,turnover_rate,turnover_rate_f,volume_ratio,"
+    "pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,"
+    "total_share,float_share,free_share,total_mv,circ_mv,limit_status"
+)
 
 
 def month_range(start: date, end: date) -> list[tuple[str, date, date]]:
@@ -180,6 +187,12 @@ class SuspensionFetcher(_DailyFetcher):
     DATASET = "suspend_d"
     API_NAME = "suspend_d"
     FIELDS = SUSPEND_FIELDS
+
+
+class DailyBasicFetcher(_DailyFetcher):
+    DATASET = "daily_basic"
+    API_NAME = "daily_basic"
+    FIELDS = DAILY_BASIC_FIELDS
 
 
 class IndexBars1dFetcher(_DailyFetcher):

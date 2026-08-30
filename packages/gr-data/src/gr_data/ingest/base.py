@@ -13,11 +13,14 @@ ingest 职责：读 raw parquet（或直连 SDK）→ 归一化为 canonical →
 from __future__ import annotations
 
 import abc
+import math
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import psycopg
+from psycopg.types.json import Jsonb
 
 from gr_data.common.contracts import TableContract
 from gr_data.common.ownership import OwnershipManager
@@ -25,6 +28,28 @@ from gr_data.common.paths import RawPaths
 from gr_data.common.quality import check_dataframe
 from gr_data.db.copy import upsert_rows
 from gr_data.logging import get_logger
+
+
+def _json_safe(value: Any) -> Any:
+    """把 dict/list 里 PG 的 jsonb 不接受的值换掉。
+
+    要处理的有三类：NaN/Inf（`json.dumps` 会产出 `NaN`/`Infinity` 字面量，
+    不是合法 JSON，PG 直接拒绝整批）、numpy 标量（`json` 不认）、
+    pandas 的 NaT/NA。**只做无损的类型转换，不做数值兜底** —— 缺失就是 None。
+    """
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.generic):
+        value = value.item()
+    if value is None or value is pd.NaT or value is pd.NA:
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, (pd.Timestamp,)):
+        return value.isoformat()
+    return value
 
 
 @dataclass
@@ -55,6 +80,15 @@ class BaseImporter(abc.ABC):
 
     # quality 校验参数（子类可覆盖）
     NOT_NULL_COLUMNS: tuple[str, ...] = ()
+
+    # 需要特殊装箱的列（必须是 contract.columns 的子集）。
+    # 普通列走 `astype(object).where(notna)` 的标量化路径就够了，但这两类不行：
+    #   ARRAY_COLUMNS：值可能是 np.ndarray，psycopg 不认，得先 .tolist()
+    #   JSON_COLUMNS ：dict 要包成 Jsonb，且内部的 NaN 必须先换成 None ——
+    #                  json.dumps(float("nan")) 产出 `NaN` 字面量，PG 的 jsonb
+    #                  解析器会直接拒绝，整批 COPY 失败
+    ARRAY_COLUMNS: tuple[str, ...] = ()
+    JSON_COLUMNS: tuple[str, ...] = ()
 
     def __init__(self, conn: psycopg.Connection, ctx: IngestContext, client: Any | None = None):
         self.conn = conn
@@ -91,9 +125,22 @@ class BaseImporter(abc.ABC):
 
     def _df_to_rows(self, df: pd.DataFrame) -> list[tuple]:
         cols = list(self.contract.columns)
+        special = set(self.ARRAY_COLUMNS) | set(self.JSON_COLUMNS)
+        unknown = special - set(cols)
+        if unknown:
+            # 列名拼错时当场报错，而不是「声明了但静默不生效」
+            raise ValueError(f"{type(self).__name__} 的 ARRAY/JSON_COLUMNS 不在契约列里：{unknown}")
+
+        plain = [c for c in cols if c not in special]
         # NaN/NaT -> None，供 psycopg 写 NULL
-        clean = df[cols].astype(object).where(pd.notna(df[cols]), None)
-        return [tuple(r) for r in clean.itertuples(index=False, name=None)]
+        out = df[cols].copy()
+        if plain:
+            out[plain] = df[plain].astype(object).where(pd.notna(df[plain]), None)
+        for col in self.ARRAY_COLUMNS:
+            out[col] = [None if v is None else list(v) for v in df[col]]
+        for col in self.JSON_COLUMNS:
+            out[col] = [None if v is None else Jsonb(_json_safe(v)) for v in df[col]]
+        return [tuple(r) for r in out.itertuples(index=False, name=None)]
 
     def run(self) -> IngestResult:
         """执行入库（单事务）。"""

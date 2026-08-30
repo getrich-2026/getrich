@@ -3,6 +3,7 @@
 from gr_data.raw.tushare.fetchers.market import (
     AdjFactorFetcher,
     Bars1dFetcher,
+    DailyBasicFetcher,
     FutureBars1dFetcher,
     IndexBars1dFetcher,
     StockLimitFetcher,
@@ -19,6 +20,7 @@ REGISTRY = {
     "calendar": CalendarFetcher,
     "daily": Bars1dFetcher,
     "adj_factor": AdjFactorFetcher,
+    "daily_basic": DailyBasicFetcher,
     "stk_limit": StockLimitFetcher,
     "suspend_d": SuspensionFetcher,
     "index_daily": IndexBars1dFetcher,

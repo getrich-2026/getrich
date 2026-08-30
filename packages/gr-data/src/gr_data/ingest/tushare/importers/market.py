@@ -74,32 +74,20 @@ def _parse_trade_date(df: pd.DataFrame, source: str) -> pd.Series:
     return parsed.dt.date
 
 
-class _BaseBarsImporter(BaseImporter):
+class _SymbolResolvingImporter(BaseImporter):
+    """把 ``ts_code`` 解析成 ``instrument_id`` 的公共部分。
+
+    行情 importer 与参考行情 importer（daily_basic / adj_factor_ts）都要做这件事，
+    且「未登记标的必须可见地跳过」这条纪律对两者一样重要，所以提到一处。
+    """
+
     PROVIDER = PROVIDER
-    NOT_NULL_COLUMNS = ("instrument_id", "dt", "trading_day")
-    PRICE_COLUMNS = ("open", "high", "low", "close", "pre_close")
 
     def _adapter(self) -> TushareAdapter:
         return TushareAdapter(self.paths)
 
     def _id_map(self) -> dict[str, int]:
         return resolve_by_symbol_map(self.conn, PROVIDER)
-
-    def _validate_prices(self, df: pd.DataFrame, source: str) -> None:
-        """严格校验：任一价格非有限或非正即抛错。
-
-        只用于**股票**。股票只要当日有 bar，五个价格就必然齐全，缺失即数据损坏，
-        应当中断而不是入库。指数与期货不同——它们的价格缺失是常态（只发布收盘
-        点位的指数、无成交但有结算价的合约），那边走 ``_null_out_invalid``。
-        """
-        cols = list(self.PRICE_COLUMNS)
-        values = df[cols].to_numpy(dtype=float)
-        if not np.isfinite(values).all():
-            raise ValueError(f"{source} 含非有限价格")
-        if (values <= 0).any():
-            raise ValueError(f"{source} 含非正价格")
-        if (df["high"] < df["low"]).any():
-            raise ValueError(f"{source} 含 high < low 的记录")
 
     def _attach_ids(self, df: pd.DataFrame, id_map: dict[str, int]) -> pd.DataFrame:
         """按 symbol_map 解析 instrument_id，未登记的标的丢弃并记警告。
@@ -121,6 +109,27 @@ class _BaseBarsImporter(BaseImporter):
             )
             df = df[~unknown]
         return df
+
+
+class _BaseBarsImporter(_SymbolResolvingImporter):
+    NOT_NULL_COLUMNS = ("instrument_id", "dt", "trading_day")
+    PRICE_COLUMNS = ("open", "high", "low", "close", "pre_close")
+
+    def _validate_prices(self, df: pd.DataFrame, source: str) -> None:
+        """严格校验：任一价格非有限或非正即抛错。
+
+        只用于**股票**。股票只要当日有 bar，五个价格就必然齐全，缺失即数据损坏，
+        应当中断而不是入库。指数与期货不同——它们的价格缺失是常态（只发布收盘
+        点位的指数、无成交但有结算价的合约），那边走 ``_null_out_invalid``。
+        """
+        cols = list(self.PRICE_COLUMNS)
+        values = df[cols].to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            raise ValueError(f"{source} 含非有限价格")
+        if (values <= 0).any():
+            raise ValueError(f"{source} 含非正价格")
+        if (df["high"] < df["low"]).any():
+            raise ValueError(f"{source} 含 high < low 的记录")
 
 
 class StockBars1dImporter(_BaseBarsImporter):
@@ -466,7 +475,132 @@ class FutureBars1dImporter(_BaseBarsImporter):
         return out[list(self.contract.columns)].reset_index(drop=True)
 
 
+class DailyBasicImporter(_SymbolResolvingImporter):
+    """daily_basic → market.stock_daily_basic。
+
+    目标表的形状是 insight 时代定的（OHLC + 换手 + 市值），而 tushare 这个接口
+    返回的是估值口径。两边只在 ``close`` / ``turnover_rate`` / 两个市值列上重合：
+
+    | tushare | 目标列 | 换算 |
+    |---|---|---|
+    | ``close``         | ``close``            | — |
+    | ``turnover_rate`` | ``turnover_rate``    | 原样，单位是 **%**（见下） |
+    | ``circ_mv``       | ``float_market_cap`` | 万元 → 元（×10000）|
+    | ``total_mv``      | ``total_market_cap`` | 万元 → 元（×10000）|
+
+    其余字段（pe / pb / ps / dv / 三个股本 / limit_status …）目标表没有实体列，
+    **按供应商原名原值**进 ``raw_payload`` —— 那一列的语义就是「完整原始行」，
+    在里面做单位换算会让同一个数字在库里有两套口径且无从分辨。面向分析的规整
+    形态（换算后的 total_mv / pb / pe_ttm）在 `fundamental.valuation_1d`，
+    由另一个 importer 读同一份 raw 生成。
+
+    ``turnover_rate`` 的单位是百分数（tushare 文档明写「换手率（%）」）。目标列
+    在 insight 时代没有单位注释，本仓也没有 insight 写入过的数据可比对，因此
+    **以 tushare 口径为准并原样入库**，不做任何缩放猜测。
+    """
+
+    DATASET = "daily_basic"
+    CONTRACT = contracts.STOCK_DAILY_BASIC
+    NOT_NULL_COLUMNS = ("instrument_id", "trading_day", "source")
+    JSON_COLUMNS = ("raw_payload",)
+
+    #: 已提升为实体列的字段，不再重复放进 raw_payload（同一个数字两处存储，
+    #: 改一处漏一处）。派生列 instrument_id / trading_day 同理。
+    _PROMOTED = (
+        "ts_code",
+        "trade_date",
+        "close",
+        "turnover_rate",
+        "circ_mv",
+        "total_mv",
+        "instrument_id",
+        "trading_day",
+    )
+
+    def build(self) -> pd.DataFrame:
+        raw = self._adapter().read_all_months("daily_basic")
+        if raw.empty:
+            self.log.warning("daily_basic 无 raw 数据")
+            return pd.DataFrame(columns=list(self.contract.columns))
+
+        _require(raw, {"ts_code", "trade_date", "close"}, "daily_basic")
+        df = raw.copy()
+        df["ts_code"] = df["ts_code"].astype(str).str.strip()
+        df["trading_day"] = _parse_trade_date(df, "daily_basic")
+        df = self._attach_ids(df, self._id_map())
+        if df.empty:
+            return pd.DataFrame(columns=list(self.contract.columns))
+
+        _to_numeric(df, [c for c in ("close", "turnover_rate", "circ_mv", "total_mv") if c in df])
+
+        payload_cols = [c for c in df.columns if c not in self._PROMOTED]
+        payload = df[payload_cols].to_dict("records")
+
+        out = pd.DataFrame(
+            {
+                "instrument_id": df["instrument_id"].astype("int64"),
+                "trading_day": df["trading_day"],
+                "close": df["close"],
+                "turnover_rate": df.get("turnover_rate"),
+                # 万元 → 元
+                "float_market_cap": df["circ_mv"] * 10000.0 if "circ_mv" in df else None,
+                "total_market_cap": df["total_mv"] * 10000.0 if "total_mv" in df else None,
+                "source": PROVIDER,
+                "raw_payload": payload,
+            }
+        )
+        out = out.drop_duplicates(subset=["instrument_id", "trading_day"], keep="last")
+        return out[list(self.contract.columns)].reset_index(drop=True)
+
+
+class AdjFactorTsImporter(_SymbolResolvingImporter):
+    """adj_factor → market.adj_factor_ts（每日单值复权因子明细，D7）。
+
+    与 `StockBars1dImporter` 回填 ``stock_bar_1d.adj_factor`` 列是两条独立的路：
+    那一列随行情表走，这张表可以在没有行情的情况下独立回补与对账。
+    因子必须为正（DDL 有 CHECK），非正值说明源数据损坏，**中断而不是丢行** ——
+    静默丢掉几天因子会让那段区间的复权价格无声偏移。
+    """
+
+    DATASET = "adj_factor_ts"
+    CONTRACT = contracts.ADJ_FACTOR_TS
+    NOT_NULL_COLUMNS = ("instrument_id", "trading_day", "adj_factor", "source")
+
+    def build(self) -> pd.DataFrame:
+        raw = self._adapter().read_all_months("adj_factor")
+        if raw.empty:
+            self.log.warning("adj_factor 无 raw 数据")
+            return pd.DataFrame(columns=list(self.contract.columns))
+
+        _require(raw, {"ts_code", "trade_date", "adj_factor"}, "adj_factor")
+        df = raw.copy()
+        df["ts_code"] = df["ts_code"].astype(str).str.strip()
+        df["trading_day"] = _parse_trade_date(df, "adj_factor")
+        df["adj_factor"] = pd.to_numeric(df["adj_factor"], errors="coerce")
+
+        bad = ~np.isfinite(df["adj_factor"].to_numpy(dtype=float)) | (df["adj_factor"] <= 0)
+        if bad.any():
+            raise ValueError(f"adj_factor 含 {int(bad.sum())} 行非正或非有限的复权因子")
+
+        df = self._attach_ids(df, self._id_map())
+        if df.empty:
+            return pd.DataFrame(columns=list(self.contract.columns))
+
+        out = pd.DataFrame(
+            {
+                "instrument_id": df["instrument_id"].astype("int64"),
+                "trading_day": df["trading_day"],
+                "adj_factor": df["adj_factor"],
+                "source": PROVIDER,
+            }
+        )
+        out = out.drop_duplicates(subset=["instrument_id", "trading_day"], keep="last")
+        return out[list(self.contract.columns)].reset_index(drop=True)
+
+
 __all__ = [
+    "AdjFactorTsImporter",
+    "DailyBasicImporter",
     "StockBars1dImporter",
     "IndexBars1dImporter",
     "FutureBars1dImporter",

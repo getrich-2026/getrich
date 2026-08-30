@@ -81,7 +81,15 @@ def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):
     REGISTRY["instruments"](fake_tushare, ctx).fetch("init")
     # 逐日 fetcher 依赖 calendar 提供交易日列表，必须先抓
     REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
-    for ds in ("daily", "adj_factor", "stk_limit", "suspend_d", "index_daily", "fut_daily"):
+    for ds in (
+        "daily",
+        "daily_basic",
+        "adj_factor",
+        "stk_limit",
+        "suspend_d",
+        "index_daily",
+        "fut_daily",
+    ):
         REGISTRY[ds](fake_tushare, ctx).fetch("init")
 
     inst = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "instruments", "stock"))
@@ -98,6 +106,12 @@ def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):
     # Fake 只在 2024-01 有数据，后续月份不应留下空文件
     months = sorted(p.stem for p in tmp_raw_root.dataset_dir("tushare", "daily").glob("*.parquet"))
     assert months == ["2024-01"]
+
+    # daily_basic 走同一套 _DailyFetcher 模板，字段必须原样落盘（raw 层不归一化）
+    basic = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "daily_basic", "2024-01"))
+    assert basic is not None and len(basic) == 4
+    assert {"total_mv", "circ_mv", "pb", "pe_ttm", "total_share"} <= set(basic.columns)
+    assert basic["total_mv"].iloc[0] == 12000.0  # 万元，raw 层不换算
 
 
 def test_tushare_update_refetches_newest_month(tmp_raw_root, fake_tushare):

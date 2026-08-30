@@ -147,6 +147,7 @@ def _run_tushare_raw(paths, fake_tushare):
         "instruments",
         "calendar",
         "daily",
+        "daily_basic",
         "adj_factor",
         "stk_limit",
         "suspend_d",
@@ -214,3 +215,51 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     owners = {o.target: o.provider for o in OwnershipManager(pg_conn).list_all()}
     assert owners["market.stock_bar_1d"] == "tushare"
     assert owners["market.future_bar_1d"] == "tushare"
+    assert owners["market.stock_daily_basic"] == "tushare"
+    assert owners["market.adj_factor_ts"] == "tushare"
+
+
+def test_daily_basic_jsonb_roundtrip(pg_conn, tmp_raw_root, fake_tushare):
+    """JSONB 列的 COPY 通路必须真的走通一次。
+
+    `upsert_rows` 走的是文本 COPY，psycopg 靠首行的 Python 类型推断适配器；
+    dict → jsonb 能不能落地、`set_types` 有没有生效，只有真库能证明。
+    mock 测试在这件事上是完全无效的。
+    """
+    _run_tushare_raw(tmp_raw_root, fake_tushare)
+    ctx = IngestContext(paths=tmp_raw_root)
+
+    from gr_data.ingest.tushare import REGISTRY
+
+    for name in ("instruments", "symbol_map", "daily_basic", "adj_factor_ts"):
+        REGISTRY[name](pg_conn, ctx).run()
+
+    assert _count(pg_conn, "market.stock_daily_basic") == 4  # 2 codes x 2 days
+    assert _count(pg_conn, "market.adj_factor_ts") == 4
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "SELECT total_market_cap, float_market_cap, close, turnover_rate, "
+            "       raw_payload->>'pb', raw_payload->>'total_share', raw_payload ? 'close' "
+            "FROM market.stock_daily_basic b JOIN meta.instruments i USING (instrument_id) "
+            "WHERE i.symbol = '600000.SH' AND b.trading_day = DATE '2024-01-02'"
+        )
+        total_mv, circ_mv, close, turnover, pb, total_share, has_close = cur.fetchone()
+        # 万元 → 元
+        assert float(total_mv) == 120_000_000.0
+        assert float(circ_mv) == 80_000_000.0
+        assert float(close) == 10.5
+        assert float(turnover) == 1.25
+        # raw_payload 是真 jsonb（能用 ->> 取值），且不重复装已提升的列
+        assert float(pb) == 1.2
+        assert float(total_share) == 100000.0  # 原值原名，不换算
+        assert has_close is False
+
+        cur.execute(
+            "SELECT adj_factor, source FROM market.adj_factor_ts a "
+            "JOIN meta.instruments i USING (instrument_id) "
+            "WHERE i.symbol = '600000.SH' AND a.trading_day = DATE '2024-01-02'"
+        )
+        adj, source = cur.fetchone()
+        assert float(adj) == 1.25
+        assert source == "tushare"

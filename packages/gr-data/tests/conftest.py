@@ -300,6 +300,37 @@ class FakeTushareClient:
             ]
         )
 
+    def _daily_basic(self, **params) -> pd.DataFrame:
+        # 数值刻意取整十整百，便于在断言里直接写死换算后的期望值：
+        # circ_mv=8000 万元 → 8e7 元；total_mv=12000 万元 → 1.2e8 元。
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": c,
+                    "trade_date": d,
+                    "close": 10.5,
+                    "turnover_rate": 1.25,
+                    "turnover_rate_f": 1.5,
+                    "volume_ratio": 0.9,
+                    "pe": 12.0,
+                    "pe_ttm": 11.5,
+                    "pb": 1.2,
+                    "ps": 3.0,
+                    "ps_ttm": 2.9,
+                    "dv_ratio": 2.5,
+                    "dv_ttm": 2.4,
+                    "total_share": 100000.0,
+                    "float_share": 80000.0,
+                    "free_share": 70000.0,
+                    "total_mv": 12000.0,
+                    "circ_mv": 8000.0,
+                    "limit_status": 0,
+                }
+                for c in self.STOCKS
+                for d in self._days_in(params)
+            ]
+        )
+
     def _stk_limit(self, **params) -> pd.DataFrame:
         return pd.DataFrame(
             [

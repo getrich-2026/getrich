@@ -57,15 +57,21 @@ enabled:
     yinhe: [calendar, hist_code_list, backward_factor, kline_day, kline_min1]
     ricequant: [instruments, calendar, bars_1d]
     insight: [basic_info, trading_days, kline_day]
-    tushare: [instruments, calendar, daily, adj_factor, stk_limit, suspend_d, index_daily, fut_daily]
+    # 顺序有依赖：calendar 必须排在逐日接口之前（它们靠交易日历决定抓哪些天）。
+    tushare: [instruments, calendar, daily, daily_basic, adj_factor, stk_limit, suspend_d, index_daily, fut_daily]
   ingest:
     yinhe: [calendar, symbol_map, instruments, bars_1d]
     ricequant: [instruments, calendar, bars_1d]
     insight: [instruments, calendar, bars_1d]
-    # Tushare 默认**不入库**。可用的 importer：
-    #   instruments, symbol_map, calendar, stock_bar_1d, index_bar_1d, future_bar_1d
-    # 这些目标表现由 yinhe 占有（见 reference/design/tushare/tushare_integration_plan.md §3.1），
-    # 启用即等于「切主源」——是该方案里标为高风险的 P5 阶段，需逐表评估数据一致性、
-    # 走 `getrich own release/set` 显式转移，并经人工确认。不要在这里随手打开。
-    # 顺序有依赖：instruments -> symbol_map -> *_bar_1d
-    tushare: []
+    # 可用的 importer（也可以直接写组名 reference / bars_1d / market_ext / all）：
+    #   instruments, symbol_map, calendar,
+    #   stock_bar_1d, index_bar_1d, future_bar_1d,
+    #   daily_basic, adj_factor_ts
+    # 顺序有依赖：instruments -> symbol_map -> 其余全部（都要靠 symbol_map 解析
+    # instrument_id）。
+    #
+    # 关于「切主源」：canonical 行情表理论上可能已被别的 provider 占有，此时
+    # tushare 的 claim 会撞 OwnershipError，需走 `gr-data own release/set` 显式转移
+    # 并做新旧源一致性比对。**先跑 `gr-data own list` 看清楚再决定**——
+    # 空的归属表意味着首次 claim、零冲突，有存量数据的库则必须逐表评估。
+    tushare: [reference, bars_1d, market_ext]

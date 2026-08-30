@@ -51,7 +51,12 @@ CONTRACTS = [
         {"ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "vol", "amount"},
     ),
     ("adj_factor", DAY, market.ADJ_FACTOR_FIELDS, {"ts_code", "trade_date", "adj_factor"}),
-    ("stk_limit", DAY, market.STK_LIMIT_FIELDS, {"ts_code", "trade_date", "up_limit", "down_limit"}),
+    (
+        "stk_limit",
+        DAY,
+        market.STK_LIMIT_FIELDS,
+        {"ts_code", "trade_date", "up_limit", "down_limit"},
+    ),
     ("suspend_d", DAY, market.SUSPEND_FIELDS, {"ts_code", "trade_date", "suspend_type"}),
     (
         "index_daily",

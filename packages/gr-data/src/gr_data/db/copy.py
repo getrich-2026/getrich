@@ -47,7 +47,14 @@ def upsert_rows(
         )
         # 临时表继承了目标表所有列；COPY 只填规范列。
         copy_sql = f'COPY "{tmp}" ({col_idents}) FROM STDIN'
+        pg_types = contract.pg_types_for(cols)
         with cur.copy(copy_sql) as cp:
+            if pg_types is not None:
+                # 文本 COPY 模式下 psycopg 靠首行的 Python 类型推断适配器。
+                # 对 str/int/float/date 够用，但 jsonb 与数组列必须显式声明：
+                # 推断出的 float8[] 喂给 real[] 走的是隐式转换（能跑但脆），
+                # 而首行恰好全 NULL 时推断会直接退化。
+                cp.set_types(pg_types)
             for row in rows:
                 cp.write_row(row)
 
