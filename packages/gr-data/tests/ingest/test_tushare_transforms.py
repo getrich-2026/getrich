@@ -671,3 +671,22 @@ def test_adj_factor_ts_rejects_nonpositive(tmp_raw_root, monkeypatch, bad):
 
     with pytest.raises(ValueError, match="复权因子"):
         _adj_factor_importer(tmp_raw_root, monkeypatch).build()
+
+
+# --------------------------------------------------------------------------- #
+# meta.instruments → classify.instrument_category（G5）
+# --------------------------------------------------------------------------- #
+def test_category_mapping_covers_only_what_it_can_decide():
+    """future / option / index 刻意不在映射表里。
+
+    CFFEX 同时挂股指期货（equity）与国债期货（fixed_income），交易所定不了类别，
+    必须逐品种判断；本仓没有品种到类别的权威映射，猜一份会让资产配置分解整块
+    失真且不报错。少一行只会让下游标 degraded，两者代价不对称。
+    """
+    from gr_data.ingest.tushare.importers.classify import _CATEGORY_BY_ASSET
+
+    assert _CATEGORY_BY_ASSET["stock"] == ("equity", "cn_a")
+    # ETF 一律 equity：区分股票型/债券型 ETF 要基金持仓明细（G4，一期不处理）
+    assert _CATEGORY_BY_ASSET["etf"] == ("equity", "cn_a")
+    for undecidable in ("future", "option", "index"):
+        assert undecidable not in _CATEGORY_BY_ASSET

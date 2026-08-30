@@ -11,6 +11,12 @@
 from __future__ import annotations
 
 from gr_data.common.contracts.base import TableContract
+from gr_data.common.contracts.classify import (
+    INDUSTRY_NODE,
+    INSTRUMENT_CATEGORY,
+    INSTRUMENT_INDUSTRY,
+    SCHEME,
+)
 from gr_data.common.contracts.factor import (
     COVARIANCE,
     DEFINITION,
@@ -38,9 +44,13 @@ __all__ = [
     "DEFINITION",
     "EXPOSURE",
     "FACTOR_RETURN",
+    "INDUSTRY_NODE",
     "INSTRUMENTS",
+    "INSTRUMENT_CATEGORY",
+    "INSTRUMENT_INDUSTRY",
     "MODEL",
     "MODEL_RUN",
+    "SCHEME",
     "SPECIFIC_RETURN",
     "SPECIFIC_RISK",
     "STOCK_DAILY_BASIC",

@@ -677,6 +677,8 @@ def pg_conn(pg_dsn):
               factor.exposure, factor.covariance, factor.factor_return,
               factor.specific_risk, factor.specific_return,
               fundamental.valuation_1d, fundamental.indicator_q,
+              classify.instrument_industry, classify.industry_node,
+              classify.instrument_category, classify.scheme,
               realtime.tick_buffer, ops.table_ownership, ops.etl_job_run,
               ops.data_quality_check
             RESTART IDENTITY CASCADE

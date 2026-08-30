@@ -229,3 +229,87 @@ def test_unknown_suffix_is_not_rewritten():
     assert split_sec_id("123456.XHKG") == ("123456", "XHKG")
     assert to_tushare_symbol("123456.XHKG") is None
     assert split_sec_id("noSuffix") == ("noSuffix", "UNKNOWN")
+
+
+# --------------------------------------------------------------------------- #
+# 行业区间压缩（G1）
+# --------------------------------------------------------------------------- #
+def _daily(rows):
+    """rows: [(instrument_id, 'YYYY-MM-DD', industry_code)]"""
+    from datetime import date as _date
+
+    return pd.DataFrame(
+        [
+            {
+                "instrument_id": iid,
+                "trading_day": _date(*(int(x) for x in day.split("-"))),
+                "industry_code": code,
+                "available_at": pd.Timestamp(f"{day} 17:00", tz="Asia/Shanghai"),
+            }
+            for iid, day, code in rows
+        ]
+    )
+
+
+def test_compress_merges_consecutive_days_into_one_interval():
+    from gr_data.ingest.datayes.importers.classify import _compress
+
+    seg = _compress(_daily([(1, "2025-01-02", "Banks"), (1, "2025-01-03", "Banks")]))
+
+    assert len(seg) == 1
+    assert seg.loc[0, "in_date"].isoformat() == "2025-01-02"
+    assert seg.loc[0, "out_date"] is None  # 当前有效
+
+
+def test_compress_splits_on_industry_change_with_halfopen_range():
+    """out_date 取**下一段的起点**（半开区间）。
+
+    用「本段最后一个交易日」当 out_date 会在两段之间漏掉一天 —— 那一天查不到
+    任何行业，而查询本身不会报错，只是少了一只票。
+    """
+    from gr_data.ingest.datayes.importers.classify import _compress
+
+    seg = _compress(
+        _daily(
+            [
+                (1, "2025-01-02", "Chemicals"),
+                (1, "2025-01-03", "Chemicals"),
+                (1, "2025-01-06", "BasicChemicals"),
+            ]
+        )
+    )
+
+    assert len(seg) == 2
+    assert seg.loc[0, "industry_code"] == "Chemicals"
+    assert seg.loc[0, "out_date"].isoformat() == "2025-01-06"  # 不是 01-03
+    assert seg.loc[1, "in_date"].isoformat() == "2025-01-06"
+    assert seg.loc[1, "out_date"] is None
+
+
+def test_compress_bridges_short_gap_but_not_long_one():
+    """停牌造成的短空洞要接上，长空洞必须断开。
+
+    缺行不等于换了行业，所以短空洞接上；但停牌一年的票中间有没有被重分类，
+    我们并不知道，接上就是替供应商编数据。
+    """
+    from gr_data.ingest.datayes.importers.classify import MAX_GAP_DAYS, _compress
+
+    assert MAX_GAP_DAYS == 40
+    short = _compress(_daily([(1, "2025-01-02", "Banks"), (1, "2025-02-05", "Banks")]))
+    long = _compress(_daily([(1, "2025-01-02", "Banks"), (1, "2025-06-05", "Banks")]))
+
+    assert len(short) == 1  # 间隔 34 天，接上
+    assert len(long) == 2  # 间隔 154 天，断开
+    assert long.loc[0, "out_date"].isoformat() == "2025-06-05"
+
+
+def test_compress_never_merges_across_instruments():
+    """相邻两行属于不同标的时必须切段，哪怕行业相同、日期连续。"""
+    from gr_data.ingest.datayes.importers.classify import _compress
+
+    seg = _compress(_daily([(1, "2025-01-02", "Banks"), (2, "2025-01-03", "Banks")]))
+
+    assert len(seg) == 2
+    assert sorted(seg["instrument_id"]) == [1, 2]
+    # 跨标的不得把 out_date 指到另一只票的起点
+    assert seg.loc[0, "out_date"] is None and seg.loc[1, "out_date"] is None

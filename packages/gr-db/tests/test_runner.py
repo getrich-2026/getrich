@@ -351,6 +351,8 @@ def test_pg_ddl_dir_is_contiguous_and_covers_all_schemas() -> None:
         "backtest",
         "pick",
         "factor",
+        "fundamental",
+        "classify",
     ):
         assert f"CREATE SCHEMA IF NOT EXISTS {schema}" in all_sql, f"schema {schema} 未创建"
     # frontend 已被 app / backtest 取代，任何 SQL 语句里都不该再出现。

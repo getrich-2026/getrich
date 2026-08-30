@@ -95,7 +95,7 @@ enabled:
     # 可用的 importer（也可以直接写组名 reference / bars_1d / market_ext / all）：
     #   instruments, symbol_map, calendar,
     #   stock_bar_1d, index_bar_1d, future_bar_1d,
-    #   daily_basic, adj_factor_ts, valuation_1d
+    #   daily_basic, adj_factor_ts, valuation_1d, instrument_category
     # 顺序有依赖：instruments -> symbol_map -> 其余全部（都要靠 symbol_map 解析
     # instrument_id）。
     #
@@ -103,8 +103,8 @@ enabled:
     # tushare 的 claim 会撞 OwnershipError，需走 `gr-data own release/set` 显式转移
     # 并做新旧源一致性比对。**先跑 `gr-data own list` 看清楚再决定**——
     # 空的归属表意味着首次 claim、零冲突，有存量数据的库则必须逐表评估。
-    tushare: [reference, bars_1d, market_ext, fundamental]
+    tushare: [reference, bars_1d, market_ext, fundamental, classify]
     # datayes 顺序有依赖：symbol_map 建立 secID → instrument_id 映射，
     # model_run 钉住因子集合与顺序，其余五张表都要靠它俩。
     # symbol_map 又依赖 tushare 先把 meta.instruments 建好。
-    datayes: [meta, wide, cross]
+    datayes: [meta, wide, cross, classify]

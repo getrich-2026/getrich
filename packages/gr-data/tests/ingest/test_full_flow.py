@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from gr_data.common.ownership import OwnershipError, OwnershipManager
@@ -306,7 +306,10 @@ def test_datayes_full_flow(pg_conn, tmp_raw_root, fake_tushare, fake_datayes):
     - 因子值按 `model_run.factor_order` 对齐，而不是按源表列序。
     """
     from gr_data.ingest.datayes import REGISTRY as DY_REGISTRY
-    from gr_data.ingest.datayes.factors import ALL_FACTORS, SW21_FACTORS
+    from gr_data.ingest.datayes.factors import ALL_FACTORS, SW21_FACTORS, SW21_INDUSTRY_FACTORS
+
+    # Fake 让每行的第一个行业哑变量为 1，其余为 0
+    fx_first_industry = SW21_INDUSTRY_FACTORS[0]
     from gr_data.ingest.datayes.scaling import load_scaling
     from gr_data.ingest.tushare import REGISTRY as TS_REGISTRY
     from gr_data.raw.datayes import REGISTRY as DY_RAW
@@ -387,6 +390,29 @@ def test_datayes_full_flow(pg_conn, tmp_raw_root, fake_tushare, fake_datayes):
         # secID 与 meta.instruments.symbol 不是同一串，靠 symbol_map 对齐
         cur.execute("SELECT source_symbol FROM meta.symbol_map WHERE source = 'datayes' ORDER BY 1")
         assert [r[0] for r in cur.fetchall()] == ["000001.XSHE", "600000.XSHG"]
+
+        # classify（G1）：31 个一级节点，逐日归属压成区间。
+        # Fake 让每行的第一个行业为 1、两天不变，因此每个标的只应得到一段，
+        # 且 out_date 为 NULL（当前有效）——压成两段说明变化点判断错了。
+        cur.execute("SELECT max_level, available_level FROM classify.scheme")
+        assert cur.fetchone() == (3, 1)
+        cur.execute("SELECT count(*) FROM classify.industry_node WHERE scheme_code = 'sw2021'")
+        assert cur.fetchone()[0] == 31
+        cur.execute(
+            "SELECT industry_code, in_date, out_date, level "
+            "FROM classify.instrument_industry ORDER BY instrument_id"
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 2
+        for code, in_date, out_date, level in rows:
+            assert code == fx_first_industry
+            assert in_date == date(2024, 1, 2)
+            assert out_date is None
+            assert level == 1
+        # external_code 恒 NULL：没有通联英文标识到申万官方码的权威映射，
+        # 填一份猜的会让下游误以为能直接对接申万发布的成分数据。
+        cur.execute("SELECT count(*) FROM classify.industry_node WHERE external_code IS NOT NULL")
+        assert cur.fetchone()[0] == 0
 
     owners = {o.target: o.provider for o in OwnershipManager(pg_conn).list_all()}
     for table in ("factor.exposure", "factor.covariance", "factor.specific_risk"):
