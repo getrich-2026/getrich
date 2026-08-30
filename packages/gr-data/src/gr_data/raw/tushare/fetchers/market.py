@@ -27,14 +27,13 @@ Tushare 对一次查询的 ``offset`` 有 **100000 的硬上限**（实测：off
 
 from __future__ import annotations
 
-import calendar as _calendar
 from datetime import date
 
 import pandas as pd
 
 from gr_data.common.parquet import read_parquet_if_exists, write_parquet
 from gr_data.common.retry import int_to_date, retry_call, sleep_s, today_int
-from gr_data.raw.base import BaseFetcher
+from gr_data.raw.base import BaseFetcher, month_range
 
 
 PROVIDER = "tushare"
@@ -59,22 +58,6 @@ DAILY_BASIC_FIELDS = (
     "pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,"
     "total_share,float_share,free_share,total_mv,circ_mv,limit_status"
 )
-
-
-def month_range(start: date, end: date) -> list[tuple[str, date, date]]:
-    """产出 [(YYYY-MM, 月初, 月末), ...]，闭区间按自然月切分。
-
-    首月起点与末月终点分别夹到 start / end，避免越界抓取。
-    """
-    out: list[tuple[str, date, date]] = []
-    y, m = start.year, start.month
-    while (y, m) <= (end.year, end.month):
-        last_day = _calendar.monthrange(y, m)[1]
-        first = max(date(y, m, 1), start)
-        last = min(date(y, m, last_day), end)
-        out.append((f"{y:04d}-{m:02d}", first, last))
-        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
-    return out
 
 
 class _DailyFetcher(BaseFetcher):

@@ -14,7 +14,7 @@ from gr_data.logging import get_logger
 
 log = get_logger("ingest.runner")
 
-PROVIDERS = ("yinhe", "ricequant", "insight", "tushare")
+PROVIDERS = ("yinhe", "ricequant", "insight", "tushare", "datayes")
 
 
 def _registry_groups(provider: str) -> tuple[dict[str, Any], dict[str, list[str]]]:
@@ -26,6 +26,8 @@ def _registry_groups(provider: str) -> tuple[dict[str, Any], dict[str, list[str]
         from gr_data.ingest.insight import GROUPS, REGISTRY
     elif provider == "tushare":
         from gr_data.ingest.tushare import GROUPS, REGISTRY
+    elif provider == "datayes":
+        from gr_data.ingest.datayes import GROUPS, REGISTRY
     else:
         raise ValueError(f"未知 provider: {provider}")
     return REGISTRY, GROUPS
@@ -57,9 +59,23 @@ def run_provider(
     names = _expand(enabled, registry, groups)
 
     ctx = IngestContext(paths=RawPaths(cfg.raw_root), force_ownership=force_ownership)
+    kwargs = _provider_kwargs(provider, cfg)
     results: list[IngestResult] = []
     for name in names:
-        importer = registry[name](conn, ctx)
+        importer = registry[name](conn, ctx, **kwargs)
         log.info("ingest 开始 provider=%s importer=%s", provider, name)
         results.append(importer.run())
     return results
+
+
+def _provider_kwargs(provider: str, cfg: Config) -> dict[str, Any]:
+    """provider 专属的构造参数。
+
+    datayes 的量纲系数**没有默认值**：配置里缺任何一个键都直接拒绝启动，
+    而不是按一套猜的系数换算。理由见 ingest/datayes/scaling.py。
+    """
+    if provider == "datayes":
+        from gr_data.ingest.datayes.scaling import load_scaling
+
+        return {"scaling": load_scaling(cfg.section("providers", "datayes").get("scaling"))}
+    return {}

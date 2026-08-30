@@ -119,13 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     raw = sub.add_parser("raw", help="抓取 raw 数据落 parquet")
-    raw.add_argument("provider", choices=["yinhe", "ricequant", "insight", "tushare"])
+    raw.add_argument("provider", choices=["yinhe", "ricequant", "insight", "tushare", "datayes"])
     raw.add_argument("--mode", choices=["init", "update"], default="update")
     raw.add_argument("--only", help="逗号分隔的 fetcher 子集")
     raw.set_defaults(func=cmd_raw)
 
     ing = sub.add_parser("ingest", help="入库到 PostgreSQL")
-    ing.add_argument("provider", choices=["yinhe", "ricequant", "insight", "tushare"])
+    ing.add_argument("provider", choices=["yinhe", "ricequant", "insight", "tushare", "datayes"])
     ing.add_argument("--only", help="逗号分隔的 importer 子集")
     ing.add_argument("--force-ownership", action="store_true", help="允许转移目标表归属")
     ing.set_defaults(func=cmd_ingest)

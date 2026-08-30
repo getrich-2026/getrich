@@ -11,6 +11,16 @@
 from __future__ import annotations
 
 from gr_data.common.contracts.base import TableContract
+from gr_data.common.contracts.factor import (
+    COVARIANCE,
+    DEFINITION,
+    EXPOSURE,
+    FACTOR_RETURN,
+    MODEL,
+    MODEL_RUN,
+    SPECIFIC_RETURN,
+    SPECIFIC_RISK,
+)
 from gr_data.common.contracts.market import (
     ADJ_FACTOR_TS,
     STOCK_DAILY_BASIC,
@@ -23,7 +33,15 @@ from gr_data.common.contracts.meta import INSTRUMENTS, SYMBOL_MAP, TRADING_CALEN
 
 __all__ = [
     "ADJ_FACTOR_TS",
+    "COVARIANCE",
+    "DEFINITION",
+    "EXPOSURE",
+    "FACTOR_RETURN",
     "INSTRUMENTS",
+    "MODEL",
+    "MODEL_RUN",
+    "SPECIFIC_RETURN",
+    "SPECIFIC_RISK",
     "STOCK_DAILY_BASIC",
     "SYMBOL_MAP",
     "TRADING_CALENDAR",

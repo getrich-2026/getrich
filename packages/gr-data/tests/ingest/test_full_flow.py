@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from gr_data.common.ownership import OwnershipError, OwnershipManager
 from gr_data.ingest.base import IngestContext
@@ -263,3 +265,119 @@ def test_daily_basic_jsonb_roundtrip(pg_conn, tmp_raw_root, fake_tushare):
         adj, source = cur.fetchone()
         assert float(adj) == 1.25
         assert source == "tushare"
+
+
+_SCALING = {
+    "mode": "calibrated",
+    "exposure_unit": "zscore",
+    "factor_ret_unit": "dec_daily",
+    "cov_unit": "pct2_annual",
+    "srisk_unit": "pct_annual",
+    "srisk_is_variance": False,
+    "spret_unit": "pct_daily",
+    "calibrated": False,
+}
+
+
+def test_datayes_full_flow(pg_conn, tmp_raw_root, fake_tushare, fake_datayes):
+    """raw(Fake) → parquet → ingest → PG，重点验证真库才能证明的那几件事：
+
+    - `REAL[]` / `DOUBLE PRECISION[]` / `JSONB` 三种列的 COPY 通路真的能走通；
+    - 数组长度约束（exposure=K、cov_flat=K(K+1)/2）真的生效；
+    - 因子值按 `model_run.factor_order` 对齐，而不是按源表列序。
+    """
+    from gr_data.ingest.datayes import REGISTRY as DY_REGISTRY
+    from gr_data.ingest.datayes.factors import ALL_FACTORS, SW21_FACTORS
+    from gr_data.ingest.datayes.scaling import load_scaling
+    from gr_data.ingest.tushare import REGISTRY as TS_REGISTRY
+    from gr_data.raw.datayes import REGISTRY as DY_RAW
+
+    # datayes 的 symbol_map 要靠 tushare 先把 meta.instruments 建好
+    _run_tushare_raw(tmp_raw_root, fake_tushare)
+    ctx = IngestContext(paths=tmp_raw_root)
+    for name in ("instruments", "symbol_map"):
+        TS_REGISTRY[name](pg_conn, ctx).run()
+
+    raw_ctx = _raw_ctx(tmp_raw_root)
+    raw_ctx.start_date = 20240101
+    for ds in DY_RAW:
+        DY_RAW[ds](fake_datayes, raw_ctx).fetch("init")
+
+    scaling = load_scaling(_SCALING)
+    from gr_data.ingest.datayes import GROUPS as DY_GROUPS
+
+    for name in DY_GROUPS["all"]:
+        DY_REGISTRY[name](pg_conn, ctx, scaling=scaling).run()
+
+    k = len(SW21_FACTORS)
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "SELECT run_id, factor_count, array_length(factor_order, 1), calibrated, "
+            "       annualization_basis, units->>'factor_return', units->>'specific_return' "
+            "FROM factor.model_run"
+        )
+        run_id, count, order_len, calibrated, basis, f_unit, u_unit = cur.fetchone()
+        assert count == k and order_len == k
+        # 全区间复核前必须是 false，下游据此把指标标成 degraded
+        assert calibrated is False
+        assert basis == "annual_252"
+        # f 是小数、u 是百分比 —— 混用会差 100 倍，口径必须落库
+        assert f_unit == "dec_daily"
+        assert u_unit == "pct_daily"
+
+        cur.execute("SELECT count(*) FROM factor.definition")
+        assert cur.fetchone()[0] == k
+
+        # 数组长度：DDL 的 CHECK 已经把关，这里再断言一次实际落库值
+        cur.execute(
+            "SELECT count(*) FROM factor.exposure WHERE array_length(exposure, 1) <> %s", (k,)
+        )
+        assert cur.fetchone()[0] == 0
+        cur.execute(
+            "SELECT count(*) FROM factor.covariance WHERE array_length(cov_flat, 1) <> %s",
+            (k * (k + 1) // 2,),
+        )
+        assert cur.fetchone()[0] == 0
+
+        # 因子值按 factor_order 对齐：Fake 让每个因子的值等于它在超集里的下标，
+        # 而三张宽表的源列序互不相同 —— 按源列序取值这条断言必挂。
+        cur.execute(
+            "SELECT factor_order, ret_vector FROM factor.model_run, factor.factor_return LIMIT 1"
+        )
+        factor_order, ret_vector = cur.fetchone()
+        for i, name in enumerate(factor_order):
+            assert ret_vector[i] == pytest.approx(ALL_FACTORS.index(name)), f"{name} 错位"
+
+        # SRISK 29.6（年化百分比波动率 σ）→ specific_var = σ² = 876.16
+        cur.execute("SELECT specific_var FROM factor.specific_risk LIMIT 1")
+        assert cur.fetchone()[0] == pytest.approx(876.16, rel=1e-4)
+        # SPRET 是百分比，原样入库不缩放
+        cur.execute("SELECT specific_ret FROM factor.specific_return LIMIT 1")
+        assert cur.fetchone()[0] == pytest.approx(1.5)
+
+        # available_at 取供应商 updateTime，并按 Asia/Shanghai 解释。
+        # 断言的是**时刻**而不是 utcoffset —— 后者只反映读取连接的会话时区，
+        # 换个连接就变，测不出「入库时是否钉了时区」。Fake 给的 17:00（东八）
+        # 必须落成 UTC 09:00；若入库时漏了 tz_localize，CI 的 UTC 机器上会存成 17:00Z。
+        cur.execute(
+            "SELECT min(available_at AT TIME ZONE 'UTC') FROM factor.exposure "
+            "WHERE trading_day = DATE '2024-01-02'"
+        )
+        assert cur.fetchone()[0] == datetime(2024, 1, 2, 9, 0)
+
+        # secID 与 meta.instruments.symbol 不是同一串，靠 symbol_map 对齐
+        cur.execute("SELECT source_symbol FROM meta.symbol_map WHERE source = 'datayes' ORDER BY 1")
+        assert [r[0] for r in cur.fetchall()] == ["000001.XSHE", "600000.XSHG"]
+
+    owners = {o.target: o.provider for o in OwnershipManager(pg_conn).list_all()}
+    for table in ("factor.exposure", "factor.covariance", "factor.specific_risk"):
+        assert owners[table] == "datayes"
+
+
+def test_datayes_scaling_missing_config_refuses_to_start(pg_conn, tmp_raw_root):
+    """量纲配置缺键时必须拒绝启动，而不是按默认系数算。"""
+    from gr_data.common.retry import PermanentError
+    from gr_data.ingest.datayes.scaling import load_scaling
+
+    with pytest.raises(PermanentError, match="scaling 缺少必填键"):
+        load_scaling({k: v for k, v in _SCALING.items() if k != "srisk_is_variance"})

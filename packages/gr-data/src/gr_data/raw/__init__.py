@@ -11,11 +11,15 @@ from gr_data.common.paths import RawPaths
 from gr_data.config.pipeline import Config
 from gr_data.logging import get_logger
 from gr_data.raw.base import RawContext
+from gr_data.raw.datayes.client import (
+    DEFAULT_BASE_URL as DATAYES_DEFAULT_BASE_URL,
+    NotAuthorizedError,
+)
 
 
 log = get_logger("raw.runner")
 
-PROVIDERS = ("yinhe", "ricequant", "insight", "tushare")
+PROVIDERS = ("yinhe", "ricequant", "insight", "tushare", "datayes")
 
 
 def _registry(provider: str) -> dict[str, Any]:
@@ -27,6 +31,8 @@ def _registry(provider: str) -> dict[str, Any]:
         from gr_data.raw.insight import REGISTRY
     elif provider == "tushare":
         from gr_data.raw.tushare import REGISTRY
+    elif provider == "datayes":
+        from gr_data.raw.datayes import REGISTRY
     else:
         raise ValueError(f"未知 provider: {provider}")
     return REGISTRY
@@ -63,6 +69,15 @@ def _build_client(provider: str, cfg: Config) -> Any:
         from gr_data.raw.tushare import TushareProClient
 
         return TushareProClient(token=pconf.get("token", ""))
+    if provider == "datayes":
+        from gr_data.raw.datayes import DatayesHttpClient
+
+        rate = pconf.get("rate_limit") or {}
+        return DatayesHttpClient(
+            token=pconf.get("token", ""),
+            base_url=pconf.get("base_url", DATAYES_DEFAULT_BASE_URL),
+            sleep_between_requests=float(rate.get("sleep_between_requests_sec", 1.0)),
+        )
     raise ValueError(f"未知 provider: {provider}")
 
 
@@ -95,5 +110,11 @@ def run_provider(
             continue
         fetcher = registry[name](client, ctx)
         log.info("raw 抓取开始 provider=%s dataset=%s mode=%s", provider, name, mode)
-        results[name] = fetcher.fetch(mode=mode)
+        try:
+            results[name] = fetcher.fetch(mode=mode)
+        except NotAuthorizedError:
+            # 按表购买制下「没买这张表」是可预期状态，不该让整批抓取失败。
+            # 但也不能静默跳过——缺表会让下游指标降级，日志里必须留痕。
+            log.error("provider=%s dataset=%s 未授权，跳过；其余 dataset 继续", provider, name)
+            results[name] = 0
     return results

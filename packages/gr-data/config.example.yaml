@@ -50,6 +50,32 @@ providers:
       retry_backoff_base_sec: 3.0
     start_date: 20130101        # 全量起点，int8
 
+  datayes:
+    # 通联数据（CNE6-SW21 风险模型五表）。无官方 pip SDK，走自研 HTTP client。
+    token_env: DATAYES_TOKEN
+    base_url: https://api.wmcloud.com/data/v1
+    rate_limit:
+      # 官方未公布限流阈值，只给了 -11/-15/-16 三个错误码。初值取保守的 1 req/s，
+      # 跑通一次全量后按实际回调。-16（调取过频）会让 client 就地把它上调 1.5 倍。
+      sleep_between_requests_sec: 1.0
+      max_retries: 5
+      retry_backoff_base_sec: 3.0
+    start_date: 20250101        # 本轮导入区间起点，回补历史时调这里
+    scaling:
+      # ⚠️ 量纲声明**没有默认值**：缺任何一个键，ingest 直接拒绝启动。
+      # 原因是同一个模型内部量纲是混着的（实测，见 getrich-design
+      # data-platform/providers/datayes.md §9.0）：f 是小数、u/SRISK/F 是百分比制，
+      # 于是 r = 100·X·f + u。少乘那个 100 差两个数量级，把 SRISK 当方差差一个数量级，
+      # 两种错都不会报错。给默认值等于「漏配就按猜的系数算」。
+      mode: calibrated          # calibrated | passthrough
+      exposure_unit: zscore     # 风格因子无量纲 z-score；行业因子是 0/1 哑变量
+      factor_ret_unit: dec_daily
+      cov_unit: pct2_annual
+      srisk_unit: pct_annual
+      srisk_is_variance: false  # 供应商给的是波动率 σ，入库前平方成方差
+      spret_unit: pct_daily
+      calibrated: false         # 全区间复核通过前保持 false，下游据此标 degraded
+
 # ---- 抓取/入库开关（哪些 fetcher / importer 启用）----
 # 详见 docs/layers/*.md
 enabled:
@@ -59,6 +85,9 @@ enabled:
     insight: [basic_info, trading_days, kline_day]
     # 顺序有依赖：calendar 必须排在逐日接口之前（它们靠交易日历决定抓哪些天）。
     tushare: [instruments, calendar, daily, daily_basic, adj_factor, stk_limit, suspend_d, index_daily, fut_daily]
+    # 顺序按「先小后大」：前两张每天只有几十到一千行，能最快验证凭证与权限；
+    # 后三张是个股 × 日的大表，全量各约 216 万行。
+    datayes: [factor_ret_cne6_sw21, factor_cov_cne6_sw21, exposure_cne6_sw21, srisk_cne6_sw21, specific_ret_cne6_sw21]
   ingest:
     yinhe: [calendar, symbol_map, instruments, bars_1d]
     ricequant: [instruments, calendar, bars_1d]
@@ -75,3 +104,7 @@ enabled:
     # 并做新旧源一致性比对。**先跑 `gr-data own list` 看清楚再决定**——
     # 空的归属表意味着首次 claim、零冲突，有存量数据的库则必须逐表评估。
     tushare: [reference, bars_1d, market_ext]
+    # datayes 顺序有依赖：symbol_map 建立 secID → instrument_id 映射，
+    # model_run 钉住因子集合与顺序，其余五张表都要靠它俩。
+    # symbol_map 又依赖 tushare 先把 meta.instruments 建好。
+    datayes: [meta, wide, cross]

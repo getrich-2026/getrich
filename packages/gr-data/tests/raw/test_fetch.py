@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from gr_data.common.parquet import read_parquet_if_exists
+from gr_data.ingest.datayes.factors import SW21_FACTORS as DY_SW21_FACTORS
 from gr_data.raw.base import RawContext
 
 
@@ -165,3 +166,39 @@ def test_tushare_fetches_by_trade_date_not_range(tmp_raw_root, fake_tushare):
     for c in daily_calls:
         assert "trade_date" in c, f"daily 应按 trade_date 调用，实际: {c}"
         assert "start_date" not in c and "end_date" not in c
+
+
+def test_datayes_fetch_flow(tmp_raw_root, fake_datayes):
+    """DataYes 五表按自然月落盘，raw 层保留供应商列名与列序。"""
+    from gr_data.raw.datayes import REGISTRY
+
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+
+    for ds in REGISTRY:
+        REGISTRY[ds](fake_datayes, ctx).fetch("init")
+
+    exposure = read_parquet_if_exists(
+        tmp_raw_root.dataset_file("datayes", "exposure_cne6_sw21", "2024-01")
+    )
+    assert exposure is not None
+    assert len(exposure) == 4  # 2 标的 x 2 天
+    assert {"secID", "tradeDate", "updateTime"} <= set(exposure.columns)
+
+    cov = read_parquet_if_exists(
+        tmp_raw_root.dataset_file("datayes", "factor_cov_cne6_sw21", "2024-01")
+    )
+    assert cov is not None
+    assert {"factorName", "factorID"} <= set(cov.columns)
+
+    # raw 层不归一化：exposure 与 covariance 的因子列序必须**保持不同**，
+    # 这正是 ingest 层要靠 reindex_wide 处理的那个差异
+    fac_exp = [c for c in exposure.columns if c.upper() in {f.upper() for f in DY_SW21_FACTORS}]
+    fac_cov = [c for c in cov.columns if c.upper() in {f.upper() for f in DY_SW21_FACTORS}]
+    assert {c.upper() for c in fac_exp} == {c.upper() for c in fac_cov}
+    assert [c.upper() for c in fac_exp] != [c.upper() for c in fac_cov]
+
+    srisk = read_parquet_if_exists(
+        tmp_raw_root.dataset_file("datayes", "srisk_cne6_sw21", "2024-01")
+    )
+    assert srisk is not None and srisk["SRISK"].iloc[0] == 29.6  # raw 层不平方
