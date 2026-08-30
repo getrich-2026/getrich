@@ -11,7 +11,7 @@ MetricValue 三态序列化。
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -176,6 +176,40 @@ def test_duplicate_symbols_are_merged_not_rejected() -> None:
     assert dup == ["600000.SH"]
     assert len(holdings) == 1
     assert holdings[0]["weight"] == 1.0
+
+
+def test_duplicate_symbols_use_the_same_normalisation_as_resolution() -> None:
+    """大小写与空白不同的同一代码仍然只能算一只。"""
+    plan = PortfolioPlan(
+        plan_id="p1",
+        holdings=[
+            HoldingItem(symbol=" 600000.sh ", weight=Decimal("30")),
+            HoldingItem(symbol="600000.SH", weight=Decimal("10")),
+        ],
+    )
+
+    _mode, holdings, unresolved, duplicated, *_ = svc._normalize_plan(plan, _INST)
+
+    assert unresolved == []
+    assert duplicated == ["600000.SH"]
+    assert len(holdings) == 1
+    assert holdings[0]["weight"] == 1.0
+
+
+def test_zero_weight_resolvable_subset_is_rejected() -> None:
+    """不能把用户权重为零的可解析子集静默改成等权。"""
+    plan = PortfolioPlan(
+        plan_id="p1",
+        holdings=[
+            HoldingItem(symbol="600000.SH", weight=Decimal(0)),
+            HoldingItem(symbol="999999.SH", weight=Decimal(100)),
+        ],
+    )
+
+    with pytest.raises(Exception, match="zero total user weight") as exc_info:
+        svc._normalize_plan(plan, _INST)
+
+    assert exc_info.value.http_status == 422
 
 
 def test_mixed_weight_input_is_rejected_at_schema_level() -> None:
@@ -418,6 +452,181 @@ def test_merge_data_quality_dedupes_and_takes_worst_coverage() -> None:
     assert merged["coverage_summary"]["industry"] == 0.5
 
 
+def test_shared_cache_is_reassembled_with_current_request_metadata() -> None:
+    """旧缓存即使含别人的请求字段，也不能把它们返回给当前 snapshot。"""
+    holdings = [{"instrument_id": 1, "symbol": "600000.SH", "weight": 1.0}]
+    section_a = _exposure(
+        holdings,
+        input_weight=Decimal(100),
+        resolved_weight=Decimal(50),
+    )
+    old_payload = {
+        "plan_id": "before",
+        "label": "before",
+        "weight_mode": "user",
+        "section_a": section_a,
+        "section_b": None,
+        "section_c": None,
+        "section_d": None,
+        "blindspots": svc._build_blindspots(section_a, {}),
+        "profile": svc._build_profile(section_a, holdings),
+    }
+    row = {
+        "plan_index": 0,
+        "plan_id": "my-portfolio",
+        "label": "mine",
+        "weight_mode": "user",
+        "requested_holdings": [{"symbol": "600000.SH", "weight": "100"}],
+        "resolved_holdings": holdings,
+        "payload": old_payload,
+        "data_quality": {
+            "unresolved_symbols": ["GARBAGE"],
+            "duplicated_symbols": ["SECRET"],
+            "coverage_summary": {"symbol_resolution": 0.5, "industry": 0.8},
+            "forced_disclosures": ["safe"],
+        },
+    }
+
+    context = svc._request_context_from_plan_row(row)
+    result = svc._assemble_plan_result(row, context)
+    dq = svc._assemble_plan_data_quality(row, context)
+
+    assert result["plan_id"] == "my-portfolio"
+    assert result["label"] == "mine"
+    assert result["section_a"]["calculation_coverage_ratio"] == pytest.approx(1.0)
+    assert dq["unresolved_symbols"] == []
+    assert dq["duplicated_symbols"] == []
+    assert dq["coverage_summary"] == {
+        "symbol_resolution": pytest.approx(1.0),
+        "industry": 0.8,
+    }
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        ([None], "pending"),
+        (["pending", "succeeded"], "pending"),
+        (["running", "succeeded"], "running"),
+        (["succeeded", "succeeded"], "succeeded"),
+        (["partially_succeeded"], "partially_succeeded"),
+        (["failed", "succeeded"], "partially_succeeded"),
+        (["failed", "failed"], "failed"),
+    ],
+)
+def test_run_status_uses_explicit_latest_run_statuses(
+    statuses: list[str | None], expected: str
+) -> None:
+    assert svc._aggregate_run_status([{"status": status} for status in statuses]) == expected
+
+
+@pytest.mark.anyio
+async def test_default_as_of_date_uses_platform_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeDateTime(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> FakeDateTime:
+            assert str(tz) == "Asia/Shanghai"
+            return cls(2026, 8, 31, 0, 30, tzinfo=tz)
+
+    class Cursor:
+        async def __aenter__(self) -> Cursor:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def execute(self, _sql: str, params: tuple[Any, ...]) -> None:
+            captured["target"] = params[1]
+
+        async def fetchone(self) -> dict[str, date]:
+            return {"trading_day": captured["target"]}
+
+    class Db:
+        def cursor(self) -> Cursor:
+            return Cursor()
+
+    monkeypatch.setattr(svc, "datetime", FakeDateTime)
+
+    resolved = await svc._resolve_as_of_date(Db(), None)
+
+    assert resolved == date(2026, 8, 31)
+    assert captured["target"] == date(2026, 8, 31)
+
+
+@pytest.mark.anyio
+async def test_symbol_resolution_rejects_ambiguous_stock_etf_match() -> None:
+    class Cursor:
+        async def __aenter__(self) -> Cursor:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def execute(self, sql: str, _params: tuple[Any, ...]) -> None:
+            assert "asset IN ('stock', 'etf')" in sql
+            assert "ORDER BY symbol" in sql
+
+        async def fetchall(self) -> list[dict[str, Any]]:
+            return [
+                {"instrument_id": 1, "symbol": "600000.SH"},
+                {"instrument_id": 2, "symbol": "600000.SH"},
+            ]
+
+    class Db:
+        def cursor(self) -> Cursor:
+            return Cursor()
+
+    with pytest.raises(Exception, match="ambiguous symbols") as exc_info:
+        await svc._resolve_symbols(Db(), ["600000.SH"])
+
+    assert exc_info.value.http_status == 422
+
+
+@pytest.mark.anyio
+async def test_sse_stream_ends_immediately_after_complete() -> None:
+    from gr_api.routers.diagnosis import _stream_sections
+
+    class ConnectedRequest:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    result = {
+        "plans": [],
+        "cov": {"primary": "historical", "computed": []},
+        "disclosures": [],
+        "run_status": "succeeded",
+        "comparison": None,
+        "data_quality": {},
+    }
+    frames = [
+        frame
+        async for frame in _stream_sections(
+            svc.uuid4(),
+            result,
+            ConnectedRequest(),  # type: ignore[arg-type]
+        )
+    ]
+
+    assert len(frames) == 2
+    assert b"event: complete" in frames[-1]
+
+
+def test_json_diagnosis_routes_declare_response_models() -> None:
+    from fastapi.routing import APIRoute
+    from gr_api.routers.diagnosis import router
+
+    json_routes = [
+        route
+        for route in router.routes
+        if isinstance(route, APIRoute) and not route.path.endswith("/stream")
+    ]
+
+    assert len(json_routes) == 8
+    assert all(route.response_model is not None for route in json_routes)
+
+
 # ===========================================================================
 # 安全头（AGENTS.md §8 硬性要求：新增路由后仍须带这 4 个头）
 # ===========================================================================
@@ -430,15 +639,33 @@ def test_diagnosis_routes_keep_security_headers(monkeypatch: pytest.MonkeyPatch)
     来测：未捕获异常由 Starlette 最外层的 ServerErrorMiddleware 处理，那一层
     在用户中间件之外，本来就拿不到这几个头，测了会得出错误结论。
     """
+    from fastapi import FastAPI
     from gr_api.deps import get_db
-    from gr_api.main import create_app
+    from gr_api.middleware import SecurityHeadersMiddleware
+    from gr_api.routers.diagnosis import router
 
     async def _fake_list(db: Any) -> list[dict[str, Any]]:
-        return [{"spec_version": "v1-hist-20260901", "is_active": True}]
+        return [
+            {
+                "spec_version": "v1-hist-20260901",
+                "factor_model": None,
+                "factor_model_version": None,
+                "params": {},
+                "effective_from": date(2026, 8, 30),
+                "effective_to": None,
+                "is_active": True,
+                # response_model 必须过滤未来新增的内部列。
+                "created_at": datetime(2026, 8, 30),
+            }
+        ]
 
     monkeypatch.setattr(svc, "list_spec_versions", _fake_list)
 
-    app = create_app()
+    # main.create_app 的全量路由会冷导入回测统计栈；这里构造同一条
+    # 「SecurityHeadersMiddleware → diagnosis router」链，专注验证本模块新增路由。
+    app = FastAPI()
+    app.add_middleware(SecurityHeadersMiddleware, csp_policy="default-src 'none'")
+    app.include_router(router, prefix="/v1")
 
     async def _fake_db() -> Any:
         yield None
@@ -450,6 +677,7 @@ def test_diagnosis_routes_keep_security_headers(monkeypatch: pytest.MonkeyPatch)
 
     assert r.status_code == 200
     assert r.json()["code"] == 0
+    assert "created_at" not in r.json()["data"]["list"][0]
     assert r.headers["X-Content-Type-Options"] == "nosniff"
     assert r.headers["X-Frame-Options"] == "DENY"
     assert r.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"

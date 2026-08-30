@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -21,9 +20,20 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from gr_api.deps import get_current_user, get_db, request_id
 from gr_api.response import success
-from gr_api.schemas.diagnosis import SnapshotRequest
+from gr_api.schemas.diagnosis import (
+    ApiResponse,
+    DataQualityReport,
+    DiagnosisReport,
+    DiagnosisResult,
+    ShareTokenCreated,
+    SnapshotAccepted,
+    SnapshotRequest,
+    SpecVersionInfo,
+    SpecVersionList,
+)
 from gr_api.services import diagnosis as diag_svc
-from gr_api.services.sse import HEARTBEAT_INTERVAL_S, SSE_HEARTBEAT, sse_frame
+from gr_api.services.sse import sse_frame
+from gr_data.db import pg_pool
 
 
 if TYPE_CHECKING:
@@ -36,7 +46,7 @@ router = APIRouter(prefix="/diagnosis", tags=["组合诊断"])
 # ---------------------------------------------------------------- 提交与读取
 
 
-@router.post("/snapshots")
+@router.post("/snapshots", response_model=ApiResponse[SnapshotAccepted])
 async def create_snapshot(
     body: SnapshotRequest,
     response: Response,
@@ -58,7 +68,7 @@ async def create_snapshot(
     return success(data, rid)
 
 
-@router.get("/snapshots/{snapshot_id}/result")
+@router.get("/snapshots/{snapshot_id}/result", response_model=ApiResponse[DiagnosisResult])
 async def get_result(
     snapshot_id: UUID,
     response: Response,
@@ -79,7 +89,7 @@ async def get_result(
     return success(data, rid)
 
 
-@router.get("/snapshots/{snapshot_id}/report")
+@router.get("/snapshots/{snapshot_id}/report", response_model=ApiResponse[DiagnosisReport])
 async def get_report(
     snapshot_id: UUID,
     user_level: str | None = Query(default=None, pattern=r"^(retail|pro)$"),
@@ -95,7 +105,10 @@ async def get_report(
     return success(data, rid)
 
 
-@router.get("/snapshots/{snapshot_id}/data-quality")
+@router.get(
+    "/snapshots/{snapshot_id}/data-quality",
+    response_model=ApiResponse[DataQualityReport],
+)
 async def get_data_quality(
     snapshot_id: UUID,
     user_id: str | None = Depends(get_current_user),
@@ -202,26 +215,19 @@ async def stream_snapshot(
     snapshot_id: UUID,
     request: Request,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
 ) -> StreamingResponse:
     """SSE 分批推送。
 
     归属校验在这里**先行**做完（``get_result`` 内部会校验）：StreamingResponse
     一旦开始就已经把 200 和响应头刷出去了，那之后再抛异常无法转成干净的 403/404。
     """
-    result = await diag_svc.get_result(db, snapshot_id, user_id=user_id)
-
-    async def gen():
-        async for frame in _stream_sections(snapshot_id, result, request):
-            yield frame
-        # 一期计算是同步的，走到这里数据已全部推完。心跳只为对付
-        # 反向代理的空闲超时，保持连接直到客户端主动断开。
-        while not await request.is_disconnected():
-            await asyncio.sleep(HEARTBEAT_INTERVAL_S)
-            yield SSE_HEARTBEAT
+    # yield 型 FastAPI 依赖会等流结束才清理，不能把 get_db 挂在 SSE 路由上；
+    # 在返回 StreamingResponse 前显式退出连接上下文，流只消费内存中的 result。
+    async with pg_pool.connection() as db:
+        result = await diag_svc.get_result(db, snapshot_id, user_id=user_id)
 
     return StreamingResponse(
-        gen(),
+        _stream_sections(snapshot_id, result, request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -234,7 +240,7 @@ async def stream_snapshot(
 # ---------------------------------------------------------------- 口径版本
 
 
-@router.get("/spec-versions")
+@router.get("/spec-versions", response_model=ApiResponse[SpecVersionList])
 async def list_spec_versions(
     db: AsyncConnection = Depends(get_db),
     rid: str = Depends(request_id),
@@ -244,7 +250,7 @@ async def list_spec_versions(
     return success({"list": rows}, rid)
 
 
-@router.get("/spec-versions/current")
+@router.get("/spec-versions/current", response_model=ApiResponse[SpecVersionInfo])
 async def get_current_spec_version(
     db: AsyncConnection = Depends(get_db),
     rid: str = Depends(request_id),
@@ -261,7 +267,11 @@ async def get_current_spec_version(
 # ---------------------------------------------------------------- 分享
 
 
-@router.post("/snapshots/{snapshot_id}/share", status_code=201)
+@router.post(
+    "/snapshots/{snapshot_id}/share",
+    status_code=201,
+    response_model=ApiResponse[ShareTokenCreated],
+)
 async def create_share(
     snapshot_id: UUID,
     user_id: str | None = Depends(get_current_user),
@@ -273,7 +283,7 @@ async def create_share(
     return success(data, rid)
 
 
-@router.get("/share/{token}/report")
+@router.get("/share/{token}/report", response_model=ApiResponse[DiagnosisReport])
 async def get_shared_report(
     token: str,
     db: AsyncConnection = Depends(get_db),

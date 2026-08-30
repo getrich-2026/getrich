@@ -23,10 +23,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from copy import deepcopy
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from gr_api.errors import BadRequest, Forbidden, NotFound
 from gr_api.schemas.diagnosis import (
@@ -48,9 +50,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-#: ``diag.diagnosis_run.payload`` 的结构版本。PlanResult 的字段增删必须同步 +1，
-#: 否则新代码会去解析旧结构的 payload 而不自知。
-PAYLOAD_SCHEMA_VERSION = "1.0"
+#: ``diag.diagnosis_run.payload`` 的结构版本。v2 起只存 PlanResult 的纯计算子集，
+#: 请求级字段统一在读取时拼接；缓存字段增删必须同步 +1。
+PAYLOAD_SCHEMA_VERSION = "2.0"
+
+#: 进程时区不能决定业务日期；数据库连接虽钉住了会话时区，却不会改变 Python 进程时区。
+PLATFORM_TZ = ZoneInfo("Asia/Shanghai")
+
+#: 这些字段描述当前 snapshot 的输入，不是计算函数的输出，禁止写进跨用户共享 payload。
+REQUEST_EXPOSURE_FIELDS: tuple[str, ...] = (
+    "input_weight",
+    "resolved_weight",
+    "unresolved_weight",
+    "calculation_coverage_ratio",
+    "normalized_within_resolved_subset",
+)
 
 #: 权重的存储精度，对齐 DDL 的 ``NUMERIC(12,8)``。
 #: 哈希前必须按这个精度舍入 —— 不舍入的话 1/3 这种除不尽的权重，
@@ -193,7 +207,12 @@ async def get_active_spec_version(db: AsyncConnection, spec_version: str | None 
 async def list_spec_versions(db: AsyncConnection) -> list[dict]:
     async with db.cursor() as cur:
         await cur.execute(
-            "SELECT * FROM diag.spec_version ORDER BY effective_from DESC, spec_version DESC"
+            """
+            SELECT spec_version, factor_model, factor_model_version, params,
+                   effective_from, effective_to, is_active
+            FROM diag.spec_version
+            ORDER BY effective_from DESC, spec_version DESC
+            """
         )
         return list(await cur.fetchall())
 
@@ -219,7 +238,7 @@ async def get_data_version(db: AsyncConnection) -> dict:
 
 async def _resolve_as_of_date(db: AsyncConnection, requested: date | None) -> date:
     """把请求的日期解析成具体交易日；缺省取最近一个已开市的交易日。"""
-    target = requested or date.today()
+    target = requested or datetime.now(PLATFORM_TZ).date()
     async with db.cursor() as cur:
         await cur.execute(
             """
@@ -251,10 +270,10 @@ async def _resolve_symbols(db: AsyncConnection, symbols: list[str]) -> dict[str,
     因此不需要转换；但凡改成按 ``exchange`` 过滤，就必须先经
     ``pick_symbols.to_canonical_exchange``，否则整批查不到且不报错。
     """
-    normalized: dict[str, str] = {}
+    normalized: set[str] = set()
     for raw in symbols:
         try:
-            normalized[raw] = parse_symbol(raw).symbol_full
+            normalized.add(parse_symbol(raw).symbol_full)
         except ValueError:
             # 格式就不对（不是 6 位数字 + .SH/.SZ/.BJ），归入未解析，不抛异常 ——
             # 部分代码解析不了应当降级出数，不是整个请求失败（§7.6）。
@@ -268,12 +287,54 @@ async def _resolve_symbols(db: AsyncConnection, symbols: list[str]) -> dict[str,
             SELECT instrument_id, symbol, asset, exchange, name, list_date, delist_date, status
             FROM meta.instruments
             WHERE symbol = ANY(%s)
+              AND asset IN ('stock', 'etf')
+            ORDER BY symbol, asset, exchange, instrument_id
             """,
-            (list(set(normalized.values())),),
+            (sorted(normalized),),
         )
-        rows = {r["symbol"]: r for r in await cur.fetchall()}
+        fetched = list(await cur.fetchall())
 
-    return {raw: rows[full] for raw, full in normalized.items() if full in rows}
+    rows: dict[str, dict] = {}
+    ambiguous: set[str] = set()
+    for row in fetched:
+        symbol = row["symbol"]
+        if symbol in rows and rows[symbol]["instrument_id"] != row["instrument_id"]:
+            ambiguous.add(symbol)
+        else:
+            rows[symbol] = row
+    if ambiguous:
+        symbols_text = ", ".join(sorted(ambiguous))
+        raise BadRequest(
+            f"ambiguous symbols matched multiple stock/etf instruments: {symbols_text}",
+            http_status=422,
+        )
+
+    return rows
+
+
+def _merge_plan_holdings(
+    plan: PortfolioPlan,
+) -> tuple[dict[str, Decimal | None], dict[str, str], list[str]]:
+    """按解析使用的规范代码合并持仓，并保留未解析代码的可读形式。"""
+    merged: dict[str, Decimal | None] = {}
+    display: dict[str, str] = {}
+    duplicated: list[str] = []
+    for item in plan.holdings:
+        try:
+            key = parse_symbol(item.symbol).symbol_full
+        except ValueError:
+            key = item.symbol.strip().upper()
+        display.setdefault(key, key)
+        if key in merged:
+            duplicated.append(display[key])
+            previous = merged[key]
+            if previous is None or item.weight is None:
+                merged[key] = None
+            else:
+                merged[key] = previous + item.weight
+        else:
+            merged[key] = item.weight
+    return merged, display, duplicated
 
 
 def _normalize_plan(
@@ -287,23 +348,12 @@ def _normalize_plan(
         input_weight, resolved_weight)``。
     """
     # 1) 同一 plan 内重复代码：合并权重（加总），记名后继续，不报错（§7.6）
-    merged: dict[str, Decimal | None] = {}
-    duplicated: list[str] = []
-    for item in plan.holdings:
-        if item.symbol in merged:
-            duplicated.append(item.symbol)
-            prev = merged[item.symbol]
-            if prev is None or item.weight is None:
-                merged[item.symbol] = None
-            else:
-                merged[item.symbol] = prev + item.weight
-        else:
-            merged[item.symbol] = item.weight
+    merged, display, duplicated = _merge_plan_holdings(plan)
 
     # 2) weight_mode：模型校验器已保证「要么全给、要么全不给」
     weight_mode = "user" if any(w is not None for w in merged.values()) else "equal"
 
-    unresolved = [s for s in merged if s not in resolved]
+    unresolved = [display[s] for s in merged if s not in resolved]
     resolvable = [s for s in merged if s in resolved]
 
     # 3) 覆盖率口径：分子分母都用**用户原始权重**，不能用归一化后的
@@ -321,7 +371,12 @@ def _normalize_plan(
     #    被排除在计算之外，这个事实必须靠覆盖率字段族显式告诉前端。
     holdings: list[dict] = []
     if resolvable:
-        if weight_mode == "user" and resolved_weight > 0:
+        if weight_mode == "user" and resolved_weight <= 0:
+            raise BadRequest(
+                f"plan '{plan.plan_id}': resolved holdings have zero total user weight",
+                http_status=422,
+            )
+        if weight_mode == "user":
             for sym in resolvable:
                 w = (merged[sym] or Decimal(0)) / resolved_weight
                 holdings.append(
@@ -345,6 +400,18 @@ def _normalize_plan(
                 )
 
     return weight_mode, holdings, unresolved, duplicated, input_weight, resolved_weight
+
+
+def _request_exposure_fields(input_weight: Decimal, resolved_weight: Decimal) -> dict[str, Any]:
+    """构造只属于当前 snapshot 输入的覆盖率字段。"""
+    coverage = float(resolved_weight / input_weight) if input_weight > 0 else 0.0
+    return {
+        "input_weight": float(input_weight),
+        "resolved_weight": float(resolved_weight),
+        "unresolved_weight": float(input_weight - resolved_weight),
+        "calculation_coverage_ratio": coverage,
+        "normalized_within_resolved_subset": True,
+    }
 
 
 # ===========================================================================
@@ -573,8 +640,6 @@ def _build_exposure_section(
         # L2 权重有效持仓数 = 1/Σw²。归一化后 hhi>0 恒成立，兜底分支只是防御。
         l2_m = _ok(1.0 / hhi) if hhi > 0 else empty
 
-    cov_ratio = float(resolved_weight / input_weight) if input_weight > 0 else 0.0
-
     return {
         "topn": topn_m,
         "hhi": hhi_m,
@@ -601,12 +666,7 @@ def _build_exposure_section(
             if has_fund
             else _ok(1.0)
         ),
-        "input_weight": float(input_weight),
-        "resolved_weight": float(resolved_weight),
-        "unresolved_weight": float(input_weight - resolved_weight),
-        "calculation_coverage_ratio": cov_ratio,
-        # 恒为 True：归一化的分母是可解析子集的权重和（见 _normalize_plan）
-        "normalized_within_resolved_subset": True,
+        **_request_exposure_fields(input_weight, resolved_weight),
     }
 
 
@@ -806,6 +866,8 @@ async def create_snapshot(
                 requested_spec_version, resolved_spec_version,
                 requested_payload, user_level
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT ON CONSTRAINT uq_snapshot_request_hash DO NOTHING
+            RETURNING snapshot_id
             """,
             (
                 snapshot_id,
@@ -822,6 +884,33 @@ async def create_snapshot(
                 req.user_level,
             ),
         )
+        inserted_snapshot = await cur.fetchone()
+        if inserted_snapshot is None:
+            # 两个同用户请求可能同时通过上面的预查。唯一约束负责仲裁，输的一方
+            # 复用赢家，而不是让 UniqueViolation 把连接留在 aborted transaction。
+            await cur.execute(
+                """
+                SELECT snapshot_id FROM diag.portfolio_snapshot
+                WHERE request_hash = %s AND user_id IS NOT DISTINCT FROM %s
+                """,
+                (req_hash, user_id),
+            )
+            concurrent = await cur.fetchone()
+            if concurrent is None:
+                raise RuntimeError(
+                    "concurrent diagnosis snapshot disappeared after uniqueness conflict"
+                )
+            existing_snapshot_id = concurrent["snapshot_id"]
+            result = await get_result(db, existing_snapshot_id, user_id=user_id)
+            return (
+                {
+                    "snapshot_id": str(existing_snapshot_id),
+                    "run_status": result["run_status"],
+                    "report_mode": result["report_mode"],
+                    "retry_after": None,
+                },
+                200,
+            )
         for item in normalized:
             await cur.execute(
                 """
@@ -949,6 +1038,10 @@ async def _ensure_run(
                     (calc_hash,),
                 )
                 row = await cur.fetchone()
+                if row is None:
+                    raise RuntimeError(
+                        "successful diagnosis run disappeared after calculation hash conflict"
+                    )
                 run_id = row["run_id"]
 
     async with db.cursor() as cur:
@@ -970,7 +1063,7 @@ async def _compute_plan(
     as_of: date,
     fingerprint_time: datetime,
 ) -> tuple[dict, dict]:
-    """算一个 plan 的 ``PlanResult`` 与它的数据质量清单。"""
+    """算一个 plan 的纯计算缓存与跨用户安全的数据质量清单。"""
     holdings: list[dict] = item["holdings"]
     ids = [h["instrument_id"] for h in holdings]
 
@@ -1025,6 +1118,14 @@ async def _compute_plan(
     # 渲染成空白才发现。校验后的结果也顺便完成了 Decimal/date → JSON 的规范化。
     plan_result = PlanResult.model_validate(plan_result).model_dump(mode="json")
 
+    # diagnosis_run 按 calculation_hash 跨用户共享。只缓存纯计算部分；plan_id、label
+    # 与覆盖率字段描述的是当前请求，必须在 get_result() 中从 portfolio_plan 重建。
+    cached_result = deepcopy(plan_result)
+    cached_result.pop("plan_id", None)
+    cached_result.pop("label", None)
+    for field in REQUEST_EXPOSURE_FIELDS:
+        cached_result["section_a"].pop(field, None)
+
     suspended = [
         instruments[i]["instrument_id"]
         for i in ids
@@ -1033,20 +1134,17 @@ async def _compute_plan(
     new_listings = [
         i
         for i in ids
-        if (ld := instruments.get(i, {}).get("list_date")) and (as_of - ld) < timedelta(days=250)
+        if (ld := instruments.get(i, {}).get("list_date")) and (as_of - ld) < timedelta(days=365)
     ]
 
     symbol_of = {h["instrument_id"]: h["symbol"] for h in holdings}
     dq = {
-        "unresolved_symbols": item["unresolved"],
-        "duplicated_symbols": item["duplicated"],
         "suspended_or_delisted": [symbol_of.get(i, str(i)) for i in suspended],
         "new_listings_short_window": [symbol_of.get(i, str(i)) for i in new_listings],
         "lookthrough_gaps": [
             symbol_of[i] for i in ids if instruments.get(i, {}).get("asset") in ("etf", "fund")
         ],
         "coverage_summary": {
-            "symbol_resolution": section_a["calculation_coverage_ratio"],
             "industry": len(industry) / len(ids) if ids else 0.0,
             "category": len(category) / len(ids) if ids else 0.0,
             "valuation": len(valuation) / len(ids) if ids else 0.0,
@@ -1057,7 +1155,7 @@ async def _compute_plan(
             fingerprint_time=fingerprint_time.strftime("%Y-%m-%d %H:%M"),
         ),
     }
-    return plan_result, dq
+    return cached_result, dq
 
 
 def _build_blindspots(section_a: dict, params: dict) -> list[dict]:
@@ -1153,6 +1251,80 @@ async def _load_snapshot(db: AsyncConnection, snapshot_id: UUID, *, user_id: str
     return row
 
 
+def _request_context_from_plan_row(row: dict) -> dict[str, Any]:
+    """从当前 portfolio_plan 重建请求级字段，不信任共享 run 里的旧副本。"""
+    plan = PortfolioPlan(
+        plan_id=row["plan_id"],
+        label=row["label"],
+        holdings=row["requested_holdings"],
+    )
+    resolved_rows = {holding["symbol"]: holding for holding in (row["resolved_holdings"] or [])}
+    mode, holdings, unresolved, duplicated, input_weight, resolved_weight = _normalize_plan(
+        plan, resolved_rows
+    )
+    if mode != row["weight_mode"]:
+        raise RuntimeError(
+            f"portfolio_plan weight mode mismatch for plan_index={row['plan_index']}"
+        )
+    return {
+        "plan": plan,
+        "holdings": holdings,
+        "unresolved": unresolved,
+        "duplicated": duplicated,
+        "exposure": _request_exposure_fields(input_weight, resolved_weight),
+    }
+
+
+def _assemble_plan_result(row: dict, context: dict[str, Any]) -> dict | None:
+    """把纯计算缓存与当前请求元数据拼成 API 的 PlanResult。"""
+    if row["payload"] is None:
+        return None
+    payload = deepcopy(row["payload"])
+    payload["plan_id"] = row["plan_id"]
+    payload["label"] = row["label"]
+    payload["weight_mode"] = row["weight_mode"]
+    payload["section_a"].update(context["exposure"])
+    return PlanResult.model_validate(payload).model_dump(mode="json")
+
+
+def _assemble_plan_data_quality(row: dict, context: dict[str, Any]) -> dict[str, Any]:
+    """仅复用跨用户安全的 DQ，并注入当前请求的解析信息。"""
+    cached = row["data_quality"] or {}
+    coverage = cached.get("coverage_summary") or {}
+    return {
+        "unresolved_symbols": context["unresolved"],
+        "duplicated_symbols": context["duplicated"],
+        "suspended_or_delisted": list(cached.get("suspended_or_delisted") or []),
+        "new_listings_short_window": list(cached.get("new_listings_short_window") or []),
+        "lookthrough_gaps": list(cached.get("lookthrough_gaps") or []),
+        "coverage_summary": {
+            "symbol_resolution": context["exposure"]["calculation_coverage_ratio"],
+            **{
+                key: coverage[key]
+                for key in ("industry", "category", "valuation")
+                if key in coverage
+            },
+        },
+        "forced_disclosures": list(cached.get("forced_disclosures") or []),
+    }
+
+
+def _aggregate_run_status(rows: list[dict]) -> str:
+    """按每个 plan 最新 run 的显式状态聚合 snapshot 状态。"""
+    statuses = [row["status"] for row in rows]
+    if any(status == "running" for status in statuses):
+        return "running"
+    if not statuses or any(status is None or status == "pending" for status in statuses):
+        return "pending"
+
+    terminal = set(statuses)
+    if terminal == {"succeeded"}:
+        return "succeeded"
+    if terminal == {"failed"}:
+        return "failed"
+    return "partially_succeeded"
+
+
 async def get_result(
     db: AsyncConnection,
     snapshot_id: UUID,
@@ -1170,30 +1342,35 @@ async def get_result(
     async with db.cursor() as cur:
         await cur.execute(
             """
-            SELECT p.plan_index, r.status, r.payload, r.data_quality, r.error_reason
+            SELECT DISTINCT ON (p.plan_index)
+                   p.plan_index, p.plan_id, p.label, p.weight_mode,
+                   p.requested_holdings, p.resolved_holdings,
+                   r.status, r.payload, r.payload_schema_version,
+                   r.data_quality, r.error_reason
             FROM diag.portfolio_plan p
             LEFT JOIN diag.snapshot_run sr
                    ON sr.snapshot_id = p.snapshot_id AND sr.plan_index = p.plan_index
             LEFT JOIN diag.diagnosis_run r ON r.run_id = sr.run_id
             WHERE p.snapshot_id = %s
-            ORDER BY p.plan_index
+            ORDER BY p.plan_index, sr.created_at DESC NULLS LAST, sr.run_id DESC NULLS LAST
             """,
             (snapshot_id,),
         )
         rows = list(await cur.fetchall())
 
-    plans = [r["payload"] for r in rows if r["payload"] is not None]
-    statuses = {r["status"] for r in rows}
-    if not plans:
-        run_status = "pending"
-    elif "failed" in statuses:
-        run_status = "partially_succeeded" if len(plans) else "failed"
-    elif len(plans) < len(rows):
-        run_status = "partially_succeeded"
-    else:
-        run_status = "succeeded"
-
-    merged_dq = _merge_data_quality([r["data_quality"] for r in rows if r["data_quality"]])
+    contexts = [_request_context_from_plan_row(row) for row in rows]
+    plans = [
+        result
+        for row, context in zip(rows, contexts, strict=True)
+        if (result := _assemble_plan_result(row, context)) is not None
+    ]
+    run_status = _aggregate_run_status(rows)
+    merged_dq = _merge_data_quality(
+        [
+            _assemble_plan_data_quality(row, context)
+            for row, context in zip(rows, contexts, strict=True)
+        ]
+    )
     params = spec["params"]
 
     return {

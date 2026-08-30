@@ -82,6 +82,16 @@ class DateRange(BaseModel):
     end: date
 
 
+class ApiResponse(BaseModel, Generic[T]):
+    """统一成功响应信封。"""
+
+    code: int
+    message: str
+    data: T
+    timestamp: int
+    request_id: str
+
+
 # ---------------------------------------------------------------------------
 # MetricValue 判别联合
 # ---------------------------------------------------------------------------
@@ -322,8 +332,9 @@ class DataQualityReport(BaseModel):
 class PlanResult(BaseModel):
     """单个方案的完整计算结果。
 
-    这也是 ``diag.diagnosis_run.payload`` 的存储形状 —— run 的粒度是 plan
-    而不是 snapshot（T17），所以 payload 存的是 PlanResult 而非 DiagnosisResult。
+    这是 API 的完整响应形状。``diag.diagnosis_run.payload`` 只存其中的纯计算子集；
+    ``plan_id`` / ``label`` 与 Section A 覆盖率在读取时从当前 portfolio_plan 拼接，
+    防止跨用户计算复用时串入别人的请求数据。
     """
 
     plan_id: str
@@ -379,6 +390,12 @@ class SpecVersionInfo(BaseModel):
     is_active: bool
 
 
+class SpecVersionList(BaseModel):
+    """口径版本列表响应的数据部分。"""
+
+    list: list[SpecVersionInfo]
+
+
 class ShareTokenCreated(BaseModel):
     """``POST /snapshots/{id}/share`` 的响应体。"""
 
@@ -421,6 +438,7 @@ class DiagnosisReport(BaseModel):
 
 
 __all__ = [
+    "ApiResponse",
     "AttributionSection",
     "BlindspotHit",
     "ComparisonSection",
@@ -451,6 +469,7 @@ __all__ = [
     "SnapshotAccepted",
     "SnapshotRequest",
     "SpecVersionInfo",
+    "SpecVersionList",
     "StructureSection",
     "UnavailableMetric",
     "UserLevel",
