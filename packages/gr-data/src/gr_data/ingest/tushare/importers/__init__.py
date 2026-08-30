@@ -1,6 +1,6 @@
 """Tushare ingest importer 注册表。"""
 
-from gr_data.ingest.tushare.importers.bars import (
+from gr_data.ingest.tushare.importers.market import (
     FutureBars1dImporter,
     IndexBars1dImporter,
     StockBars1dImporter,

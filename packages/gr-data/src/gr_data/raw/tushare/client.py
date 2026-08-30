@@ -22,7 +22,7 @@ Tushare 的所有接口都通过 ``pro.<api_name>(**params)`` 调用，形态统
   （fetcher）通过 ``RawContext.sleep_between_requests`` 控制。
 - **offset 上限 100000**：实测 offset=100000 可用、100001 报
   「查询数据失败，请确认参数」。即单次查询最多只能翻出约 10 万行，
-  再多的数据**取不到**。因此调用方必须把查询切小（见 fetchers/bars.py
+  再多的数据**取不到**。因此调用方必须把查询切小（见 fetchers/market.py
   按交易日调用的说明），而不是指望翻页翻到底。
 """
 

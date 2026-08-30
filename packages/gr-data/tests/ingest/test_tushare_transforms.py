@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from gr_data.ingest.tushare.importers.reference import parse_date
 from gr_data.ingest.tushare.symbols import split_ts_code
-from gr_data.raw.tushare.fetchers.bars import month_range
+from gr_data.raw.tushare.fetchers.market import month_range
 
 
 # --------------------------------------------------------------------------- #
@@ -83,7 +83,7 @@ def test_month_range_single_month():
 # --------------------------------------------------------------------------- #
 def _stock_importer(tmp_raw_root):
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import StockBars1dImporter
+    from gr_data.ingest.tushare.importers.market import StockBars1dImporter
 
     return StockBars1dImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
 
@@ -299,7 +299,7 @@ def test_unknown_symbols_are_skipped_not_silently(tmp_raw_root, monkeypatch):
 def test_future_units(tmp_raw_root, monkeypatch):
     """期货：amount 万元→元 (×10000)；vol / oi 保持「手」。"""
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import FutureBars1dImporter
+    from gr_data.ingest.tushare.importers.market import FutureBars1dImporter
 
     _write(
         tmp_raw_root,
@@ -337,7 +337,7 @@ def test_future_units(tmp_raw_root, monkeypatch):
 
 def _future_importer(tmp_raw_root):
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import FutureBars1dImporter
+    from gr_data.ingest.tushare.importers.market import FutureBars1dImporter
 
     return FutureBars1dImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
 
@@ -447,7 +447,7 @@ def test_future_settle_only_rows_kept(tmp_raw_root, monkeypatch):
 def test_index_close_only_rows_kept(tmp_raw_root, monkeypatch):
     """大量指数只发布收盘点位，不发布 OHLC——必须保留。"""
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import IndexBars1dImporter
+    from gr_data.ingest.tushare.importers.market import IndexBars1dImporter
 
     _write(
         tmp_raw_root,
@@ -480,7 +480,7 @@ def test_index_close_only_rows_kept(tmp_raw_root, monkeypatch):
 
 def test_index_no_adj_factor_no_limits(tmp_raw_root, monkeypatch):
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import IndexBars1dImporter
+    from gr_data.ingest.tushare.importers.market import IndexBars1dImporter
 
     _write(
         tmp_raw_root,

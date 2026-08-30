@@ -1,6 +1,6 @@
 """Tushare raw fetcher 注册表。"""
 
-from gr_data.raw.tushare.fetchers.bars import (
+from gr_data.raw.tushare.fetchers.market import (
     AdjFactorFetcher,
     Bars1dFetcher,
     FutureBars1dFetcher,
