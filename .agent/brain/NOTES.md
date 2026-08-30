@@ -325,19 +325,15 @@ TypeScript **拦不住这个**（类型是编译期的，后端返什么是运�
 
 | 项 | 状态 |
 |---|---|
-| `uv run pytest` | **2395 passed, 24 skipped, 0 failed** |
+| `uv run pytest` | **2435 passed, 38 skipped, 0 failed** |
 | `uv run ruff check` / `format --check` | 通过 |
-| `scripts/lint_migrations.py` | 通过（39 pg + 1 ch） |
-| `gr-db migrate --target pg` | 39 个迁移全部 applied，重跑幂等 |
+| `scripts/lint_migrations.py` | 通过（40 pg + 1 ch） |
+| `gr-db migrate --target pg` | 40 个迁移全部 applied，重跑幂等 |
 
-24 个 skip 里：6 个是缺 `DATAYES_TOKEN` 的 live 契约用例（见上文），
-其余是缺 `GETRICH_TEST_PG` 的选股集成、缺凭证的其它 live 用例，
-以及 `test_main_loop.py` 里 Windows-only 的 ProactorEventLoop 守卫。
-
-**这个基线里有 27 个用例是「本来就该跑但从没跑过的」**，不是新写的：5 个 docker
-集成（探测命令挡住）+ 11 个 tushare 真实接口（缺凭证）+ 5 个 job 持久化（缺 anyio
-marker）+ 选股集成。改动前是 2323 passed / 25 skipped / 1 failed。
-**看基线时 skip 数和 failed 数一样重要**（D-030）。
+38 个 skip 里：10 个是缺 `DATAYES_TOKEN` 的 live 契约用例，11 个是缺
+`TUSHARE_TOKEN` 的 live 契约用例，16 个是默认关闭的真 PostgreSQL 集成用例
+（诊断 3、选股 8、作业持久化 5），另 1 个是 `test_main_loop.py` 里 Windows-only
+的 ProactorEventLoop 守卫。诊断的 3 个 PG 用例已单独启用并通过。
 
 ## 已验证（真实环境，非 mock）
 
