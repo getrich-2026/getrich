@@ -52,13 +52,20 @@ def run_provider(
     *,
     only: list[str] | None = None,
     force_ownership: bool = False,
+    months: tuple[str, ...] | None = None,
 ) -> list[IngestResult]:
-    """运行某 provider 下启用的（或 only 指定的）importer。"""
+    """运行某 provider 下启用的（或 only 指定的）importer。
+
+    `months` 限定只处理哪些自然月，用于把大数据集分批入库（见
+    `IngestContext.months` 里关于内存的说明）。None = 全部。
+    """
     registry, groups = _registry_groups(provider)
     enabled = only or cfg.get("enabled", "ingest", provider, default=list(registry.keys()))
     names = _expand(enabled, registry, groups)
 
-    ctx = IngestContext(paths=RawPaths(cfg.raw_root), force_ownership=force_ownership)
+    ctx = IngestContext(
+        paths=RawPaths(cfg.raw_root), force_ownership=force_ownership, months=months
+    )
     kwargs = _provider_kwargs(provider, cfg)
     results: list[IngestResult] = []
     for name in names:

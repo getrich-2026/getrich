@@ -1030,3 +1030,94 @@ DDL 注释门禁只检查相对 PR 基线新增或修改的建表迁移，并从
 数据字典的 PG 契约／归属校验只能在实际传入 PostgreSQL 连接时执行。ClickHouse-only 模式
 仍会列出 raw 数据集，但没有 PG catalog 作为比较基准时不能把它们判成漂移；否则
 `gr-db docs --target ch --fail-on-drift` 会产生错误的失败。
+
+## D-045 通联 CNE6 的行业体系在 2021-11 切换，`cne6-sw21` 的窗口只能从 2021-12 起
+
+抓完全量后，`ModelRunImporter` 的逐月因子集校验当场报出：
+
+```
+2021-11 的活跃因子集合与 2021-08 不一致：
+  多出 [BasicChemicals, BeautyCare, Coal, EnvironProtect, Petroleum,
+        PowerEquip, RetailTrade, SocialServices, TextileApparel]
+  缺少 [Chemicals, Commerce, ElectricalEquip, Leisure, Mining, TextileGarment]
+```
+
+逐月统计（61 个月）：**2021-08/09/10 是申万 2014（49 因子），2021-11 起是申万
+2021（52 因子）**，只切换一次。注意接口路径叫 `...CNE6SW21`，但它对切换前的日期
+返回的仍是旧体系 —— **端点名不能当作口径保证**。
+
+更细的一层：切换在五张表之间**不是同一天发生的**。逐日核对 2021-11：
+
+| 表 | 2021-11-01 |
+|---|---|
+| exposure | 已是申万 2021（4527 行全部落在新行业列） |
+| factor_ret / covariance | **仍是申万 2014**（协方差当月 1141 行 = 49 + 21×52） |
+| srisk / specific_ret | 无因子列，不受影响 |
+
+所以 2021-11 是个混合月。五张表必须在同一个 `model_run` 内**逐日一致**（同一天
+要能同时取到 X、F、D、f），因此 `cne6-sw21` 的窗口起点定为 **2021-12-01**，
+实际入库 57 个月（2021-12 → 2026-08）。
+
+**为什么不给申万 2014 那段单独开一个 run**：`factor.definition` 的主键是
+`(model_id, factor_code)`、并且有 `UNIQUE (model_id, ordinal)`，是**按 model_id**
+而不是按 model_version 建的。两套体系里同名因子的 ordinal 不同，塞进同一个
+`model_id` 会直接撞唯一约束。要支持双体系，得先决定是拆 `model_id`
+（`barra_cne6_sw14` / `barra_cne6_sw21`）还是把 `definition` 下沉到 model_version
+—— 那是 `持仓诊断_表与接口设计.md` §5.2 的设计范围，**不在数据接入层单方面改**。
+代价是 2021-08~11 共 4 个月（约 5% 的可取区间）暂时进不了库。
+
+顺带一条**方法论**：这个错误是「逐月比对」抓出来的。原实现是先把 61 个月
+`concat` 成一个大 DataFrame 再算 `active_factors`，那样得到的是两套体系的**并集
+58 个**，既不等于 49 也不等于 52，会被当成「超集全都活跃」而静默混用两套下标。
+改成逐月比对不只是为了省内存，它本身就是更强的校验。
+
+## D-046 全量入库必须按月分批，否则会被 OOM killer 静默杀掉
+
+第一次跑 `gr-data ingest datayes --only symbol_map,model_run` 的现象是：
+**没有任何输出、退出码 0、一行数据都没落库**。不是异常被吞了，是进程被
+OOM killer 杀掉 —— 这种失败模式比报错危险得多，看日志会以为「跑完了但没数据」。
+
+本机 5 GB 内存（可用约 2 GB），而 importer 的形态是「读全部月份 → 拼一个大
+DataFrame → 一次 upsert」：
+
+| 数据集 | 规模 | pandas 占用 |
+|---|---|---|
+| datayes exposure | 61 个月 × 11 万行 × 58 列 | 约 3.5 GB |
+| tushare daily_basic | 164 个月 × 11 万行 | 加上 merge 的中间结果同样量级 |
+
+三处改动（都向后兼容，默认行为不变）：
+
+1. `IngestContext.months` + 两个 adapter 的 `list_months` 过滤，
+   `gr-data ingest --months 2021-12..2026-08` 暴露到 CLI。按月调用把峰值压到单月
+   量级，代价是每月一条 `ops.etl_job_run` —— 这反而让「哪个月入过库」可追溯。
+2. `DatayesSymbolMapImporter` / `ModelRunImporter` 改成**逐月读、当场归约**
+   （前者累积 secID 集合，后者只比对列集合），它们本来就不需要行数据。
+3. `InstrumentIndustryImporter` **不能按月分批**（区间压缩需要全历史，分批会把每个月
+   压成独立区间、`out_date` 全错，而且 EXCLUDE 约束拦不住 —— 它们并不重叠）。
+   改成逐月读入后立刻降到 4 列，全历史中间结果约 200 MB。
+
+顺带一条 `statement_timeout`：分批之后单批只有 10 万行左右，30 分钟的超时绰绰有余；
+但**不分批时曾在 60s 处被 `QueryCanceled` 打断并整批回滚**（见 D-038）。
+
+## D-047 通联接口在大响应上会中途断连，而读超时拦不住它
+
+抓 exposure 时（按 10 个自然日切，单次响应约 4 MB）反复出现：
+
+```
+peer closed connection without sending complete message body
+  (received 2724243 bytes, expected 3900172)
+```
+
+重试能接住，但随后会转成**持续的读超时**，而且**拖不死也退不出**：
+httpx 的 `timeout` 是「两次收到字节之间的最长间隔」，服务端慢速涓流会不断重置它。
+实测单个 chunk 卡了 33 分钟仍未触发超时，`retry_call` 重试 5 次耗尽后整批抓取中断
+（`fetch()` 只捕获配额与未授权两类异常）。
+
+处理：`ExposureFetcher.CHUNK_DAYS` 10 → 4，把响应压到约 1.5 MB，之后不再触发。
+**但要知道代价**：服务端耗时几乎与返回行数无关（每次约 60–100 秒），切得越碎总耗时
+越长 —— 实测 4 天切分反而比 10 天慢（14 min/月 vs 7 min/月）。
+
+真正的杠杆是**并发**：瓶颈是服务端响应时间，不是我们的调用频率（实测约 0.03 req/s，
+远低于配置的 1 req/s）。用 4 并发的一次性脚本回补 43 个月，零失败，
+把 10 小时压到 1.5 小时。这条没有写进仓库代码 —— 并发抓取要不要成为常规能力，
+涉及限流策略与配额，是需要先讨论的架构决定。

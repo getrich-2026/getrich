@@ -174,3 +174,21 @@ def test_adaptive_slowdown_has_a_ceiling():
             c._unwrap("/x.json", {"retCode": -16, "retMsg": "too frequent"}, {})
 
     assert c._sleep == MAX_ADAPTIVE_SLEEP
+
+
+# --------------------------------------------------------------------------- #
+# CLI 的 --months 解析（放这里是因为它只服务于 datayes/tushare 的分批入库）
+# --------------------------------------------------------------------------- #
+def test_parse_months_range_and_list():
+    from gr_data.cli import _parse_months
+
+    assert _parse_months(None) is None
+    assert _parse_months("2021-11") == ("2021-11",)
+    # 闭区间，且必须跨年正确进位
+    assert _parse_months("2021-11..2022-02") == ("2021-11", "2021-12", "2022-01", "2022-02")
+    # 混用 + 保序去重
+    assert _parse_months("2022-01,2021-11..2021-12,2022-01") == (
+        "2022-01",
+        "2021-11",
+        "2021-12",
+    )

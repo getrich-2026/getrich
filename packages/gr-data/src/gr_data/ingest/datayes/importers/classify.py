@@ -117,19 +117,41 @@ class InstrumentIndustryImporter(_DatayesImporter):
     )
 
     def build(self) -> pd.DataFrame:
-        raw = self._raw()
-        if raw.empty:
+        """逐月读入、当场降维，再统一压区间。
+
+        这张表**不能按月分批入库**：区间压缩本身就需要全历史（按月分批会把每个月
+        压成一段独立区间，`out_date` 全错，而 EXCLUDE 约束还拦不住 —— 它们并不
+        重叠）。所以这里不用 `IngestContext.months`，而是自己控制内存：
+        exposure 全量在 pandas 里约 3.5 GB（61 个月 × 11 万行 × 58 列），
+        但**本表只要 4 列**（标的 / 日期 / 行业 / 可用时点），读一个月就立刻降维，
+        峰值压到单月量级，全历史的中间结果只有约 200 MB。
+        """
+        adapter = self._adapter()
+        months = adapter.list_months(self.DATASET_RAW)
+        if not months:
             self.log.warning("%s 无 raw 数据", self.DATASET_RAW)
             return self._empty()
 
-        df = self._attach_instrument_ids(raw)
-        if df.empty:
-            return self._empty()
+        factor_order: list[str] | None = None
+        parts: list[pd.DataFrame] = []
+        for ym in months:
+            raw = adapter.read_month(self.DATASET_RAW, ym)
+            if raw is None or raw.empty:
+                continue
+            if factor_order is None:
+                # 因子集合与顺序只认一次：`_run_and_order` 会逐月复核，
+                # 供应商中途换体系会在那里中断，不会静默混用两套顺序。
+                _, factor_order = self._run_and_order(raw)
+            df = self._attach_instrument_ids(raw)
+            if df.empty:
+                continue
+            parts.append(self._daily_industry(df, factor_order))
+            del raw, df
 
-        _, factor_order = self._run_and_order(raw)
-        daily = self._daily_industry(df, factor_order)
-        if daily.empty:
+        if not parts:
             return self._empty()
+        daily = pd.concat(parts, axis=0, ignore_index=True)
+        del parts
 
         intervals = _compress(daily)
 
