@@ -920,3 +920,91 @@ G1（行业分类）的**正解**是 tushare 的 `index_classify` + `index_membe
 顺带一条：`raw_payload` 这类 JSONB 列在 `to_dict("records")` 之前必须把 NaN 换成
 None —— `json.dumps(float('nan'))` 产出 `NaN` 字面量，PG 的 jsonb 解析器**会拒绝**，
 整批 COPY 失败（而不是那一行失败）。
+
+---
+
+## D-042 `diag` 的用户列用 UUID，不是设计文档写的 BIGINT
+
+`持仓诊断_表与接口设计.md` §5.5 把 `portfolio_snapshot.user_id` 与
+`share_token.created_by` 都写成 `BIGINT`，但本仓 `app.users.id` 是 **UUID**。
+`040_diag.sql` 直接对齐真实主键类型，没有照抄文档。
+
+理由是 D-020 已经踩过一次同型的坑：`strategies.id` 是 VARCHAR 而引用方按 UUID
+建，结果整个策略／信号接口在全新库上恒 500。**引用列与被引用主键类型不一致，
+建表时不报错，报错要等到第一次 join**，所以这类偏差必须在建表当下就纠正，
+不能留给"以后再说"。
+
+同类提醒：设计文档给的是产品口径，不是本仓的 schema 现状。落地前逐个外键核对
+被引用列的真实类型，比通读文档更有效。
+
+## D-043 泛型判别联合在 3.10 下要用 `TypeAliasType`，裸 `Annotated` 别名会 TypeError
+
+`MetricValue[T]`（`OkMetric[T] | DegradedMetric[T] | UnavailableMetric`，按
+`status` 判别）第一版写成：
+
+```python
+MetricValue = Annotated[OkMetric[T] | DegradedMetric[T] | UnavailableMetric,
+                        Field(discriminator="status")]
+```
+
+导入即炸：`TypeError: typing.Annotated[...] is not a generic class`。
+`Annotated[...]` 的赋值别名**不是** generic class，不能再下标。
+
+PEP 695 的 `type MetricValue[T] = ...` 能解决，但那是 **3.12 语法**，本仓下限
+3.10。可用的写法是 `typing_extensions.TypeAliasType`：
+
+```python
+MetricValue = TypeAliasType(
+    "MetricValue",
+    Annotated[OkMetric[T] | DegradedMetric[T] | UnavailableMetric,
+              Field(discriminator="status")],
+    type_params=(T,),
+)
+```
+
+Pydantic v2 原生支持它做判别联合，`MetricValue[float]` 正常工作。
+
+## D-044 「不得静默估算」靠**字段缺失**落实，不靠字段可空
+
+`UnavailableMetric` **没有** `value` 字段（而不是 `value: T | None`）。差别在于：
+可空版本里 `{"status": "unavailable", "value": 0.0}` 是可构造的，前端也能把它
+渲染成数字 0；字段缺失版本里这个组合在类型层面就不存在。
+
+同一条原则的三个推论，实现时都踩到过：
+
+1. 分布类指标没有数据时返回 `unavailable`，**不返回空字典** —— `{}` 会被前端
+   渲染成「一个没有任何行业的组合」，看上去像已经算过了。
+2. 覆盖不全时在**有数据的子集内**归一化并标 `degraded`，把缺失权重当 0 会让
+   分布凑成看似完整的 100%。
+3. 依赖未启用模块的盲点检测器必须显式返回 `triggered=false` + `reason_code`，
+   而不是干脆不返回那一项 —— 省略等于告诉用户「查过了，没问题」。
+
+## D-045 计算缓存的两套哈希：粒度不同、时机不同、入参不同
+
+`request_hash`（幂等）与 `calculation_hash`（计算复用）**不可混用**，
+表接口篇 §7.8 把它列为「算错但不报错」的三处之一。落地要点：
+
+* `request_hash` 在**解析前**算，用原始 symbol，**必须含** `label` 与
+  `plan_index` —— 漏掉会让 before/after 互换命中同一个 snapshot，调仓结论直接反向。
+* `calculation_hash` 在**解析后**算，粒度是**单个 plan**，用 `instrument_id`
+  升序重排，且**不含** `plan_id`/`label`/`plan_index`/`intent` —— 用户给方案起
+  什么名字不影响数值，入哈希只会打散跨用户复用。
+
+真库实测确认了收益：两个 snapshot（换 plan_id、加 label、颠倒输入顺序）
+只产生 **1 行** `diagnosis_run` + 2 条 `snapshot_run` 关联。
+
+两者都必须走规范化 JSON（固定键序、无空白），**不能裸字符串拼接** ——
+拼接没有转义规则，`["a,b"]` 与 `["a","b"]` 会拼成同一个串。
+权重入哈希前按 8 位小数 `ROUND_HALF_EVEN`，否则 1/3 这类除不尽的权重
+每次尾数都可能不同，同一组合永远命中不了缓存。
+
+## D-046 安全头测试不能拿「让它 500」来验
+
+给新路由补安全头用例时，第一版故意打一个缺 DB 连接的端点，断言 4 个头 —— 失败。
+原因：未捕获异常由 Starlette 最外层的 `ServerErrorMiddleware` 处理，**那一层在
+用户中间件之外**，`SecurityHeadersMiddleware` 根本没机会执行。
+
+正确做法是 `app.dependency_overrides[get_db]` 覆盖依赖，让端点走**正常 200
+响应**这条路径再断言。既有的 `test_middleware.py` 用 `/boom` 能测出头，是因为
+它抛的是 `HTTPException`，由内层的 `ExceptionMiddleware` 处理，仍在中间件栈内 ——
+两者不是一回事，照抄会得出错误结论。

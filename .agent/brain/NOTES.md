@@ -2,7 +2,69 @@
 
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
-最后更新：2026-08-30 · 分支 `feat/data-ingest-tushare-datayes`（未合回 `dev`）
+最后更新：2026-08-30 · 分支 `feat/data-ingest-tushare-datayes`（未合回 `dev`）；
+持仓诊断 API 在 `worktree-feat-diagnosis-api` 上（基线同上，未合回）
+
+---
+
+## 持仓诊断后端 API 已落地（P0，真库实测通过）
+
+`getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md` §7.1 的 **9 个端点
+全部实现**，挂在 `/v1/diagnosis/*`（**不是**文档写的 `/api/v1/*`，本仓路由都在
+`/v1` 下、没有 `/api` 段）。四个新文件 + `040_diag.sql`：
+
+| 文件 | 内容 |
+|---|---|
+| `gr-db/ddl/postgres/040_diag.sql` | `diag` 的 7 张表 + bootstrap 的 `spec_version` / `data_version` 两行 |
+| `gr-api/schemas/diagnosis.py` | §7.2/§7.3 的请求响应模型，`MetricValue` 判别联合 |
+| `gr-api/services/diagnosis.py` | 解析／归一化／两套哈希／模块 A／编排持久化 |
+| `gr-api/routers/diagnosis.py` | 9 个端点 + SSE |
+
+**范围**：模块 A 完整（TopN/HHI/L1/L2 + 行业／资产类别／市场／风格分布）；
+B/C/D 按契约返回 `null` + `reason_code`，前端已能正确渲染降级态。
+计算**同步执行**（架构篇 §6.1/§6.5：毫秒量级，请求路径不引队列）。
+
+### 真库实测结果（本地 `getrich` 库）
+
+等权两只股票：L1=2、HHI=0.5、L2=2.0、TopN=1.0，全部符合预期。分布类指标的
+出数情况**正好反映当前数据现状**：
+
+| 指标 | 状态 | 原因 |
+|---|---|---|
+| 资产类别 / 市场分布 | `ok` | `classify.instrument_category` 有 5,890 行 |
+| 风格分布（市值×PB） | `ok` | `fundamental.valuation_1d` 有 143 万行 |
+| **行业分布** | `unavailable` | `classify.instrument_industry` **是空的**（`DATAYES_TOKEN` 未配，见下节）。数据灌进去后自动出数，**不需要改代码** |
+
+⚠️ 但 `spec_version.params.industry_scheme` 现在是 `'sw2021'`，而
+`039_classify.sql` 注明 datayes 落库的 `industry_code` 是**通联英文标识**。
+**导完 classify 数据后必须核对 `classify.scheme` 里的真实 `scheme_code`**，
+对不上就开一个新 `spec_version`（不要原地改那一行，会毁掉历史报告的可复现性）。
+
+其余实测通过项：`request_hash` 幂等；跨请求计算复用（2 个 snapshot 只产生 1 行
+`diagnosis_run`）；覆盖率字段族如实暴露未解析权重；4xx 分支（混合权重／全不可
+解析／plans 超限／负权重）统一 422；SSE 事件序列与 §7.5 逐条一致（2 plan 时
+`complete` id=9）；`retail`/`pro` 分级裁剪。
+
+测试 37 条，全量 2421 passed / 35 skipped，`ruff` 与 `lint_migrations` 全绿。
+
+### 两个已知缺口（不阻塞前端联调，但要记着）
+
+1. **`data_fingerprint` 没有维护者**。文档要求每日盘后批任务维护
+   `diag.data_version`，该任务不存在，现在只有 bootstrap 的一行。后果：**数据
+   重新导入后 fingerprint 不变，已成功的计算不会失效，接口返回陈旧结果**。
+   缓解办法是每次数据导入后手工插一行新的 `diag.data_version`。
+2. **9 条新路由同样没挂 `response_model`**，`/openapi.json` 的响应 schema 仍是空的
+   —— 与下文「前后端契约错位」D 节说的 55 条路由是同一个问题。但这批是最接近
+   方案 1 前置条件的：响应形状已经有 Pydantic 真源（`schemas/diagnosis.py`），
+   且 `PlanResult` 在落库前会 `model_validate` 一次。要推方案 1 可以拿它开头。
+
+### 下一步
+
+* 前端 `apps/web/src/api/diagnosis.ts` + `src/types/diagnosis.ts`：现在可以照
+  **实际 return** 写了（不要照设计稿，见 D-032）。注意 `EventSource` 不能带
+  自定义 header 而本仓认证靠请求头，SSE 要用 fetch + ReadableStream。
+* 模块 B/D（历史协方差口径）：架构篇 P0-b，需要 §6.3 的 L1 全市场日收益矩阵常驻缓存。
+* 模块 C：卡在缺口 G6（组合历史序列口径），**是产品决策不是工程问题**。
 
 ---
 
