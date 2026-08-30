@@ -920,3 +920,70 @@ G1（行业分类）的**正解**是 tushare 的 `index_classify` + `index_membe
 顺带一条：`raw_payload` 这类 JSONB 列在 `to_dict("records")` 之前必须把 NaN 换成
 None —— `json.dumps(float('nan'))` 产出 `NaN` 字面量，PG 的 jsonb 解析器**会拒绝**，
 整批 COPY 失败（而不是那一行失败）。
+
+## D-042 datayes 的区间查询必须用 `tradeDate` 多值，不是 `beginDate`/`endDate`
+
+配好 token 后第一次跑 live 契约用例，10 条挂了 9 条，全部是 retCode=-2：
+
+```
+At least one of [secID,ticker,tradeDate] parameters must be provided   (exposure / srisk / specific_ret)
+At least one of [factorName,tradeDate] parameters must be provided     (covariance)
+```
+
+五张表里**只有 factor_ret 接受纯 `beginDate`+`endDate`**，另外四张必须在
+`tradeDate` 那一组里至少给一个。接口文档看不出这一点：它的「是否必须」一栏填的
+是「多选多」（文档作者也在注里标了这栏可疑），实测语义是「这一组至少给一个」。
+
+实测确认的三条语义：
+
+- `tradeDate` 支持**逗号分隔多值**（空格分隔返回 0 行，不报错 —— 又一个静默失败）；
+- 给了 `tradeDate` 之后，`beginDate`/`endDate` **被忽略**；
+- 单日 exposure 约 5551 行，因此一次最多塞约 17 天就会逼近 10 万行上限。
+
+改法：`client._query_span()` 把区间展开成**工作日列表**发 `tradeDate`，
+`query_range` 的切分与折半逻辑不动。周末不发（接口对非交易日只返回空，带上它
+只让 URL 长 30%）；法定节假日仍然发 —— 查日历会让 raw 层依赖数据库，而
+`meta.trading_calendar` 本身也是抓来的，那是循环依赖，代价只是几行空返回。
+
+**这条是「live 契约用例挡住了设计错误」的实例**：Fake 永远测不出来，因为 Fake 是
+照我们自己的理解写的。单测已把契约钉死在 `tests/raw/test_datayes_client.py`。
+
+## D-043 通联的北交所后缀是 `XBEI`，不是 canonical 的 `XBSE`
+
+`ingest/datayes/symbols.py` 原来假设「通联用的本来就是 canonical 码」，
+把 `DATAYES_SUFFIX_TO_EXCHANGE` 写成恒等映射。**实测证明北交所不是。**
+
+2026-08-28 单日 exposure 的后缀分布：`XSHE` 2897 / `XSHG` 2315 / **`XBEI` 339**，
+一条 `XBSE` 都没有。XBEI 那 339 只全在 920xxx 代码段，与 `meta.instruments` 里
+341 只 920xxx（exchange=XBSE）交叉核对一致 —— 是实测结论，不是按名字猜的。
+
+不改的后果：339 只北交所标的的 `secID` 解析不出交易所 → `to_tushare_symbol()`
+返回 None → symbol_map 建不起来 → 这批标的的因子数据整批入不了库。
+未解析比例 339/5551 ≈ 6.1%，会撞上 0.5% 的容忍上限直接中断，所以**这次不会静默**；
+但如果哪天北交所只剩十几只，就会掉到容忍线以下变成静默丢数。
+
+`XBSE` 仍保留在映射表里兜底，万一供应商改用 canonical 码不至于整批解析不了。
+
+**这条同样是探针用例抓出来的**（`test_sec_id_suffixes_are_all_known`）：
+它枚举真实返回的后缀，出现未登记的就失败。当初写它时标的是「未决项 U21」，
+现在证明这个未决项确实存在，而且答案与推测相反。
+
+## D-044 datayes 五表的真实数据起点是 2021-08-02
+
+探针方法（避免踩到自己挖的坑）：
+
+1. **先别用 `meta.trading_calendar` 做二分。** 第一次这么做，五张表都「探到」
+   最早是 2025-08-01 —— 那是**日历表在本库里的下界**，不是接口的下界
+   （tushare calendar 当时只灌了 1520 行）。二分只能证明「在候选集合内最早」，
+   候选集合本身错了就毫无意义。
+2. **按年粗探时别取月初工作日。** 第二次用「每年 1/4/7/10 月的前 5 个工作日」，
+   得出「最早 2022 年」。错的：2021 年那批候选日里，10 月 1–7 日整周是国庆、
+   1 月 1 日元旦、4 月 5 日清明 —— 几乎全是节假日。改用**月中**（每月 12 日起的
+   4 个工作日）后，2021 年立刻有数据。
+
+最终结论：五张表**一致**在 2021-08-02（2021 年 8 月第一个交易日）起有数据，
+2021-07 整月为空，2020 及更早全空。`config.yaml` 的
+`providers.datayes.start_date` 因此定为 `20210802`，再往前抓只会拿到空返回。
+
+顺带一条：手上那份 2020-12-31 的样本 CSV **不是本账号权限内的数据**，
+它是供应商的演示样本。别拿它当「历史能取到 2020 年」的证据。

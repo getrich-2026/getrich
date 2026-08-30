@@ -10,21 +10,30 @@
 写进映射表，之后所有 datayes importer 统一走现成的
 `resolve_by_symbol_map(conn, "datayes")`，不在各处做临时的后缀互转。
 
-后缀集合是**待实测确认项**（U21）：下面这张表只覆盖已在文档与样本里见过的三个
-市场。未知后缀原样大写返回、**不静默改写**（照 `ingest/tushare/symbols.py` 的做法），
-`@live_sdk` 里有一条探针用例会枚举真实返回的后缀，出现新后缀就失败 ——
-那正是我们想要的信号。
+后缀集合已实测确认（原 U21）：见下表的注释。未知后缀原样大写返回、
+**不静默改写**（照 `ingest/tushare/symbols.py` 的做法），`@live_sdk` 里有一条探针
+用例会枚举真实返回的后缀，出现新后缀就失败 —— 那正是我们想要的信号，
+北交所的 `XBEI` 就是这条用例抓出来的。
 """
 
 from __future__ import annotations
 
 
-#: 通联 exchangeCD → 本仓 canonical exchange。通联用的本来就是 canonical 码，
-#: 所以这张表目前是恒等映射；留着它是为了让「哪些后缀被认可」有一处可查。
+#: 通联 exchangeCD → 本仓 canonical exchange。
+#:
+#: 这张表原本被当成恒等映射（「通联用的本来就是 canonical 码」），**实测证明
+#: 北交所不是**：通联用 ``XBEI``，本仓 canonical 是 ``XBSE``。
+#: 2026-08-28 单日实测的后缀分布：XSHE 2897 / XSHG 2315 / **XBEI 339**，
+#: 没有一条 ``XBSE``。XBEI 的 339 只全是 920xxx 代码段，与 `meta.instruments`
+#: 里 341 只 920xxx（exchange=XBSE）交叉核对一致 —— 这是实测结论，不是按名字猜的。
+#:
+#: ``XBSE`` 保留在表里只是兜底：万一供应商哪天改用 canonical 码，不至于整批标的
+#: 解析不了。
 DATAYES_SUFFIX_TO_EXCHANGE: dict[str, str] = {
-    "XSHG": "XSHG",  # 上交所
-    "XSHE": "XSHE",  # 深交所
-    "XBSE": "XBSE",  # 北交所
+    "XSHG": "XSHG",  # 上交所（实测）
+    "XSHE": "XSHE",  # 深交所（实测）
+    "XBEI": "XBSE",  # 北交所（实测，通联码 ≠ canonical 码）
+    "XBSE": "XBSE",  # 兜底：供应商若改用 canonical 码
 }
 
 #: canonical exchange → tushare 后缀，用于把 secID 折算成 meta.instruments.symbol。

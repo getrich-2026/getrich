@@ -94,6 +94,23 @@ def _fmt(d: date) -> str:
     return d.strftime("%Y%m%d")
 
 
+def _weekdays(lo: date, hi: date) -> list[date]:
+    """区间内的工作日（含首尾）。
+
+    周末一律不发：接口对非交易日只是返回空，但请求参数是 `tradeDate` 的逗号
+    拼接串，带上周末平白让 URL 长 30% 而一行数据都换不回来。
+    法定节假日仍然会发（不查日历），代价只是几行空返回，换来的是 **raw 层不依赖
+    数据库** —— 让抓取依赖 `meta.trading_calendar` 会造成「日历没灌就抓不了数」
+    的循环依赖，而日历本身也是抓来的。
+    """
+    out, cur = [], lo
+    while cur <= hi:
+        if cur.weekday() < 5:
+            out.append(cur)
+        cur += timedelta(days=1)
+    return out
+
+
 def _chunks(begin: date, end: date, days: int) -> Iterator[tuple[date, date]]:
     cur = begin
     while cur <= end:
@@ -207,6 +224,14 @@ class DatayesHttpClient:
     ) -> pd.DataFrame:
         """按 `chunk_days` 切分区间逐段取数，遇到结果集过大就把该段折半。
 
+        **区间是靠 `tradeDate` 多值参数表达的，不是 `beginDate`/`endDate`。**
+        五张表里有四张（exposure / srisk / specific_ret / covariance）在只给
+        `beginDate`+`endDate` 时直接返回 retCode=-2：
+        ``At least one of [secID,ticker,tradeDate] parameters must be provided``。
+        接口文档把这几个参数的「是否必须」一栏填成了「多选多」，文档作者也标注了
+        这一栏可疑 —— 实测语义是「这一组里至少给一个」。`tradeDate` 支持逗号分隔
+        多值，且一旦给了它，`beginDate`/`endDate` 就被忽略（实测）。
+
         不用官方的 `pagenum`/`pagesize`：分页行为官方只给了一句示例，与
         「超限可能静默截断」叠加之后无法自证完整；按日期切分则可以和
         `meta.trading_calendar` 逐日对账。分页留作单表权限受限时的兜底。
@@ -221,8 +246,12 @@ class DatayesHttpClient:
         return pd.concat(frames, axis=0, ignore_index=True)
 
     def _query_span(self, api_path: str, lo: date, hi: date, **params: Any) -> pd.DataFrame:
+        days = _weekdays(lo, hi)
+        if not days:
+            # 整段都是周末，一次请求都不必发
+            return pd.DataFrame()
         try:
-            return self.query(api_path, beginDate=_fmt(lo), endDate=_fmt(hi), **params)
+            return self.query(api_path, tradeDate=",".join(_fmt(d) for d in days), **params)
         except DatayesQueryTooLargeError:
             if lo >= hi:
                 # 单日仍然过大，切无可切 —— 这时必须抛出去，
