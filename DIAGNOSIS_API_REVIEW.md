@@ -1,6 +1,6 @@
 # 持仓诊断 API — 代码审查交接单
 
-> **状态**：待修复。本文列出的 13 条发现来自对 commit `2089022` 的独立代码审查，
+> **状态**：已修复并验证（2026-08-30）。本文列出的 13 条发现来自对 commit `2089022` 的独立代码审查，
 > 其中 4 条（#1 #2 #3 #5）已由第二人逐条对着源码复核确认成立，其余为审查结论、
 > 未逐条复核但机制描述可信。
 >
@@ -12,7 +12,31 @@
 > `持仓诊断_表与接口设计.md`（v0.2.2）与 `持仓诊断_架构设计.md`（v0.1.3）。
 > 判断「哪个是对的」以设计文档为准，不以现有代码为准。
 
-## 被审代码
+## 修复结论（2026-08-30）
+
+修复提交为 `f57927c`，文档与验证基线分别见 `16c995c`、`35332cb`。三条护栏保持不变：
+`calculation_hash` 仍不含请求级字段，`request_hash` 仍含 `label` 与 `plan_index`，
+模块 B/C/D 仍按契约降级，不填估算值。
+
+| 发现 | 处置 |
+|---|---|
+| #1 | 共享 run 只存纯计算子集；读取时从当前 `portfolio_plan` 重建 `plan_id`、`label`、覆盖率与请求级数据质量。 |
+| #2 | SSE 发出 `complete` 后结束；在构造 `StreamingResponse` 前显式退出 PG 连接上下文。 |
+| #3 / #9 | 标的查询限定 `stock` / `etf`、排序并显式拒绝歧义；重复持仓按规范化 `symbol_full` 合并。 |
+| #4 / #8 | `/result` 选择每个 plan 的最新 run，并按 `diagnosis_run.status` 显式聚合全部状态。 |
+| #5 | 可解析子集用户权重和为零时返回 422，不再静默改为等权。 |
+| #6 | 新增 3 条 `GETRICH_TEST_PG=1` 门控集成用例，覆盖 SQL 全链路、幂等、跨用户复用隔离、`diag.` 前缀及 UUID 绑定。 |
+| #7 / #10 | 新股窗口改为 365 个自然日；默认业务日期固定使用 `Asia/Shanghai`。 |
+| #11 / #12 | snapshot 与 run 的冲突路径均使用 `ON CONFLICT` 回读并做空值防御。 |
+| #13 | 8 个 JSON 端点均声明统一响应信封的 `response_model`；口径列表改为显式字段查询。 |
+
+验证已完成：诊断单元测试 `51 passed`，真 PostgreSQL 集成测试 `3 passed`，全仓
+`2435 passed / 38 skipped / 0 failed`；Ruff、格式、迁移静态检查与依赖锁检查均通过。
+临时 `.env` 已删除。未执行手工并发 `curl` / `pg_stat_activity` 观测；SSE 的连接释放已
+通过路由实现复核，分帧结束行为有单元覆盖。`data_fingerprint` 的每日维护任务仍是既有缺口，
+不属于本轮修复。
+
+## 被审代码（审查时快照）
 
 | 文件 | 行数 | 内容 |
 |---|---|---|
@@ -239,12 +263,12 @@ DDL 的 `chk_run_status` 和 `error_reason` 列都为这两个状态预留了位
 
 # 验证
 
-修完后必须全绿：
+修复后验证结果：
 
 ```bash
 # 从 worktree 根目录跑
 uv run pytest packages/gr-api/tests/test_diagnosis.py -v
-uv run pytest -v                                    # 全量，基线是 2421 passed / 35 skipped
+uv run pytest -v                                    # 实测：2435 passed / 38 skipped
 uv run ruff check packages/ scripts/
 uv run ruff format --check packages/ scripts/
 uv run python scripts/lint_migrations.py
@@ -269,8 +293,7 @@ curl -s -XPOST localhost:8021/v1/diagnosis/snapshots -H 'Content-Type: applicati
 `file_name + checksum`，**改动会导致整个文件重新应用**，所以 DDL 必须保持幂等
 （bootstrap 的两条 INSERT 已经是 `ON CONFLICT DO NOTHING`，别改成裸 INSERT）。
 
-# 收尾
+# 收尾（已完成）
 
-按 `AGENTS.md` §7：实质性改动后更新 `.agent/brain/NOTES.md`；
-若修复过程中发现新的「本来会静默出错」的坑，追加到 `.agent/brain/DECISIONS.md`
-（本批已有 D-045~D-049，接着编号）。
+已按 `AGENTS.md` §7 更新 `.agent/brain/NOTES.md`，并在 `.agent/brain/DECISIONS.md`
+追加 D-050（门控 PG 集成测试连接失败时的凭证泄漏防护）。
