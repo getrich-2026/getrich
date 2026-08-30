@@ -16,6 +16,15 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from gr_data.common.paths import RawPaths
+from gr_data.ingest.datayes.factors import (
+    ALL_FACTORS as DY_ALL_FACTORS,
+    INDUSTRY_FACTORS as _DY_INDUSTRIES,
+    SW21_FACTORS as DY_SW21_FACTORS,
+    canonical as dy_canon,
+)
+
+
+DY_INDUSTRY_SET = set(_DY_INDUSTRIES)
 
 
 @pytest.fixture
@@ -300,6 +309,37 @@ class FakeTushareClient:
             ]
         )
 
+    def _daily_basic(self, **params) -> pd.DataFrame:
+        # 数值刻意取整十整百，便于在断言里直接写死换算后的期望值：
+        # circ_mv=8000 万元 → 8e7 元；total_mv=12000 万元 → 1.2e8 元。
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": c,
+                    "trade_date": d,
+                    "close": 10.5,
+                    "turnover_rate": 1.25,
+                    "turnover_rate_f": 1.5,
+                    "volume_ratio": 0.9,
+                    "pe": 12.0,
+                    "pe_ttm": 11.5,
+                    "pb": 1.2,
+                    "ps": 3.0,
+                    "ps_ttm": 2.9,
+                    "dv_ratio": 2.5,
+                    "dv_ttm": 2.4,
+                    "total_share": 100000.0,
+                    "float_share": 80000.0,
+                    "free_share": 70000.0,
+                    "total_mv": 12000.0,
+                    "circ_mv": 8000.0,
+                    "limit_status": 0,
+                }
+                for c in self.STOCKS
+                for d in self._days_in(params)
+            ]
+        )
+
     def _stk_limit(self, **params) -> pd.DataFrame:
         return pd.DataFrame(
             [
@@ -392,6 +432,132 @@ def fake_insight():
 @pytest.fixture
 def fake_tushare():
     return FakeTushareClient()
+
+
+class FakeDatayesClient:
+    """实现 raw.datayes.client.DatayesClient 协议。
+
+    **关键设计：三张宽表故意用三种不同的列顺序、三种不同的大小写返回。**
+    这不是为了刁难，而是正面复现供应商的真实行为（实测样本
+    dy1d_*_20260829.csv 三表列序互不相同，且 JSON 接口里风格因子全大写、
+    行业因子驼峰）。importer 若按源列序取值，这些用例必挂 —— 那正是它们的价值。
+    """
+
+    SEC_IDS = ("600000.XSHG", "000001.XSHE")
+    DAYS = ("2024-01-02", "2024-01-03")
+    #: 每个因子的取值 = 它在超集里的下标，便于断言对齐
+    FACTORS = tuple(DY_SW21_FACTORS)
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    # -- 列序与大小写的三种花样 ------------------------------------------
+    def _exposure_columns(self) -> list[str]:
+        return list(self.FACTORS)
+
+    def _factor_ret_columns(self) -> list[str]:
+        return [f.upper() for f in reversed(self.FACTORS)]
+
+    def _cov_columns(self) -> list[str]:
+        mid = len(self.FACTORS) // 2
+        return [f.upper() for f in (list(self.FACTORS[mid:]) + list(self.FACTORS[:mid]))]
+
+    def _value(self, factor: str) -> float:
+        return float(DY_ALL_FACTORS.index(factor))
+
+    def _days_in(self, params) -> list[str]:
+        begin = str(params.get("beginDate", "00000000"))
+        end = str(params.get("endDate", "99999999"))
+        return [d for d in self.DAYS if begin <= d.replace("-", "") <= end]
+
+    def _row_meta(self, sec_id: str, day: str) -> dict:
+        ticker, _, suffix = sec_id.partition(".")
+        return {
+            "secID": sec_id,
+            "ticker": ticker,
+            "secShortName": "测试",
+            "exchangeCD": suffix,
+            "tradeDate": day,
+            "updateTime": f"{day} 17:00:00",
+        }
+
+    def query(self, api_path: str, **params):
+        self.calls.append(api_path)
+        days = self._days_in(params)
+        if not days:
+            return pd.DataFrame()
+
+        if "Exposure" in api_path:
+            rows = []
+            for sec_id in self.SEC_IDS:
+                for day in days:
+                    row = self._row_meta(sec_id, day)
+                    for col in self._exposure_columns():
+                        canon = col  # exposure 用规范写法
+                        row[col] = (
+                            1.0
+                            if canon in DY_INDUSTRY_SET or canon == "COUNTRY"
+                            else self._value(canon)
+                        )
+                    # 行业哑变量：只让第一个行业为 1，其余为 0
+                    for i, ind in enumerate(
+                        [c for c in self._exposure_columns() if c in DY_INDUSTRY_SET]
+                    ):
+                        row[ind] = 1.0 if i == 0 else 0.0
+                    rows.append(row)
+            return pd.DataFrame(rows)
+
+        if "FactorRet" in api_path:
+            rows = []
+            for day in days:
+                row = {"tradeDate": day, "updateTime": f"{day} 19:30:00"}
+                for col in self._factor_ret_columns():
+                    row[col] = self._value(dy_canon(col))
+                rows.append(row)
+            return pd.DataFrame(rows)
+
+        if "Covariance" in api_path:
+            rows = []
+            for day in days:
+                for i, label in enumerate(self.FACTORS):
+                    row = {
+                        "tradeDate": day,
+                        "factorID": i,
+                        "factorName": label,  # 行标签用原大小写
+                        "updateTime": f"{day} 19:30:00",
+                    }
+                    for col in self._cov_columns():
+                        j = DY_ALL_FACTORS.index(dy_canon(col))
+                        k = DY_ALL_FACTORS.index(label)
+                        # 对称、对角为正的构造：C_ij = 1/(1+|i-j|) + (i==j)
+                        row[col] = 1.0 / (1 + abs(j - k)) + (1.0 if j == k else 0.0)
+                    rows.append(row)
+            return pd.DataFrame(rows)
+
+        if "Srisk" in api_path:
+            return pd.DataFrame(
+                [{**self._row_meta(s, d), "SRISK": 29.6} for s in self.SEC_IDS for d in days]
+            )
+
+        if "SpecificRet" in api_path:
+            return pd.DataFrame(
+                [{**self._row_meta(s, d), "SPRET": 1.5} for s in self.SEC_IDS for d in days]
+            )
+
+        raise AssertionError(f"FakeDatayesClient 未实现 {api_path}，请补 fixture")
+
+    def query_range(self, api_path: str, begin, end, *, chunk_days: int = 10, **params):
+        return self.query(
+            api_path,
+            beginDate=begin.strftime("%Y%m%d"),
+            endDate=end.strftime("%Y%m%d"),
+            **params,
+        )
+
+
+@pytest.fixture
+def fake_datayes():
+    return FakeDatayesClient()
 
 
 # --------------------------------------------------------------------------- #
@@ -506,8 +672,15 @@ def pg_conn(pg_dsn):
             TRUNCATE
               meta.instruments, meta.symbol_map, meta.trading_calendar,
               market.stock_bar_1d, market.etf_bar_1d, market.index_bar_1d,
-              market.future_bar_1d,
-              realtime.tick_buffer, ops.table_ownership, ops.etl_job_run
+              market.future_bar_1d, market.stock_daily_basic, market.adj_factor_ts,
+              factor.model, factor.definition, factor.model_run,
+              factor.exposure, factor.covariance, factor.factor_return,
+              factor.specific_risk, factor.specific_return,
+              fundamental.valuation_1d, fundamental.indicator_q,
+              classify.instrument_industry, classify.industry_node,
+              classify.instrument_category, classify.scheme,
+              realtime.tick_buffer, ops.table_ownership, ops.etl_job_run,
+              ops.data_quality_check
             RESTART IDENTITY CASCADE
             """
         )

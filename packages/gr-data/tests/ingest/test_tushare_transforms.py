@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from gr_data.ingest.tushare.importers.reference import parse_date
 from gr_data.ingest.tushare.symbols import split_ts_code
-from gr_data.raw.tushare.fetchers.bars import month_range
+from gr_data.raw.tushare.fetchers.market import month_range
 
 
 # --------------------------------------------------------------------------- #
@@ -83,7 +83,7 @@ def test_month_range_single_month():
 # --------------------------------------------------------------------------- #
 def _stock_importer(tmp_raw_root):
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import StockBars1dImporter
+    from gr_data.ingest.tushare.importers.market import StockBars1dImporter
 
     return StockBars1dImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
 
@@ -299,7 +299,7 @@ def test_unknown_symbols_are_skipped_not_silently(tmp_raw_root, monkeypatch):
 def test_future_units(tmp_raw_root, monkeypatch):
     """期货：amount 万元→元 (×10000)；vol / oi 保持「手」。"""
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import FutureBars1dImporter
+    from gr_data.ingest.tushare.importers.market import FutureBars1dImporter
 
     _write(
         tmp_raw_root,
@@ -337,7 +337,7 @@ def test_future_units(tmp_raw_root, monkeypatch):
 
 def _future_importer(tmp_raw_root):
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import FutureBars1dImporter
+    from gr_data.ingest.tushare.importers.market import FutureBars1dImporter
 
     return FutureBars1dImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
 
@@ -447,7 +447,7 @@ def test_future_settle_only_rows_kept(tmp_raw_root, monkeypatch):
 def test_index_close_only_rows_kept(tmp_raw_root, monkeypatch):
     """大量指数只发布收盘点位，不发布 OHLC——必须保留。"""
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import IndexBars1dImporter
+    from gr_data.ingest.tushare.importers.market import IndexBars1dImporter
 
     _write(
         tmp_raw_root,
@@ -480,7 +480,7 @@ def test_index_close_only_rows_kept(tmp_raw_root, monkeypatch):
 
 def test_index_no_adj_factor_no_limits(tmp_raw_root, monkeypatch):
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.bars import IndexBars1dImporter
+    from gr_data.ingest.tushare.importers.market import IndexBars1dImporter
 
     _write(
         tmp_raw_root,
@@ -510,3 +510,183 @@ def test_index_no_adj_factor_no_limits(tmp_raw_root, monkeypatch):
     assert row["limit_up"] is None
     assert row["volume"] == 200000.0 * 100
     assert row["amount"] == 250000.0 * 1000
+
+
+# --------------------------------------------------------------------------- #
+# daily_basic → market.stock_daily_basic
+# --------------------------------------------------------------------------- #
+def _daily_basic_df():
+    return pd.DataFrame(
+        [
+            {
+                "ts_code": "600000.SH",
+                "trade_date": "20240102",
+                "close": 10.5,
+                "turnover_rate": 1.25,
+                "pe_ttm": 11.5,
+                "pb": 1.2,
+                "total_share": 100000.0,
+                "float_share": 80000.0,
+                "total_mv": 12000.0,
+                "circ_mv": 8000.0,
+                "limit_status": 0,
+            }
+        ]
+    )
+
+
+def _daily_basic_importer(tmp_raw_root, monkeypatch):
+    from gr_data.ingest.base import IngestContext
+    from gr_data.ingest.tushare.importers.market import DailyBasicImporter
+
+    imp = DailyBasicImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    return imp
+
+
+def test_daily_basic_market_cap_wan_yuan_to_yuan(tmp_raw_root, monkeypatch):
+    """万元 → 元（×10000）。期望值写死，不用被测代码的系数反算。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    row = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert row["total_market_cap"] == 120_000_000.0  # 12000 万元
+    assert row["float_market_cap"] == 80_000_000.0  # 8000 万元
+    assert row["close"] == 10.5
+    assert row["turnover_rate"] == 1.25  # 百分数，原样
+
+
+def test_daily_basic_payload_holds_only_unpromoted_fields(tmp_raw_root, monkeypatch):
+    """已提升为实体列的字段不得在 raw_payload 里重复出现。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    payload = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]["raw_payload"]
+
+    assert payload["pb"] == 1.2
+    assert payload["total_share"] == 100000.0  # 原值原名，raw_payload 不做换算
+    for promoted in ("close", "total_mv", "circ_mv", "turnover_rate", "ts_code", "trade_date"):
+        assert promoted not in payload
+
+
+def test_daily_basic_payload_nan_becomes_none(tmp_raw_root, monkeypatch):
+    """NaN 必须换成 None：json.dumps(nan) 产出 `NaN` 字面量，PG 的 jsonb 会拒收整批。"""
+    import json
+
+    from gr_data.ingest.base import _json_safe
+
+    df = _daily_basic_df()
+    df.loc[0, "pe_ttm"] = float("nan")
+    _write(tmp_raw_root, "daily_basic", df)
+
+    payload = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]["raw_payload"]
+    safe = _json_safe(payload)
+
+    assert safe["pe_ttm"] is None
+    assert "NaN" not in json.dumps(safe)
+
+
+# --------------------------------------------------------------------------- #
+# daily_basic → fundamental.valuation_1d
+# --------------------------------------------------------------------------- #
+def _valuation_importer(tmp_raw_root, monkeypatch):
+    from gr_data.ingest.base import IngestContext
+    from gr_data.ingest.tushare.importers.market import ValuationImporter
+
+    imp = ValuationImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    return imp
+
+
+def test_valuation_market_cap_wan_yuan_to_yuan(tmp_raw_root, monkeypatch):
+    """万元 → 元的换算只在 ingest 层发生一次。期望值写死，不用被测代码的系数反算。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert row["total_mv"] == 120_000_000.0  # 12000 万元
+    assert row["circ_mv"] == 80_000_000.0  # 8000 万元
+    assert row["pb"] == 1.2  # 无量纲，原样
+    assert row["currency"] == "CNY"
+    assert row["source"] == "tushare"
+
+
+def test_valuation_loss_making_pe_stays_null(tmp_raw_root, monkeypatch):
+    """亏损股的 pe_ttm 是「不知道」，不是某个数 —— 用 0 或极大值兜底会让估值分档失真。"""
+    df = _daily_basic_df()
+    df.loc[0, "pe_ttm"] = None
+    _write(tmp_raw_root, "daily_basic", df)
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert pd.isna(row["pe_ttm"])
+    assert row["total_mv"] == 120_000_000.0  # 同行其余字段照常入库
+
+
+def test_valuation_available_at_is_trading_day_1700_shanghai(tmp_raw_root, monkeypatch):
+    """available_at 必须是交易日 17:00 +08:00 —— 下游按它过滤，早一天就是前视。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+    ts = pd.Timestamp(row["available_at"])
+
+    assert (ts.year, ts.month, ts.day, ts.hour) == (2024, 1, 2, 17)
+    assert ts.utcoffset().total_seconds() == 8 * 3600
+
+
+# --------------------------------------------------------------------------- #
+# adj_factor → market.adj_factor_ts
+# --------------------------------------------------------------------------- #
+def _adj_factor_importer(tmp_raw_root, monkeypatch):
+    from gr_data.ingest.base import IngestContext
+    from gr_data.ingest.tushare.importers.market import AdjFactorTsImporter
+
+    imp = AdjFactorTsImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    return imp
+
+
+def test_adj_factor_ts_passthrough(tmp_raw_root, monkeypatch):
+    """复权因子不做任何缩放 —— 缩放会让整段历史价格系统性偏移且不报错。"""
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": 1.25}]),
+    )
+
+    row = _adj_factor_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert row["adj_factor"] == 1.25
+    assert row["instrument_id"] == 42
+    assert row["source"] == "tushare"
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan")])
+def test_adj_factor_ts_rejects_nonpositive(tmp_raw_root, monkeypatch, bad):
+    """非正/非有限因子必须中断，不能静默丢行。"""
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": bad}]),
+    )
+
+    with pytest.raises(ValueError, match="复权因子"):
+        _adj_factor_importer(tmp_raw_root, monkeypatch).build()
+
+
+# --------------------------------------------------------------------------- #
+# meta.instruments → classify.instrument_category（G5）
+# --------------------------------------------------------------------------- #
+def test_category_mapping_covers_only_what_it_can_decide():
+    """future / option / index 刻意不在映射表里。
+
+    CFFEX 同时挂股指期货（equity）与国债期货（fixed_income），交易所定不了类别，
+    必须逐品种判断；本仓没有品种到类别的权威映射，猜一份会让资产配置分解整块
+    失真且不报错。少一行只会让下游标 degraded，两者代价不对称。
+    """
+    from gr_data.ingest.tushare.importers.classify import _CATEGORY_BY_ASSET
+
+    assert _CATEGORY_BY_ASSET["stock"] == ("equity", "cn_a")
+    # ETF 一律 equity：区分股票型/债券型 ETF 要基金持仓明细（G4，一期不处理）
+    assert _CATEGORY_BY_ASSET["etf"] == ("equity", "cn_a")
+    for undecidable in ("future", "option", "index"):
+        assert undecidable not in _CATEGORY_BY_ASSET

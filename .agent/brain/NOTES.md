@@ -2,7 +2,134 @@
 
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
-最后更新：2026-08-19 · 分支 `dev`
+最后更新：2026-08-30 · 分支 `feat/data-ingest-tushare-datayes`（未合回 `dev`）；
+持仓诊断 API 在 `worktree-feat-diagnosis-api` 上完成独立审查修复（基线同上，未合回）
+
+---
+
+## 持仓诊断后端 API 已落地并完成审查修复（P0，真库实测通过）
+
+`getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md` §7.1 的 **9 个端点
+全部实现**，挂在 `/v1/diagnosis/*`（**不是**文档写的 `/api/v1/*`，本仓路由都在
+`/v1` 下、没有 `/api` 段）。四个新文件 + `040_diag.sql`：
+
+| 文件 | 内容 |
+|---|---|
+| `gr-db/ddl/postgres/040_diag.sql` | `diag` 的 7 张表 + bootstrap 的 `spec_version` / `data_version` 两行 |
+| `gr-api/schemas/diagnosis.py` | §7.2/§7.3 的请求响应模型，`MetricValue` 判别联合 |
+| `gr-api/services/diagnosis.py` | 解析／归一化／两套哈希／模块 A／编排持久化 |
+| `gr-api/routers/diagnosis.py` | 9 个端点 + SSE |
+
+**范围**：模块 A 完整（TopN/HHI/L1/L2 + 行业／资产类别／市场／风格分布）；
+B/C/D 按契约返回 `null` + `reason_code`，前端已能正确渲染降级态。
+计算**同步执行**（架构篇 §6.1/§6.5：毫秒量级，请求路径不引队列）。
+
+### 真库实测结果（本地 `getrich` 库）
+
+等权两只股票：L1=2、HHI=0.5、L2=2.0、TopN=1.0，全部符合预期。分布类指标的
+出数情况**正好反映当前数据现状**：
+
+| 指标 | 状态 | 原因 |
+|---|---|---|
+| 资产类别 / 市场分布 | `ok` | `classify.instrument_category` 有 5,890 行 |
+| 风格分布（市值×PB） | `ok` | `fundamental.valuation_1d` 有 143 万行 |
+| **行业分布** | `unavailable` | `classify.instrument_industry` **是空的**（`DATAYES_TOKEN` 未配，见下节）。数据灌进去后自动出数，**不需要改代码** |
+
+⚠️ 但 `spec_version.params.industry_scheme` 现在是 `'sw2021'`，而
+`039_classify.sql` 注明 datayes 落库的 `industry_code` 是**通联英文标识**。
+**导完 classify 数据后必须核对 `classify.scheme` 里的真实 `scheme_code`**，
+对不上就开一个新 `spec_version`（不要原地改那一行，会毁掉历史报告的可复现性）。
+
+其余实测通过项：`request_hash` 幂等；跨请求计算复用（2 个 snapshot 只产生 1 行
+`diagnosis_run`）；覆盖率字段族如实暴露未解析权重；4xx 分支（混合权重／全不可
+解析／plans 超限／负权重）统一 422；SSE 事件序列与 §7.5 逐条一致（2 plan 时
+`complete` id=9）；`retail`/`pro` 分级裁剪。
+
+审查交接单的 13 项发现已全部修复：跨用户共享 run 只缓存纯计算字段，响应按当前
+`portfolio_plan` 重建 plan 元数据、覆盖率和请求级 DQ；SSE 在 `complete` 后结束且
+返回流前释放 PG 连接；标的解析、状态聚合、并发幂等、最新 run、时区和响应模型均有
+回归覆盖。诊断单元测试 **51 passed**；新增 3 条 `GETRICH_TEST_PG=1` 门控用例，真库
+覆盖 POST → result → report、幂等、跨用户复用隔离、`diag.` 前缀与 UUID 绑定，
+**3 passed**。
+
+### 一个已知缺口（不阻塞前端联调，但要记着）
+
+1. **`data_fingerprint` 没有维护者**。文档要求每日盘后批任务维护
+   `diag.data_version`，该任务不存在，现在只有 bootstrap 的一行。后果：**数据
+   重新导入后 fingerprint 不变，已成功的计算不会失效，接口返回陈旧结果**。
+   缓解办法是每次数据导入后手工插一行新的 `diag.data_version`。
+
+### 下一步
+
+* 前端 `apps/web/src/api/diagnosis.ts` + `src/types/diagnosis.ts`：现在可以照
+  **实际 return** 写了（不要照设计稿，见 D-032）。注意 `EventSource` 不能带
+  自定义 header 而本仓认证靠请求头，SSE 要用 fetch + ReadableStream。
+* 模块 B/D（历史协方差口径）：架构篇 P0-b，需要 §6.3 的 L1 全市场日收益矩阵常驻缓存。
+* 模块 C：卡在缺口 G6（组合历史序列口径），**是产品决策不是工程问题**。
+
+---
+
+## 进行中：tushare 全域 + datayes CNE6 数据接入（P0–P2 已完成）
+
+目标是把 `getrich-design/portfolio-analysis/`（持仓诊断）从「无数据可算」推到
+「主要指标可出数」。方案分 P0–P6，**已完成 P0、P1、P2**，四个 commit 在
+`feat/data-ingest-tushare-datayes` 上。
+
+已关闭的缺口：**G2**（因子模型，最大阻塞）、**G3**（估值快照）、**G5**（资产类别）、
+**G1 的一级部分**（申万 2021 一级行业，从 datayes 暴露表派生）。
+
+新增三个 schema，DDL 在 `gr-db` 的 `036`–`039`：
+
+| 迁移 | 内容 |
+|---|---|
+| `036_market_ext.sql` | `market.adj_factor_ts`（复权因子明细，可独立回补对账） |
+| `037_factor.sql` | 8 张表：model / definition / model_run / exposure / covariance / factor_return / specific_risk / specific_return |
+| `038_fundamental.sql` | `valuation_1d`（估值快照）+ `indicator_q`（季度指标，PIT） |
+| `039_classify.sql` | scheme / industry_node / instrument_industry / instrument_category |
+
+**四处刻意偏离设计文档**（不是实现错误，理由见 D-035）：`cov_flat` 用
+`DOUBLE PRECISION[]` 而非 `REAL[]`；`model_run` 加 `units JSONB` / `calibrated` /
+`factor_set_hash` 三列。
+
+### 已实测落库（真库，非 mock）
+
+| 表 | 行数 | 备注 |
+|---|---|---|
+| `fundamental.valuation_1d` | 1,433,283 | 2025-08-01 → 2026-08-28；`total_mv` 中位数 65.25 亿元；`pe_ttm` 亏损股 NULL 39.8 万行 |
+| `market.stock_daily_basic` | 1,433,283 | 未提升的字段进 `raw_payload` JSONB |
+| `market.adj_factor_ts` | 1,437,673 | |
+| `classify.instrument_category` | 5,890 | 5,551 当前有效；15 个标的缺 `list_date` 已跳过并记 dq |
+| `meta.instruments` | 27,654 | |
+
+### 仍然阻塞：`DATAYES_TOKEN` 没配
+
+根 `.env` 里没有 `DATAYES_TOKEN`，因此 **datayes 五表一行真实数据都没抓过**，
+`factor.*` 与 `classify.instrument_industry` 全是空的，6 个 live 契约用例长期 skip。
+代码走 `FakeDatayesClient` 全链通过（含真库的数组 / JSONB COPY 通路），
+但**「Fake 通过」不等于「供应商接口如文档所述」**。配好 token 后按顺序跑：
+
+```bash
+DATAYES_TOKEN=... uv run pytest packages/gr-data/tests/live/test_datayes_live.py -m live_sdk -v
+uv run gr-data raw datayes --mode init --only factor_ret_cne6_sw21   # 先跑最小的表验证凭证
+uv run gr-data raw datayes --mode init                               # 全五表，约 201 次请求
+uv run gr-data ingest datayes --only meta                            # model / definition / model_run
+uv run gr-data ingest datayes
+```
+
+live 用例失败是**信号不是噪声**：因子集合、`secID` 后缀集合、`SRISK` 量纲任一
+变了都会挂，那正是我们要它挡住的东西。
+
+### 剩余分期
+
+- **P3** `finance` 10 张财报表（`_PeriodFetcher`）
+- **P4** `reference` / `macro` / `sentiment`
+- **P5** etf / option 行情扩容
+- **P6** 巡检：`r = 100·X·f + u` 五表自洽校验。这是把 `model_run.calibrated`
+  置真、下游解除 `degraded` 的**唯一门槛**，建议插到 P3 前面（只要 6 天，
+  投产价值高于 P3 的 15 天）。
+
+`G1 的正解`仍是 tushare 的 `index_classify` + `index_member_all`（三级树、官方码、
+真实生效日期），但这两个接口在 `getrich-design` 里**没有字段目录**，已记为待补文档。
 
 ---
 
@@ -194,22 +321,19 @@ TypeScript **拦不住这个**（类型是编译期的，后端返什么是运�
 - **数据库容器数据目录改用 named volume**（D-029）：bind mount 在 macOS 上会丢
   POSIX 语义，PG 在 autovacuum 里报 `could not open file`。已改并重建容器。
 
-## 当前基线（2026-08-17 实测）
+## 当前基线（2026-08-30 实测）
 
 | 项 | 状态 |
 |---|---|
-| `GETRICH_TEST_PG=1 uv run pytest` | **2350 passed, 1 skipped, 0 failed** |
+| `uv run pytest` | **2435 passed, 38 skipped, 0 failed** |
 | `uv run ruff check` / `format --check` | 通过 |
-| `scripts/lint_migrations.py --db pg` / `--db ch` | 通过（35 + 1 个迁移） |
-| `gr-db migrate --target all` | 全新库上建成，重跑两边都报 already applied |
+| `scripts/lint_migrations.py` | 通过（40 pg + 1 ch） |
+| `gr-db migrate --target pg` | 40 个迁移全部 applied，重跑幂等 |
 
-唯一的 skip 是 `test_main_loop.py` 里 Windows-only 的 ProactorEventLoop 守卫，
-POSIX 上本就不适用。
-
-**这个基线里有 27 个用例是「本来就该跑但从没跑过的」**，不是新写的：5 个 docker
-集成（探测命令挡住）+ 11 个 tushare 真实接口（缺凭证）+ 5 个 job 持久化（缺 anyio
-marker）+ 选股集成。改动前是 2323 passed / 25 skipped / 1 failed。
-**看基线时 skip 数和 failed 数一样重要**（D-030）。
+38 个 skip 里：10 个是缺 `DATAYES_TOKEN` 的 live 契约用例，11 个是缺
+`TUSHARE_TOKEN` 的 live 契约用例，16 个是默认关闭的真 PostgreSQL 集成用例
+（诊断 3、选股 8、作业持久化 5），另 1 个是 `test_main_loop.py` 里 Windows-only
+的 ProactorEventLoop 守卫。诊断的 3 个 PG 用例已单独启用并通过。
 
 ## 已验证（真实环境，非 mock）
 

@@ -52,6 +52,7 @@ from gr_api.routers import (
     backtest_runs as backtest_runs_router,
     backtest_sweeps as backtest_sweeps_router,
     backtest_walk_forwards as backtest_walk_forwards_router,
+    diagnosis as diagnosis_router,
     payments as payments_router,
     picks as picks_router,
     signal_settings as signal_settings_router,
@@ -194,6 +195,9 @@ def create_app() -> FastAPI:
     app.include_router(backtest_sweeps_router.router, prefix="/v1")
     app.include_router(backtest_walk_forwards_router.router, prefix="/v1")
     app.include_router(strategies_router.router, prefix="/v1")
+    # 持仓诊断：/v1/diagnosis/*。契约见 getrich-design/portfolio-analysis/
+    # 持仓诊断_表与接口设计.md §7.1（该文档写的 /api/v1 前缀与本仓不符，以此处为准）。
+    app.include_router(diagnosis_router.router, prefix="/v1")
     # 选股展示：策略列表/详情/标的池走 pick.* 两张表，与择时策略的
     # /v1/strategies 分开 —— 选股策略 P0 没有业绩数字，混在一起会让
     # 前端拿到一堆 null 并误以为策略跑输了。

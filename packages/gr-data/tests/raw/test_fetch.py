@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from gr_data.common.parquet import read_parquet_if_exists
+from gr_data.ingest.datayes.factors import SW21_FACTORS as DY_SW21_FACTORS
 from gr_data.raw.base import RawContext
 
 
@@ -81,7 +82,15 @@ def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):
     REGISTRY["instruments"](fake_tushare, ctx).fetch("init")
     # 逐日 fetcher 依赖 calendar 提供交易日列表，必须先抓
     REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
-    for ds in ("daily", "adj_factor", "stk_limit", "suspend_d", "index_daily", "fut_daily"):
+    for ds in (
+        "daily",
+        "daily_basic",
+        "adj_factor",
+        "stk_limit",
+        "suspend_d",
+        "index_daily",
+        "fut_daily",
+    ):
         REGISTRY[ds](fake_tushare, ctx).fetch("init")
 
     inst = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "instruments", "stock"))
@@ -98,6 +107,12 @@ def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):
     # Fake 只在 2024-01 有数据，后续月份不应留下空文件
     months = sorted(p.stem for p in tmp_raw_root.dataset_dir("tushare", "daily").glob("*.parquet"))
     assert months == ["2024-01"]
+
+    # daily_basic 走同一套 _DailyFetcher 模板，字段必须原样落盘（raw 层不归一化）
+    basic = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "daily_basic", "2024-01"))
+    assert basic is not None and len(basic) == 4
+    assert {"total_mv", "circ_mv", "pb", "pe_ttm", "total_share"} <= set(basic.columns)
+    assert basic["total_mv"].iloc[0] == 12000.0  # 万元，raw 层不换算
 
 
 def test_tushare_update_refetches_newest_month(tmp_raw_root, fake_tushare):
@@ -151,3 +166,39 @@ def test_tushare_fetches_by_trade_date_not_range(tmp_raw_root, fake_tushare):
     for c in daily_calls:
         assert "trade_date" in c, f"daily 应按 trade_date 调用，实际: {c}"
         assert "start_date" not in c and "end_date" not in c
+
+
+def test_datayes_fetch_flow(tmp_raw_root, fake_datayes):
+    """DataYes 五表按自然月落盘，raw 层保留供应商列名与列序。"""
+    from gr_data.raw.datayes import REGISTRY
+
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+
+    for ds in REGISTRY:
+        REGISTRY[ds](fake_datayes, ctx).fetch("init")
+
+    exposure = read_parquet_if_exists(
+        tmp_raw_root.dataset_file("datayes", "exposure_cne6_sw21", "2024-01")
+    )
+    assert exposure is not None
+    assert len(exposure) == 4  # 2 标的 x 2 天
+    assert {"secID", "tradeDate", "updateTime"} <= set(exposure.columns)
+
+    cov = read_parquet_if_exists(
+        tmp_raw_root.dataset_file("datayes", "factor_cov_cne6_sw21", "2024-01")
+    )
+    assert cov is not None
+    assert {"factorName", "factorID"} <= set(cov.columns)
+
+    # raw 层不归一化：exposure 与 covariance 的因子列序必须**保持不同**，
+    # 这正是 ingest 层要靠 reindex_wide 处理的那个差异
+    fac_exp = [c for c in exposure.columns if c.upper() in {f.upper() for f in DY_SW21_FACTORS}]
+    fac_cov = [c for c in cov.columns if c.upper() in {f.upper() for f in DY_SW21_FACTORS}]
+    assert {c.upper() for c in fac_exp} == {c.upper() for c in fac_cov}
+    assert [c.upper() for c in fac_exp] != [c.upper() for c in fac_cov]
+
+    srisk = read_parquet_if_exists(
+        tmp_raw_root.dataset_file("datayes", "srisk_cne6_sw21", "2024-01")
+    )
+    assert srisk is not None and srisk["SRISK"].iloc[0] == 29.6  # raw 层不平方

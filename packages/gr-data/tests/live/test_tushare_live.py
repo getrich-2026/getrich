@@ -14,7 +14,7 @@ import os
 
 import pytest
 from gr_data.raw.tushare.client import TushareProClient
-from gr_data.raw.tushare.fetchers import bars, reference
+from gr_data.raw.tushare.fetchers import market, reference
 
 
 pytestmark = pytest.mark.live_sdk
@@ -47,22 +47,27 @@ CONTRACTS = [
     (
         "daily",
         DAY,
-        bars.DAILY_FIELDS,
+        market.DAILY_FIELDS,
         {"ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "vol", "amount"},
     ),
-    ("adj_factor", DAY, bars.ADJ_FACTOR_FIELDS, {"ts_code", "trade_date", "adj_factor"}),
-    ("stk_limit", DAY, bars.STK_LIMIT_FIELDS, {"ts_code", "trade_date", "up_limit", "down_limit"}),
-    ("suspend_d", DAY, bars.SUSPEND_FIELDS, {"ts_code", "trade_date", "suspend_type"}),
+    ("adj_factor", DAY, market.ADJ_FACTOR_FIELDS, {"ts_code", "trade_date", "adj_factor"}),
+    (
+        "stk_limit",
+        DAY,
+        market.STK_LIMIT_FIELDS,
+        {"ts_code", "trade_date", "up_limit", "down_limit"},
+    ),
+    ("suspend_d", DAY, market.SUSPEND_FIELDS, {"ts_code", "trade_date", "suspend_type"}),
     (
         "index_daily",
         {"ts_code": "000300.SH", **DAY},
-        bars.INDEX_DAILY_FIELDS,
+        market.INDEX_DAILY_FIELDS,
         {"ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "vol", "amount"},
     ),
     (
         "fut_daily",
         DAY,
-        bars.FUT_DAILY_FIELDS,
+        market.FUT_DAILY_FIELDS,
         {
             "ts_code",
             "trade_date",
