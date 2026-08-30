@@ -53,6 +53,10 @@ ROW_LIMIT = 100_000
 #: 等真的撞上 100000 时已经分不清「刚好这么多」和「被截断了」。
 ROW_LIMIT_ALARM = 95_000
 
+#: `-16`（调用过频）自适应降速的上限（秒）。超过这个间隔说明限流不是靠等能解决的
+#: （多半是配额或并发策略问题），继续放大只会让整批抓取无声地拖成几十小时。
+MAX_ADAPTIVE_SLEEP = 30.0
+
 _RETRYABLE = {-3, -4, -5, -8, -16}
 _PARAM_ERRORS = {-2, -9, -12, -13, -14}
 _QUOTA_ERRORS = {-6, -11, -15}
@@ -212,8 +216,11 @@ class DatayesHttpClient:
         if code == -7:
             raise DatayesQueryTooLargeError(f"{ctx} 查询超时（retCode=-7）：{msg}")
         if code == -16:
-            # 调用过频：就地降速，本次仍作为可重试异常抛出
-            self._sleep *= 1.5
+            # 调用过频：就地降速，本次仍作为可重试异常抛出。
+            # **必须有上限**：乘性放大没有天花板的话，一段网络不好的时间就能把
+            # sleep 推到几十秒，而它不会自己降回来 —— 后面几千次请求全按这个
+            # 间隔走，一次全量抓取会从几小时变成几天，且日志里只有一行警告。
+            self._sleep = min(self._sleep * 1.5, MAX_ADAPTIVE_SLEEP)
             log.warning("%s 调用过频，sleep 上调到 %.2fs", ctx, self._sleep)
 
         raise RuntimeError(f"{ctx} 调用失败（retCode={code}）：{msg}")

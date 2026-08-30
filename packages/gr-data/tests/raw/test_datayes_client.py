@@ -156,3 +156,21 @@ def test_row_limit_alarm_treats_near_limit_as_too_large():
 
     with pytest.raises(DatayesQueryTooLargeError):
         c._unwrap("/x.json", body, {})
+
+
+def test_adaptive_slowdown_has_a_ceiling():
+    """-16 的乘性降速必须有天花板。
+
+    没有上限的话，一段网络不好的时间就能把 sleep 推到几十秒，而它**不会自己降
+    回来** —— 后面几千次请求全按这个间隔走，一次全量抓取从几小时变成几天，
+    日志里却只有一行警告。
+    """
+    from gr_data.raw.datayes.client import MAX_ADAPTIVE_SLEEP
+
+    c = DatayesHttpClient(token="fake", sleep_between_requests=1.0)
+
+    for _ in range(50):
+        with pytest.raises(RuntimeError):
+            c._unwrap("/x.json", {"retCode": -16, "retMsg": "too frequent"}, {})
+
+    assert c._sleep == MAX_ADAPTIVE_SLEEP
