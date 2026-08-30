@@ -2,7 +2,71 @@
 
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
-最后更新：2026-08-19 · 分支 `dev`
+最后更新：2026-08-30 · 分支 `feat/data-ingest-tushare-datayes`（未合回 `dev`）
+
+---
+
+## 进行中：tushare 全域 + datayes CNE6 数据接入（P0–P2 已完成）
+
+目标是把 `getrich-design/portfolio-analysis/`（持仓诊断）从「无数据可算」推到
+「主要指标可出数」。方案分 P0–P6，**已完成 P0、P1、P2**，四个 commit 在
+`feat/data-ingest-tushare-datayes` 上。
+
+已关闭的缺口：**G2**（因子模型，最大阻塞）、**G3**（估值快照）、**G5**（资产类别）、
+**G1 的一级部分**（申万 2021 一级行业，从 datayes 暴露表派生）。
+
+新增三个 schema，DDL 在 `gr-db` 的 `036`–`039`：
+
+| 迁移 | 内容 |
+|---|---|
+| `036_market_ext.sql` | `market.adj_factor_ts`（复权因子明细，可独立回补对账） |
+| `037_factor.sql` | 8 张表：model / definition / model_run / exposure / covariance / factor_return / specific_risk / specific_return |
+| `038_fundamental.sql` | `valuation_1d`（估值快照）+ `indicator_q`（季度指标，PIT） |
+| `039_classify.sql` | scheme / industry_node / instrument_industry / instrument_category |
+
+**四处刻意偏离设计文档**（不是实现错误，理由见 D-035）：`cov_flat` 用
+`DOUBLE PRECISION[]` 而非 `REAL[]`；`model_run` 加 `units JSONB` / `calibrated` /
+`factor_set_hash` 三列。
+
+### 已实测落库（真库，非 mock）
+
+| 表 | 行数 | 备注 |
+|---|---|---|
+| `fundamental.valuation_1d` | 1,433,283 | 2025-08-01 → 2026-08-28；`total_mv` 中位数 65.25 亿元；`pe_ttm` 亏损股 NULL 39.8 万行 |
+| `market.stock_daily_basic` | 1,433,283 | 未提升的字段进 `raw_payload` JSONB |
+| `market.adj_factor_ts` | 1,437,673 | |
+| `classify.instrument_category` | 5,890 | 5,551 当前有效；15 个标的缺 `list_date` 已跳过并记 dq |
+| `meta.instruments` | 27,654 | |
+
+### 仍然阻塞：`DATAYES_TOKEN` 没配
+
+根 `.env` 里没有 `DATAYES_TOKEN`，因此 **datayes 五表一行真实数据都没抓过**，
+`factor.*` 与 `classify.instrument_industry` 全是空的，6 个 live 契约用例长期 skip。
+代码走 `FakeDatayesClient` 全链通过（含真库的数组 / JSONB COPY 通路），
+但**「Fake 通过」不等于「供应商接口如文档所述」**。配好 token 后按顺序跑：
+
+```bash
+DATAYES_TOKEN=... uv run pytest packages/gr-data/tests/live/test_datayes_live.py -m live_sdk -v
+uv run gr-data raw datayes --mode init --only factor_ret_cne6_sw21   # 先跑最小的表验证凭证
+uv run gr-data raw datayes --mode init                               # 全五表，约 201 次请求
+uv run gr-data ingest datayes --only meta                            # model / definition / model_run
+uv run gr-data ingest datayes
+```
+
+live 用例失败是**信号不是噪声**：因子集合、`secID` 后缀集合、`SRISK` 量纲任一
+变了都会挂，那正是我们要它挡住的东西。
+
+### 剩余分期
+
+- **P3** `finance` 10 张财报表（`_PeriodFetcher`）
+- **P4** `reference` / `macro` / `sentiment`
+- **P5** etf / option 行情扩容
+- **P6** 巡检：`r = 100·X·f + u` 五表自洽校验。这是把 `model_run.calibrated`
+  置真、下游解除 `degraded` 的**唯一门槛**，建议插到 P3 前面（只要 6 天，
+  投产价值高于 P3 的 15 天）。
+
+`G1 的正解`仍是 tushare 的 `index_classify` + `index_member_all`（三级树、官方码、
+真实生效日期），但这两个接口在 `getrich-design` 里**没有字段目录**，已记为待补文档。
 
 ---
 
@@ -194,17 +258,18 @@ TypeScript **拦不住这个**（类型是编译期的，后端返什么是运�
 - **数据库容器数据目录改用 named volume**（D-029）：bind mount 在 macOS 上会丢
   POSIX 语义，PG 在 autovacuum 里报 `could not open file`。已改并重建容器。
 
-## 当前基线（2026-08-17 实测）
+## 当前基线（2026-08-30 实测）
 
 | 项 | 状态 |
 |---|---|
-| `GETRICH_TEST_PG=1 uv run pytest` | **2350 passed, 1 skipped, 0 failed** |
+| `uv run pytest` | **2395 passed, 24 skipped, 0 failed** |
 | `uv run ruff check` / `format --check` | 通过 |
-| `scripts/lint_migrations.py --db pg` / `--db ch` | 通过（35 + 1 个迁移） |
-| `gr-db migrate --target all` | 全新库上建成，重跑两边都报 already applied |
+| `scripts/lint_migrations.py` | 通过（39 pg + 1 ch） |
+| `gr-db migrate --target pg` | 39 个迁移全部 applied，重跑幂等 |
 
-唯一的 skip 是 `test_main_loop.py` 里 Windows-only 的 ProactorEventLoop 守卫，
-POSIX 上本就不适用。
+24 个 skip 里：6 个是缺 `DATAYES_TOKEN` 的 live 契约用例（见上文），
+其余是缺 `GETRICH_TEST_PG` 的选股集成、缺凭证的其它 live 用例，
+以及 `test_main_loop.py` 里 Windows-only 的 ProactorEventLoop 守卫。
 
 **这个基线里有 27 个用例是「本来就该跑但从没跑过的」**，不是新写的：5 个 docker
 集成（探测命令挡住）+ 11 个 tushare 真实接口（缺凭证）+ 5 个 job 持久化（缺 anyio

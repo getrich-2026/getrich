@@ -762,3 +762,161 @@ src/types/<domain>.ts 与后端对齐的类型
 **代价要认**：产物 JS 1352 → 1390 kB（gzip 407 → 422）。axios 之前因为
 `src/api/` 无人引用被 tree-shaking 掉了，现在真正进包。这是走 `AGENTS.md` §5
 规定路径的成本，接受。
+
+---
+
+## D-035 `factor` schema 相对设计文档的四处刻意偏离
+
+`getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md` §5.2 是 `factor`
+schema 的 DDL 草案真源。`037_factor.sql` 有四处不照抄，**都是刻意的**，
+看到差异不要当成实现错误去「订正」：
+
+| 偏离 | 理由 |
+|---|---|
+| `covariance.cov_flat` 用 `DOUBLE PRECISION[]` 而非 `REAL[]` | 实测样本里最大值 723.695971 = 9 位有效数字，`REAL` 只有约 7 位，末两位会被**静默**截掉。矩阵求逆与半正定判定对精度敏感，而截断后的矩阵依然对称、依然正定，不会有任何报错 |
+| `model_run` 加 `units JSONB NOT NULL DEFAULT '{}'` | `annualization_basis` 是单值 CHECK ∈ (daily, annual_252)，装不下「$F$/$D$ 年化 + $f$/$u$ 日频」这种**同一模型内部混着量纲**的事实。`annualization_basis` 保留填 `'annual_252'`，语义收窄为「风险类口径」 |
+| `model_run` 加 `calibrated BOOLEAN NOT NULL DEFAULT false` | 量纲定标的依据是**单日**样例且属 SW14 期。全区间复核（P6）通过前，下游必须能读到「这批数是没复核过的」，否则会把 degraded 当成正常结果展示 |
+| `model_run` 加 `factor_set_hash VARCHAR(32)` | 每日复核当日活跃因子集合，不符即中断。见 D-036 |
+
+**下游必须知道的一条**：若 portfolio-analysis 按
+`annualization_basis='annual_252'` 去读 `factor_return.ret_vector`，会差 √252 倍
+——`f` 是**日频小数**。口径以 `model_run.units` 为准，不以 `annualization_basis` 为准。
+
+另有一条 ownership 粒度的边界：`factor.*` 目前**按表级**登记归属
+（`OwnershipManager` 只支持表级）。一旦要用自研估计与采购数据并存地写
+`factor.*`，必须先把 ownership 下沉到表 + run_id，否则两套估计会混在一张表里
+且事后分辨不出哪行是谁写的。
+
+## D-036 datayes 三张宽表的因子列顺序互不相同（静默算错的头号风险）
+
+实测样本 `dy1d_*_20260829.csv` 逐列核对，**不是推测**：
+
+```
+exposure  : … COMPUTERS, CONGLOMERATES, CONSTRDECOR, DEFENSE, ELECTRICALEQUIP, ELECTRONICS …
+covariance: … COMPUTERS, ELECTRONICS,   CONSTRDECOR, DEFENSE, ELECTRICALEQUIP, NONBANKFINAN …
+```
+
+三表都是 58 个因子列（20 风格 + 37 行业 + COUNTRY），**集合相同、顺序不同**，
+且 CSV 列名全大写而协方差的 `factorName` 行标签是原大小写。
+
+**按源列序 `df[cols].to_numpy()` 展平 = 每个因子都对应错**，而结果依然是合法的
+52 维向量 / 对称正定矩阵，没有任何报错。这是本次接入唯一的「形状正确但数值全错」
+高危点。四层防护：
+
+1. `factors.reindex_wide(df, order)` 是**唯一允许把宽表变成数组的函数**，
+   源列名经大小写归一后匹配，缺列 / 重复列一律抛错，**不 fillna 不容忍**。
+   全仓禁止再出现按源列序取值的写法。
+2. `factor_set_hash` 每日复核：当日活跃因子集合的哈希与 `model_run` 不符即中断，
+   人工确认后开新 `model_version`。与 `factor_order_hash`（校验我们自己的常量
+   没被改）分两列存。
+3. 协方差硬校验：行标签集合 == 列名集合、对称性、对角元 > 0，任一不满足即中断；
+   半正定只做软校验（告警）。
+4. 行业哑变量每行恰有一个 1、`COUNTRY ≡ 1` —— 这两条同时是「列没错位」的最强
+   证据，因此**不做「取最大值」兜底**：兜底正好会把错位掩盖过去。
+
+配套的一条：活跃因子集合**从数据派生**而不是写死 52。SW14 期是 49 个、SW21 期
+是 52 个，写死一个数字就等于在体系切换时静默算错。写死的只有 58 个的超集与它
+的规范顺序（那份是文档明确给出的）。
+
+**踩过的坑**：手上的样本 CSV 是 2020-12-31，属 SW14 期，9 个 SW21 新行业整列为
+NaN，只有 49 个因子有值。**它不能直接当 52 因子路径的测试 fixture。**
+
+## D-037 `meta.symbol_map` 是「单表单一来源」铁律的唯一例外
+
+AGENTS.md §3.4 规定同一张目标表只能由一个 provider 写入。接入 datayes 时
+`DatayesSymbolMapImporter` 撞上 `OwnershipError：表 meta.symbol_map 已归属
+provider='tushare'`。
+
+这不是实现 bug，是规则与这张表的用途本身冲突：**该表的主键就是
+`(source, source_symbol)`，它存在的意义就是跨源对齐**。铁律要防的是「两家供应商
+往同一批行里写不同口径的值」，而这里两个 source 写的是互不相交的行。
+
+处理：`common/ownership.py` 加 `MULTI_SOURCE_TABLES = frozenset({"meta.symbol_map"})`，
+`check()` 提前返回、`claim()` 不登记。
+
+**往这个集合里加表的门槛（必须同时满足）**：主键里含 `source` 列，因此不同
+provider 写的行物理上不可能相交。不满足就不能加 —— 加错了不会报错，只会让两家
+供应商的数据互相覆盖。
+
+## D-038 gr-data CLI 的 statement_timeout 放宽到 30 分钟
+
+`PgConfig.statement_timeout_ms` 默认 60 s，那是给交互式短查询的。而一次 ingest
+是「一个事务里 COPY 上百万行再 UPSERT」：实测 `daily_basic` 单次 1,433,283 行在
+60 s 处被 `psycopg.errors.QueryCanceled` 打断，**已写入的部分整批回滚，重跑还是
+同样的结果**，且报错信息（"canceling statement due to statement timeout"）看不出
+是量太大还是库有问题。
+
+`cli.py::_pg()` 显式传 `_INGEST_STATEMENT_TIMEOUT_MS`（默认 1800000，可用
+`GR_DATA_STATEMENT_TIMEOUT_MS` 覆盖）。**只影响 gr-data CLI 这条批处理通路**，
+服务侧的连接池与 `PgConfig` 的默认值都不变 —— 给 API 请求 30 分钟的超时是灾难。
+
+## D-039 从 datayes 暴露表派生行业分类：五条必须显式披露的限制
+
+G1（行业分类）的**正解**是 tushare 的 `index_classify` + `index_member_all`：
+三级树、申万官方码、真实生效日期。但这两个接口在
+`getrich-design/dataapi/tushare-api/tushare_api_design.md` 的 §2–§8（61 个小节，
+已逐节核对）里**没有字段目录**，凭猜实现会写出一批看起来对、实际对不上申万发布
+口径的数据。
+
+折中：从通联 CNE6 exposure 的 31 个行业哑变量读出逐日归属，按变化点压成
+`[in_date, out_date)` 区间。代价是五条限制，**全部写进 DDL 列注释 +
+`ops.data_quality_check`，不假装不存在**：
+
+1. 只覆盖 CNE6 收录的 A 股个股，不含 ETF / 指数 / 期货；
+2. 只有一级，`scheme.available_level = 1`（**体系级声明，不得当逐标的判据**）；
+3. `industry_code` 是通联的英文标识（`Banks` / `NonbankFinan`），不是申万官方码
+   （`801780.SI` 那类）。`industry_node.external_code` **恒 NULL**，接到真源后
+   回填 —— 猜一份映射会让下游误以为能直接对接申万发布的成分数据；
+4. 没有真实 `in_date`，区间起点被导入窗口截短（记 `rule='classify_window_truncated'`）。
+   方向是**保守**的：不会让历史看到未来的行业，只会看不到更早的历史；
+5. 停牌日没有 exposure 行会打断区间，只对行业相同、间隔 ≤ 40 自然日的相邻段合并。
+   停牌一年的票中间有没有被重分类，我们并不知道，接上就是替供应商编数据。
+
+两个容易写错的实现细节：
+
+- **`out_date` 取下一段的起点，不是本段最后一个交易日。** 后者会在两段之间漏掉
+  一天，那一天查不到任何行业，而查询本身不报错，只是少了一只票。
+- **资产类别（G5）只映射能确定的 stock / etf / fund。** future / option / index
+  刻意不映射：CFFEX 同时挂股指期货（equity）与国债期货（fixed_income），交易所
+  定不了类别。少一行只让下游标 degraded，写错一行让资产配置分解整块失真且不报错
+  —— 两者代价不对称。
+
+接到 tushare 真源后，`classify.instrument_industry` 走 `gr-data own release/set`
+转移归属，**两个来源的分歧本身就是很强的质量信号**，值得保留交叉校验。
+
+## D-040 `available_at` 只能有一个产地
+
+新建 `ingest/pit.py`，三个函数按**可信度降序**：
+
+| 函数 | 依据 | 可信度 |
+|---|---|---|
+| `from_vendor_timestamp(ts)` | 供应商的逐行时间戳（datayes `updateTime`） | 高：逐行精确，天然覆盖回算与重述 |
+| `from_announce_date(ann, fallback)` | 公告日（财报的 `f_ann_date` / `ann_date`） | 中：日粒度 |
+| `from_trading_day(day, publish_hour)` | 交易日 + 文档声明的发布小时 | 低：**文档值不是实测值** |
+
+**绝对禁止用 `end_date` 兜底**：20241231 的年报次年 3–4 月才披露，按 `end_date`
+对齐等于提前看到三四个月后的信息，且回测会「表现优异」——这类前视不会报错，
+只会让结果好看。
+
+时区一律 `Asia/Shanghai` 显式 localize。相关的测试写法坑：断言时区**不能断言
+`utcoffset()`**，那只反映读取连接的会话时区，换个连接就变。要断言**瞬间**：
+`SELECT available_at AT TIME ZONE 'UTC'`，17:00+08 必须等于 09:00 UTC。
+漏了 `tz_localize` 时，CI 的 UTC 机器上会存成 17:00Z 而本地机器看着完全正常。
+
+## D-041 `column_types` 声明的是**发送侧线格式**，不是目标列类型
+
+`TableContract` 新增可选字段 `column_types`，`upsert_rows` 据它调
+`cursor.copy().set_types(...)`，用来打通 JSONB 与数组列的 COPY 通路。
+
+踩过的坑：`fundamental.valuation_1d.total_mv` 目标列是 `NUMERIC(24,4)`，
+于是声明成 `("total_mv", "numeric")`，结果 psycopg 报
+`TypeError: class NumericDumper cannot dump float` —— Python 侧给的是 `float`，
+而 `numeric` 适配器不接受它。改声明 `float8` 后正常：float8 的文本表示能被
+`NUMERIC` 原样解析。
+
+规则：**填的是「我这边发的是什么 Python 类型」，不是「库里那列是什么类型」。**
+另外 `set_types` 要么不填、要么填全，不能只填一部分。
+
+顺带一条：`raw_payload` 这类 JSONB 列在 `to_dict("records")` 之前必须把 NaN 换成
+None —— `json.dumps(float('nan'))` 产出 `NaN` 字面量，PG 的 jsonb 解析器**会拒绝**，
+整批 COPY 失败（而不是那一行失败）。
