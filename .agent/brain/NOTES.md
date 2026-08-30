@@ -48,23 +48,61 @@
 | `classify.instrument_category` | 5,890 | 5,551 当前有效；15 个标的缺 `list_date` 已跳过并记 dq |
 | `meta.instruments` | 27,654 | |
 
-### 仍然阻塞：`DATAYES_TOKEN` 没配
+### 全量数据已导入（2026-08-31 实测）
 
-根 `.env` 里没有 `DATAYES_TOKEN`，因此 **datayes 五表一行真实数据都没抓过**，
-`factor.*` 与 `classify.instrument_industry` 全是空的，6 个 live 契约用例长期 skip。
-代码走 `FakeDatayesClient` 全链通过（含真库的数组 / JSONB COPY 通路），
-但**「Fake 通过」不等于「供应商接口如文档所述」**。配好 token 后按顺序跑：
+`DATAYES_TOKEN` 已配置，两个源的全量历史都已落库。**下面的行数是真库实测值。**
 
-```bash
-DATAYES_TOKEN=... uv run pytest packages/gr-data/tests/live/test_datayes_live.py -m live_sdk -v
-uv run gr-data raw datayes --mode init --only factor_ret_cne6_sw21   # 先跑最小的表验证凭证
-uv run gr-data raw datayes --mode init                               # 全五表，约 201 次请求
-uv run gr-data ingest datayes --only meta                            # model / definition / model_run
-uv run gr-data ingest datayes
-```
+| 表 | 行数 | 区间 |
+|---|---|---|
+| `market.stock_bar_1d` | 12,800,645 | 2013-01-04 → 2026-08-28 |
+| `market.index_bar_1d` | 25,927,848 | 同上 |
+| `market.future_bar_1d` | 2,426,406 | 同上 |
+| `market.stock_daily_basic` | 12,709,865 | 同上 |
+| `market.adj_factor_ts` | 13,389,771 | 同上 |
+| `fundamental.valuation_1d` | 12,709,865 | 同上 |
+| `factor.exposure` | 6,132,348 | **2021-11-01** → 2026-08-28 |
+| `factor.specific_risk` | 6,031,475 | 2021-12-01 → 2026-08-28 |
+| `factor.specific_return` | 6,030,370 | 同上 |
+| `factor.covariance` / `factor_return` | 各 1,151 | 同上 |
+| `classify.instrument_industry` | 6,191 | 5,743 个标的 |
+| `classify.instrument_category` | 5,890 | 5,551 当前有效 |
+| `meta.trading_calendar` | 10,710 | 2013-01-01 → 2027-08-30 |
 
-live 用例失败是**信号不是噪声**：因子集合、`secID` 后缀集合、`SRISK` 量纲任一
-变了都会挂，那正是我们要它挡住的东西。
+不变量全部通过：数组长度（exposure=52 / cov_flat=1378 / ret_vector=52）零违例、
+`specific_var` 非负、`high<low` 零行、`adj_factor` 无缺失、行业区间零重叠。
+量纲抽查：`specific_var` P50 = 733.7 → SRISK ≈ 27.1% 年化波动率（预期 20–45）；
+`total_mv` P50 = 56.96 亿元。归属：tushare 9 张表、datayes 9 张表。
+
+**datayes 的真实数据起点是 2021-08-02**（2021-07 及更早全空，见 D-044）。
+
+### ⚠️ 三个已知缺口，都需要人来决定
+
+1. **`factor.*` 的窗口从 2021-12 起，不是 2021-08**（见 D-045）。
+   通联在 **2021-11 换了行业体系**（申万 2014 的 49 因子 → 申万 2021 的 52 因子），
+   且五张表的切换不在同一天：exposure 在 11-01 已切换，而 factor_ret / covariance
+   的 11-01 仍是旧体系。同一个 `model_run` 内因子集合必须恒定、五张表必须逐日
+   一致，所以 2021-08~11 共 4 个月（约 5%）暂未入库。
+   要补齐得先决定 `factor.definition` 怎么容纳两套体系（它按 `model_id` 建、
+   `UNIQUE(model_id, ordinal)`），那是 `持仓诊断_表与接口设计.md` §5.2 的范围。
+
+2. **`factor.exposure` 有 100,873 行孤儿数据**（2021-11-01 → 11-30）。
+   来自定窗口之前的一次试跑：exposure 已提交、`factor_return` 才报错。
+   后果是 2021-11 那个月**只有 X，没有 F / D / f**，对该月做诊断会拿到不完整的
+   `DataPack`。清理命令（**需要人确认后执行，属对业务主库的删除**）：
+   ```sql
+   DELETE FROM factor.exposure WHERE trading_day < DATE '2021-12-01';  -- 100873 行
+   ```
+
+3. **`calibrated` 仍是 false**，下游必须据此标 `degraded`。解除它的唯一门槛是
+   P6 的 `r = 100·X·f + u` 五表自洽校验。
+
+### 运维要点（下次全量重跑必看）
+
+- **必须按月分批**：`gr-data ingest <provider> --months 2021-12..2026-08`。
+  不分批会被 OOM killer **静默**杀掉 —— 无输出、无落库、退出码 0（D-046）。
+- datayes exposure 串行抓要 10 小时，瓶颈是服务端响应时间而非限流；
+  4 并发可压到 1.5 小时（D-047）。并发抓取**没有进仓库代码**，需要先讨论。
+- `config.yaml`（gitignore 内）已建好，`providers.datayes.start_date = 20210802`。
 
 ### 剩余分期
 
