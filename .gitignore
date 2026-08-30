@@ -162,6 +162,9 @@ venv.bak/
 # Generated static-site output
 /site
 
+# 数据字典由真库 catalog 生成，部署时写入前端静态目录，不提交数据库快照。
+/apps/web/public/data-dictionary.html
+
 # Docker bind-mount data must never enter the repository
 .docker/
 

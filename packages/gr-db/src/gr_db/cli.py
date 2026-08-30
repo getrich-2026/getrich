@@ -19,10 +19,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 from gr_data.config import settings
+from gr_data.config.pipeline import load_config
 
 from .executors import (
     ClickHouseMigrationExecutor,
@@ -50,14 +53,32 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "command",
         nargs="?",
         default="migrate",
-        choices=("migrate", "status"),
-        help="migrate=应用 DDL；status=只看磁盘上有哪些 DDL（默认 migrate）。",
+        choices=("migrate", "status", "docs"),
+        help="migrate=应用 DDL；status=只看磁盘 DDL；docs=生成数据字典（默认 migrate）。",
     )
     parser.add_argument(
         "--target",
         default="all",
         choices=("postgres", "pg", "clickhouse", "ch", "all"),
         help="作用于哪个数据库（默认 all）。",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="数据字典输出路径；'-' 输出到 stdout。默认 raw_root/_docs/data-dictionary.html。",
+    )
+    parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("html", "json"),
+        default="html",
+        help="数据字典输出格式（默认 html）。",
+    )
+    parser.add_argument(
+        "--fail-on-drift",
+        action="store_true",
+        help="生成数据字典时，发现 error 级漂移则以非零退出。",
     )
     parser.add_argument(
         "--dry-run",
@@ -187,6 +208,108 @@ def _run_clickhouse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _open_postgres_connection() -> object:
+    """按迁移 CLI 相同配置建立 PostgreSQL 连接。
+
+    Time Complexity: O(1)。
+    Space Complexity: O(1)。
+    """
+    import psycopg
+
+    cfg = settings.postgres
+    dsn = (
+        f"host={cfg.host} port={cfg.port} user={cfg.user} "
+        f"password={cfg.password} dbname={cfg.database}"
+    )
+    return psycopg.connect(dsn, autocommit=True)
+
+
+def _open_clickhouse_client() -> object:
+    """按迁移 CLI 相同配置建立 ClickHouse 客户端。
+
+    Time Complexity: O(1)。
+    Space Complexity: O(1)。
+    """
+    import clickhouse_connect
+
+    cfg = settings.clickhouse
+    return clickhouse_connect.get_client(
+        host=cfg.host,
+        port=cfg.port,
+        username=cfg.user,
+        password=cfg.password,
+        database=cfg.database,
+        secure=cfg.protocol.lower() == "https",
+    )
+
+
+def _default_docs_out() -> Path:
+    """返回数据字典默认产物路径。
+
+    Time Complexity: O(1)。
+    Space Complexity: O(1)。
+    """
+    configured = os.environ.get("GETRICH_DOCS_OUT", "").strip()
+    if configured:
+        return Path(configured)
+    return load_config().raw_root / "_docs" / "data-dictionary.html"
+
+
+def _write_atomically(path: Path, content: str) -> None:
+    """原子写入文本输出，避免读者看到半份字典。
+
+    Time Complexity: O(n)，n 为内容字符数。
+    Space Complexity: O(n)。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.tmp-{uuid4().hex}")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _run_docs(args: argparse.Namespace) -> int:
+    """反射所选活库并输出数据字典。
+
+    Time Complexity: O(t + c + r)，由数据库 catalog 与契约规模决定。
+    Space Complexity: O(t + c + r)。
+    """
+    from gr_db.docs import build_dictionary, render_html
+    from gr_db.docs.render import render_json
+
+    target = {"pg": "postgres", "ch": "clickhouse"}.get(args.target, args.target)
+    postgres_conn = None
+    clickhouse_client = None
+    try:
+        if target in ("postgres", "all"):
+            postgres_conn = _open_postgres_connection()
+        if target in ("clickhouse", "all"):
+            clickhouse_client = _open_clickhouse_client()
+        dictionary = build_dictionary(postgres_conn, clickhouse_client)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("cannot build data dictionary: %s", exc)
+        return 2
+    finally:
+        if postgres_conn is not None:
+            postgres_conn.close()
+        if clickhouse_client is not None and hasattr(clickhouse_client, "close"):
+            clickhouse_client.close()
+
+    content = render_json(dictionary) if args.output_format == "json" else render_html(dictionary)
+    output = args.out or _default_docs_out()
+    if str(output) == "-":
+        sys.stdout.write(content)
+        if not content.endswith("\n"):
+            sys.stdout.write("\n")
+    else:
+        _write_atomically(output, content)
+        logger.info("data dictionary written to %s", output)
+    return int(args.fail_on_drift and any(item.severity == "error" for item in dictionary.findings))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _configure_logging(args.verbose)
@@ -202,6 +325,9 @@ def main(argv: list[str] | None = None) -> int:
         if want_ch and args.clickhouse_dir.exists():
             rc = _print_status(args.clickhouse_dir) or rc
         return rc
+
+    if args.command == "docs":
+        return _run_docs(args)
 
     rc = 0
     if want_pg:

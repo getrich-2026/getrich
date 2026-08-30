@@ -21,4 +21,4 @@ where = ["src"]
 include = ["gr_db*"]
 
 [tool.setuptools.package-data]
-gr_db = ["ddl/postgres/*.sql", "ddl/clickhouse/*.sql", "ddl/upgrade/*.sql"]
+gr_db = ["ddl/postgres/*.sql", "ddl/clickhouse/*.sql", "ddl/upgrade/*.sql", "docs/*.html"]
