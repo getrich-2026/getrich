@@ -690,3 +690,34 @@ def test_category_mapping_covers_only_what_it_can_decide():
     assert _CATEGORY_BY_ASSET["etf"] == ("equity", "cn_a")
     for undecidable in ("future", "option", "index"):
         assert undecidable not in _CATEGORY_BY_ASSET
+
+
+# --------------------------------------------------------------------------- #
+# 月份窗口（IngestContext.months）
+# --------------------------------------------------------------------------- #
+def test_months_window_limits_what_is_read(tmp_raw_root, monkeypatch):
+    """给了 months 就只读那些月 —— 这是全量入库不 OOM 的唯一手段。
+
+    importer 的 build() 是「读全部月份 → 拼一个大 DataFrame → 一次 upsert」，
+    tushare 日线 164 个月、datayes exposure 61 个月 × 58 列都会吃掉几个 GB。
+    """
+    from gr_data.common.parquet import write_parquet
+    from gr_data.ingest.base import IngestContext
+    from gr_data.ingest.tushare.importers.market import DailyBasicImporter
+
+    for ym, code in (("2024-01", "600000.SH"), ("2024-02", "000001.SZ")):
+        df = _daily_basic_df()
+        df.loc[0, "ts_code"] = code
+        df.loc[0, "trade_date"] = ym.replace("-", "") + "05"
+        write_parquet(df, tmp_raw_root.dataset_file("tushare", "daily_basic", ym), append=False)
+
+    id_map = {"600000.SH": 42, "000001.SZ": 43}
+
+    def build_with(months):
+        imp = DailyBasicImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root, months=months))
+        monkeypatch.setattr(imp, "_id_map", lambda: id_map)
+        return imp.build()
+
+    assert len(build_with(None)) == 2  # 默认读全部，与加窗口前行为一致
+    assert build_with(("2024-01",))["instrument_id"].tolist() == [42]
+    assert build_with(("2024-02",))["instrument_id"].tolist() == [43]
