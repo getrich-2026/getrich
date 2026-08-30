@@ -13,6 +13,7 @@ provider ∈ {yinhe, ricequant, insight, tushare}（stream 仅 yinhe/insight）�
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from gr_data.config import settings
@@ -33,6 +34,15 @@ def _configure_logging_from(cfg: Config) -> None:
     )
 
 
+#: 批量入库的 statement_timeout（毫秒）。``PgConfig`` 的默认值 60s 是给交互式短
+#: 查询的，而一次 ingest 是「一个事务里 COPY 上百万行再 UPSERT」——实测
+#: daily_basic 单次 143 万行就会在 60s 处被 ``QueryCanceled`` 打断，且已写入的
+#: 部分整批回滚，重跑还是同样的结果。这里放宽到 30 分钟，只影响 gr-data CLI 这
+#: 条批处理通路，服务侧的连接池不受影响。可用 ``GR_DATA_STATEMENT_TIMEOUT_MS``
+#: 覆盖（跑全量历史回补时可能还要更大）。
+_INGEST_STATEMENT_TIMEOUT_MS = int(os.environ.get("GR_DATA_STATEMENT_TIMEOUT_MS", "1800000"))
+
+
 def _pg(cfg: Config) -> PgConfig:
     """PostgreSQL 连接来自 settings（根 .env 的 PG_*）。
 
@@ -48,6 +58,7 @@ def _pg(cfg: Config) -> PgConfig:
         dbname=pg.database,
         user=pg.user,
         password=pg.password,
+        statement_timeout_ms=_INGEST_STATEMENT_TIMEOUT_MS,
     )
 
 

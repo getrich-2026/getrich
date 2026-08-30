@@ -21,6 +21,7 @@ from gr_data.common.contracts.factor import (
     SPECIFIC_RETURN,
     SPECIFIC_RISK,
 )
+from gr_data.common.contracts.fundamental import VALUATION_1D
 from gr_data.common.contracts.market import (
     ADJ_FACTOR_TS,
     STOCK_DAILY_BASIC,
@@ -46,6 +47,7 @@ __all__ = [
     "SYMBOL_MAP",
     "TRADING_CALENDAR",
     "VALID_ASSETS",
+    "VALUATION_1D",
     "TableContract",
     "bar_1d",
     "bar_1m",

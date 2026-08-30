@@ -233,11 +233,12 @@ def test_daily_basic_jsonb_roundtrip(pg_conn, tmp_raw_root, fake_tushare):
 
     from gr_data.ingest.tushare import REGISTRY
 
-    for name in ("instruments", "symbol_map", "daily_basic", "adj_factor_ts"):
+    for name in ("instruments", "symbol_map", "daily_basic", "adj_factor_ts", "valuation_1d"):
         REGISTRY[name](pg_conn, ctx).run()
 
     assert _count(pg_conn, "market.stock_daily_basic") == 4  # 2 codes x 2 days
     assert _count(pg_conn, "market.adj_factor_ts") == 4
+    assert _count(pg_conn, "fundamental.valuation_1d") == 4
 
     with pg_conn.cursor() as cur:
         cur.execute(
@@ -265,6 +266,24 @@ def test_daily_basic_jsonb_roundtrip(pg_conn, tmp_raw_root, fake_tushare):
         adj, source = cur.fetchone()
         assert float(adj) == 1.25
         assert source == "tushare"
+
+        # fundamental.valuation_1d：同一份 raw 的另一条路，单位已归一。
+        # available_at 断言的是**瞬间**而不是 utcoffset —— 后者只反映读取连接的
+        # 会话时区，换个连接就变，证明不了写入时钉对了时区。
+        cur.execute(
+            "SELECT total_mv, circ_mv, pb, pe_ttm, currency, "
+            "       available_at AT TIME ZONE 'UTC' "
+            "FROM fundamental.valuation_1d v "
+            "JOIN meta.instruments i USING (instrument_id) "
+            "WHERE i.symbol = '600000.SH' AND v.trading_day = DATE '2024-01-02'"
+        )
+        total_mv, circ_mv, pb, pe_ttm, currency, avail_utc = cur.fetchone()
+        assert float(total_mv) == 120_000_000.0
+        assert float(circ_mv) == 80_000_000.0
+        assert float(pb) == 1.2
+        assert float(pe_ttm) == 11.5
+        assert currency == "CNY"
+        assert avail_utc == datetime(2024, 1, 2, 9, 0)  # 17:00 +08:00
 
 
 _SCALING = {

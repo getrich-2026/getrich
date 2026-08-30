@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from gr_data.common import contracts
+from gr_data.ingest import pit
 from gr_data.ingest.base import BaseImporter
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
@@ -553,6 +554,68 @@ class DailyBasicImporter(_SymbolResolvingImporter):
         return out[list(self.contract.columns)].reset_index(drop=True)
 
 
+class ValuationImporter(_SymbolResolvingImporter):
+    """daily_basic → fundamental.valuation_1d（面向分析的规整估值快照，G3）。
+
+    与 `DailyBasicImporter` 读同一份 raw，但目标不同：那张表保留 insight 时代的
+    形状、多余字段进 raw_payload；**这张表是计算层直接取用的形态**，单位与口径
+    都已归一，下游不再临时乘除。
+
+    | tushare | 目标列 | 换算 |
+    |---|---|---|
+    | ``total_mv`` | ``total_mv`` | 万元 → 元（×10000）|
+    | ``circ_mv``  | ``circ_mv``  | 万元 → 元（×10000）|
+    | ``pb``       | ``pb``       | 无量纲，原样 |
+    | ``pe_ttm``   | ``pe_ttm``   | 无量纲，原样；**亏损股为 NULL，保持 NULL** |
+
+    亏损股的 `pe_ttm` 用 0 或极大值兜底会让估值分档整体失真 —— 那是
+    「不知道」不是「等于某个数」，两者不能混为一谈。
+    """
+
+    DATASET = "valuation_1d"
+    CONTRACT = contracts.VALUATION_1D
+    NOT_NULL_COLUMNS = ("instrument_id", "trading_day", "source", "available_at")
+
+    #: daily_basic 官方 15:00–17:00 更新。**这是文档值不是实测值**，
+    #: 供应商没给逐行时间戳，只能用固定小时近似（见 ingest/pit.py 的分级说明）。
+    PUBLISH_HOUR = 17
+
+    def build(self) -> pd.DataFrame:
+        raw = self._adapter().read_all_months("daily_basic")
+        if raw.empty:
+            self.log.warning("daily_basic 无 raw 数据")
+            return pd.DataFrame(columns=list(self.contract.columns))
+
+        _require(raw, {"ts_code", "trade_date"}, "daily_basic")
+        df = raw.copy()
+        df["ts_code"] = df["ts_code"].astype(str).str.strip()
+        df["trading_day"] = _parse_trade_date(df, "daily_basic")
+        df = self._attach_ids(df, self._id_map())
+        if df.empty:
+            return pd.DataFrame(columns=list(self.contract.columns))
+
+        _to_numeric(df, [c for c in ("total_mv", "circ_mv", "pb", "pe_ttm") if c in df])
+
+        out = pd.DataFrame(
+            {
+                "instrument_id": df["instrument_id"].astype("int64"),
+                "trading_day": df["trading_day"],
+                # 万元 → 元。换算只在这里发生一次，计算层与文档都不再乘除。
+                "total_mv": df["total_mv"] * 10000.0 if "total_mv" in df else None,
+                "circ_mv": df["circ_mv"] * 10000.0 if "circ_mv" in df else None,
+                "pb": df.get("pb"),
+                "pe_ttm": df.get("pe_ttm"),
+                "currency": "CNY",
+                "source": PROVIDER,
+                "available_at": pit.from_trading_day(
+                    df["trading_day"], publish_hour=self.PUBLISH_HOUR
+                ),
+            }
+        )
+        out = out.drop_duplicates(subset=["instrument_id", "trading_day"], keep="last")
+        return out[list(self.contract.columns)].reset_index(drop=True)
+
+
 class AdjFactorTsImporter(_SymbolResolvingImporter):
     """adj_factor → market.adj_factor_ts（每日单值复权因子明细，D7）。
 
@@ -600,6 +663,7 @@ class AdjFactorTsImporter(_SymbolResolvingImporter):
 
 __all__ = [
     "AdjFactorTsImporter",
+    "ValuationImporter",
     "DailyBasicImporter",
     "StockBars1dImporter",
     "IndexBars1dImporter",

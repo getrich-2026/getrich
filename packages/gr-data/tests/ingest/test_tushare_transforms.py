@@ -586,6 +586,54 @@ def test_daily_basic_payload_nan_becomes_none(tmp_raw_root, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# daily_basic → fundamental.valuation_1d
+# --------------------------------------------------------------------------- #
+def _valuation_importer(tmp_raw_root, monkeypatch):
+    from gr_data.ingest.base import IngestContext
+    from gr_data.ingest.tushare.importers.market import ValuationImporter
+
+    imp = ValuationImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    return imp
+
+
+def test_valuation_market_cap_wan_yuan_to_yuan(tmp_raw_root, monkeypatch):
+    """万元 → 元的换算只在 ingest 层发生一次。期望值写死，不用被测代码的系数反算。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert row["total_mv"] == 120_000_000.0  # 12000 万元
+    assert row["circ_mv"] == 80_000_000.0  # 8000 万元
+    assert row["pb"] == 1.2  # 无量纲，原样
+    assert row["currency"] == "CNY"
+    assert row["source"] == "tushare"
+
+
+def test_valuation_loss_making_pe_stays_null(tmp_raw_root, monkeypatch):
+    """亏损股的 pe_ttm 是「不知道」，不是某个数 —— 用 0 或极大值兜底会让估值分档失真。"""
+    df = _daily_basic_df()
+    df.loc[0, "pe_ttm"] = None
+    _write(tmp_raw_root, "daily_basic", df)
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert pd.isna(row["pe_ttm"])
+    assert row["total_mv"] == 120_000_000.0  # 同行其余字段照常入库
+
+
+def test_valuation_available_at_is_trading_day_1700_shanghai(tmp_raw_root, monkeypatch):
+    """available_at 必须是交易日 17:00 +08:00 —— 下游按它过滤，早一天就是前视。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+    ts = pd.Timestamp(row["available_at"])
+
+    assert (ts.year, ts.month, ts.day, ts.hour) == (2024, 1, 2, 17)
+    assert ts.utcoffset().total_seconds() == 8 * 3600
+
+
+# --------------------------------------------------------------------------- #
 # adj_factor → market.adj_factor_ts
 # --------------------------------------------------------------------------- #
 def _adj_factor_importer(tmp_raw_root, monkeypatch):
