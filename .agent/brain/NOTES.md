@@ -3,11 +3,11 @@
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
 最后更新：2026-08-30 · 分支 `feat/data-ingest-tushare-datayes`（未合回 `dev`）；
-持仓诊断 API 在 `worktree-feat-diagnosis-api` 上（基线同上，未合回）
+持仓诊断 API 在 `worktree-feat-diagnosis-api` 上完成独立审查修复（基线同上，未合回）
 
 ---
 
-## 持仓诊断后端 API 已落地（P0，真库实测通过）
+## 持仓诊断后端 API 已落地并完成审查修复（P0，真库实测通过）
 
 `getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md` §7.1 的 **9 个端点
 全部实现**，挂在 `/v1/diagnosis/*`（**不是**文档写的 `/api/v1/*`，本仓路由都在
@@ -45,18 +45,19 @@ B/C/D 按契约返回 `null` + `reason_code`，前端已能正确渲染降级态
 解析／plans 超限／负权重）统一 422；SSE 事件序列与 §7.5 逐条一致（2 plan 时
 `complete` id=9）；`retail`/`pro` 分级裁剪。
 
-测试 37 条，全量 2421 passed / 35 skipped，`ruff` 与 `lint_migrations` 全绿。
+审查交接单的 13 项发现已全部修复：跨用户共享 run 只缓存纯计算字段，响应按当前
+`portfolio_plan` 重建 plan 元数据、覆盖率和请求级 DQ；SSE 在 `complete` 后结束且
+返回流前释放 PG 连接；标的解析、状态聚合、并发幂等、最新 run、时区和响应模型均有
+回归覆盖。诊断单元测试 **51 passed**；新增 3 条 `GETRICH_TEST_PG=1` 门控用例，真库
+覆盖 POST → result → report、幂等、跨用户复用隔离、`diag.` 前缀与 UUID 绑定，
+**3 passed**。
 
-### 两个已知缺口（不阻塞前端联调，但要记着）
+### 一个已知缺口（不阻塞前端联调，但要记着）
 
 1. **`data_fingerprint` 没有维护者**。文档要求每日盘后批任务维护
    `diag.data_version`，该任务不存在，现在只有 bootstrap 的一行。后果：**数据
    重新导入后 fingerprint 不变，已成功的计算不会失效，接口返回陈旧结果**。
    缓解办法是每次数据导入后手工插一行新的 `diag.data_version`。
-2. **9 条新路由同样没挂 `response_model`**，`/openapi.json` 的响应 schema 仍是空的
-   —— 与下文「前后端契约错位」D 节说的 55 条路由是同一个问题。但这批是最接近
-   方案 1 前置条件的：响应形状已经有 Pydantic 真源（`schemas/diagnosis.py`），
-   且 `PlanResult` 在落库前会 `model_validate` 一次。要推方案 1 可以拿它开头。
 
 ### 下一步
 

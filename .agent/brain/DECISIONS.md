@@ -1008,3 +1008,13 @@ Pydantic v2 原生支持它做判别联合，`MetricValue[float]` 正常工作�
 响应**这条路径再断言。既有的 `test_middleware.py` 用 `/boom` 能测出头，是因为
 它抛的是 `HTTPException`，由内层的 `ExceptionMiddleware` 处理，仍在中间件栈内 ——
 两者不是一回事，照抄会得出错误结论。
+
+## D-050 PG 集成测试的连接失败 traceback 也可能泄漏凭证
+
+测试代码若把包含密码的 PostgreSQL DSN 直接传给 `psycopg.connect()`，连接失败时
+pytest 会展开 psycopg 栈帧与局部变量，DSN 可能随测试日志进入终端或 CI artifact。
+这不是业务日志泄漏，常规的「不要记录密码」检查挡不住。
+
+门控 PG 测试必须在连接 helper 内捕获 `OperationalError`，用不含 DSN 的固定消息
+终止测试并关闭 traceback 展开；失败信息不得拼接原异常或连接字符串。测试成功路径
+仍用真实连接，不能因此把连接失败静默 skip。
