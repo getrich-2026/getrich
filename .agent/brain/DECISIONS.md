@@ -923,7 +923,7 @@ None —— `json.dumps(float('nan'))` 产出 `NaN` 字面量，PG 的 jsonb 解
 
 ---
 
-## D-042 `diag` 的用户列用 UUID，不是设计文档写的 BIGINT
+## D-045 `diag` 的用户列用 UUID，不是设计文档写的 BIGINT
 
 `持仓诊断_表与接口设计.md` §5.5 把 `portfolio_snapshot.user_id` 与
 `share_token.created_by` 都写成 `BIGINT`，但本仓 `app.users.id` 是 **UUID**。
@@ -937,7 +937,7 @@ None —— `json.dumps(float('nan'))` 产出 `NaN` 字面量，PG 的 jsonb 解
 同类提醒：设计文档给的是产品口径，不是本仓的 schema 现状。落地前逐个外键核对
 被引用列的真实类型，比通读文档更有效。
 
-## D-043 泛型判别联合在 3.10 下要用 `TypeAliasType`，裸 `Annotated` 别名会 TypeError
+## D-046 泛型判别联合在 3.10 下要用 `TypeAliasType`，裸 `Annotated` 别名会 TypeError
 
 `MetricValue[T]`（`OkMetric[T] | DegradedMetric[T] | UnavailableMetric`，按
 `status` 判别）第一版写成：
@@ -964,7 +964,7 @@ MetricValue = TypeAliasType(
 
 Pydantic v2 原生支持它做判别联合，`MetricValue[float]` 正常工作。
 
-## D-044 「不得静默估算」靠**字段缺失**落实，不靠字段可空
+## D-047 「不得静默估算」靠**字段缺失**落实，不靠字段可空
 
 `UnavailableMetric` **没有** `value` 字段（而不是 `value: T | None`）。差别在于：
 可空版本里 `{"status": "unavailable", "value": 0.0}` 是可构造的，前端也能把它
@@ -979,7 +979,7 @@ Pydantic v2 原生支持它做判别联合，`MetricValue[float]` 正常工作�
 3. 依赖未启用模块的盲点检测器必须显式返回 `triggered=false` + `reason_code`，
    而不是干脆不返回那一项 —— 省略等于告诉用户「查过了，没问题」。
 
-## D-045 计算缓存的两套哈希：粒度不同、时机不同、入参不同
+## D-048 计算缓存的两套哈希：粒度不同、时机不同、入参不同
 
 `request_hash`（幂等）与 `calculation_hash`（计算复用）**不可混用**，
 表接口篇 §7.8 把它列为「算错但不报错」的三处之一。落地要点：
@@ -998,7 +998,7 @@ Pydantic v2 原生支持它做判别联合，`MetricValue[float]` 正常工作�
 权重入哈希前按 8 位小数 `ROUND_HALF_EVEN`，否则 1/3 这类除不尽的权重
 每次尾数都可能不同，同一组合永远命中不了缓存。
 
-## D-046 安全头测试不能拿「让它 500」来验
+## D-049 安全头测试不能拿「让它 500」来验
 
 给新路由补安全头用例时，第一版故意打一个缺 DB 连接的端点，断言 4 个头 —— 失败。
 原因：未捕获异常由 Starlette 最外层的 `ServerErrorMiddleware` 处理，**那一层在
