@@ -2,8 +2,7 @@
 
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
-最后更新：2026-08-30 · 分支 `feat/data-ingest-tushare-datayes`（未合回 `dev`）；
-持仓诊断 API 在 `worktree-feat-diagnosis-api` 上完成独立审查修复（基线同上，未合回）
+最后更新：2026-09-06 · 分支 `dev`
 
 ---
 
@@ -26,14 +25,8 @@ B/C/D 按契约返回 `null` + `reason_code`，前端已能正确渲染降级态
 
 ### 真库实测结果（本地 `getrich` 库）
 
-等权两只股票：L1=2、HHI=0.5、L2=2.0、TopN=1.0，全部符合预期。分布类指标的
-出数情况**正好反映当前数据现状**：
-
-| 指标 | 状态 | 原因 |
-|---|---|---|
-| 资产类别 / 市场分布 | `ok` | `classify.instrument_category` 有 5,890 行 |
-| 风格分布（市值×PB） | `ok` | `fundamental.valuation_1d` 有 143 万行 |
-| **行业分布** | `unavailable` | `classify.instrument_industry` **是空的**（`DATAYES_TOKEN` 未配，见下节）。数据灌进去后自动出数，**不需要改代码** |
+等权两只股票的 L1、HHI、L2、TopN 与预期一致；资产类别、市场及风格分布可出数。
+`classify.instrument_industry` 已完成全量导入，行业分布需按真实 `scheme_code` 再验一次。
 
 ⚠️ 但 `spec_version.params.industry_scheme` 现在是 `'sw2021'`，而
 `039_classify.sql` 注明 datayes 落库的 `industry_code` 是**通联英文标识**。
@@ -69,6 +62,16 @@ B/C/D 按契约返回 `null` + `reason_code`，前端已能正确渲染降级态
 
 ---
 
+## 刚完成：数据字典生成器与 DDL 注释门禁
+
+- `gr-db docs --target pg|ch|all` 生成活库数据字典；`--fail-on-drift` 校验 PG 契约与归属。
+- 注释门禁检查新增建表及 `ALTER TABLE ... ADD COLUMN`；041/042 补齐 92 张表、1,102 个字段注释。
+- 覆盖 gr-db 的 12 个业务 schema（含 `diag`），排除 TimescaleDB 内部表；`ch` 模式不执行 PG 漂移校验。
+- 匿名快照：`http://45.142.166.254:3000/data-dictionary.html`；更新命令：
+  `uv run gr-db docs --target pg --out apps/web/public/data-dictionary.html --fail-on-drift`。后续迁入登录态页面。
+
+---
+
 ## 进行中：tushare 全域 + datayes CNE6 数据接入（P0–P2 已完成）
 
 目标是把 `getrich-design/portfolio-analysis/`（持仓诊断）从「无数据可算」推到
@@ -101,23 +104,53 @@ B/C/D 按契约返回 `null` + `reason_code`，前端已能正确渲染降级态
 | `classify.instrument_category` | 5,890 | 5,551 当前有效；15 个标的缺 `list_date` 已跳过并记 dq |
 | `meta.instruments` | 27,654 | |
 
-### 仍然阻塞：`DATAYES_TOKEN` 没配
+### 全量数据已导入（2026-08-31 实测）
 
-根 `.env` 里没有 `DATAYES_TOKEN`，因此 **datayes 五表一行真实数据都没抓过**，
-`factor.*` 与 `classify.instrument_industry` 全是空的，6 个 live 契约用例长期 skip。
-代码走 `FakeDatayesClient` 全链通过（含真库的数组 / JSONB COPY 通路），
-但**「Fake 通过」不等于「供应商接口如文档所述」**。配好 token 后按顺序跑：
+`DATAYES_TOKEN` 已配置，两个源的全量历史都已落库。**下面的行数是真库实测值。**
 
-```bash
-DATAYES_TOKEN=... uv run pytest packages/gr-data/tests/live/test_datayes_live.py -m live_sdk -v
-uv run gr-data raw datayes --mode init --only factor_ret_cne6_sw21   # 先跑最小的表验证凭证
-uv run gr-data raw datayes --mode init                               # 全五表，约 201 次请求
-uv run gr-data ingest datayes --only meta                            # model / definition / model_run
-uv run gr-data ingest datayes
-```
+| 表 | 行数 | 区间 |
+|---|---|---|
+| `market.stock_bar_1d` | 12,800,645 | 2013-01-04 → 2026-08-28 |
+| `market.index_bar_1d` | 25,927,848 | 同上 |
+| `market.future_bar_1d` | 2,426,406 | 同上 |
+| `market.stock_daily_basic` | 12,709,865 | 同上 |
+| `market.adj_factor_ts` | 13,389,771 | 同上 |
+| `fundamental.valuation_1d` | 12,709,865 | 同上 |
+| `factor.exposure` | 6,031,475 | 2021-12-01 → 2026-08-28 |
+| `factor.specific_risk` | 6,031,475 | 2021-12-01 → 2026-08-28 |
+| `factor.specific_return` | 6,030,370 | 同上 |
+| `factor.covariance` / `factor_return` | 各 1,151 | 同上 |
+| `classify.instrument_industry` | 6,191 | 5,743 个标的 |
+| `classify.instrument_category` | 5,890 | 5,551 当前有效 |
+| `meta.trading_calendar` | 10,710 | 2013-01-01 → 2027-08-30 |
 
-live 用例失败是**信号不是噪声**：因子集合、`secID` 后缀集合、`SRISK` 量纲任一
-变了都会挂，那正是我们要它挡住的东西。
+不变量全部通过：数组长度（exposure=52 / cov_flat=1378 / ret_vector=52）零违例、
+`specific_var` 非负、`high<low` 零行、`adj_factor` 无缺失、行业区间零重叠。
+量纲抽查：`specific_var` P50 = 733.7 → SRISK ≈ 27.1% 年化波动率（预期 20–45）；
+`total_mv` P50 = 56.96 亿元。归属：tushare 9 张表、datayes 9 张表。
+
+**datayes 的真实数据起点是 2021-08-02**（2021-07 及更早全空，见 D-044）。
+
+### ⚠️ 两个已知缺口，都需要人来决定
+
+1. **`factor.*` 的窗口从 2021-12 起，不是 2021-08**（见 D-055）。
+   通联在 **2021-11 换了行业体系**（申万 2014 的 49 因子 → 申万 2021 的 52 因子），
+   且五张表的切换不在同一天：exposure 在 11-01 已切换，而 factor_ret / covariance
+   的 11-01 仍是旧体系。同一个 `model_run` 内因子集合必须恒定、五张表必须逐日
+   一致，所以 2021-08~11 共 4 个月（约 5%）暂未入库。
+   要补齐得先决定 `factor.definition` 怎么容纳两套体系（它按 `model_id` 建、
+   `UNIQUE(model_id, ordinal)`），那是 `持仓诊断_表与接口设计.md` §5.2 的范围。
+
+2. **`calibrated` 仍是 false**，下游必须据此标 `degraded`。解除它的唯一门槛是
+   P6 的 `r = 100·X·f + u` 五表自洽校验。
+
+### 运维要点（下次全量重跑必看）
+
+- **必须按月分批**：`gr-data ingest <provider> --months 2021-12..2026-08`。
+  不分批会被 OOM killer **静默**杀掉 —— 无输出、无落库、退出码 0（D-056）。
+- datayes exposure 串行抓要 10 小时，瓶颈是服务端响应时间而非限流；
+  4 并发可压到 1.5 小时（D-057）。并发抓取**没有进仓库代码**，需要先讨论。
+- `config.yaml`（gitignore 内）已建好，`providers.datayes.start_date = 20210802`。
 
 ### 剩余分期
 

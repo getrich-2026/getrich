@@ -66,6 +66,47 @@ def test_parse_args_status_command() -> None:
     assert ns.target == "all"
 
 
+def test_parse_args_docs_command() -> None:
+    """数据字典命令提供结构化输出与严格漂移模式。"""
+    ns = cli._parse_args(["docs", "--target", "pg", "--format", "json", "--fail-on-drift"])
+    assert ns.command == "docs"
+    assert ns.output_format == "json"
+    assert ns.fail_on_drift is True
+
+
+def test_run_docs_clickhouse_only_strict_mode_skips_postgres_drift_checks(
+    tmp_path: Path,
+) -> None:
+    """ClickHouse-only 严格模式不应因未连接 PG 而返回漂移错误。"""
+    output = tmp_path / "dictionary.json"
+    args = cli._parse_args(
+        [
+            "docs",
+            "--target",
+            "ch",
+            "--format",
+            "json",
+            "--out",
+            str(output),
+            "--fail-on-drift",
+        ]
+    )
+    clickhouse_client = MagicMock()
+
+    with (
+        patch.object(cli, "_open_postgres_connection") as open_postgres,
+        patch.object(cli, "_open_clickhouse_client", return_value=clickhouse_client),
+        patch("gr_db.docs.introspect_clickhouse", return_value=()),
+        patch("gr_db.docs.discover_datasets", return_value=()),
+    ):
+        rc = cli._run_docs(args)
+
+    assert rc == 0
+    assert output.exists()
+    open_postgres.assert_not_called()
+    clickhouse_client.close.assert_called_once()
+
+
 def test_parse_args_unknown_command_exits() -> None:
     """未知子命令触发 argparse 的 error → SystemExit(2)。"""
     with pytest.raises(SystemExit) as exc_info:

@@ -38,7 +38,7 @@ uv sync --all-packages
 # 2. 配置：填数据库连接与数据源凭证
 cp .env.example .env
 
-# 3. 建库：7 个 schema、60+ 张表
+# 3. 建库：12 个业务 schema、92 张表
 uv run gr-db migrate --target all
 
 # 4. 跑一个回测
@@ -115,6 +115,20 @@ uv lock --check && uv sync --frozen --all-packages
 
 完整命令表见 `AGENTS.md` §6。
 
+### 数据字典
+
+```bash
+# 从活库生成 HTML / JSON；--target 可用 pg、ch、all
+uv run gr-db docs --target pg --out /tmp/data-dictionary.html --fail-on-drift
+uv run gr-db docs --target ch --format json --out - --fail-on-drift
+
+# CI 中检查新增建表或新增字段是否有 COMMENT ON
+uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/dev
+```
+
+数据字典只展示 `gr-db` 管理的 12 个业务 schema；`ch` 模式不依赖 PostgreSQL。开发环境的
+匿名快照地址为 `http://45.142.166.254:3000/data-dictionary.html`，后续将迁入登录态页面。
+
 ---
 
 ## 文档去向
@@ -123,6 +137,7 @@ uv lock --check && uv sync --frozen --all-packages
 |---|---|
 | 开发约束、数据库职责、编码规范 | [`AGENTS.md`](AGENTS.md) |
 | 数据接入层怎么跑、排障 | [`packages/gr-data/README.md`](packages/gr-data/README.md) |
+| 数据库结构与数据字典命令 | 本 README「数据字典」 |
 | 基础设施部署模板 | [`deploy/README.md`](deploy/README.md) |
 | 当前进度、未决 TODO、已知失败 | `.agent/brain/NOTES.md` |
 | 技术决策与踩坑记录 | `.agent/brain/DECISIONS.md` |

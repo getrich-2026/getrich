@@ -115,7 +115,7 @@ class _DatayesImporter(BaseImporter):
         return self._scaling
 
     def _adapter(self) -> DatayesAdapter:
-        return DatayesAdapter(self.paths)
+        return DatayesAdapter(self.paths, self.ctx.months)
 
     def _raw(self) -> pd.DataFrame:
         return self._adapter().read_all_months(self.DATASET_RAW)
@@ -190,12 +190,26 @@ class DatayesSymbolMapImporter(_DatayesImporter):
     NOT_NULL_COLUMNS = ("instrument_id", "source", "source_symbol")
 
     def build(self) -> pd.DataFrame:
-        raw = self._raw()
-        if raw.empty:
+        # 逐月累积 secID 集合，不 concat 全历史：这里只要「有哪些代码」，
+        # 而全量 exposure 在 pandas 里约 3.5 GB。**必须覆盖全部月份**，
+        # 只读最近一个月会漏掉期间退市的标的，那些标的的历史因子数据就永远
+        # 解析不出 instrument_id、整批入不了库。
+        adapter = self._adapter()
+        sec_id_set: set[str] = set()
+        for ym in adapter.list_months(self.DATASET_RAW):
+            raw = adapter.read_month(self.DATASET_RAW, ym)
+            if raw is None or raw.empty:
+                continue
+            sec_id_set.update(
+                s.strip() for s in _require_column(raw, "secID", "SEC_ID").astype(str)
+            )
+            del raw
+
+        if not sec_id_set:
             self.log.warning("%s 无 raw 数据，无法建立 symbol_map", self.DATASET_RAW)
             return self._empty()
 
-        sec_ids = sorted({s.strip() for s in _require_column(raw, "secID", "SEC_ID").astype(str)})
+        sec_ids = sorted(sec_id_set)
         stock_ids = resolve_by_instrument(self.conn, "stock")
 
         rows, unmapped = [], []
@@ -238,16 +252,40 @@ class ModelRunImporter(_DatayesImporter):
     CONTRACT = contracts.MODEL_RUN
 
     def build(self) -> pd.DataFrame:
-        raw = self._raw()
-        if raw.empty:
+        # 逐月读、逐月比，而不是先 concat 全历史：全量 exposure 在 pandas 里约
+        # 3.5 GB，而这里只需要「列集合」这一件事。顺带得到一个更强的保证 ——
+        # **要求每个月的活跃因子集合都相同**，中途换体系会当场报出是哪个月变的，
+        # 而不是被 concat 成一个并集后无声地混用两套顺序。
+        adapter = self._adapter()
+        months = adapter.list_months(self.DATASET_RAW)
+        factor_order: list[str] | None = None
+        first_ym = ""
+        estimated_at = None
+        for ym in months:
+            raw = adapter.read_month(self.DATASET_RAW, ym)
+            if raw is None or raw.empty:
+                continue
+            # 活跃因子集合**从数据派生**，不写死：sw14 期是 49 个、sw21 期是 52 个，
+            # 写死一个数字就等于在体系切换时静默算错。写死的只有超集与它的顺序。
+            active = list(fx.active_factors(raw))
+            if factor_order is None:
+                factor_order, first_ym = active, ym
+            elif set(active) != set(factor_order):
+                raise fx.FactorSetChangedError(
+                    f"{ym} 的活跃因子集合与 {first_ym} 不一致："
+                    f"多出 {sorted(set(active) - set(factor_order))}，"
+                    f"缺少 {sorted(set(factor_order) - set(active))}。"
+                    "同一个 model_run 内因子集合必须恒定，请人工确认后按体系分段建 run。"
+                )
+            month_max = _available_at(raw).max()
+            estimated_at = month_max if estimated_at is None else max(estimated_at, month_max)
+            del raw
+
+        if factor_order is None:
             raise RuntimeError(
                 f"{self.DATASET_RAW} 无 raw 数据，无法确定活跃因子集合。"
                 "请先运行 `gr-data raw datayes`。"
             )
-
-        # 活跃因子集合**从数据派生**，不写死：sw14 期是 49 个、sw21 期是 52 个，
-        # 写死一个数字就等于在体系切换时静默算错。写死的只有超集与它的顺序。
-        factor_order = list(fx.active_factors(raw))
         if not factor_order:
             raise ValueError("未能从 raw 数据识别出任何已知因子列")
 
@@ -261,7 +299,7 @@ class ModelRunImporter(_DatayesImporter):
                 sorted(expected - set(factor_order)),
             )
 
-        estimated_at = _available_at(raw).max().to_pydatetime()
+        estimated_at = estimated_at.to_pydatetime()
         mr.upsert_model_and_definitions(self.conn, factor_order)
         run_id = mr.get_or_create_run(
             self.conn, factor_order, self.scaling, estimated_at=estimated_at

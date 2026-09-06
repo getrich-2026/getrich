@@ -216,6 +216,11 @@ def test_scaling_is_frozen():
     [
         ("000002.XSHE", "000002", "XSHE", "000002.SZ"),
         ("600000.XSHG", "600000", "XSHG", "600000.SH"),
+        # 北交所：通联发的是 XBEI，本仓 canonical 是 XBSE —— 这条**不是恒等映射**。
+        # 实测 2026-08-28 单日 339 只 XBEI，全是 920xxx 代码段，
+        # 与 meta.instruments 里 341 只 920xxx(XBSE) 交叉核对一致。
+        ("920000.XBEI", "920000", "XBSE", "920000.BJ"),
+        # 供应商若改用 canonical 码的兜底路径
         ("430047.XBSE", "430047", "XBSE", "430047.BJ"),
     ],
 )

@@ -1018,3 +1018,212 @@ pytest 会展开 psycopg 栈帧与局部变量，DSN 可能随测试日志进入
 门控 PG 测试必须在连接 helper 内捕获 `OperationalError`，用不含 DSN 的固定消息
 终止测试并关闭 traceback 展开；失败信息不得拼接原异常或连接字符串。测试成功路径
 仍用真实连接，不能因此把连接失败静默 skip。
+## D-042 datayes 的区间查询必须用 `tradeDate` 多值，不是 `beginDate`/`endDate`
+
+配好 token 后第一次跑 live 契约用例，10 条挂了 9 条，全部是 retCode=-2：
+
+```
+At least one of [secID,ticker,tradeDate] parameters must be provided   (exposure / srisk / specific_ret)
+At least one of [factorName,tradeDate] parameters must be provided     (covariance)
+```
+
+五张表里**只有 factor_ret 接受纯 `beginDate`+`endDate`**，另外四张必须在
+`tradeDate` 那一组里至少给一个。接口文档看不出这一点：它的「是否必须」一栏填的
+是「多选多」（文档作者也在注里标了这栏可疑），实测语义是「这一组至少给一个」。
+
+实测确认的三条语义：
+
+- `tradeDate` 支持**逗号分隔多值**（空格分隔返回 0 行，不报错 —— 又一个静默失败）；
+- 给了 `tradeDate` 之后，`beginDate`/`endDate` **被忽略**；
+- 单日 exposure 约 5551 行，因此一次最多塞约 17 天就会逼近 10 万行上限。
+
+改法：`client._query_span()` 把区间展开成**工作日列表**发 `tradeDate`，
+`query_range` 的切分与折半逻辑不动。周末不发（接口对非交易日只返回空，带上它
+只让 URL 长 30%）；法定节假日仍然发 —— 查日历会让 raw 层依赖数据库，而
+`meta.trading_calendar` 本身也是抓来的，那是循环依赖，代价只是几行空返回。
+
+**这条是「live 契约用例挡住了设计错误」的实例**：Fake 永远测不出来，因为 Fake 是
+照我们自己的理解写的。单测已把契约钉死在 `tests/raw/test_datayes_client.py`。
+
+## D-043 通联的北交所后缀是 `XBEI`，不是 canonical 的 `XBSE`
+
+`ingest/datayes/symbols.py` 原来假设「通联用的本来就是 canonical 码」，
+把 `DATAYES_SUFFIX_TO_EXCHANGE` 写成恒等映射。**实测证明北交所不是。**
+
+2026-08-28 单日 exposure 的后缀分布：`XSHE` 2897 / `XSHG` 2315 / **`XBEI` 339**，
+一条 `XBSE` 都没有。XBEI 那 339 只全在 920xxx 代码段，与 `meta.instruments` 里
+341 只 920xxx（exchange=XBSE）交叉核对一致 —— 是实测结论，不是按名字猜的。
+
+不改的后果：339 只北交所标的的 `secID` 解析不出交易所 → `to_tushare_symbol()`
+返回 None → symbol_map 建不起来 → 这批标的的因子数据整批入不了库。
+未解析比例 339/5551 ≈ 6.1%，会撞上 0.5% 的容忍上限直接中断，所以**这次不会静默**；
+但如果哪天北交所只剩十几只，就会掉到容忍线以下变成静默丢数。
+
+`XBSE` 仍保留在映射表里兜底，万一供应商改用 canonical 码不至于整批解析不了。
+
+**这条同样是探针用例抓出来的**（`test_sec_id_suffixes_are_all_known`）：
+它枚举真实返回的后缀，出现未登记的就失败。当初写它时标的是「未决项 U21」，
+现在证明这个未决项确实存在，而且答案与推测相反。
+
+## D-044 datayes 五表的真实数据起点是 2021-08-02
+
+探针方法（避免踩到自己挖的坑）：
+
+1. **先别用 `meta.trading_calendar` 做二分。** 第一次这么做，五张表都「探到」
+   最早是 2025-08-01 —— 那是**日历表在本库里的下界**，不是接口的下界
+   （tushare calendar 当时只灌了 1520 行）。二分只能证明「在候选集合内最早」，
+   候选集合本身错了就毫无意义。
+2. **按年粗探时别取月初工作日。** 第二次用「每年 1/4/7/10 月的前 5 个工作日」，
+   得出「最早 2022 年」。错的：2021 年那批候选日里，10 月 1–7 日整周是国庆、
+   1 月 1 日元旦、4 月 5 日清明 —— 几乎全是节假日。改用**月中**（每月 12 日起的
+   4 个工作日）后，2021 年立刻有数据。
+
+最终结论：五张表**一致**在 2021-08-02（2021 年 8 月第一个交易日）起有数据，
+2021-07 整月为空，2020 及更早全空。`config.yaml` 的
+`providers.datayes.start_date` 因此定为 `20210802`，再往前抓只会拿到空返回。
+
+顺带一条：手上那份 2020-12-31 的样本 CSV **不是本账号权限内的数据**，
+它是供应商的演示样本。别拿它当「历史能取到 2020 年」的证据。
+
+## D-051 数据契约与 DDL 的一致性由 `gr-db docs` 在 CI 守卫
+
+`gr_data.common.contracts` 与 `gr-db` 的 DDL 原本分别维护，虽有「严格对齐」的约定，
+但没有自动验证，新增列后很容易只改一侧。现在 `gr-db docs` 反射活库 catalog，读取
+ingest 注册表和 `ops.table_ownership`，并在 `--fail-on-drift` 时将「契约列不存在」与
+「运行时归属 provider 不在注册表中」作为 error；CI 的全新迁移库执行此检查。
+
+多个 provider 可以声明同一张表作为可选接入能力，不能仅据此判定生产冲突；真正的单表
+写入方由运行时 `ops.table_ownership` 锁定。将未启用的 importer 当作 error 会让 CI 对
+合法的切换能力误报。
+
+DDL 注释门禁只检查相对 PR 基线新增或修改的建表迁移，并从整个迁移目录收集 `COMMENT ON`，
+这样后续迁移补的注释也有效；存量欠账不阻塞当前开发。新表除 `id`、`created_at`、
+`updated_at` 外的每个列都必须有明确注释。
+
+## D-052 zsh 的 `status` 是只读保留变量
+
+执行验证包装命令时不能将退出码写入 `status`；zsh 会报 `read-only variable: status`，
+即使前一条业务命令已经成功也会让整个 shell 返回失败。后续脚本统一使用任务专属名称，
+如 `dictionary_exit_code`，或直接以最后一条验证命令的退出码结束。
+
+## D-053 gr-db 只管理显式声明的业务 schema，不改 TimescaleDB 内部 catalog
+
+活库的 `pg_class` 同时会列出 `_timescaledb_catalog`、`_timescaledb_internal` 等扩展内部对象，
+以及可能由其它仓库迁移维护的 schema（当前为 `diag`）。这些对象不在
+`packages/gr-db/src/gr_db/ddl/` 的唯一真源中；给它们写 `COMMENT ON` 会把扩展实现细节或
+外部 schema 误纳入本仓迁移责任。
+
+数据字典与全量注释迁移只覆盖 gr-db 明确拥有的 11 个 schema：`app`、`backtest`、
+`classify`、`factor`、`fundamental`、`market`、`meta`、`ops`、`pick`、`realtime`、`staging`。
+当前 85 张表、1,048 个字段均有 catalog 注释；以后新字段仍由 DDL 注释门禁负责阻止遗漏。
+
+## D-054 DDL 注释门禁同时覆盖建表与后续新增列
+
+仅检查 `CREATE TABLE` 会留下一个直接绕过路径：迁移可先创建带完整注释的表，再通过
+`ALTER TABLE ... ADD COLUMN` 增加未经说明的业务字段。注释门禁现在会解析同一条 ALTER 的
+多个 `ADD COLUMN [IF NOT EXISTS]` 动作，并要求每个非豁免字段在整个迁移目录中存在
+`COMMENT ON COLUMN`；`id`、`created_at`、`updated_at` 保持自明字段豁免。
+
+数据字典的 PG 契约／归属校验只能在实际传入 PostgreSQL 连接时执行。ClickHouse-only 模式
+仍会列出 raw 数据集，但没有 PG catalog 作为比较基准时不能把它们判成漂移；否则
+`gr-db docs --target ch --fail-on-drift` 会产生错误的失败。
+
+## D-055 通联 CNE6 的行业体系在 2021-11 切换，`cne6-sw21` 的窗口只能从 2021-12 起
+
+抓完全量后，`ModelRunImporter` 的逐月因子集校验当场报出：
+
+```
+2021-11 的活跃因子集合与 2021-08 不一致：
+  多出 [BasicChemicals, BeautyCare, Coal, EnvironProtect, Petroleum,
+        PowerEquip, RetailTrade, SocialServices, TextileApparel]
+  缺少 [Chemicals, Commerce, ElectricalEquip, Leisure, Mining, TextileGarment]
+```
+
+逐月统计（61 个月）：**2021-08/09/10 是申万 2014（49 因子），2021-11 起是申万
+2021（52 因子）**，只切换一次。注意接口路径叫 `...CNE6SW21`，但它对切换前的日期
+返回的仍是旧体系 —— **端点名不能当作口径保证**。
+
+更细的一层：切换在五张表之间**不是同一天发生的**。逐日核对 2021-11：
+
+| 表 | 2021-11-01 |
+|---|---|
+| exposure | 已是申万 2021（4527 行全部落在新行业列） |
+| factor_ret / covariance | **仍是申万 2014**（协方差当月 1141 行 = 49 + 21×52） |
+| srisk / specific_ret | 无因子列，不受影响 |
+
+所以 2021-11 是个混合月。五张表必须在同一个 `model_run` 内**逐日一致**（同一天
+要能同时取到 X、F、D、f），因此 `cne6-sw21` 的窗口起点定为 **2021-12-01**，
+实际入库 57 个月（2021-12 → 2026-08）。
+
+**为什么不给申万 2014 那段单独开一个 run**：`factor.definition` 的主键是
+`(model_id, factor_code)`、并且有 `UNIQUE (model_id, ordinal)`，是**按 model_id**
+而不是按 model_version 建的。两套体系里同名因子的 ordinal 不同，塞进同一个
+`model_id` 会直接撞唯一约束。要支持双体系，得先决定是拆 `model_id`
+（`barra_cne6_sw14` / `barra_cne6_sw21`）还是把 `definition` 下沉到 model_version
+—— 那是 `持仓诊断_表与接口设计.md` §5.2 的设计范围，**不在数据接入层单方面改**。
+代价是 2021-08~11 共 4 个月（约 5% 的可取区间）暂时进不了库。
+
+顺带一条**方法论**：这个错误是「逐月比对」抓出来的。原实现是先把 61 个月
+`concat` 成一个大 DataFrame 再算 `active_factors`，那样得到的是两套体系的**并集
+58 个**，既不等于 49 也不等于 52，会被当成「超集全都活跃」而静默混用两套下标。
+改成逐月比对不只是为了省内存，它本身就是更强的校验。
+
+## D-056 全量入库必须按月分批，否则会被 OOM killer 静默杀掉
+
+第一次跑 `gr-data ingest datayes --only symbol_map,model_run` 的现象是：
+**没有任何输出、退出码 0、一行数据都没落库**。不是异常被吞了，是进程被
+OOM killer 杀掉 —— 这种失败模式比报错危险得多，看日志会以为「跑完了但没数据」。
+
+本机 5 GB 内存（可用约 2 GB），而 importer 的形态是「读全部月份 → 拼一个大
+DataFrame → 一次 upsert」：
+
+| 数据集 | 规模 | pandas 占用 |
+|---|---|---|
+| datayes exposure | 61 个月 × 11 万行 × 58 列 | 约 3.5 GB |
+| tushare daily_basic | 164 个月 × 11 万行 | 加上 merge 的中间结果同样量级 |
+
+三处改动（都向后兼容，默认行为不变）：
+
+1. `IngestContext.months` + 两个 adapter 的 `list_months` 过滤，
+   `gr-data ingest --months 2021-12..2026-08` 暴露到 CLI。按月调用把峰值压到单月
+   量级，代价是每月一条 `ops.etl_job_run` —— 这反而让「哪个月入过库」可追溯。
+2. `DatayesSymbolMapImporter` / `ModelRunImporter` 改成**逐月读、当场归约**
+   （前者累积 secID 集合，后者只比对列集合），它们本来就不需要行数据。
+3. `InstrumentIndustryImporter` **不能按月分批**（区间压缩需要全历史，分批会把每个月
+   压成独立区间、`out_date` 全错，而且 EXCLUDE 约束拦不住 —— 它们并不重叠）。
+   改成逐月读入后立刻降到 4 列，全历史中间结果约 200 MB。
+
+顺带一条 `statement_timeout`：分批之后单批只有 10 万行左右，30 分钟的超时绰绰有余；
+但**不分批时曾在 60s 处被 `QueryCanceled` 打断并整批回滚**（见 D-038）。
+
+## D-057 通联接口在大响应上会中途断连，而读超时拦不住它
+
+抓 exposure 时（按 10 个自然日切，单次响应约 4 MB）反复出现：
+
+```
+peer closed connection without sending complete message body
+  (received 2724243 bytes, expected 3900172)
+```
+
+重试能接住，但随后会转成**持续的读超时**，而且**拖不死也退不出**：
+httpx 的 `timeout` 是「两次收到字节之间的最长间隔」，服务端慢速涓流会不断重置它。
+实测单个 chunk 卡了 33 分钟仍未触发超时，`retry_call` 重试 5 次耗尽后整批抓取中断
+（`fetch()` 只捕获配额与未授权两类异常）。
+
+处理：`ExposureFetcher.CHUNK_DAYS` 10 → 4，把响应压到约 1.5 MB，之后不再触发。
+**但要知道代价**：服务端耗时几乎与返回行数无关（每次约 60–100 秒），切得越碎总耗时
+越长 —— 实测 4 天切分反而比 10 天慢（14 min/月 vs 7 min/月）。
+
+真正的杠杆是**并发**：瓶颈是服务端响应时间，不是我们的调用频率（实测约 0.03 req/s，
+远低于配置的 1 req/s）。用 4 并发的一次性脚本回补 43 个月，零失败，
+把 10 小时压到 1.5 小时。这条没有写进仓库代码 —— 并发抓取要不要成为常规能力，
+涉及限流策略与配额，是需要先讨论的架构决定。
+
+## D-058 合并后 `diag` 纳入 gr-db 数据字典管理范围
+
+D-053 形成时 `diag` 还不在当前分支的 DDL 中，因此被视为仓外 schema。合并持仓诊断分支后，
+`040_diag.sql` 已成为 gr-db 的迁移，`diag` 随之纳入数据字典和注释补齐范围。受管 schema
+由 11 个增至 12 个；TimescaleDB 内部 schema 仍排除。
+
+`dev` 已占用迁移号 040，后合入的数据字典迁移顺延为 041/042，避免重复编号。旧文件名若已在
+本地迁移账本出现，重跑时只会再次执行幂等的 `COMMENT ON` 补齐，不改表结构或业务数据。

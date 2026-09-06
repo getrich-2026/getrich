@@ -107,11 +107,22 @@ class _DatayesMonthlyFetcher(BaseFetcher):
 
 
 class ExposureFetcher(_DatayesMonthlyFetcher):
-    """因子暴露 X（标的 × 日 × 58 因子）。全量里最大的一张，约 5 GB。"""
+    """因子暴露 X（标的 × 日 × 58 因子）。全量里最大的一张。
+
+    `CHUNK_DAYS` 取 4 而不是 10，是**实测逼出来的**，不是按行数上限算的：
+    按 10 天切时每次响应约 4 MB（约 7 个交易日 × 5500 只 × 58 列），
+    供应商在这个量级上会中途断连（``peer closed connection without sending
+    complete message body``），随后转成持续的读超时。
+
+    更麻烦的是这类超时**拖不死也退不出**：httpx 的 `timeout` 是「两次收到字节之间
+    的最长间隔」，服务端慢速涓流时会被不断重置，没有整体超时兜底 —— 实测单个
+    chunk 卡了 33 分钟仍未超时，而 `retry_call` 重试 5 次耗尽后会让整批抓取中断。
+    把响应压到约 1.5 MB 之后就不再触发。代价是请求数从约 180 涨到约 490。
+    """
 
     DATASET = "exposure_cne6_sw21"
     API_PATH = "/api/equity/getDy1dExposureCNE6SW21.json"
-    CHUNK_DAYS = 10
+    CHUNK_DAYS = 4
 
 
 class SpecificReturnFetcher(_DatayesMonthlyFetcher):

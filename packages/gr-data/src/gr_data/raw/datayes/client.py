@@ -53,6 +53,10 @@ ROW_LIMIT = 100_000
 #: 等真的撞上 100000 时已经分不清「刚好这么多」和「被截断了」。
 ROW_LIMIT_ALARM = 95_000
 
+#: `-16`（调用过频）自适应降速的上限（秒）。超过这个间隔说明限流不是靠等能解决的
+#: （多半是配额或并发策略问题），继续放大只会让整批抓取无声地拖成几十小时。
+MAX_ADAPTIVE_SLEEP = 30.0
+
 _RETRYABLE = {-3, -4, -5, -8, -16}
 _PARAM_ERRORS = {-2, -9, -12, -13, -14}
 _QUOTA_ERRORS = {-6, -11, -15}
@@ -92,6 +96,23 @@ class DatayesClient(Protocol):
 
 def _fmt(d: date) -> str:
     return d.strftime("%Y%m%d")
+
+
+def _weekdays(lo: date, hi: date) -> list[date]:
+    """区间内的工作日（含首尾）。
+
+    周末一律不发：接口对非交易日只是返回空，但请求参数是 `tradeDate` 的逗号
+    拼接串，带上周末平白让 URL 长 30% 而一行数据都换不回来。
+    法定节假日仍然会发（不查日历），代价只是几行空返回，换来的是 **raw 层不依赖
+    数据库** —— 让抓取依赖 `meta.trading_calendar` 会造成「日历没灌就抓不了数」
+    的循环依赖，而日历本身也是抓来的。
+    """
+    out, cur = [], lo
+    while cur <= hi:
+        if cur.weekday() < 5:
+            out.append(cur)
+        cur += timedelta(days=1)
+    return out
 
 
 def _chunks(begin: date, end: date, days: int) -> Iterator[tuple[date, date]]:
@@ -195,8 +216,11 @@ class DatayesHttpClient:
         if code == -7:
             raise DatayesQueryTooLargeError(f"{ctx} 查询超时（retCode=-7）：{msg}")
         if code == -16:
-            # 调用过频：就地降速，本次仍作为可重试异常抛出
-            self._sleep *= 1.5
+            # 调用过频：就地降速，本次仍作为可重试异常抛出。
+            # **必须有上限**：乘性放大没有天花板的话，一段网络不好的时间就能把
+            # sleep 推到几十秒，而它不会自己降回来 —— 后面几千次请求全按这个
+            # 间隔走，一次全量抓取会从几小时变成几天，且日志里只有一行警告。
+            self._sleep = min(self._sleep * 1.5, MAX_ADAPTIVE_SLEEP)
             log.warning("%s 调用过频，sleep 上调到 %.2fs", ctx, self._sleep)
 
         raise RuntimeError(f"{ctx} 调用失败（retCode={code}）：{msg}")
@@ -206,6 +230,14 @@ class DatayesHttpClient:
         self, api_path: str, begin: date, end: date, *, chunk_days: int = 10, **params: Any
     ) -> pd.DataFrame:
         """按 `chunk_days` 切分区间逐段取数，遇到结果集过大就把该段折半。
+
+        **区间是靠 `tradeDate` 多值参数表达的，不是 `beginDate`/`endDate`。**
+        五张表里有四张（exposure / srisk / specific_ret / covariance）在只给
+        `beginDate`+`endDate` 时直接返回 retCode=-2：
+        ``At least one of [secID,ticker,tradeDate] parameters must be provided``。
+        接口文档把这几个参数的「是否必须」一栏填成了「多选多」，文档作者也标注了
+        这一栏可疑 —— 实测语义是「这一组里至少给一个」。`tradeDate` 支持逗号分隔
+        多值，且一旦给了它，`beginDate`/`endDate` 就被忽略（实测）。
 
         不用官方的 `pagenum`/`pagesize`：分页行为官方只给了一句示例，与
         「超限可能静默截断」叠加之后无法自证完整；按日期切分则可以和
@@ -221,8 +253,12 @@ class DatayesHttpClient:
         return pd.concat(frames, axis=0, ignore_index=True)
 
     def _query_span(self, api_path: str, lo: date, hi: date, **params: Any) -> pd.DataFrame:
+        days = _weekdays(lo, hi)
+        if not days:
+            # 整段都是周末，一次请求都不必发
+            return pd.DataFrame()
         try:
-            return self.query(api_path, beginDate=_fmt(lo), endDate=_fmt(hi), **params)
+            return self.query(api_path, tradeDate=",".join(_fmt(d) for d in days), **params)
         except DatayesQueryTooLargeError:
             if lo >= hi:
                 # 单日仍然过大，切无可切 —— 这时必须抛出去，

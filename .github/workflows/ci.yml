@@ -41,6 +41,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0
@@ -70,6 +72,11 @@ jobs:
 
       - name: Migration topology lint
         run: uv run --frozen python scripts/lint_migrations.py --db all
+
+      - name: Migration comment coverage
+        run: >-
+          uv run --frozen python scripts/lint_migrations.py --db pg --comments
+          --base-ref origin/${{ github.base_ref || 'dev' }}
 
   python-tests:
     name: Python tests (${{ matrix.python-version }})
@@ -163,6 +170,10 @@ jobs:
 
       - name: Apply ClickHouse migrations
         run: uv run --frozen gr-db migrate --target ch
+
+      - name: Data dictionary smoke
+        if: matrix.coverage
+        run: uv run --frozen gr-db docs --target all --out /tmp/dd.html --fail-on-drift
 
       - name: Run tests
         if: ${{ !matrix.coverage }}

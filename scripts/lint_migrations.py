@@ -12,6 +12,8 @@ import re
 import sys
 from pathlib import Path
 
+from gr_db.docs.ddl_lint import changed_migrations, comment_violations
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = REPO_ROOT / "packages/gr-db/src/gr_db/ddl"
@@ -64,6 +66,16 @@ def lint_files(paths: list[Path], rules: tuple[Rule, ...]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", choices=("ch", "pg", "all"), default="all")
+    parser.add_argument(
+        "--comments",
+        action="store_true",
+        help="检查相对 base ref 新增或修改的 PG 建表迁移是否补齐注释。",
+    )
+    parser.add_argument(
+        "--base-ref",
+        default="origin/dev",
+        help="注释检查的 git diff 基线（默认 origin/dev）。",
+    )
     args = parser.parse_args(argv)
 
     selected = ("ch", "pg") if args.db == "all" else (args.db,)
@@ -81,6 +93,17 @@ def main(argv: list[str] | None = None) -> int:
         total += violations
         if violations == 0:
             print(f"OK    {len(files)} {database} migration(s)")
+    if args.comments:
+        changed, warning = changed_migrations(REPO_ROOT, MIGRATIONS_DIR / "postgres", args.base_ref)
+        if warning:
+            print(f"WARN  {warning}")
+        else:
+            comments = comment_violations(changed, MIGRATIONS_DIR / "postgres")
+            for violation in comments:
+                print(f"FAIL  {violation}")
+            total += len(comments)
+            if not comments:
+                print(f"OK    {len(changed)} changed PostgreSQL migration(s) have comments")
     return int(total > 0)
 
 

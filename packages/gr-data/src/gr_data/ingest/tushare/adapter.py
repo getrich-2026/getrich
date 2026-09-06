@@ -22,8 +22,11 @@ CALENDAR_EXCHANGE_MAP = {"SSE": "XSHG", "SZSE": "XSHE"}
 
 
 class TushareAdapter:
-    def __init__(self, paths: RawPaths):
+    def __init__(self, paths: RawPaths, months: tuple[str, ...] | None = None):
         self.paths = paths
+        # None = 全部月份（默认，与以前一致）；给了就只读这些月，见
+        # IngestContext.months 里关于内存的说明。
+        self.months = months
 
     def read_instruments(self, asset: str) -> pd.DataFrame | None:
         return read_parquet_if_exists(self.paths.dataset_file(PROVIDER, "instruments", asset))
@@ -35,7 +38,8 @@ class TushareAdapter:
         d = self.paths.dataset_dir(PROVIDER, dataset)
         if not d.exists():
             return []
-        return sorted(f.stem for f in d.glob("*.parquet"))
+        found = sorted(f.stem for f in d.glob("*.parquet"))
+        return [m for m in found if m in self.months] if self.months else found
 
     def read_month(self, dataset: str, ym: str) -> pd.DataFrame | None:
         return read_parquet_if_exists(self.paths.dataset_file(PROVIDER, dataset, ym))

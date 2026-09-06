@@ -3,7 +3,7 @@
 用法::
 
     gr-data raw <provider> [--mode init|update] [--only a,b]
-    gr-data ingest <provider> [--only a,b] [--force-ownership]
+    gr-data ingest <provider> [--only a,b] [--force-ownership] [--months 2021-11..2026-08]
     gr-data stream <provider> [--symbols ...]          # 长驻，需真实 SDK
     gr-data own list | set <target> <provider> <channel> | release <target>
 
@@ -66,6 +66,32 @@ def _split(val: str | None) -> list[str] | None:
     return [x.strip() for x in val.split(",") if x.strip()] if val else None
 
 
+def _parse_months(val: str | None) -> tuple[str, ...] | None:
+    """``2021-11,2022-01..2022-03`` → ``("2021-11", "2022-01", "2022-02", "2022-03")``。
+
+    支持 ``A..B`` 闭区间，因为按月分批入库时一次要写几十个月，逐个列出来
+    既啰嗦又容易漏。
+    """
+    if not val:
+        return None
+    out: list[str] = []
+    for item in (x.strip() for x in val.split(",")):
+        if not item:
+            continue
+        if ".." not in item:
+            out.append(item)
+            continue
+        lo, _, hi = item.partition("..")
+        y, m = (int(x) for x in lo.split("-"))
+        y2, m2 = (int(x) for x in hi.split("-"))
+        while (y, m) <= (y2, m2):
+            out.append(f"{y:04d}-{m:02d}")
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    # 保序去重
+    seen: set[str] = set()
+    return tuple(x for x in out if not (x in seen or seen.add(x)))
+
+
 def cmd_raw(args: argparse.Namespace, cfg: Config) -> int:
     from gr_data.raw import run_provider
 
@@ -86,6 +112,7 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
             cfg,
             only=_split(args.only),
             force_ownership=args.force_ownership,
+            months=_parse_months(args.months),
         )
     for r in results:
         log.info("ingest %s -> rows=%d warnings=%d", r.target, r.rows_written, len(r.warnings))
@@ -139,6 +166,11 @@ def build_parser() -> argparse.ArgumentParser:
     ing.add_argument("provider", choices=["yinhe", "ricequant", "insight", "tushare", "datayes"])
     ing.add_argument("--only", help="逗号分隔的 importer 子集")
     ing.add_argument("--force-ownership", action="store_true", help="允许转移目标表归属")
+    ing.add_argument(
+        "--months",
+        help="只入库这些自然月，逗号分隔，支持 A..B 闭区间（如 2021-11..2026-08）。"
+        "用于把大数据集分批入库，避免一次读全历史撑爆内存。",
+    )
     ing.set_defaults(func=cmd_ingest)
 
     st = sub.add_parser("stream", help="实时行情入库（长驻）")

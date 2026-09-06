@@ -90,8 +90,9 @@ def test_three_wide_tables_share_the_same_factor_set(client, probe_window):
         sets[name] = {fx.canonical(c) for c in df.columns} - {None}
 
     assert sets["exposure"] == sets["factor_ret"] == sets["covariance"]
-    # 本轮区间在申万 2021 体系内，活跃因子应为 52 个
-    assert len(sets["exposure"]) == len(fx.ALL_FACTORS)
+    # 本轮区间在申万 2021 体系内，返回的因子列应为 52 个（= SW21_FACTORS），
+    # **不是 58**——58 是含申万 2014 旧行业的超集，接口在 SW21 期不返回那 6 列。
+    assert len(sets["exposure"]) == len(fx.SW21_FACTORS)
 
 
 def test_active_factor_set_matches_sw21(client, probe_window):
