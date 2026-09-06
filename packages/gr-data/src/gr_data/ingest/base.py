@@ -58,6 +58,16 @@ class IngestContext:
     channel: str = "ingest"
     force_ownership: bool = False  # True=允许转移归属
 
+    #: 只处理这些自然月（``("2025-01", "2025-02")``）；None = 全部。
+    #:
+    #: 存在的理由是**内存**：importer 的 `build()` 是「读全部月份 → 拼一个大
+    #: DataFrame → 一次 upsert」的形态，对 tushare 日线（164 个月 × 11 万行）和
+    #: datayes exposure（61 个月 × 11 万行 × 58 列）会吃掉几个 GB，在小内存机器上
+    #: 直接 OOM。按月分批调用 `run()` 可以把峰值压到单月量级，代价是每月一条
+    #: `ops.etl_job_run`（这反而让「哪个月入过库」可追溯）。
+    #: 默认 None 时行为与以前完全一致。
+    months: tuple[str, ...] | None = None
+
 
 @dataclass
 class IngestResult:
