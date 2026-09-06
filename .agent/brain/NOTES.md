@@ -2,7 +2,7 @@
 
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
-最后更新：2026-08-30 · 分支 `feat/data-ingest-tushare-datayes`（未合回 `dev`）
+最后更新：2026-09-06 · 分支 `feat/data-ingest-tushare-datayes`（未合回 `dev`）
 
 ---
 
@@ -60,7 +60,7 @@
 | `market.stock_daily_basic` | 12,709,865 | 同上 |
 | `market.adj_factor_ts` | 13,389,771 | 同上 |
 | `fundamental.valuation_1d` | 12,709,865 | 同上 |
-| `factor.exposure` | 6,132,348 | **2021-11-01** → 2026-08-28 |
+| `factor.exposure` | 6,031,475 | 2021-12-01 → 2026-08-28 |
 | `factor.specific_risk` | 6,031,475 | 2021-12-01 → 2026-08-28 |
 | `factor.specific_return` | 6,030,370 | 同上 |
 | `factor.covariance` / `factor_return` | 各 1,151 | 同上 |
@@ -75,7 +75,7 @@
 
 **datayes 的真实数据起点是 2021-08-02**（2021-07 及更早全空，见 D-044）。
 
-### ⚠️ 三个已知缺口，都需要人来决定
+### ⚠️ 两个已知缺口，都需要人来决定
 
 1. **`factor.*` 的窗口从 2021-12 起，不是 2021-08**（见 D-045）。
    通联在 **2021-11 换了行业体系**（申万 2014 的 49 因子 → 申万 2021 的 52 因子），
@@ -85,15 +85,7 @@
    要补齐得先决定 `factor.definition` 怎么容纳两套体系（它按 `model_id` 建、
    `UNIQUE(model_id, ordinal)`），那是 `持仓诊断_表与接口设计.md` §5.2 的范围。
 
-2. **`factor.exposure` 有 100,873 行孤儿数据**（2021-11-01 → 11-30）。
-   来自定窗口之前的一次试跑：exposure 已提交、`factor_return` 才报错。
-   后果是 2021-11 那个月**只有 X，没有 F / D / f**，对该月做诊断会拿到不完整的
-   `DataPack`。清理命令（**需要人确认后执行，属对业务主库的删除**）：
-   ```sql
-   DELETE FROM factor.exposure WHERE trading_day < DATE '2021-12-01';  -- 100873 行
-   ```
-
-3. **`calibrated` 仍是 false**，下游必须据此标 `degraded`。解除它的唯一门槛是
+2. **`calibrated` 仍是 false**，下游必须据此标 `degraded`。解除它的唯一门槛是
    P6 的 `r = 100·X·f + u` 五表自洽校验。
 
 ### 运维要点（下次全量重跑必看）
