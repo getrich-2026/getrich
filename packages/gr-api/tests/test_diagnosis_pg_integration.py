@@ -70,8 +70,17 @@ async def _connect(*, autocommit: bool = False) -> AsyncConnection:
 
 
 @pytest.fixture
-async def diagnosis_db() -> AsyncIterator[tuple[AsyncConnection, UUID, UUID]]:
+async def diagnosis_db(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[tuple[AsyncConnection, UUID, UUID]]:
     """准备两名用户、两只标的、交易日和独立数据版本。"""
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2099, 1, 6, 18, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    monkeypatch.setattr(svc, "datetime", FrozenDateTime)
     conn = await _connect()
     user_a = uuid4()
     user_b = uuid4()
@@ -121,6 +130,7 @@ async def diagnosis_db() -> AsyncIterator[tuple[AsyncConnection, UUID, UUID]]:
         await conn.commit()
         yield conn, user_a, user_b
     finally:
+        await conn.rollback()
         await _cleanup(conn)
         await conn.close()
 
@@ -190,8 +200,13 @@ async def test_sql_end_to_end_cache_reuse_and_request_isolation(
     )
 
     accepted_a, status_a = await svc.create_snapshot(db, request_a, user_id=str(user_a))
-    accepted_b, status_b = await svc.create_snapshot(db, request_b, user_id=str(user_b))
-    repeated_b, repeated_status = await svc.create_snapshot(db, request_b, user_id=str(user_b))
+    key = str(uuid4())
+    accepted_b, status_b = await svc.create_snapshot(
+        db, request_b, user_id=str(user_b), idempotency_key=key
+    )
+    repeated_b, repeated_status = await svc.create_snapshot(
+        db, request_b, user_id=str(user_b), idempotency_key=key
+    )
 
     assert (status_a, status_b, repeated_status) == (201, 201, 200)
     assert repeated_b["snapshot_id"] == accepted_b["snapshot_id"]
@@ -201,12 +216,14 @@ async def test_sql_end_to_end_cache_reuse_and_request_isolation(
     report_b = await svc.get_report(db, UUID(accepted_b["snapshot_id"]), user_id=str(user_b))
 
     assert result_a["plans"][0]["plan_id"] == "before"
-    assert result_a["data_quality"]["unresolved_symbols"] == ["GARBAGE"]
-    assert result_a["plans"][0]["section_a"]["calculation_coverage_ratio"] == 0.5
+    assert any(i["code"] == "unresolved" for i in result_a["data_quality"]["plans"][0]["issues"])
+    assert result_a["plans"][0]["input"]["calculation_coverage_ratio"] == 0.5
     assert result_b["plans"][0]["plan_id"] == "my-portfolio"
     assert result_b["plans"][0]["label"] == "mine"
-    assert result_b["data_quality"]["unresolved_symbols"] == []
-    assert result_b["plans"][0]["section_a"]["calculation_coverage_ratio"] == 1.0
+    assert not any(
+        i["code"] == "unresolved" for i in result_b["data_quality"]["plans"][0]["issues"]
+    )
+    assert result_b["plans"][0]["input"]["calculation_coverage_ratio"] == 1.0
     assert report_b["snapshot_id"] == accepted_b["snapshot_id"]
 
     async with db.cursor() as cur:
@@ -233,7 +250,7 @@ async def test_equal_weight_baseline_metrics_on_real_sql(
 
     accepted, status = await svc.create_snapshot(db, request, user_id=str(user_a))
     result = await svc.get_result(db, UUID(accepted["snapshot_id"]), user_id=str(user_a))
-    section_a = result["plans"][0]["section_a"]
+    section_a = result["plans"][0]["section_a"]["value"]
 
     assert status == 201
     assert section_a["l1_count"]["value"] == 2
@@ -248,10 +265,14 @@ async def test_concurrent_authenticated_requests_are_idempotent(
     _db, user_a, _user_b = diagnosis_db
     request = _request("concurrent", [HoldingItem(symbol=_SYMBOL_A)])
 
+    key = str(uuid4())
+
     async def submit() -> tuple[dict, int]:
         conn = await _connect(autocommit=True)
         try:
-            return await svc.create_snapshot(conn, request, user_id=str(user_a))
+            return await svc.create_snapshot(
+                conn, request, user_id=str(user_a), idempotency_key=key
+            )
         finally:
             await conn.close()
 
@@ -259,3 +280,63 @@ async def test_concurrent_authenticated_requests_are_idempotent(
 
     assert left[0]["snapshot_id"] == right[0]["snapshot_id"]
     assert sorted((left[1], right[1])) == [200, 201]
+
+
+async def test_new_resources_key_conflict_and_failed_plan_isolation(diagnosis_db, monkeypatch):
+    from gr_api.errors import Conflict
+
+    db, user_a, _ = diagnosis_db
+    req = _request("p", [HoldingItem(symbol=_SYMBOL_A)])
+    first, _ = await svc.create_snapshot(db, req, user_id=str(user_a))
+    second, _ = await svc.create_snapshot(db, req, user_id=str(user_a))
+    assert first["snapshot_id"] != second["snapshot_id"]
+    key = str(uuid4())
+    await svc.create_snapshot(db, req, user_id=str(user_a), idempotency_key=key)
+    different = _request("renamed", [HoldingItem(symbol=_SYMBOL_A)])
+    with pytest.raises(Conflict):
+        await svc.create_snapshot(db, different, user_id=str(user_a), idempotency_key=key)
+
+    original = svc._compute_plan
+
+    async def faulty(*args, **kwargs):
+        if kwargs["item"]["plan"].plan_id == "broken":
+            raise RuntimeError("private diagnostic detail must not appear in response")
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(svc, "_compute_plan", faulty)
+    pair = SnapshotRequest(
+        plans=[
+            req.plans[0],
+            PortfolioPlan(plan_id="broken", holdings=[HoldingItem(symbol=_SYMBOL_B)]),
+        ],
+        as_of_date=_AS_OF,
+    )
+    submitted, _ = await svc.create_snapshot(db, pair, user_id=str(user_a))
+    result = await svc.get_result(db, UUID(submitted["snapshot_id"]), user_id=str(user_a))
+    assert result["run_status"] == "partially_succeeded"
+    assert result["plans"][1]["run_status"] == "failed"
+    assert "private diagnostic detail" not in str(result)
+    assert result["comparison"]["reason_code"] == "feature_not_available"
+    monkeypatch.setattr(svc, "_compute_plan", original)
+    retry, _ = await svc.create_snapshot(db, pair, user_id=str(user_a))
+    retried = await svc.get_result(db, UUID(retry["snapshot_id"]), user_id=str(user_a))
+    assert retried["plans"][1]["section_a"]["status"] == "ready"
+    original_result = await svc.get_result(db, UUID(submitted["snapshot_id"]), user_id=str(user_a))
+    assert original_result == result
+
+
+async def test_key_replay_uses_original_snapshot_before_resolving_latest_data(
+    diagnosis_db, monkeypatch
+):
+    db, user_a, _ = diagnosis_db
+    key = str(uuid4())
+    req = _request("frozen", [HoldingItem(symbol=_SYMBOL_A)])
+    first, _ = await svc.create_snapshot(db, req, user_id=str(user_a), idempotency_key=key)
+
+    async def no_latest_data(*args, **kwargs):
+        raise AssertionError("replay must not resolve the current data version")
+
+    monkeypatch.setattr(svc, "get_data_version", no_latest_data)
+    replay, code = await svc.create_snapshot(db, req, user_id=str(user_a), idempotency_key=key)
+    assert code == 200
+    assert replay == first

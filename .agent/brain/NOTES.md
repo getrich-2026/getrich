@@ -2,63 +2,40 @@
 
 **这个文件是状态快照，可以整体覆写。** 不要在这里追加施工流水账 —— 历史沿革查 `git log`，长期决策和踩坑写 `DECISIONS.md`。
 
-最后更新：2026-09-06 · 分支 `dev`
+最后更新：2026-09-07 · 分支 `dev`
 
 ---
 
-## 持仓诊断后端 API 已落地并完成审查修复（P0，真库实测通过）
+## 持仓诊断：前端 A–E API 契约已更新
 
-`getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md` §7.1 的 **9 个端点
-全部实现**，挂在 `/v1/diagnosis/*`（**不是**文档写的 `/api/v1/*`，本仓路由都在
-`/v1` 下、没有 `/api` 段）。四个新文件 + `040_diag.sql`：
+本轮用户明确选择“先完成前端 API 契约”，不补 B/D 的历史协方差计算。
+参考相邻仓库 `../getrich-design/portfolio-analysis/` 的表接口 v0.3.0。
+实际前缀沿用 `/v1/diagnosis`，成功响应保留仓库统一信封。
 
-| 文件 | 内容 |
-|---|---|
-| `gr-db/ddl/postgres/040_diag.sql` | `diag` 的 7 张表 + bootstrap 的 `spec_version` / `data_version` 两行 |
-| `gr-api/schemas/diagnosis.py` | §7.2/§7.3 的请求响应模型，`MetricValue` 判别联合 |
-| `gr-api/services/diagnosis.py` | 解析／归一化／两套哈希／模块 A／编排持久化 |
-| `gr-api/routers/diagnosis.py` | 9 个端点 + SSE |
+- `schemas/diagnosis_response.py`：网页数值、输入回显、区块状态、进度、报告组件与错误模型。
+  `schemas/diagnosis.py` 继续提供提交请求和内部旧计算载体；路由公开的新响应以新文件为准。
+- `services/diagnosis_presentation.py`：从固定运行结果组装 A–E 与报告。
+  A 使用已有计算；B/D、压力测试及 E 多方案比较为 `feature_not_available`，
+  C 为 `spec_not_defined`，单方案 E 为 `not_applicable`。终态不再用裸 null 区块。
+- `services/diagnosis.py`：零权重不进计算，量化余差按确定顺序分配；快照保存标的名称。
+  覆盖率作用于指标、盲点及画像，数据质量按完整输入份额展示。缓存不存画像或盲点。
+  每方案 savepoint 隔离故障，保留失败方案；新快照重试不修改旧失败结果。
+- 新提交总建新 snapshot；仅同一 UUIDv4 `Idempotency-Key` 重放原资源，同键异体 409。
+  复用既有列和事务锁，无 DDL 改动。POST 不再接受 user_level/idempotency_key 字段。
+  请求键、原始请求体和纯计算键各司其职；计算载体版本 3.0 纳入计算哈希，避免复用旧形状。
+- `/result`、`/report`、`/data-quality`、POST 有正式响应模型、202 进度和链接。
+  报告默认 retail、private/no-store；SSE 同步晚订阅只发 meta → 完整 complete。
+  分享响应使用字段白名单，移除私有标识、持仓回显及数据质量路径。
+- 调用说明更新在根 README；契约由运行应用的 `/openapi.json` 导出。
 
-**范围**：模块 A 完整（TopN/HHI/L1/L2 + 行业／资产类别／市场／风格分布）；
-B/C/D 按契约返回 `null` + `reason_code`，前端已能正确渲染降级态。
-计算**同步执行**（架构篇 §6.1/§6.5：毫秒量级，请求路径不引队列）。
+验证：诊断单元/HTTP 契约测试 73 项 + 真实 PG 集成测试 5 项，合计 **78 passed**。
+Ruff check、format --check 与 git diff --check 均通过。PG 测试覆盖同键重放、并发、
+同键异体冲突、失败方案重试及旧终态不变；测试数据已由 fixture 清理。
 
-### 真库实测结果（本地 `getrich` 库）
-
-等权两只股票的 L1、HHI、L2、TopN 与预期一致；资产类别、市场及风格分布可出数。
-`classify.instrument_industry` 已完成全量导入，行业分布需按真实 `scheme_code` 再验一次。
-
-⚠️ 但 `spec_version.params.industry_scheme` 现在是 `'sw2021'`，而
-`039_classify.sql` 注明 datayes 落库的 `industry_code` 是**通联英文标识**。
-**导完 classify 数据后必须核对 `classify.scheme` 里的真实 `scheme_code`**，
-对不上就开一个新 `spec_version`（不要原地改那一行，会毁掉历史报告的可复现性）。
-
-其余实测通过项：`request_hash` 幂等；跨请求计算复用（2 个 snapshot 只产生 1 行
-`diagnosis_run`）；覆盖率字段族如实暴露未解析权重；4xx 分支（混合权重／全不可
-解析／plans 超限／负权重）统一 422；SSE 事件序列与 §7.5 逐条一致（2 plan 时
-`complete` id=9）；`retail`/`pro` 分级裁剪。
-
-审查交接单的 13 项发现已全部修复：跨用户共享 run 只缓存纯计算字段，响应按当前
-`portfolio_plan` 重建 plan 元数据、覆盖率和请求级 DQ；SSE 在 `complete` 后结束且
-返回流前释放 PG 连接；标的解析、状态聚合、并发幂等、最新 run、时区和响应模型均有
-回归覆盖。诊断单元测试 **51 passed**；新增 3 条 `GETRICH_TEST_PG=1` 门控用例，真库
-覆盖 POST → result → report、幂等、跨用户复用隔离、`diag.` 前缀与 UUID 绑定，
-**3 passed**。
-
-### 一个已知缺口（不阻塞前端联调，但要记着）
-
-1. **`data_fingerprint` 没有维护者**。文档要求每日盘后批任务维护
-   `diag.data_version`，该任务不存在，现在只有 bootstrap 的一行。后果：**数据
-   重新导入后 fingerprint 不变，已成功的计算不会失效，接口返回陈旧结果**。
-   缓解办法是每次数据导入后手工插一行新的 `diag.data_version`。
-
-### 下一步
-
-* 前端 `apps/web/src/api/diagnosis.ts` + `src/types/diagnosis.ts`：现在可以照
-  **实际 return** 写了（不要照设计稿，见 D-032）。注意 `EventSource` 不能带
-  自定义 header 而本仓认证靠请求头，SSE 要用 fetch + ReadableStream。
-* 模块 B/D（历史协方差口径）：架构篇 P0-b，需要 §6.3 的 L1 全市场日收益矩阵常驻缓存。
-* 模块 C：卡在缺口 G6（组合历史序列口径），**是产品决策不是工程问题**。
+仍然存在的供数限制：`diag.data_version` 无每日维护任务，数据重新导入后须推进版本；
+这次不改变其发布流程，也不承诺跨供应商修订重算。`sw2021` 的实际分类体系对应关系
+仍需核验；factor.calibrated=false、G6 等已有计算前置条件仍未解除。
+当前仍为同步事务路径，没有引入异步运行租约或 Redis 活跃批次通知。
 
 ---
 

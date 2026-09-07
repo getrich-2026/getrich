@@ -346,10 +346,10 @@ def test_negative_book_value_is_not_classified_as_value_stock() -> None:
     [
         ([("p1", ["600000.SH"])], "single_instrument"),
         ([("p1", ["600000.SH", "000001.SZ"])], "single_portfolio"),
-        # 两个 plan、标的集合相同 → 只调金额
-        ([("p1", ["600000.SH"]), ("p2", ["600000.SH"])], "rebalance_amount"),
-        # 两个 plan、标的集合不同 → 有标的增减
-        ([("p1", ["600000.SH"]), ("p2", ["000001.SZ"])], "rebalance_holding"),
+        # 两个方案缺省都为多组合，不猜调仓意图
+        ([("p1", ["600000.SH"]), ("p2", ["600000.SH"])], "multi_portfolio"),
+        # 集合不同也不能推断调仓意图
+        ([("p1", ["600000.SH"]), ("p2", ["000001.SZ"])], "multi_portfolio"),
         (
             [("p1", ["600000.SH"]), ("p2", ["000001.SZ"]), ("p3", ["600519.SH"])],
             "multi_portfolio",
@@ -593,6 +593,15 @@ async def test_sse_stream_ends_immediately_after_complete() -> None:
             return False
 
     result = {
+        "snapshot_id": str(svc.uuid4()),
+        "schema_version": "diagnosis.v1",
+        "spec_version": "test",
+        "as_of_date": "2026-09-01",
+        "data_fingerprint": "test",
+        "data_snapshot_at": "2026-09-01T18:00:00+08:00",
+        "resolved_intent": "single_portfolio",
+        "report_mode": "standard",
+        "requested_cov_methods": ["historical"],
         "plans": [],
         "cov": {"primary": "historical", "computed": []},
         "disclosures": [],
@@ -677,7 +686,7 @@ def test_diagnosis_routes_keep_security_headers(monkeypatch: pytest.MonkeyPatch)
 
     assert r.status_code == 200
     assert r.json()["code"] == 0
-    assert "created_at" not in r.json()["data"]["list"][0]
+    assert "created_at" not in r.json()["data"]["items"][0]
     assert r.headers["X-Content-Type-Options"] == "nosniff"
     assert r.headers["X-Frame-Options"] == "DENY"
     assert r.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"

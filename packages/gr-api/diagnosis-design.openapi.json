@@ -1,0 +1,4973 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "持仓诊断 API 设计规范",
+    "version": "0.3.0",
+    "description": "根据《持仓诊断_表与接口设计.md》v0.3.0 生成的设计契约，尚不等同于已部署接口。保留设计路径 /api/v1/diagnosis 及直接响应体；当前 gr-api 实际路径为 /v1/diagnosis，且使用 code/message/data/timestamp/request_id 信封，仍需独立对齐实现。不得直接将此文件作为当前生产服务的已验证客户端契约。P2 分享端点保留已知定义，未决响应不臆造。"
+  },
+  "tags": [
+    {
+      "name": "持仓诊断",
+      "description": "一期设计：A–D 按 plan 返回；比较与压力测试按 enabled_features 表示未开放。"
+    },
+    {
+      "name": "持仓诊断分享（P2 预留）",
+      "description": "仅预留设计，不表示一期已开放。"
+    }
+  ],
+  "paths": {
+    "/api/v1/diagnosis/snapshots": {
+      "post": {
+        "tags": [
+          "持仓诊断"
+        ],
+        "operationId": "createDiagnosisSnapshot",
+        "summary": "提交持仓诊断",
+        "description": "新提交创建新 snapshot，计算结果仍可共享。只有相同 Idempotency-Key 重放原请求资源。所有成功状态使用 SnapshotAccepted，不直接返回完整计算结果。未完成为 202，新资源终态为 201，幂等重放终态为 200。",
+        "responses": {
+          "200": {
+            "description": "幂等重放：原快照已到终态，包括 failed。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotAccepted"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              }
+            }
+          },
+          "201": {
+            "description": "新建快照已到终态，包括 failed。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotAccepted"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              }
+            }
+          },
+          "202": {
+            "description": "已接受，仍在 pending/running；新提交和重放均可返回。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotAccepted"
+                },
+                "example": {
+                  "snapshot_id": "be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f",
+                  "schema_version": "diagnosis.v1",
+                  "spec_version": "v1-hist-20260901",
+                  "as_of_date": "2026-09-04",
+                  "data_fingerprint": "20260904T1800",
+                  "data_snapshot_at": "2026-09-04T18:00:00+08:00",
+                  "resolved_intent": "single_portfolio",
+                  "report_mode": "standard",
+                  "requested_cov_methods": [
+                    "historical"
+                  ],
+                  "run_status": "pending",
+                  "plans": [
+                    {
+                      "plan_id": "p1",
+                      "label": null,
+                      "run_status": "pending",
+                      "sections": {
+                        "section_a": "pending",
+                        "section_b": "pending",
+                        "section_c": "pending",
+                        "section_d": "pending",
+                        "stress_scenarios": "pending",
+                        "blindspots": "pending",
+                        "profile": "pending"
+                      },
+                      "error": null
+                    }
+                  ],
+                  "links": {
+                    "result": "/api/v1/diagnosis/snapshots/be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f/result",
+                    "report": "/api/v1/diagnosis/snapshots/be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f/report",
+                    "stream": "/api/v1/diagnosis/snapshots/be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f/stream",
+                    "data_quality": "/api/v1/diagnosis/snapshots/be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f/data-quality"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P0",
+        "x-design-source": "持仓诊断_表与接口设计.md §7",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "客户端安全随机生成的 UUIDv4。同一次操作的网络重试复用该键；重新诊断或重试计算使用新键。相同身份空间下同键异体返回 409。至少保留 24 小时，完整规则见 §7.8。",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotRequest"
+              },
+              "examples": {
+                "weighted": {
+                  "summary": "单方案显式权重",
+                  "value": {
+                    "plans": [
+                      {
+                        "plan_id": "p1",
+                        "holdings": [
+                          {
+                            "symbol": "600000.SH",
+                            "weight": "40"
+                          },
+                          {
+                            "symbol": "000001.SZ",
+                            "weight": "60"
+                          }
+                        ]
+                      }
+                    ],
+                    "intent": "single_portfolio"
+                  }
+                },
+                "equal": {
+                  "summary": "先去重后等权",
+                  "value": {
+                    "plans": [
+                      {
+                        "plan_id": "p1",
+                        "holdings": [
+                          {
+                            "symbol": "600000.SH"
+                          },
+                          {
+                            "symbol": "000001.SZ"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-access-control": "可匿名提交；已登录请求按用户隔离幂等空间，匿名请求使用独立匿名空间。"
+      }
+    },
+    "/api/v1/diagnosis/snapshots/{id}/result": {
+      "get": {
+        "tags": [
+          "持仓诊断"
+        ],
+        "operationId": "getDiagnosisResult",
+        "summary": "读取全量诊断结果",
+        "description": "从固定的 snapshot 终态读取；处理中返回进度，终态返回本端点模型。报告和数据质量均由同一份固定结果裁剪。",
+        "responses": {
+          "200": {
+            "description": "已读取终态。HTTP 200 不代表诊断成功，必须检查 run_status；区块按 ready/unavailable/failed 分派。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosisResult"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "202": {
+            "description": "计算尚未完成；按 Retry-After 轮询。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotProgress"
+                },
+                "example": {
+                  "snapshot_id": "be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f",
+                  "schema_version": "diagnosis.v1",
+                  "spec_version": "v1-hist-20260901",
+                  "as_of_date": "2026-09-04",
+                  "data_fingerprint": "20260904T1800",
+                  "data_snapshot_at": "2026-09-04T18:00:00+08:00",
+                  "resolved_intent": "single_portfolio",
+                  "report_mode": "standard",
+                  "requested_cov_methods": [
+                    "historical"
+                  ],
+                  "run_status": "pending",
+                  "plans": [
+                    {
+                      "plan_id": "p1",
+                      "label": null,
+                      "run_status": "pending",
+                      "sections": {
+                        "section_a": "pending",
+                        "section_b": "pending",
+                        "section_c": "pending",
+                        "section_d": "pending",
+                        "stress_scenarios": "pending",
+                        "blindspots": "pending",
+                        "profile": "pending"
+                      },
+                      "error": null
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P0",
+        "x-design-source": "持仓诊断_表与接口设计.md §7",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUIDv4 快照标识；匿名快照中同时是不透明访问凭证。",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+            }
+          }
+        ],
+        "x-access-control": "已登录快照校验请求者归属；匿名快照按 UUIDv4 snapshot_id 访问。鉴权传输方式尚未在设计稿中定义，参见 x-contract-gaps。"
+      }
+    },
+    "/api/v1/diagnosis/snapshots/{id}/report": {
+      "get": {
+        "tags": [
+          "持仓诊断"
+        ],
+        "operationId": "getDiagnosisReport",
+        "summary": "读取按偏好裁剪的报告",
+        "description": "从固定的 snapshot 终态读取；处理中返回进度，终态返回本端点模型。报告和数据质量均由同一份固定结果裁剪。",
+        "responses": {
+          "200": {
+            "description": "已读取终态。HTTP 200 不代表诊断成功，必须检查 run_status；区块按 ready/unavailable/failed 分派。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                },
+                "examples": {
+                  "unavailableSectionShape": {
+                    "summary": "完整最小结构示例；实际报告必须包含所有适用章节和强制声明",
+                    "value": {
+                      "snapshot_id": "be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f",
+                      "schema_version": "diagnosis.v1",
+                      "spec_version": "v1-hist-20260901",
+                      "as_of_date": "2026-09-04",
+                      "data_fingerprint": "20260904T1800",
+                      "data_snapshot_at": "2026-09-04T18:00:00+08:00",
+                      "resolved_intent": "single_portfolio",
+                      "report_mode": "standard",
+                      "requested_cov_methods": [
+                        "historical"
+                      ],
+                      "user_level": "retail",
+                      "run_status": "partially_succeeded",
+                      "sections": [
+                        {
+                          "section_id": "p1:style",
+                          "plan_id": "p1",
+                          "kind": "style",
+                          "title": "风格与暴露",
+                          "content": {
+                            "status": "unavailable",
+                            "reason_code": "factor_model_unavailable",
+                            "reason": "因子数据尚不可用，暂时无法判断风格暴露。"
+                          }
+                        }
+                      ],
+                      "disclosures": [
+                        "本报告基于 2026-09-04 18:00 的数据快照计算，数据供应商的后续修订不会反映在本报告中。"
+                      ],
+                      "data_quality": {
+                        "plans": [
+                          {
+                            "plan_id": "p1",
+                            "issues": [],
+                            "coverage_summary": {
+                              "input": 1.0
+                            },
+                            "forced_disclosures": []
+                          }
+                        ],
+                        "forced_disclosures": [
+                          "本报告不代表用户真实收益。"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateNoStore"
+              }
+            }
+          },
+          "202": {
+            "description": "计算尚未完成；按 Retry-After 轮询。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotProgress"
+                },
+                "example": {
+                  "snapshot_id": "be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f",
+                  "schema_version": "diagnosis.v1",
+                  "spec_version": "v1-hist-20260901",
+                  "as_of_date": "2026-09-04",
+                  "data_fingerprint": "20260904T1800",
+                  "data_snapshot_at": "2026-09-04T18:00:00+08:00",
+                  "resolved_intent": "single_portfolio",
+                  "report_mode": "standard",
+                  "requested_cov_methods": [
+                    "historical"
+                  ],
+                  "run_status": "pending",
+                  "plans": [
+                    {
+                      "plan_id": "p1",
+                      "label": null,
+                      "run_status": "pending",
+                      "sections": {
+                        "section_a": "pending",
+                        "section_b": "pending",
+                        "section_c": "pending",
+                        "section_d": "pending",
+                        "stress_scenarios": "pending",
+                        "blindspots": "pending",
+                        "profile": "pending"
+                      },
+                      "error": null
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateNoStore"
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P0",
+        "x-design-source": "持仓诊断_表与接口设计.md §7",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUIDv4 快照标识；匿名快照中同时是不透明访问凭证。",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+            }
+          },
+          {
+            "name": "user_level",
+            "in": "query",
+            "required": false,
+            "description": "访问时的报告渲染偏好，与付费无关；切换不触发计算。",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "retail",
+                "pro"
+              ],
+              "default": "retail"
+            }
+          }
+        ],
+        "x-access-control": "已登录快照校验请求者归属；匿名快照按 UUIDv4 snapshot_id 访问。鉴权传输方式尚未在设计稿中定义，参见 x-contract-gaps。"
+      }
+    },
+    "/api/v1/diagnosis/snapshots/{id}/data-quality": {
+      "get": {
+        "tags": [
+          "持仓诊断"
+        ],
+        "operationId": "getDiagnosisDataQuality",
+        "summary": "读取数据质量与强制声明",
+        "description": "从固定的 snapshot 终态读取；处理中返回进度，终态返回本端点模型。报告和数据质量均由同一份固定结果裁剪。",
+        "responses": {
+          "200": {
+            "description": "已读取终态。HTTP 200 不代表诊断成功，必须检查 run_status；区块按 ready/unavailable/failed 分派。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataQualityResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "202": {
+            "description": "计算尚未完成；按 Retry-After 轮询。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotProgress"
+                },
+                "example": {
+                  "snapshot_id": "be6ebd1d-ab25-4ce5-8b8a-e366ab509f2f",
+                  "schema_version": "diagnosis.v1",
+                  "spec_version": "v1-hist-20260901",
+                  "as_of_date": "2026-09-04",
+                  "data_fingerprint": "20260904T1800",
+                  "data_snapshot_at": "2026-09-04T18:00:00+08:00",
+                  "resolved_intent": "single_portfolio",
+                  "report_mode": "standard",
+                  "requested_cov_methods": [
+                    "historical"
+                  ],
+                  "run_status": "pending",
+                  "plans": [
+                    {
+                      "plan_id": "p1",
+                      "label": null,
+                      "run_status": "pending",
+                      "sections": {
+                        "section_a": "pending",
+                        "section_b": "pending",
+                        "section_c": "pending",
+                        "section_d": "pending",
+                        "stress_scenarios": "pending",
+                        "blindspots": "pending",
+                        "profile": "pending"
+                      },
+                      "error": null
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P0",
+        "x-design-source": "持仓诊断_表与接口设计.md §7",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUIDv4 快照标识；匿名快照中同时是不透明访问凭证。",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+            }
+          }
+        ],
+        "x-access-control": "已登录快照校验请求者归属；匿名快照按 UUIDv4 snapshot_id 访问。鉴权传输方式尚未在设计稿中定义，参见 x-contract-gaps。"
+      }
+    },
+    "/api/v1/diagnosis/spec-versions": {
+      "get": {
+        "tags": [
+          "持仓诊断"
+        ],
+        "operationId": "listDiagnosisSpecVersions",
+        "summary": "列出口径版本",
+        "description": "按 effective_from 降序一次返回全部版本。",
+        "responses": {
+          "200": {
+            "description": "版本列表。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpecVersionList"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P0",
+        "x-design-source": "持仓诊断_表与接口设计.md §7"
+      }
+    },
+    "/api/v1/diagnosis/spec-versions/current": {
+      "get": {
+        "tags": [
+          "持仓诊断"
+        ],
+        "operationId": "getCurrentDiagnosisSpecVersion",
+        "summary": "读取当前口径配置",
+        "description": "没有当前生效版本时返回 503。配置值不等于已完成计算的方法。",
+        "responses": {
+          "200": {
+            "description": "当前生效版本及配置。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpecVersionInfo"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P0",
+        "x-design-source": "持仓诊断_表与接口设计.md §7"
+      }
+    },
+    "/api/v1/diagnosis/snapshots/{id}/stream": {
+      "get": {
+        "tags": [
+          "持仓诊断"
+        ],
+        "operationId": "streamDiagnosisSnapshot",
+        "summary": "订阅分批诊断事件",
+        "description": "不同 plan 按完成顺序交错发送，全局递增 id 仅用于本连接排序去重。一期不支持 Last-Event-ID 重放。订阅时已完成只发 meta → complete。服务端先订阅再复查终态；complete 发送一次后关闭。客户端异常关闭后停止自动重连并轮询 /result。响应头发出前的错误使用 HTTP；之后通过 error 事件。",
+        "responses": {
+          "200": {
+            "description": "SSE 帧流，data 行是对应事件的 JSON 对象；不是一个 JSON 数组。",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "event: section_c\nid: 3\ndata: {\"plan_id\":\"p1\",\"section_c\":{\"status\":\"unavailable\",\"reason_code\":\"spec_not_defined\",\"reason\":\"组合历史序列口径尚未确定。\"},\"elapsed_ms\":420}\n\n",
+                "x-sse-events": {
+                  "meta": {
+                    "dataSchema": {
+                      "$ref": "#/components/schemas/StreamMeta"
+                    },
+                    "id": "0",
+                    "description": "首帧，含权重假设和已知披露；requested_cov_methods 不表示已算出。"
+                  },
+                  "section_a": {
+                    "dataSchema": {
+                      "$ref": "#/components/schemas/SectionAEventData"
+                    },
+                    "description": "替换该 plan 的 section_a。"
+                  },
+                  "section_bd": {
+                    "dataSchema": {
+                      "$ref": "#/components/schemas/SectionBDEventData"
+                    },
+                    "description": "替换该 plan 的 cov、section_b、section_d。"
+                  },
+                  "section_c": {
+                    "dataSchema": {
+                      "$ref": "#/components/schemas/SectionCEventData"
+                    },
+                    "description": "HistorySection；不可用时同样携带原因。"
+                  },
+                  "section_blindspots": {
+                    "dataSchema": {
+                      "$ref": "#/components/schemas/SectionBlindspotsEventData"
+                    },
+                    "description": "替换 plan 顶层字段；压力测试不回填 section_b。"
+                  },
+                  "complete": {
+                    "dataSchema": {
+                      "$ref": "#/components/schemas/DiagnosisResult"
+                    },
+                    "description": "完整终态，覆盖本地聚合结果后关闭连接。"
+                  },
+                  "heartbeat": {
+                    "dataSchema": {
+                      "type": "object",
+                      "additionalProperties": false
+                    },
+                    "id": null,
+                    "description": "每 15 秒保活，不改变业务状态。"
+                  },
+                  "error": {
+                    "dataSchema": {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    "id": null,
+                    "description": "流传输/服务故障，关闭流并回退轮询；不是计算终态。"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P0",
+        "x-design-source": "持仓诊断_表与接口设计.md §7",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUIDv4 快照标识；匿名快照中同时是不透明访问凭证。",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+            }
+          }
+        ],
+        "x-access-control": "已登录快照校验请求者归属；匿名快照按 UUIDv4 snapshot_id 访问。鉴权传输方式尚未在设计稿中定义，参见 x-contract-gaps。",
+        "x-supports-replay": false
+      }
+    },
+    "/api/v1/diagnosis/snapshots/{id}/share": {
+      "post": {
+        "tags": [
+          "持仓诊断分享（P2 预留）"
+        ],
+        "operationId": "createDiagnosisShareToken",
+        "summary": "创建分享凭证（P2 预留）",
+        "description": "仅预留设计。默认有效期与撤销入口尚未定型；不新增未定义的请求参数。创建者归属校验沿用快照读取规则。",
+        "responses": {
+          "201": {
+            "description": "返回分享凭证及有效期。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTokenCreated"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P2",
+        "x-design-source": "持仓诊断_表与接口设计.md §7",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUIDv4 快照标识；匿名快照中同时是不透明访问凭证。",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+            }
+          }
+        ],
+        "x-access-control": "已登录快照校验请求者归属；匿名快照按 UUIDv4 snapshot_id 访问。鉴权传输方式尚未在设计稿中定义，参见 x-contract-gaps。",
+        "x-contract-status": "deferred"
+      }
+    },
+    "/api/v1/diagnosis/share/{token}/report": {
+      "get": {
+        "tags": [
+          "持仓诊断分享（P2 预留）"
+        ],
+        "operationId": "getSharedDiagnosisReport",
+        "summary": "读取分享报告（P2 预留）",
+        "description": "仅可访问报告。token 过期或撤销返回 404。脱敏字段白名单和处理中 DTO 尚未定义，因此成功响应有意不声明 schema；不能用私有 ReportResponse/SnapshotProgress 代替。",
+        "responses": {
+          "200": {
+            "description": "待定义的脱敏报告响应；禁止包含私有 snapshot_id、原始输入和 result/stream 链接。"
+          },
+          "202": {
+            "description": "待定义的分享进度响应；不暴露私有快照标识或链接。"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-stage": "P2",
+        "x-design-source": "持仓诊断_表与接口设计.md §7",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "独立于 snapshot_id 的分享凭证。"
+          },
+          {
+            "name": "user_level",
+            "in": "query",
+            "required": false,
+            "description": "访问时的报告渲染偏好，与付费无关；切换不触发计算。",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "retail",
+                "pro"
+              ],
+              "default": "retail"
+            }
+          }
+        ],
+        "x-contract-status": "response-schema-not-defined"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BlindspotHit": {
+        "additionalProperties": false,
+        "properties": {
+          "detector": {
+            "title": "Detector",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "triggered",
+              "not_triggered",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReasonCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "detector",
+          "status",
+          "severity",
+          "message",
+          "reason_code"
+        ],
+        "title": "BlindspotHit",
+        "type": "object"
+      },
+      "CalculationHolding": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument_id": {
+            "title": "Instrument Id",
+            "type": "integer"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "input_share": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Input Share",
+            "type": "number"
+          },
+          "calculation_weight": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Calculation Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "symbol",
+          "name",
+          "input_share",
+          "calculation_weight"
+        ],
+        "title": "CalculationHolding",
+        "type": "object"
+      },
+      "ComparisonSection": {
+        "additionalProperties": false,
+        "properties": {
+          "pairs": {
+            "items": {
+              "$ref": "#/components/schemas/PairComparison"
+            },
+            "title": "Pairs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pairs"
+        ],
+        "title": "ComparisonSection",
+        "type": "object"
+      },
+      "CorrelationBlock": {
+        "additionalProperties": false,
+        "properties": {
+          "primary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary"
+          },
+          "by_method": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MetricValue_CorrelationMatrix_"
+            },
+            "title": "By Method",
+            "type": "object"
+          },
+          "divergence": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          }
+        },
+        "required": [
+          "primary",
+          "by_method",
+          "divergence"
+        ],
+        "title": "CorrelationBlock",
+        "type": "object"
+      },
+      "CorrelationChartBlock": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "correlation_matrix",
+            "default": "correlation_matrix",
+            "title": "Type",
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
+          },
+          "values": {
+            "$ref": "#/components/schemas/CorrelationBlock"
+          }
+        },
+        "required": [
+          "labels",
+          "values"
+        ],
+        "title": "CorrelationChartBlock",
+        "type": "object"
+      },
+      "CorrelationMatrix": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Instrument Ids",
+            "type": "array"
+          },
+          "matrix": {
+            "items": {
+              "items": {
+                "maximum": 1,
+                "minimum": -1,
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Matrix",
+            "type": "array"
+          }
+        },
+        "required": [
+          "instrument_ids",
+          "matrix"
+        ],
+        "title": "CorrelationMatrix",
+        "type": "object",
+        "description": "instrument_ids 唯一且升序；矩阵维度与 ID 数一致，行列使用同一顺序；对称、对角为 1，容差 1e-6。排除标的和覆盖率需披露。"
+      },
+      "CovarianceSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "requested": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested",
+            "type": "array"
+          },
+          "primary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary"
+          },
+          "computed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Computed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "requested",
+          "primary",
+          "computed"
+        ],
+        "title": "CovarianceSpec",
+        "type": "object",
+        "description": "属于单个方案；primary 必须来自 computed，仅当 computed 为空时 primary 为 null。"
+      },
+      "DataQualityIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "reason",
+          "paths"
+        ],
+        "title": "DataQualityIssue",
+        "type": "object"
+      },
+      "DataQualityReport": {
+        "additionalProperties": false,
+        "properties": {
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PlanDataQuality"
+            },
+            "title": "Plans",
+            "type": "array"
+          },
+          "forced_disclosures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Forced Disclosures",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plans",
+          "forced_disclosures"
+        ],
+        "title": "DataQualityReport",
+        "type": "object"
+      },
+      "DataQualityResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "diagnosis.v1",
+            "default": "diagnosis.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "spec_version": {
+            "title": "Spec Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "data_fingerprint": {
+            "title": "Data Fingerprint",
+            "type": "string"
+          },
+          "data_snapshot_at": {
+            "format": "date-time",
+            "title": "Data Snapshot At",
+            "type": "string"
+          },
+          "resolved_intent": {
+            "enum": [
+              "single_portfolio",
+              "single_instrument",
+              "rebalance_amount",
+              "rebalance_holding",
+              "multi_portfolio"
+            ],
+            "title": "Resolved Intent",
+            "type": "string"
+          },
+          "report_mode": {
+            "enum": [
+              "standard",
+              "single_instrument",
+              "compare"
+            ],
+            "title": "Report Mode",
+            "type": "string"
+          },
+          "requested_cov_methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Cov Methods",
+            "type": "array"
+          },
+          "run_status": {
+            "enum": [
+              "succeeded",
+              "partially_succeeded",
+              "failed"
+            ],
+            "title": "Run Status",
+            "type": "string"
+          },
+          "data_quality": {
+            "$ref": "#/components/schemas/DataQualityReport"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "spec_version",
+          "as_of_date",
+          "data_fingerprint",
+          "data_snapshot_at",
+          "resolved_intent",
+          "report_mode",
+          "requested_cov_methods",
+          "run_status",
+          "data_quality"
+        ],
+        "title": "DataQualityResponse",
+        "type": "object"
+      },
+      "DateRange": {
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "DateRange",
+        "type": "object"
+      },
+      "DegradedMetric_Annotated_float__AllowInfNan_allow_inf_nan_False___": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "degraded",
+            "default": "degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method",
+          "reason_code",
+          "reason",
+          "confidence"
+        ],
+        "title": "DegradedMetric[Annotated[float, AllowInfNan(allow_inf_nan=False)]]",
+        "type": "object"
+      },
+      "DegradedMetric_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "degraded",
+            "default": "degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Value",
+            "type": "number"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method",
+          "reason_code",
+          "reason",
+          "confidence"
+        ],
+        "title": "DegradedMetric[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1), _PydanticGeneralMetadata(allow_inf_nan=False)])]]",
+        "type": "object"
+      },
+      "DegradedMetric_CorrelationMatrix_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "degraded",
+            "default": "degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/CorrelationMatrix"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method",
+          "reason_code",
+          "reason",
+          "confidence"
+        ],
+        "title": "DegradedMetric[CorrelationMatrix]",
+        "type": "object"
+      },
+      "DegradedMetric_Union_Annotated_float__AllowInfNan_allow_inf_nan_False____int__": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "degraded",
+            "default": "degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Value"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method",
+          "reason_code",
+          "reason",
+          "confidence"
+        ],
+        "title": "DegradedMetric[Union[Annotated[float, AllowInfNan(allow_inf_nan=False)], int]]",
+        "type": "object"
+      },
+      "DegradedMetric_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "degraded",
+            "default": "degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Value",
+            "type": "object"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method",
+          "reason_code",
+          "reason",
+          "confidence"
+        ],
+        "title": "DegradedMetric[dict[str, Annotated[float, AllowInfNan(allow_inf_nan=False)]]]",
+        "type": "object"
+      },
+      "DegradedMetric_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "degraded",
+            "default": "degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "additionalProperties": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "title": "Value",
+            "type": "object"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method",
+          "reason_code",
+          "reason",
+          "confidence"
+        ],
+        "title": "DegradedMetric[dict[str, Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1), _PydanticGeneralMetadata(allow_inf_nan=False)])]]]",
+        "type": "object"
+      },
+      "DegradedMetric_int_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "degraded",
+            "default": "degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method",
+          "reason_code",
+          "reason",
+          "confidence"
+        ],
+        "title": "DegradedMetric[int]",
+        "type": "object"
+      },
+      "DegradedMetric_list_HighCorrelationPair__": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "degraded",
+            "default": "degraded",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "items": {
+              "$ref": "#/components/schemas/HighCorrelationPair"
+            },
+            "title": "Value",
+            "type": "array"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method",
+          "reason_code",
+          "reason",
+          "confidence"
+        ],
+        "title": "DegradedMetric[list[HighCorrelationPair]]",
+        "type": "object"
+      },
+      "DiagnosisResult": {
+        "additionalProperties": false,
+        "properties": {
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "diagnosis.v1",
+            "default": "diagnosis.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "spec_version": {
+            "title": "Spec Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "data_fingerprint": {
+            "title": "Data Fingerprint",
+            "type": "string"
+          },
+          "data_snapshot_at": {
+            "format": "date-time",
+            "title": "Data Snapshot At",
+            "type": "string"
+          },
+          "resolved_intent": {
+            "enum": [
+              "single_portfolio",
+              "single_instrument",
+              "rebalance_amount",
+              "rebalance_holding",
+              "multi_portfolio"
+            ],
+            "title": "Resolved Intent",
+            "type": "string"
+          },
+          "report_mode": {
+            "enum": [
+              "standard",
+              "single_instrument",
+              "compare"
+            ],
+            "title": "Report Mode",
+            "type": "string"
+          },
+          "requested_cov_methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Cov Methods",
+            "type": "array"
+          },
+          "run_status": {
+            "enum": [
+              "succeeded",
+              "partially_succeeded",
+              "failed"
+            ],
+            "title": "Run Status",
+            "type": "string"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PlanResult"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Plans",
+            "type": "array"
+          },
+          "comparison": {
+            "$ref": "#/components/schemas/SectionResult_ComparisonSection_"
+          },
+          "disclosures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Disclosures",
+            "type": "array"
+          },
+          "data_quality": {
+            "$ref": "#/components/schemas/DataQualityReport"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "spec_version",
+          "as_of_date",
+          "data_fingerprint",
+          "data_snapshot_at",
+          "resolved_intent",
+          "report_mode",
+          "requested_cov_methods",
+          "run_status",
+          "plans",
+          "comparison",
+          "disclosures",
+          "data_quality"
+        ],
+        "title": "DiagnosisResult",
+        "type": "object"
+      },
+      "DistributionBlock": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "distribution",
+            "default": "distribution",
+            "title": "Type",
+            "type": "string"
+          },
+          "metric_id": {
+            "title": "Metric Id",
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
+          },
+          "values": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______"
+          }
+        },
+        "required": [
+          "metric_id",
+          "labels",
+          "values"
+        ],
+        "title": "DistributionBlock",
+        "type": "object"
+      },
+      "ErrorInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "title": "ErrorInfo",
+        "type": "object"
+      },
+      "ErrorIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "code",
+          "message"
+        ],
+        "title": "ErrorIssue",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorInfo"
+          }
+        },
+        "required": [
+          "request_id",
+          "error"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "ExposureMetrics": {
+        "additionalProperties": false,
+        "properties": {
+          "topn": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____"
+          },
+          "hhi": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____"
+          },
+          "l1_count": {
+            "$ref": "#/components/schemas/MetricValue_int_"
+          },
+          "l2_effective_count": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "industry_distribution": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______"
+          },
+          "market_distribution": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______"
+          },
+          "asset_category_distribution": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______"
+          },
+          "style_distribution": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______"
+          },
+          "lookthrough_coverage": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____"
+          }
+        },
+        "required": [
+          "topn",
+          "hhi",
+          "l1_count",
+          "l2_effective_count",
+          "industry_distribution",
+          "market_distribution",
+          "asset_category_distribution",
+          "style_distribution",
+          "lookthrough_coverage"
+        ],
+        "title": "ExposureMetrics",
+        "type": "object"
+      },
+      "FailedSection": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "failed",
+            "default": "failed",
+            "title": "Status",
+            "type": "string"
+          },
+          "error": {
+            "$ref": "#/components/schemas/ErrorInfo"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "FailedSection",
+        "type": "object"
+      },
+      "HighCorrelationPair": {
+        "additionalProperties": false,
+        "properties": {
+          "left_instrument_id": {
+            "title": "Left Instrument Id",
+            "type": "integer"
+          },
+          "right_instrument_id": {
+            "title": "Right Instrument Id",
+            "type": "integer"
+          },
+          "correlation": {
+            "maximum": 1,
+            "minimum": -1,
+            "title": "Correlation",
+            "type": "number"
+          }
+        },
+        "required": [
+          "left_instrument_id",
+          "right_instrument_id",
+          "correlation"
+        ],
+        "title": "HighCorrelationPair",
+        "type": "object"
+      },
+      "HistorySection": {
+        "additionalProperties": false,
+        "properties": {
+          "max_drawdown": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "current_drawdown": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "var": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "cvar": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "return_attribution": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____"
+          },
+          "beta_vs_alpha": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____"
+          },
+          "risk_attribution": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____"
+          },
+          "historical_percentile": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______"
+          }
+        },
+        "required": [
+          "max_drawdown",
+          "current_drawdown",
+          "var",
+          "cvar",
+          "return_attribution",
+          "beta_vs_alpha",
+          "risk_attribution",
+          "historical_percentile"
+        ],
+        "title": "HistorySection",
+        "type": "object"
+      },
+      "HoldingEcho": {
+        "additionalProperties": false,
+        "properties": {
+          "input_index": {
+            "minimum": 0,
+            "title": "Input Index",
+            "type": "integer"
+          },
+          "input_symbol": {
+            "title": "Input Symbol",
+            "type": "string"
+          },
+          "input_weight": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Weight"
+          },
+          "normalized_symbol": {
+            "title": "Normalized Symbol",
+            "type": "string"
+          },
+          "instrument_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instrument Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "status": {
+            "enum": [
+              "resolved",
+              "unresolved",
+              "duplicate",
+              "zero_weight"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "merged_into_input_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Merged Into Input Index"
+          }
+        },
+        "required": [
+          "input_index",
+          "input_symbol",
+          "input_weight",
+          "normalized_symbol",
+          "instrument_id",
+          "name",
+          "status"
+        ],
+        "title": "HoldingEcho",
+        "type": "object"
+      },
+      "HoldingItem": {
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Symbol",
+            "type": "string"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Weight"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "title": "HoldingItem",
+        "type": "object"
+      },
+      "HoldingsBlock": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "holdings",
+            "default": "holdings",
+            "title": "Type",
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/components/schemas/PlanInputSummary"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "title": "HoldingsBlock",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "MethodValues_Annotated_float__AllowInfNan_allow_inf_nan_False___": {
+        "additionalProperties": false,
+        "properties": {
+          "primary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary"
+          },
+          "by_method": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+            },
+            "title": "By Method",
+            "type": "object"
+          }
+        },
+        "required": [
+          "primary",
+          "by_method"
+        ],
+        "title": "MethodValues[Annotated[float, AllowInfNan(allow_inf_nan=False)]]",
+        "type": "object"
+      },
+      "MetricCard": {
+        "additionalProperties": false,
+        "properties": {
+          "metric_id": {
+            "title": "Metric Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/MetricValue_Union_Annotated_float__AllowInfNan_allow_inf_nan_False____int__"
+          },
+          "format": {
+            "enum": [
+              "percent",
+              "percentage_point",
+              "number",
+              "integer"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "decimals": {
+            "maximum": 8,
+            "minimum": 0,
+            "title": "Decimals",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "metric_id",
+          "label",
+          "value",
+          "format",
+          "decimals"
+        ],
+        "title": "MetricCard",
+        "type": "object"
+      },
+      "MetricCardsBlock": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "metric_cards",
+            "default": "metric_cards",
+            "title": "Type",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MetricCard"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "MetricCardsBlock",
+        "type": "object"
+      },
+      "MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___": {
+        "discriminator": {
+          "mapping": {
+            "degraded": "#/components/schemas/DegradedMetric_Annotated_float__AllowInfNan_allow_inf_nan_False___",
+            "ok": "#/components/schemas/OkMetric_Annotated_float__AllowInfNan_allow_inf_nan_False___",
+            "unavailable": "#/components/schemas/UnavailableMetric"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OkMetric_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          {
+            "$ref": "#/components/schemas/DegradedMetric_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableMetric"
+          }
+        ],
+        "title": "MetricValue[Annotated[float, AllowInfNan(allow_inf_nan=False)]]"
+      },
+      "MetricValue_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____": {
+        "discriminator": {
+          "mapping": {
+            "degraded": "#/components/schemas/DegradedMetric_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____",
+            "ok": "#/components/schemas/OkMetric_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____",
+            "unavailable": "#/components/schemas/UnavailableMetric"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OkMetric_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____"
+          },
+          {
+            "$ref": "#/components/schemas/DegradedMetric_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableMetric"
+          }
+        ],
+        "title": "MetricValue[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1), _PydanticGeneralMetadata(allow_inf_nan=False)])]]"
+      },
+      "MetricValue_CorrelationMatrix_": {
+        "discriminator": {
+          "mapping": {
+            "degraded": "#/components/schemas/DegradedMetric_CorrelationMatrix_",
+            "ok": "#/components/schemas/OkMetric_CorrelationMatrix_",
+            "unavailable": "#/components/schemas/UnavailableMetric"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OkMetric_CorrelationMatrix_"
+          },
+          {
+            "$ref": "#/components/schemas/DegradedMetric_CorrelationMatrix_"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableMetric"
+          }
+        ],
+        "title": "MetricValue[CorrelationMatrix]"
+      },
+      "MetricValue_Union_Annotated_float__AllowInfNan_allow_inf_nan_False____int__": {
+        "discriminator": {
+          "mapping": {
+            "degraded": "#/components/schemas/DegradedMetric_Union_Annotated_float__AllowInfNan_allow_inf_nan_False____int__",
+            "ok": "#/components/schemas/OkMetric_Union_Annotated_float__AllowInfNan_allow_inf_nan_False____int__",
+            "unavailable": "#/components/schemas/UnavailableMetric"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OkMetric_Union_Annotated_float__AllowInfNan_allow_inf_nan_False____int__"
+          },
+          {
+            "$ref": "#/components/schemas/DegradedMetric_Union_Annotated_float__AllowInfNan_allow_inf_nan_False____int__"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableMetric"
+          }
+        ],
+        "title": "MetricValue[Union[Annotated[float, AllowInfNan(allow_inf_nan=False)], int]]"
+      },
+      "MetricValue_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____": {
+        "discriminator": {
+          "mapping": {
+            "degraded": "#/components/schemas/DegradedMetric_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____",
+            "ok": "#/components/schemas/OkMetric_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____",
+            "unavailable": "#/components/schemas/UnavailableMetric"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OkMetric_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____"
+          },
+          {
+            "$ref": "#/components/schemas/DegradedMetric_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableMetric"
+          }
+        ],
+        "title": "MetricValue[dict[str, Annotated[float, AllowInfNan(allow_inf_nan=False)]]]"
+      },
+      "MetricValue_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______": {
+        "discriminator": {
+          "mapping": {
+            "degraded": "#/components/schemas/DegradedMetric_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______",
+            "ok": "#/components/schemas/OkMetric_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______",
+            "unavailable": "#/components/schemas/UnavailableMetric"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OkMetric_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______"
+          },
+          {
+            "$ref": "#/components/schemas/DegradedMetric_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableMetric"
+          }
+        ],
+        "title": "MetricValue[dict[str, Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1), _PydanticGeneralMetadata(allow_inf_nan=False)])]]]"
+      },
+      "MetricValue_int_": {
+        "discriminator": {
+          "mapping": {
+            "degraded": "#/components/schemas/DegradedMetric_int_",
+            "ok": "#/components/schemas/OkMetric_int_",
+            "unavailable": "#/components/schemas/UnavailableMetric"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OkMetric_int_"
+          },
+          {
+            "$ref": "#/components/schemas/DegradedMetric_int_"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableMetric"
+          }
+        ],
+        "title": "MetricValue[int]"
+      },
+      "MetricValue_list_HighCorrelationPair__": {
+        "discriminator": {
+          "mapping": {
+            "degraded": "#/components/schemas/DegradedMetric_list_HighCorrelationPair__",
+            "ok": "#/components/schemas/OkMetric_list_HighCorrelationPair__",
+            "unavailable": "#/components/schemas/UnavailableMetric"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OkMetric_list_HighCorrelationPair__"
+          },
+          {
+            "$ref": "#/components/schemas/DegradedMetric_list_HighCorrelationPair__"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableMetric"
+          }
+        ],
+        "title": "MetricValue[list[HighCorrelationPair]]"
+      },
+      "OkMetric_Annotated_float__AllowInfNan_allow_inf_nan_False___": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "default": "high",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method"
+        ],
+        "title": "OkMetric[Annotated[float, AllowInfNan(allow_inf_nan=False)]]",
+        "type": "object"
+      },
+      "OkMetric_Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False_____": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Value",
+            "type": "number"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "default": "high",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method"
+        ],
+        "title": "OkMetric[Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1), _PydanticGeneralMetadata(allow_inf_nan=False)])]]",
+        "type": "object"
+      },
+      "OkMetric_CorrelationMatrix_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/CorrelationMatrix"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "default": "high",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method"
+        ],
+        "title": "OkMetric[CorrelationMatrix]",
+        "type": "object"
+      },
+      "OkMetric_Union_Annotated_float__AllowInfNan_allow_inf_nan_False____int__": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Value"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "default": "high",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method"
+        ],
+        "title": "OkMetric[Union[Annotated[float, AllowInfNan(allow_inf_nan=False)], int]]",
+        "type": "object"
+      },
+      "OkMetric_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Value",
+            "type": "object"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "default": "high",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method"
+        ],
+        "title": "OkMetric[dict[str, Annotated[float, AllowInfNan(allow_inf_nan=False)]]]",
+        "type": "object"
+      },
+      "OkMetric_dict_str__Annotated_float__FieldInfo_annotation_NoneType__required_True__metadata__Ge_ge_0___Le_le_1____PydanticGeneralMetadata_allow_inf_nan_False______": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "additionalProperties": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "title": "Value",
+            "type": "object"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "default": "high",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method"
+        ],
+        "title": "OkMetric[dict[str, Annotated[float, FieldInfo(annotation=NoneType, required=True, metadata=[Ge(ge=0), Le(le=1), _PydanticGeneralMetadata(allow_inf_nan=False)])]]]",
+        "type": "object"
+      },
+      "OkMetric_int_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "default": "high",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method"
+        ],
+        "title": "OkMetric[int]",
+        "type": "object"
+      },
+      "OkMetric_list_HighCorrelationPair__": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "items": {
+              "$ref": "#/components/schemas/HighCorrelationPair"
+            },
+            "title": "Value",
+            "type": "array"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "window_target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "window_actual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DateRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "confidence": {
+            "default": "high",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "method"
+        ],
+        "title": "OkMetric[list[HighCorrelationPair]]",
+        "type": "object"
+      },
+      "PairComparison": {
+        "additionalProperties": false,
+        "properties": {
+          "before_plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Before Plan Id",
+            "type": "string"
+          },
+          "after_plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "After Plan Id",
+            "type": "string"
+          },
+          "deltas": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+            },
+            "title": "Deltas",
+            "type": "object"
+          },
+          "marginal_impact": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "overlap_with_new": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "intent_effect_gap": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Intent Effect Gap",
+            "type": "array"
+          }
+        },
+        "required": [
+          "before_plan_id",
+          "after_plan_id",
+          "deltas",
+          "marginal_impact",
+          "overlap_with_new",
+          "intent_effect_gap"
+        ],
+        "title": "PairComparison",
+        "type": "object"
+      },
+      "PlanDataQuality": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/DataQualityIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "coverage_summary": {
+            "additionalProperties": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "title": "Coverage Summary",
+            "type": "object"
+          },
+          "forced_disclosures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Forced Disclosures",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan_id",
+          "issues",
+          "coverage_summary",
+          "forced_disclosures"
+        ],
+        "title": "PlanDataQuality",
+        "type": "object"
+      },
+      "PlanInputSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "weight_mode": {
+            "enum": [
+              "user",
+              "equal"
+            ],
+            "title": "Weight Mode",
+            "type": "string"
+          },
+          "holdings": {
+            "items": {
+              "$ref": "#/components/schemas/HoldingEcho"
+            },
+            "title": "Holdings",
+            "type": "array"
+          },
+          "calculation_holdings": {
+            "items": {
+              "$ref": "#/components/schemas/CalculationHolding"
+            },
+            "title": "Calculation Holdings",
+            "type": "array"
+          },
+          "input_weight": {
+            "const": 1.0,
+            "default": 1.0,
+            "title": "Input Weight",
+            "type": "number"
+          },
+          "resolved_weight": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Resolved Weight",
+            "type": "number"
+          },
+          "unresolved_weight": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Unresolved Weight",
+            "type": "number"
+          },
+          "calculation_coverage_ratio": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Calculation Coverage Ratio",
+            "type": "number"
+          },
+          "normalized_within_resolved_subset": {
+            "title": "Normalized Within Resolved Subset",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "weight_mode",
+          "holdings",
+          "calculation_holdings",
+          "resolved_weight",
+          "unresolved_weight",
+          "calculation_coverage_ratio",
+          "normalized_within_resolved_subset"
+        ],
+        "title": "PlanInputSummary",
+        "type": "object",
+        "description": "resolved_weight + unresolved_weight = 1，calculation_coverage_ratio = resolved_weight，计算权重之和为 1；不能复用其他请求的输入上下文。"
+      },
+      "PlanProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "run_status": {
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "partially_succeeded",
+              "failed"
+            ],
+            "title": "Run Status",
+            "type": "string"
+          },
+          "sections": {
+            "additionalProperties": {
+              "enum": [
+                "pending",
+                "running",
+                "ready",
+                "unavailable",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "section_a",
+                "section_b",
+                "section_c",
+                "section_d",
+                "stress_scenarios",
+                "blindspots",
+                "profile"
+              ]
+            },
+            "title": "Sections",
+            "type": "object"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "plan_id",
+          "label",
+          "run_status",
+          "sections",
+          "error"
+        ],
+        "title": "PlanProgress",
+        "type": "object"
+      },
+      "PlanResult": {
+        "additionalProperties": false,
+        "properties": {
+          "cov": {
+            "$ref": "#/components/schemas/CovarianceSpec"
+          },
+          "section_a": {
+            "$ref": "#/components/schemas/SectionResult_ExposureMetrics_"
+          },
+          "section_b": {
+            "$ref": "#/components/schemas/SectionResult_RiskSection_"
+          },
+          "section_c": {
+            "$ref": "#/components/schemas/SectionResult_HistorySection_"
+          },
+          "section_d": {
+            "$ref": "#/components/schemas/SectionResult_StructureSection_"
+          },
+          "stress_scenarios": {
+            "$ref": "#/components/schemas/SectionResult_list_StressScenario__"
+          },
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "run_status": {
+            "enum": [
+              "succeeded",
+              "partially_succeeded",
+              "failed"
+            ],
+            "title": "Run Status",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input": {
+            "$ref": "#/components/schemas/PlanInputSummary"
+          },
+          "blindspots": {
+            "$ref": "#/components/schemas/SectionResult_list_BlindspotHit__"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/SectionResult_PortfolioProfile_"
+          }
+        },
+        "required": [
+          "cov",
+          "section_a",
+          "section_b",
+          "section_c",
+          "section_d",
+          "stress_scenarios",
+          "plan_id",
+          "label",
+          "run_status",
+          "error",
+          "input",
+          "blindspots",
+          "profile"
+        ],
+        "title": "PlanResult",
+        "type": "object"
+      },
+      "PortfolioPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "holdings": {
+            "items": {
+              "$ref": "#/components/schemas/HoldingItem"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Holdings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan_id",
+          "holdings"
+        ],
+        "title": "PortfolioPlan",
+        "type": "object"
+      },
+      "PortfolioProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "top_findings": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Top Findings",
+            "type": "array"
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          },
+          "data_status": {
+            "enum": [
+              "complete",
+              "partial",
+              "degraded"
+            ],
+            "title": "Data Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "top_findings",
+          "confidence",
+          "data_status"
+        ],
+        "title": "PortfolioProfile",
+        "type": "object"
+      },
+      "ReadySection_ComparisonSection_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/ComparisonSection"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[ComparisonSection]",
+        "type": "object"
+      },
+      "ReadySection_ExposureMetrics_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/ExposureMetrics"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[ExposureMetrics]",
+        "type": "object"
+      },
+      "ReadySection_HistorySection_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/HistorySection"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[HistorySection]",
+        "type": "object"
+      },
+      "ReadySection_PortfolioProfile_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/PortfolioProfile"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[PortfolioProfile]",
+        "type": "object"
+      },
+      "ReadySection_RiskSection_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/RiskSection"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[RiskSection]",
+        "type": "object"
+      },
+      "ReadySection_StructureSection_": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/StructureSection"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[StructureSection]",
+        "type": "object"
+      },
+      "ReadySection_list_Annotated_Union_TextBlock__MetricCardsBlock__DistributionBlock__CorrelationChartBlock__HoldingsBlock___FieldInfo_annotation_NoneType__required_True__discriminator__type_____": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "correlation_matrix": "#/components/schemas/CorrelationChartBlock",
+                  "distribution": "#/components/schemas/DistributionBlock",
+                  "holdings": "#/components/schemas/HoldingsBlock",
+                  "metric_cards": "#/components/schemas/MetricCardsBlock",
+                  "text": "#/components/schemas/TextBlock"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/MetricCardsBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/DistributionBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/CorrelationChartBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/HoldingsBlock"
+                }
+              ]
+            },
+            "title": "Value",
+            "type": "array"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[list[Annotated[Union[TextBlock, MetricCardsBlock, DistributionBlock, CorrelationChartBlock, HoldingsBlock], FieldInfo(annotation=NoneType, required=True, discriminator='type')]]]",
+        "type": "object"
+      },
+      "ReadySection_list_BlindspotHit__": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "items": {
+              "$ref": "#/components/schemas/BlindspotHit"
+            },
+            "title": "Value",
+            "type": "array"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[list[BlindspotHit]]",
+        "type": "object"
+      },
+      "ReadySection_list_StressScenario__": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "items": {
+              "$ref": "#/components/schemas/StressScenario"
+            },
+            "title": "Value",
+            "type": "array"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ReadySection[list[StressScenario]]",
+        "type": "object"
+      },
+      "ReasonCode": {
+        "enum": [
+          "factor_model_unavailable",
+          "history_insufficient",
+          "coverage_below_threshold",
+          "spec_not_defined",
+          "lookthrough_incomplete",
+          "benchmark_missing",
+          "new_listing_short_window",
+          "feature_not_available",
+          "not_applicable"
+        ],
+        "title": "ReasonCode",
+        "type": "string"
+      },
+      "ReportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "diagnosis.v1",
+            "default": "diagnosis.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "spec_version": {
+            "title": "Spec Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "data_fingerprint": {
+            "title": "Data Fingerprint",
+            "type": "string"
+          },
+          "data_snapshot_at": {
+            "format": "date-time",
+            "title": "Data Snapshot At",
+            "type": "string"
+          },
+          "resolved_intent": {
+            "enum": [
+              "single_portfolio",
+              "single_instrument",
+              "rebalance_amount",
+              "rebalance_holding",
+              "multi_portfolio"
+            ],
+            "title": "Resolved Intent",
+            "type": "string"
+          },
+          "report_mode": {
+            "enum": [
+              "standard",
+              "single_instrument",
+              "compare"
+            ],
+            "title": "Report Mode",
+            "type": "string"
+          },
+          "requested_cov_methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Cov Methods",
+            "type": "array"
+          },
+          "user_level": {
+            "enum": [
+              "retail",
+              "pro"
+            ],
+            "title": "User Level",
+            "type": "string"
+          },
+          "run_status": {
+            "enum": [
+              "succeeded",
+              "partially_succeeded",
+              "failed"
+            ],
+            "title": "Run Status",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/ReportSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "disclosures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Disclosures",
+            "type": "array"
+          },
+          "data_quality": {
+            "$ref": "#/components/schemas/DataQualityReport"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "spec_version",
+          "as_of_date",
+          "data_fingerprint",
+          "data_snapshot_at",
+          "resolved_intent",
+          "report_mode",
+          "requested_cov_methods",
+          "user_level",
+          "run_status",
+          "sections",
+          "disclosures",
+          "data_quality"
+        ],
+        "title": "ReportResponse",
+        "type": "object"
+      },
+      "ReportSection": {
+        "additionalProperties": false,
+        "properties": {
+          "section_id": {
+            "title": "Section Id",
+            "type": "string"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "kind": {
+            "enum": [
+              "profile",
+              "exposure",
+              "diversification",
+              "risk",
+              "style",
+              "instrument",
+              "comparison",
+              "limitations",
+              "summary"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/SectionResult_list_Annotated_Union_TextBlock__MetricCardsBlock__DistributionBlock__CorrelationChartBlock__HoldingsBlock___FieldInfo_annotation_NoneType__required_True__discriminator__type_____"
+          }
+        },
+        "required": [
+          "section_id",
+          "plan_id",
+          "kind",
+          "title",
+          "content"
+        ],
+        "title": "ReportSection",
+        "type": "object"
+      },
+      "RiskSection": {
+        "additionalProperties": false,
+        "properties": {
+          "volatility": {
+            "$ref": "#/components/schemas/MethodValues_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "beta": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "risk_contribution": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____"
+          },
+          "risk_contribution_ratio": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____"
+          },
+          "marginal_risk_contribution": {
+            "$ref": "#/components/schemas/MetricValue_dict_str__Annotated_float__AllowInfNan_allow_inf_nan_False____"
+          },
+          "l3_effective_count": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "l4_effective_count": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          }
+        },
+        "required": [
+          "volatility",
+          "beta",
+          "risk_contribution",
+          "risk_contribution_ratio",
+          "marginal_risk_contribution",
+          "l3_effective_count",
+          "l4_effective_count"
+        ],
+        "title": "RiskSection",
+        "type": "object"
+      },
+      "SectionAEventData": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "minimum": 0,
+            "title": "Elapsed Ms",
+            "type": "integer"
+          },
+          "section_a": {
+            "$ref": "#/components/schemas/SectionResult_ExposureMetrics_"
+          }
+        },
+        "required": [
+          "plan_id",
+          "elapsed_ms",
+          "section_a"
+        ],
+        "title": "SectionAEventData",
+        "type": "object"
+      },
+      "SectionBDEventData": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "minimum": 0,
+            "title": "Elapsed Ms",
+            "type": "integer"
+          },
+          "cov": {
+            "$ref": "#/components/schemas/CovarianceSpec"
+          },
+          "section_b": {
+            "$ref": "#/components/schemas/SectionResult_RiskSection_"
+          },
+          "section_d": {
+            "$ref": "#/components/schemas/SectionResult_StructureSection_"
+          }
+        },
+        "required": [
+          "plan_id",
+          "elapsed_ms",
+          "cov",
+          "section_b",
+          "section_d"
+        ],
+        "title": "SectionBDEventData",
+        "type": "object"
+      },
+      "SectionBlindspotsEventData": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "minimum": 0,
+            "title": "Elapsed Ms",
+            "type": "integer"
+          },
+          "blindspots": {
+            "$ref": "#/components/schemas/SectionResult_list_BlindspotHit__"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/SectionResult_PortfolioProfile_"
+          },
+          "stress_scenarios": {
+            "$ref": "#/components/schemas/SectionResult_list_StressScenario__"
+          }
+        },
+        "required": [
+          "plan_id",
+          "elapsed_ms",
+          "blindspots",
+          "profile",
+          "stress_scenarios"
+        ],
+        "title": "SectionBlindspotsEventData",
+        "type": "object"
+      },
+      "SectionCEventData": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "minimum": 0,
+            "title": "Elapsed Ms",
+            "type": "integer"
+          },
+          "section_c": {
+            "$ref": "#/components/schemas/SectionResult_HistorySection_"
+          }
+        },
+        "required": [
+          "plan_id",
+          "elapsed_ms",
+          "section_c"
+        ],
+        "title": "SectionCEventData",
+        "type": "object"
+      },
+      "SectionResult_ComparisonSection_": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_ComparisonSection_",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_ComparisonSection_"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[ComparisonSection]"
+      },
+      "SectionResult_ExposureMetrics_": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_ExposureMetrics_",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_ExposureMetrics_"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[ExposureMetrics]"
+      },
+      "SectionResult_HistorySection_": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_HistorySection_",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_HistorySection_"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[HistorySection]"
+      },
+      "SectionResult_PortfolioProfile_": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_PortfolioProfile_",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_PortfolioProfile_"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[PortfolioProfile]"
+      },
+      "SectionResult_RiskSection_": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_RiskSection_",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_RiskSection_"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[RiskSection]"
+      },
+      "SectionResult_StructureSection_": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_StructureSection_",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_StructureSection_"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[StructureSection]"
+      },
+      "SectionResult_list_Annotated_Union_TextBlock__MetricCardsBlock__DistributionBlock__CorrelationChartBlock__HoldingsBlock___FieldInfo_annotation_NoneType__required_True__discriminator__type_____": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_list_Annotated_Union_TextBlock__MetricCardsBlock__DistributionBlock__CorrelationChartBlock__HoldingsBlock___FieldInfo_annotation_NoneType__required_True__discriminator__type_____",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_list_Annotated_Union_TextBlock__MetricCardsBlock__DistributionBlock__CorrelationChartBlock__HoldingsBlock___FieldInfo_annotation_NoneType__required_True__discriminator__type_____"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[list[Annotated[Union[TextBlock, MetricCardsBlock, DistributionBlock, CorrelationChartBlock, HoldingsBlock], FieldInfo(annotation=NoneType, required=True, discriminator='type')]]]"
+      },
+      "SectionResult_list_BlindspotHit__": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_list_BlindspotHit__",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_list_BlindspotHit__"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[list[BlindspotHit]]"
+      },
+      "SectionResult_list_StressScenario__": {
+        "discriminator": {
+          "mapping": {
+            "failed": "#/components/schemas/FailedSection",
+            "ready": "#/components/schemas/ReadySection_list_StressScenario__",
+            "unavailable": "#/components/schemas/UnavailableSection"
+          },
+          "propertyName": "status"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReadySection_list_StressScenario__"
+          },
+          {
+            "$ref": "#/components/schemas/UnavailableSection"
+          },
+          {
+            "$ref": "#/components/schemas/FailedSection"
+          }
+        ],
+        "title": "SectionResult[list[StressScenario]]"
+      },
+      "SnapshotAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "diagnosis.v1",
+            "default": "diagnosis.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "spec_version": {
+            "title": "Spec Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "data_fingerprint": {
+            "title": "Data Fingerprint",
+            "type": "string"
+          },
+          "data_snapshot_at": {
+            "format": "date-time",
+            "title": "Data Snapshot At",
+            "type": "string"
+          },
+          "resolved_intent": {
+            "enum": [
+              "single_portfolio",
+              "single_instrument",
+              "rebalance_amount",
+              "rebalance_holding",
+              "multi_portfolio"
+            ],
+            "title": "Resolved Intent",
+            "type": "string"
+          },
+          "report_mode": {
+            "enum": [
+              "standard",
+              "single_instrument",
+              "compare"
+            ],
+            "title": "Report Mode",
+            "type": "string"
+          },
+          "requested_cov_methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Cov Methods",
+            "type": "array"
+          },
+          "run_status": {
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "partially_succeeded",
+              "failed"
+            ],
+            "title": "Run Status",
+            "type": "string"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PlanProgress"
+            },
+            "title": "Plans",
+            "type": "array"
+          },
+          "links": {
+            "$ref": "#/components/schemas/SnapshotLinks"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "spec_version",
+          "as_of_date",
+          "data_fingerprint",
+          "data_snapshot_at",
+          "resolved_intent",
+          "report_mode",
+          "requested_cov_methods",
+          "run_status",
+          "plans",
+          "links"
+        ],
+        "title": "SnapshotAccepted",
+        "type": "object"
+      },
+      "SnapshotLinks": {
+        "additionalProperties": false,
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          },
+          "report": {
+            "title": "Report",
+            "type": "string"
+          },
+          "stream": {
+            "title": "Stream",
+            "type": "string"
+          },
+          "data_quality": {
+            "title": "Data Quality",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result",
+          "report",
+          "stream",
+          "data_quality"
+        ],
+        "title": "SnapshotLinks",
+        "type": "object"
+      },
+      "SnapshotProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "diagnosis.v1",
+            "default": "diagnosis.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "spec_version": {
+            "title": "Spec Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "data_fingerprint": {
+            "title": "Data Fingerprint",
+            "type": "string"
+          },
+          "data_snapshot_at": {
+            "format": "date-time",
+            "title": "Data Snapshot At",
+            "type": "string"
+          },
+          "resolved_intent": {
+            "enum": [
+              "single_portfolio",
+              "single_instrument",
+              "rebalance_amount",
+              "rebalance_holding",
+              "multi_portfolio"
+            ],
+            "title": "Resolved Intent",
+            "type": "string"
+          },
+          "report_mode": {
+            "enum": [
+              "standard",
+              "single_instrument",
+              "compare"
+            ],
+            "title": "Report Mode",
+            "type": "string"
+          },
+          "requested_cov_methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Cov Methods",
+            "type": "array"
+          },
+          "run_status": {
+            "enum": [
+              "pending",
+              "running"
+            ],
+            "title": "Run Status",
+            "type": "string"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PlanProgress"
+            },
+            "title": "Plans",
+            "type": "array"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "spec_version",
+          "as_of_date",
+          "data_fingerprint",
+          "data_snapshot_at",
+          "resolved_intent",
+          "report_mode",
+          "requested_cov_methods",
+          "run_status",
+          "plans"
+        ],
+        "title": "SnapshotProgress",
+        "type": "object"
+      },
+      "SnapshotRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PortfolioPlan"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Plans",
+            "type": "array"
+          },
+          "intent": {
+            "anyOf": [
+              {
+                "enum": [
+                  "single_portfolio",
+                  "single_instrument",
+                  "rebalance_amount",
+                  "rebalance_holding",
+                  "multi_portfolio"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intent"
+          },
+          "as_of_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "As Of Date"
+          },
+          "spec_version": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Spec Version"
+          }
+        },
+        "required": [
+          "plans"
+        ],
+        "title": "SnapshotRequest",
+        "type": "object",
+        "description": "plan_id 必须唯一；single intent 恰好一个方案，rebalance 恰好两个，multi 至少两个。标的集合及 before/after 语义需后端解析后校验。等权先去重；任一方案无正权重可计算标的则整次 422。详见来源 §7.2。"
+      },
+      "SpecVersionInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "spec_version": {
+            "title": "Spec Version",
+            "type": "string"
+          },
+          "effective_from": {
+            "format": "date",
+            "title": "Effective From",
+            "type": "string"
+          },
+          "effective_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective To"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "params": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "required": [
+          "spec_version",
+          "effective_from",
+          "effective_to",
+          "is_active",
+          "params"
+        ],
+        "title": "SpecVersionInfo",
+        "type": "object"
+      },
+      "SpecVersionList": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SpecVersionInfo"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SpecVersionList",
+        "type": "object"
+      },
+      "StreamMeta": {
+        "additionalProperties": false,
+        "properties": {
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "diagnosis.v1",
+            "default": "diagnosis.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "spec_version": {
+            "title": "Spec Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "data_fingerprint": {
+            "title": "Data Fingerprint",
+            "type": "string"
+          },
+          "data_snapshot_at": {
+            "format": "date-time",
+            "title": "Data Snapshot At",
+            "type": "string"
+          },
+          "resolved_intent": {
+            "enum": [
+              "single_portfolio",
+              "single_instrument",
+              "rebalance_amount",
+              "rebalance_holding",
+              "multi_portfolio"
+            ],
+            "title": "Resolved Intent",
+            "type": "string"
+          },
+          "report_mode": {
+            "enum": [
+              "standard",
+              "single_instrument",
+              "compare"
+            ],
+            "title": "Report Mode",
+            "type": "string"
+          },
+          "requested_cov_methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Cov Methods",
+            "type": "array"
+          },
+          "run_status": {
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "partially_succeeded",
+              "failed"
+            ],
+            "title": "Run Status",
+            "type": "string"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/StreamPlanMeta"
+            },
+            "title": "Plans",
+            "type": "array"
+          },
+          "disclosures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Disclosures",
+            "type": "array"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "spec_version",
+          "as_of_date",
+          "data_fingerprint",
+          "data_snapshot_at",
+          "resolved_intent",
+          "report_mode",
+          "requested_cov_methods",
+          "run_status",
+          "plans",
+          "disclosures"
+        ],
+        "title": "StreamMeta",
+        "type": "object"
+      },
+      "StreamPlanMeta": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "input": {
+            "$ref": "#/components/schemas/PlanInputSummary"
+          },
+          "disclosures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Disclosures",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan_id",
+          "label",
+          "input",
+          "disclosures"
+        ],
+        "title": "StreamPlanMeta",
+        "type": "object"
+      },
+      "StressScenario": {
+        "additionalProperties": false,
+        "properties": {
+          "scenario_id": {
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "label",
+          "impact"
+        ],
+        "title": "StressScenario",
+        "type": "object"
+      },
+      "StructureSection": {
+        "additionalProperties": false,
+        "properties": {
+          "correlation": {
+            "$ref": "#/components/schemas/CorrelationBlock"
+          },
+          "avg_pairwise_correlation": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          },
+          "high_correlation_pairs": {
+            "$ref": "#/components/schemas/MetricValue_list_HighCorrelationPair__"
+          },
+          "hidden_exposure": {
+            "$ref": "#/components/schemas/MetricValue_Annotated_float__AllowInfNan_allow_inf_nan_False___"
+          }
+        },
+        "required": [
+          "correlation",
+          "avg_pairwise_correlation",
+          "high_correlation_pairs",
+          "hidden_exposure"
+        ],
+        "title": "StructureSection",
+        "type": "object"
+      },
+      "TextBlock": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "text",
+            "default": "text",
+            "title": "Type",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TextBlock",
+        "type": "object"
+      },
+      "UnavailableMetric": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "unavailable",
+            "default": "unavailable",
+            "title": "Status",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason_code",
+          "reason"
+        ],
+        "title": "UnavailableMetric",
+        "type": "object"
+      },
+      "UnavailableSection": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "unavailable",
+            "default": "unavailable",
+            "title": "Status",
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason_code",
+          "reason"
+        ],
+        "title": "UnavailableSection",
+        "type": "object"
+      },
+      "ShareTokenCreated": {
+        "type": "object",
+        "required": [
+          "token",
+          "expires_at"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "不透明分享凭证；不得记录到日志。"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "带时区的失效时间，默认时长待 T12 确认。"
+          }
+        },
+        "additionalProperties": false,
+        "description": "P2 预留：已明确的分享创建返回字段。"
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "description": "与 JSON ErrorResponse.request_id 相同的请求追踪标识。",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RetryAfter": {
+        "description": "建议等待秒数；设计一期为 1。",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "example": 1
+      },
+      "Location": {
+        "description": "指向响应 links.result 的同源相对地址。",
+        "schema": {
+          "type": "string",
+          "format": "uri-reference"
+        }
+      },
+      "PrivateNoStore": {
+        "description": "报告按访问偏好生成，不存储 HTTP 缓存。",
+        "schema": {
+          "type": "string",
+          "const": "private, no-store"
+        }
+      }
+    },
+    "responses": {
+      "InvalidRequest": {
+        "description": "请求、路径或查询参数校验失败；issues.path 使用原始输入位置。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        }
+      },
+      "IdempotencyConflict": {
+        "description": "相同身份空间中的幂等键已对应不同请求体。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "request_id": "example-request-id",
+              "error": {
+                "code": "IDEMPOTENCY_KEY_CONFLICT",
+                "message": "同一幂等键已用于不同请求。",
+                "retryable": false,
+                "issues": []
+              }
+            }
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "请求者无权访问该快照。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        }
+      },
+      "NotFound": {
+        "description": "资源不存在，或分享凭证已过期/撤销。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "请求无法被可靠接受或服务暂时不可用；重试 POST 必须保留原幂等键。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        },
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          }
+        }
+      }
+    }
+  },
+  "x-source": {
+    "file": "getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md",
+    "version": "0.3.0",
+    "sections": [
+      "7.1",
+      "7.2",
+      "7.3",
+      "7.4",
+      "7.5",
+      "7.6",
+      "7.7",
+      "7.8"
+    ],
+    "sha256": "ac7ce5c29cd7ac7b2d4804e6f20a852977fe94a73893ea5c0dcc3e36e9c1a1da"
+  },
+  "x-contract-gaps": [
+    {
+      "scope": "authentication",
+      "source": "§7.7",
+      "description": "设计定义了归属校验和匿名凭证，但未定义身份传输方式；未臆造 securitySchemes。没有 security 声明不表示登录快照不校验归属。"
+    },
+    {
+      "scope": "share",
+      "source": "§7.1、§7.7、T12",
+      "description": "P2 脱敏分享报告、分享进度响应、默认有效期和撤销入口尚未定型。"
+    },
+    {
+      "scope": "calculation",
+      "source": "§9.2 及指标文档",
+      "description": "未决指标公式、阈值、基准和数据源不由本 JSON 决定；示例不是生产计算配置。"
+    }
+  ],
+  "x-run-status-rules": [
+    "有方案未终结时，总状态为 pending 或 running。",
+    "所有方案失败为 failed；适用区块和比较均完成为 succeeded；其余可用部分为 partially_succeeded。",
+    "degraded 数值仍属可用；not_applicable 和明确未开放区块不降低运行状态。",
+    "计算失败是已记录业务终态，通过 200 的方案/区块错误表达；请求无法被服务为 503。"
+  ]
+}

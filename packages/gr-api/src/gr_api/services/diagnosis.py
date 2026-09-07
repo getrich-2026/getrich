@@ -1,21 +1,7 @@
-"""持仓诊断服务层：代码解析、权重归一化、缓存键、模块 A 计算、编排与持久化。
+"""诊断提交、规范化、A 区计算及固定终态存储。
 
-契约见 ``getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md``（v0.2.2）
-与 ``持仓诊断_架构设计.md``（v0.1.3）。路由层只做参数校验与响应包壳，SQL 全在这里。
-
-本轮范围（架构篇 §10 的 P0-a + P0-c 的模块 A 部分）
---------------------------------------------------
-* 模块 A 完整出数：TopN / HHI / L1 / L2 + 行业、资产类别、市场、风格分布。
-* 模块 B / C / D 按契约返回 ``None``：
-  - B、D 需要协方差，依赖 §6.3 的 L1 全市场日收益矩阵常驻缓存（架构篇 P0-b）；
-  - C 的组合历史序列口径本身未定（缺口 G6，产品决策）。
-  前端不需要为此改代码 —— 这三个字段在类型上本来就可空。
-
-三处「算错但不报错」的高危点，改动前务必先读对应注释
-----------------------------------------------------
-1. :func:`_calculation_hash` 与 :func:`_request_hash` 的 canonical 定义不可混用（§7.8）。
-2. 行业归属必须按 ``as_of_date`` 取**当时**的归属，不能用最新归属回算历史（前视偏差）。
-3. 查 ``meta.*`` 前交易所码必须转成 canonical 码，写错不报错、只会整批查不到。
+网页 DTO 与报告由 diagnosis_presentation 组装；计算缓存不携带请求覆盖率、
+方案名称或报告画像。B/C/D 与 E 本期仅提供明确的不可用状态契约。
 """
 
 from __future__ import annotations
@@ -33,13 +19,11 @@ from zoneinfo import ZoneInfo
 from gr_api.errors import BadRequest, Forbidden, NotFound
 from gr_api.schemas.diagnosis import (
     DataQualityReport,
-    DiagnosisReport,
     PlanResult,
     PortfolioPlan,
-    ReportBlock,
-    ReportSection,
     SnapshotRequest,
 )
+from gr_api.services import diagnosis_presentation as presentation
 from gr_api.services.pick_symbols import parse_symbol
 
 
@@ -52,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 #: ``diag.diagnosis_run.payload`` 的结构版本。v2 起只存 PlanResult 的纯计算子集，
 #: 请求级字段统一在读取时拼接；缓存字段增删必须同步 +1。
-PAYLOAD_SCHEMA_VERSION = "2.0"
+PAYLOAD_SCHEMA_VERSION = "3.0"
 
 #: 进程时区不能决定业务日期；数据库连接虽钉住了会话时区，却不会改变 Python 进程时区。
 PLATFORM_TZ = ZoneInfo("Asia/Shanghai")
@@ -88,6 +72,13 @@ EQUAL_WEIGHT_DISCLOSURE = "未提供权重，本报告按等权假设计算。"
 SNAPSHOT_DISCLOSURE_TPL = (
     "本报告基于 {fingerprint_time} 的数据快照计算，数据供应商的后续修订不会反映在本报告中。"
 )
+
+
+def _invalid_input(message: str, path: str) -> BadRequest:
+    """业务校验也携带原始输入位置，页面无需解析错误文案。"""
+    error = BadRequest(message, http_status=422)
+    error.issues = [{"path": path, "code": "invalid_input", "message": message}]
+    return error
 
 
 # ===========================================================================
@@ -163,6 +154,7 @@ def _calculation_hash(
     return _sha256(
         _canonical_json(
             {
+                "payload_schema_version": PAYLOAD_SCHEMA_VERSION,
                 "weight_mode": weight_mode,
                 "resolved_holdings": [
                     {
@@ -200,7 +192,7 @@ async def get_active_spec_version(db: AsyncConnection, spec_version: str | None 
             await cur.execute("SELECT * FROM diag.spec_version WHERE is_active LIMIT 1")
         row = await cur.fetchone()
     if row is None:
-        raise NotFound(f"spec_version not found: {spec_version or '<active>'}")
+        raise BadRequest("spec_version not found", http_status=422 if spec_version else 503)
     return row
 
 
@@ -354,7 +346,7 @@ def _normalize_plan(
     weight_mode = "user" if any(w is not None for w in merged.values()) else "equal"
 
     unresolved = [display[s] for s in merged if s not in resolved]
-    resolvable = [s for s in merged if s in resolved]
+    resolvable = [s for s in merged if s in resolved and (merged[s] is None or merged[s] > 0)]
 
     # 3) 覆盖率口径：分子分母都用**用户原始权重**，不能用归一化后的
     #    （归一化后分母恒为 1，覆盖率永远是 100%，等于没算）
@@ -370,6 +362,10 @@ def _normalize_plan(
     #    normalized_within_resolved_subset=True —— 解析不出来的那部分权重
     #    被排除在计算之外，这个事实必须靠覆盖率字段族显式告诉前端。
     holdings: list[dict] = []
+    if weight_mode == "user" and resolved_weight <= 0 and any(s in resolved for s in merged):
+        raise BadRequest(
+            f"plan '{plan.plan_id}': resolved holdings have zero total user weight", http_status=422
+        )
     if resolvable:
         if weight_mode == "user" and resolved_weight <= 0:
             raise BadRequest(
@@ -383,6 +379,7 @@ def _normalize_plan(
                     {
                         "instrument_id": resolved[sym]["instrument_id"],
                         "symbol": resolved[sym]["symbol"],
+                        "name": resolved[sym].get("name", resolved[sym]["symbol"]),
                         "weight": float(w.quantize(WEIGHT_QUANT, rounding=ROUND_HALF_EVEN)),
                     }
                 )
@@ -395,10 +392,16 @@ def _normalize_plan(
                     {
                         "instrument_id": resolved[sym]["instrument_id"],
                         "symbol": resolved[sym]["symbol"],
+                        "name": resolved[sym].get("name", resolved[sym]["symbol"]),
                         "weight": float(each),
                     }
                 )
 
+    # 余差分配到最大权重项，ID 打破平局，保证输入排序不改变计算哈希。
+    if holdings:
+        residual = Decimal(1) - sum(Decimal(str(h["weight"])) for h in holdings)
+        largest = max(holdings, key=lambda h: (h["weight"], -h["instrument_id"]))
+        largest["weight"] = float(Decimal(str(largest["weight"])) + residual)
     return weight_mode, holdings, unresolved, duplicated, input_weight, resolved_weight
 
 
@@ -550,17 +553,18 @@ def _distribution(
         )
 
     covered = [h for h in holdings if mapping.get(h["instrument_id"]) is not None]
-    covered_weight = sum(h["weight"] for h in covered)
+    covered_weight = sum((Decimal(str(h["weight"])) for h in covered), Decimal(0))
     if not covered or covered_weight <= 0:
         return _unavailable(
             reason_code="coverage_below_threshold",
             reason=f"组合内没有任何标的具备{label}数据",
         )
 
-    dist: dict[str, float] = {}
+    totals: dict[str, Decimal] = {}
     for h in covered:
         key = str(mapping[h["instrument_id"]])
-        dist[key] = dist.get(key, 0.0) + h["weight"] / covered_weight
+        totals[key] = totals.get(key, Decimal(0)) + Decimal(str(h["weight"]))
+    dist = {key: float(weight / covered_weight) for key, weight in totals.items()}
 
     if len(covered) == len(holdings):
         return _ok(dist)
@@ -634,7 +638,7 @@ def _build_exposure_section(
     if n == 0:
         topn_m = hhi_m = l1_m = l2_m = empty
     else:
-        topn_m = _ok(sum(weights[:topn_k]))
+        topn_m = _ok(float(sum((Decimal(str(w)) for w in weights[:topn_k]), Decimal(0))))
         hhi_m = _ok(hhi)
         l1_m = _ok(n)
         # L2 权重有效持仓数 = 1/Σw²。归一化后 hhi>0 恒成立，兜底分支只是防御。
@@ -742,7 +746,7 @@ def _build_disclosures(params: dict, *, weight_mode: str, fingerprint_time: str)
         out.append(EQUAL_WEIGHT_DISCLOSURE)
     # 本期唯一的口径妥协，必须显式披露（架构篇 §2.1）
     out.append(
-        "本期风险、归因、结构类指标尚未启用：因子模型数据缺口（G2）与组合历史序列口径"
+        "本期风险、归因、结构类指标尚未启用：计算功能尚未开放，且组合历史序列口径"
         "（G6）未决，相关章节整体不出数，而非以估算值填充。"
     )
     return out
@@ -759,11 +763,6 @@ def _resolve_intent(req: SnapshotRequest) -> str:
         return req.intent
     if len(req.plans) == 1:
         return "single_instrument" if len(req.plans[0].holdings) == 1 else "single_portfolio"
-    if len(req.plans) == 2:
-        left = {h.symbol for h in req.plans[0].holdings}
-        right = {h.symbol for h in req.plans[1].holdings}
-        # 标的集合相同 → 只调金额；不同 → 有标的增减
-        return "rebalance_amount" if left == right else "rebalance_holding"
     return "multi_portfolio"
 
 
@@ -787,6 +786,51 @@ async def create_snapshot(
     req: SnapshotRequest,
     *,
     user_id: str | None,
+    idempotency_key: str | None = None,
+) -> tuple[dict, int]:
+    """新提交创建新资源；相同 UUIDv4 幂等键只重放原资源。
+
+    事务锁在匿名和登录命名空间分别仲裁。快照、方案和终态同事务提交，
+    不向轮询端暴露尚未有固定数据版本的半成品。
+    """
+    from gr_api.errors import Conflict
+
+    scope = str(user_id) if user_id else "anonymous"
+    req_hash = _sha256(f"diagnosis.v1:{scope}:{idempotency_key or uuid4()}")
+    async with db.transaction():
+        if idempotency_key:
+            lock_key = int.from_bytes(bytes.fromhex(req_hash)[:8], "big", signed=True)
+            async with db.cursor() as cur:
+                await cur.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
+                await cur.execute(
+                    "SELECT snapshot_id, requested_payload FROM diag.portfolio_snapshot "
+                    "WHERE request_hash = %s AND user_id IS NOT DISTINCT FROM %s",
+                    (req_hash, user_id),
+                )
+                existing = await cur.fetchone()
+            if existing:
+                if existing["requested_payload"] != req.model_dump(mode="json"):
+                    raise Conflict("idempotency key was already used with a different request")
+                result = await get_result(db, existing["snapshot_id"], user_id=user_id)
+                return presentation.accepted(result), 200
+        data, status_code = await _create_snapshot(
+            db,
+            req,
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+            req_hash=req_hash,
+        )
+        result = await get_result(db, UUID(data["snapshot_id"]), user_id=user_id)
+        return presentation.accepted(result), status_code
+
+
+async def _create_snapshot(
+    db: AsyncConnection,
+    req: SnapshotRequest,
+    *,
+    user_id: str | None,
+    idempotency_key: str | None,
+    req_hash: str,
 ) -> tuple[dict, int]:
     """``POST /snapshots`` 的主流程。
 
@@ -799,9 +843,17 @@ async def create_snapshot(
     spec = await get_active_spec_version(db, req.spec_version)
     params: dict = spec["params"]
     data_version = await get_data_version(db)
-    as_of = await _resolve_as_of_date(db, req.as_of_date)
+    if req.as_of_date and req.as_of_date > datetime.now(PLATFORM_TZ).date():
+        raise _invalid_input("as_of_date must not be in the future", "/as_of_date")
+    published_day = data_version["snapshot_at"].astimezone(PLATFORM_TZ).date()
+    if req.as_of_date and req.as_of_date > published_day:
+        raise BadRequest(
+            "requested date is newer than the published data snapshot", http_status=503
+        )
+    as_of = await _resolve_as_of_date(
+        db, req.as_of_date or min(published_day, datetime.now(PLATFORM_TZ).date())
+    )
     intent = _resolve_intent(req)
-    req_hash = _request_hash(req)
 
     # 1) 同一用户的相同请求直接复用（匿名时 user_id 为 NULL，不参与唯一性比较）
     async with db.cursor() as cur:
@@ -832,14 +884,17 @@ async def create_snapshot(
 
     normalized: list[dict] = []
     for idx, plan in enumerate(req.plans):
-        mode, holdings, unresolved, duplicated, in_w, res_w = _normalize_plan(plan, resolved)
+        try:
+            mode, holdings, unresolved, duplicated, in_w, res_w = _normalize_plan(plan, resolved)
+        except BadRequest as exc:
+            raise _invalid_input(exc.message, f"/plans/{idx}/holdings") from None
         if not holdings:
             # 全部标的都解析不出来 → 无法构成组合。§7.6 规定这里是 **422**
             # 而不是 400：语义上同「请求校验失败」一类（plans 超限、混合权重），
             # 前端按同一个分支提示用户改输入即可。
-            raise BadRequest(
-                f"plan '{plan.plan_id}': none of the symbols could be resolved: {unresolved}",
-                http_status=422,
+            raise _invalid_input(
+                f"plan '{plan.plan_id}': no positive holdings could be resolved",
+                f"/plans/{idx}/holdings",
             )
         normalized.append(
             {
@@ -853,6 +908,23 @@ async def create_snapshot(
                 "resolved_weight": res_w,
             }
         )
+
+    sets = [
+        {h["instrument_id"] for h in item["holdings"] if h["weight"] > 0} for item in normalized
+    ]
+    unresolved_positive = [item["input_weight"] > item["resolved_weight"] for item in normalized]
+    if req.intent is None and len(normalized) == 1:
+        intent = (
+            "single_instrument"
+            if len(sets[0]) == 1 and not unresolved_positive[0]
+            else "single_portfolio"
+        )
+    if intent == "single_instrument" and (len(sets[0]) != 1 or unresolved_positive[0]):
+        raise _invalid_input("single_instrument requires one resolved positive holding", "/intent")
+    if intent in ("rebalance_amount", "rebalance_holding") and (
+        any(unresolved_positive) or ((sets[0] == sets[1]) != (intent == "rebalance_amount"))
+    ):
+        raise _invalid_input("rebalance intent does not match resolved holding sets", "/intent")
 
     # 3) 落 snapshot + plan
     snapshot_id = uuid4()  # 必须 v4：匿名用户之间的隔离只依赖它不可猜测
@@ -873,7 +945,7 @@ async def create_snapshot(
                 snapshot_id,
                 user_id,
                 req_hash,
-                req.idempotency_key,
+                idempotency_key,
                 req.intent,
                 intent,
                 req.as_of_date,
@@ -881,7 +953,7 @@ async def create_snapshot(
                 req.spec_version,
                 spec["spec_version"],
                 json.dumps(req.model_dump(mode="json")),
-                req.user_level,
+                "retail",
             ),
         )
         inserted_snapshot = await cur.fetchone()
@@ -932,18 +1004,53 @@ async def create_snapshot(
                 ),
             )
 
-    # 4) 逐 plan 计算（或命中已有计算）
+    # 4) 每个方案用 savepoint 隔离计算故障，失败终态保留输入且不参与成功缓存。
     for item in normalized:
-        await _ensure_run(
-            db,
-            snapshot_id=snapshot_id,
-            item=item,
-            spec=spec,
-            params=params,
-            as_of=as_of,
-            data_fingerprint=data_version["data_version_id"],
-            fingerprint_time=data_version["snapshot_at"],
-        )
+        try:
+            async with db.transaction():
+                await _ensure_run(
+                    db,
+                    snapshot_id=snapshot_id,
+                    item=item,
+                    spec=spec,
+                    params=params,
+                    as_of=as_of,
+                    data_fingerprint=data_version["data_version_id"],
+                    fingerprint_time=data_version["snapshot_at"],
+                )
+        except Exception as exc:
+            logger.error(
+                "diagnosis plan failed: plan_index=%s error_type=%s",
+                item["plan_index"],
+                type(exc).__name__,
+            )
+            run_id = uuid4()
+            calc_hash = _calculation_hash(
+                weight_mode=item["weight_mode"],
+                resolved_holdings=item["holdings"],
+                resolved_as_of_date=as_of,
+                spec_version=spec["spec_version"],
+                data_fingerprint=data_version["data_version_id"],
+            )
+            async with db.cursor() as cur:
+                await cur.execute(
+                    """INSERT INTO diag.diagnosis_run
+                       (run_id, calculation_hash, spec_version, data_fingerprint, status,
+                        payload_schema_version, error_reason, computed_at)
+                       VALUES (%s, %s, %s, %s, 'failed', %s, 'calculation_failed', now())""",
+                    (
+                        run_id,
+                        calc_hash,
+                        spec["spec_version"],
+                        data_version["data_version_id"],
+                        PAYLOAD_SCHEMA_VERSION,
+                    ),
+                )
+                await cur.execute(
+                    "INSERT INTO diag.snapshot_run (snapshot_id, plan_index, run_id) "
+                    "VALUES (%s, %s, %s)",
+                    (snapshot_id, item["plan_index"], run_id),
+                )
 
     logger.info(
         "diagnosis snapshot created: snapshot_id=%s intent=%s plans=%d as_of=%s spec=%s",
@@ -1123,6 +1230,8 @@ async def _compute_plan(
     cached_result = deepcopy(plan_result)
     cached_result.pop("plan_id", None)
     cached_result.pop("label", None)
+    cached_result.pop("profile", None)
+    cached_result.pop("blindspots", None)
     for field in REQUEST_EXPOSURE_FIELDS:
         cached_result["section_a"].pop(field, None)
 
@@ -1145,9 +1254,28 @@ async def _compute_plan(
             symbol_of[i] for i in ids if instruments.get(i, {}).get("asset") in ("etf", "fund")
         ],
         "coverage_summary": {
-            "industry": len(industry) / len(ids) if ids else 0.0,
-            "category": len(category) / len(ids) if ids else 0.0,
-            "valuation": len(valuation) / len(ids) if ids else 0.0,
+            "industry": float(
+                sum(
+                    (Decimal(str(h["weight"])) for h in holdings if h["instrument_id"] in industry),
+                    Decimal(0),
+                )
+            ),
+            "category": float(
+                sum(
+                    (Decimal(str(h["weight"])) for h in holdings if h["instrument_id"] in category),
+                    Decimal(0),
+                )
+            ),
+            "valuation": float(
+                sum(
+                    (
+                        Decimal(str(h["weight"]))
+                        for h in holdings
+                        if h["instrument_id"] in valuation
+                    ),
+                    Decimal(0),
+                )
+            ),
         },
         "forced_disclosures": _build_disclosures(
             params,
@@ -1284,6 +1412,8 @@ def _assemble_plan_result(row: dict, context: dict[str, Any]) -> dict | None:
     payload["label"] = row["label"]
     payload["weight_mode"] = row["weight_mode"]
     payload["section_a"].update(context["exposure"])
+    payload["profile"] = _build_profile(payload["section_a"], context["holdings"])
+    payload["blindspots"] = []
     return PlanResult.model_validate(payload).model_dump(mode="json")
 
 
@@ -1346,11 +1476,13 @@ async def get_result(
                    p.plan_index, p.plan_id, p.label, p.weight_mode,
                    p.requested_holdings, p.resolved_holdings,
                    r.status, r.payload, r.payload_schema_version,
-                   r.data_quality, r.error_reason
+                   r.data_quality, r.error_reason, r.data_fingerprint,
+                   dv.snapshot_at AS data_snapshot_at
             FROM diag.portfolio_plan p
             LEFT JOIN diag.snapshot_run sr
                    ON sr.snapshot_id = p.snapshot_id AND sr.plan_index = p.plan_index
             LEFT JOIN diag.diagnosis_run r ON r.run_id = sr.run_id
+            LEFT JOIN diag.data_version dv ON dv.data_version_id = r.data_fingerprint
             WHERE p.snapshot_id = %s
             ORDER BY p.plan_index, sr.created_at DESC NULLS LAST, sr.run_id DESC NULLS LAST
             """,
@@ -1365,32 +1497,11 @@ async def get_result(
         if (result := _assemble_plan_result(row, context)) is not None
     ]
     run_status = _aggregate_run_status(rows)
-    merged_dq = _merge_data_quality(
-        [
-            _assemble_plan_data_quality(row, context)
-            for row, context in zip(rows, contexts, strict=True)
-        ]
-    )
-    params = spec["params"]
-
-    return {
-        "snapshot_id": str(snapshot_id),
-        "spec_version": snapshot["resolved_spec_version"],
-        "cov": {
-            "primary": str(params.get("primary_cov_method", "historical")),
-            # 一期一个都没实际算出来（B/D 未启用）。写成 [] 而不是照抄配置的
-            # cov_methods —— 后者会让前端以为历史协方差已经算过了。
-            "computed": [],
-        },
-        "as_of_date": snapshot["resolved_as_of_date"].isoformat(),
-        "report_mode": _report_mode(snapshot["resolved_intent"]),
-        "run_status": run_status,
-        "plans": plans,
-        "comparison": None,  # 模块 E 属 P2-b
-        "disclosures": merged_dq.get("forced_disclosures", []),
-        "data_quality": merged_dq,
-        "error_reason": next((r["error_reason"] for r in rows if r["error_reason"]), None),
-    }
+    dq_items = [
+        _assemble_plan_data_quality(row, context)
+        for row, context in zip(rows, contexts, strict=True)
+    ]
+    return presentation.assemble(snapshot, spec, rows, contexts, plans, dq_items, run_status)
 
 
 def _merge_data_quality(items: list[dict]) -> dict:
@@ -1419,28 +1530,15 @@ async def get_data_quality(
 ) -> dict:
     """``GET /snapshots/{id}/data-quality``：单独取降级清单与强制声明。"""
     result = await get_result(db, snapshot_id, user_id=user_id)
-    return result["data_quality"]
+    if result["run_status"] in ("pending", "running"):
+        return result
+    from gr_api.schemas.diagnosis_response import SnapshotMeta
 
-
-def _metric_block(key: str, label: str, metric: dict, *, fmt: str = "{}") -> ReportBlock:
-    """把一个 MetricValue 渲染成报告块。
-
-    ``unavailable`` 必须渲染成「不可用 + 原因」而不是隐藏或填 0 ——
-    这是架构篇 §8.2 的硬约束，也是渲染层唯一不能省的分支。
-    """
-    status = metric.get("status", "unavailable")
-    if status == "unavailable":
-        return ReportBlock(
-            key=key, label=label, value=None, status="unavailable", reason=metric.get("reason")
-        )
-    value = metric.get("value")
-    return ReportBlock(
-        key=key,
-        label=label,
-        value=fmt.format(value) if isinstance(value, (int, float)) else value,
-        status=status,
-        reason=metric.get("reason"),
-    )
+    return {
+        **{k: result[k] for k in SnapshotMeta.model_fields},
+        "run_status": result["run_status"],
+        "data_quality": result["data_quality"],
+    }
 
 
 async def get_report(
@@ -1450,134 +1548,9 @@ async def get_report(
     user_id: str | None,
     user_level: str | None = None,
 ) -> dict:
-    """``GET /snapshots/{id}/report``：按 ``user_level`` 裁剪后的报告。
-
-    等级只影响**渲染**，不影响计算：同一份 ``diagnosis_run`` 服务两种等级，
-    裁剪在访问时动态做、不做持久化缓存（避免等级变更后旧渲染残留，§7.7）。
-    """
-    snapshot = await _load_snapshot(db, snapshot_id, user_id=user_id)
+    """只读取已固定的终态，渲染偏好不进入计算或缓存。"""
     result = await get_result(db, snapshot_id, user_id=user_id)
-    level = user_level or snapshot["user_level"]
-
-    sections: list[ReportSection] = []
-    for plan in result["plans"]:
-        a = plan["section_a"]
-        prefix = f"{plan['plan_id']}." if len(result["plans"]) > 1 else ""
-
-        profile = plan["profile"]
-        sections.append(
-            ReportSection(
-                section_id=f"{prefix}0",
-                title="整体判断",
-                blocks=[
-                    ReportBlock(key="label", label="组合画像", value=profile["label"]),
-                    ReportBlock(key="findings", label="Top 发现", value=profile["top_findings"]),
-                    ReportBlock(key="confidence", label="置信度", value=profile["confidence"]),
-                    ReportBlock(key="data_status", label="数据状态", value=profile["data_status"]),
-                ],
-            )
-        )
-
-        blocks = [
-            _metric_block("l1", "名义持仓数", a["l1_count"]),
-            _metric_block("industry", "行业分布", a["industry_distribution"]),
-            _metric_block("category", "资产类别分布", a["asset_category_distribution"]),
-            _metric_block("market", "市场分布", a["market_distribution"]),
-            _metric_block("style", "风格分布", a["style_distribution"]),
-        ]
-        if level == "pro":
-            # 散户等级给判断不给中间指标；专业等级才展开原始数字（架构篇 §4.4）
-            blocks.extend(
-                [
-                    _metric_block("hhi", "HHI 集中度", a["hhi"], fmt="{:.4f}"),
-                    _metric_block("topn", "TopN 权重", a["topn"], fmt="{:.2%}"),
-                    _metric_block(
-                        "coverage",
-                        "解析覆盖率",
-                        {"status": "ok", "value": a["calculation_coverage_ratio"]},
-                        fmt="{:.2%}",
-                    ),
-                ]
-            )
-        sections.append(
-            ReportSection(section_id=f"{prefix}1", title="你实际持有的是什么", blocks=blocks)
-        )
-
-        sections.append(
-            ReportSection(
-                section_id=f"{prefix}2",
-                title="分散度真相",
-                blocks=[
-                    _metric_block("l2", "权重有效持仓数", a["l2_effective_count"], fmt="{:.2f}"),
-                    *[
-                        ReportBlock(
-                            key=b["detector"],
-                            label=b["detector"],
-                            value=b["message"],
-                            status="unavailable" if b["reason_code"] else "ok",
-                            reason=b["reason_code"],
-                        )
-                        for b in plan["blindspots"]
-                    ],
-                ],
-            )
-        )
-
-        for sid, title, key in (
-            ("3", "风险画像", "section_b"),
-            ("4", "风格与暴露", "section_d"),
-            ("5", "归因与分位", "section_c"),
-        ):
-            if plan.get(key) is None:
-                sections.append(
-                    ReportSection(
-                        section_id=f"{prefix}{sid}",
-                        title=title,
-                        blocks=[
-                            ReportBlock(
-                                key=key,
-                                label=title,
-                                value=None,
-                                status="unavailable",
-                                reason="本期该模块未启用：因子模型（G2）与历史序列口径（G6）未就绪",
-                            )
-                        ],
-                    )
-                )
-
-    # Section 6 是降级信息唯一的落脚点 —— 没有它，降级说明只能散在各节角标里，
-    # 用户看不到全貌（架构篇 §8.1 评审新增）。
-    dq = result["data_quality"]
-    sections.append(
-        ReportSection(
-            section_id="6",
-            title="方法与数据局限",
-            blocks=[
-                ReportBlock(
-                    key="unresolved", label="未能解析的代码", value=dq["unresolved_symbols"]
-                ),
-                ReportBlock(
-                    key="duplicated", label="重复代码（已合并）", value=dq["duplicated_symbols"]
-                ),
-                ReportBlock(key="suspended", label="停牌或退市", value=dq["suspended_or_delisted"]),
-                ReportBlock(
-                    key="new_listing", label="上市不足一年", value=dq["new_listings_short_window"]
-                ),
-                ReportBlock(
-                    key="lookthrough", label="未穿透的基金/ETF", value=dq["lookthrough_gaps"]
-                ),
-                ReportBlock(key="coverage", label="各项数据覆盖率", value=dq["coverage_summary"]),
-            ],
-        )
-    )
-
-    return DiagnosisReport(
-        snapshot_id=snapshot_id,
-        report_mode=result["report_mode"],
-        user_level=level,
-        sections=sections,
-        disclosures=result["disclosures"],
-    ).model_dump(mode="json")
+    return presentation.report(result, user_level or "retail")
 
 
 # ===========================================================================

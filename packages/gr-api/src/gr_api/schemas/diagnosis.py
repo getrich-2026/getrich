@@ -20,7 +20,7 @@ from enum import StrEnum
 from typing import Annotated, Generic, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import TypeAliasType, TypeVar
 
 
@@ -154,6 +154,8 @@ MetricValue = TypeAliasType(
 class HoldingItem(BaseModel):
     """一条持仓。``weight`` 缺省表示「让服务端按等权处理」。"""
 
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
     symbol: str = Field(min_length=1, max_length=64)
     # ge=0：一期不支持负权重/空头/杠杆（§8.1 非目标），请求层直接拒绝。
     weight: Decimal | None = Field(default=None, ge=0)
@@ -162,7 +164,9 @@ class HoldingItem(BaseModel):
 class PortfolioPlan(BaseModel):
     """一个方案。单组合诊断只有 1 个；推演 / 多组合对比有 N 个。"""
 
-    plan_id: str = Field(min_length=1, max_length=64)
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    plan_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     label: str | None = Field(default=None, max_length=32)
     # 上限 100 是过渡值（文档 T11）：性能预算基于 n=50，n=200 时 L4 特征分解
     # 的 O(n^3) 与相关矩阵的 JSON 体积都显著超预算。最终数字待真实用户分布确认。
@@ -170,6 +174,8 @@ class PortfolioPlan(BaseModel):
 
     @model_validator(mode="after")
     def _check_weights(self) -> PortfolioPlan:
+        if any(not h.symbol.strip() for h in self.holdings):
+            raise ValueError("symbol must not be blank")
         weights = [h.weight for h in self.holdings]
         has_some = any(w is not None for w in weights)
         has_none = any(w is None for w in weights)
@@ -192,13 +198,25 @@ class SnapshotRequest(BaseModel):
     走同一个请求结构：编排层只需按 ``len(plans)`` 与 ``intent`` 决定跑几遍。
     """
 
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
     plans: list[PortfolioPlan] = Field(min_length=1, max_length=5)
     intent: Intent | None = None  # 缺省 → 按 plans 数量与差异自动判定
-    user_level: UserLevel = "retail"  # 渲染偏好，与付费无关（D6）
     as_of_date: date | None = None  # 缺省 → 最近交易日
-    spec_version: str | None = Field(default=None, max_length=32)
-    # 契约先行：一期只靠 request_hash 兜底，不单独实现幂等键存储与查重（§8.1）。
-    idempotency_key: str | None = Field(default=None, max_length=128)
+    spec_version: str | None = Field(default=None, min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def _check_plans(self) -> SnapshotRequest:
+        if len({p.plan_id for p in self.plans}) != len(self.plans):
+            raise ValueError("plan_id must be unique within a snapshot")
+        n = len(self.plans)
+        if self.intent in ("single_portfolio", "single_instrument") and n != 1:
+            raise ValueError("single intent requires exactly one plan")
+        if self.intent in ("rebalance_amount", "rebalance_holding") and n != 2:
+            raise ValueError("rebalance intent requires exactly two plans")
+        if self.intent == "multi_portfolio" and n < 2:
+            raise ValueError("multi_portfolio requires at least two plans")
+        return self
 
 
 # ---------------------------------------------------------------------------
