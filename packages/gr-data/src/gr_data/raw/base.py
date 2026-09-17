@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import abc
 import calendar as _calendar
+import logging
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from gr_data.common.paths import RawPaths
-from gr_data.logging import get_logger
 
 
 @dataclass
@@ -53,7 +53,7 @@ class BaseFetcher(abc.ABC):
     def __init__(self, client: Any, ctx: RawContext):
         self.client = client
         self.ctx = ctx
-        self.log = get_logger(f"raw.{self.PROVIDER}.{self.DATASET}")
+        self.log = logging.getLogger(f"gr_data.raw.{self.PROVIDER}.{self.DATASET}")
 
     @property
     def paths(self) -> RawPaths:

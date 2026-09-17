@@ -162,20 +162,17 @@ def test_parse_args_default_dirs_point_into_package() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_configure_logging_info_default() -> None:
-    with patch.object(cli, "logging") as fake_logging:
+def test_configure_logging_preserves_configured_level() -> None:
+    """不带 verbose 时保持 LOG_LEVEL，而不是强制 INFO。"""
+    with patch.object(cli, "setup_logging") as configure:
         cli._configure_logging(verbose=False)
-    fake_logging.basicConfig.assert_called_once()
-    kwargs = fake_logging.basicConfig.call_args.kwargs
-    assert kwargs["level"] == fake_logging.INFO
-    assert "%(asctime)s" in kwargs["format"]
+    configure.assert_called_once_with(cli.settings, level=None)
 
 
 def test_configure_logging_debug_when_verbose() -> None:
-    with patch.object(cli, "logging") as fake_logging:
+    with patch.object(cli, "setup_logging") as configure:
         cli._configure_logging(verbose=True)
-    kwargs = fake_logging.basicConfig.call_args.kwargs
-    assert kwargs["level"] == fake_logging.DEBUG
+    configure.assert_called_once_with(cli.settings, level="DEBUG")
 
 
 # ---------------------------------------------------------------------------

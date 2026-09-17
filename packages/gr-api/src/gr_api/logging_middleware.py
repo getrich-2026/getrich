@@ -1,44 +1,7 @@
-"""Structured logging + request_id propagation.
+"""HTTP 请求上下文与日志 filter。
 
-Why this module exists
-----------------------
-The web app emits ~6 distinct log lines per request today
-(``auth.router`` login, ``backtest_jobs`` create, the SSE
-listener, the metrics middleware, etc.). Without a shared
-``request_id``, correlating those lines on a 500 / 502 is
-guesswork: the user pastes a ``request_id`` from the response
-envelope and we grep the log file by it. If only ONE line in
-the chain has that id, we lose 5 lines of context.
-
-The fix is two pieces:
-
-1. A ``contextvars.ContextVar`` holding the current request's
-   ``request_id``. It's a ``ContextVar`` (not a module-level
-   global) so async / SSE generator / BackgroundTasks all
-   inherit the value for the duration of their task — without
-   it, a background job spawned in the same request scope
-   would log without an id and break correlation.
-2. A ``RequestIdLogFilter`` that injects the var into every
-   ``LogRecord`` so the formatter can render it. The filter
-   is installed ONCE at app startup (``main.py``) and lives
-   on the root logger, so every existing ``logging.getLogger(
-   __name__)`` call in the codebase picks it up without any
-   per-module wiring.
-
-The filter is intentionally tolerant: if the var is unset
-(e.g. an admin script, a Celery worker, a CLI migration) the
-filter writes ``request_id="-"`` instead of raising. That
-keeps legacy log calls working in non-FastAPI contexts.
-
-Why not ``structlog``? Two reasons:
-  - We already have a ``Logger`` compatibility wrapper in
-    ``libs/logging.py`` and 2 services using
-    ``logging.getLogger(__name__)``. Swapping to ``structlog``
-    is a Round-sized migration. The filter-then-format change
-    is ~30 lines and zero per-call-site changes.
-  - Production logging pipelines (Loki / CloudWatch / ELK)
-    all parse stdlib JSON fine. We get 80% of the value with
-    stdlib + a filter.
+API lifespan 将 filter 安装到日志输出 handler；挂在 root logger 的 filter
+不会处理子 logger 传播来的记录。ContextVar 隔离并发请求，非请求日志使用占位符。
 """
 
 from __future__ import annotations
@@ -69,13 +32,7 @@ def get_current_request_id() -> str:
 
 
 class RequestIdLogFilter(logging.Filter):
-    """Inject the per-request id into every ``LogRecord``.
-
-    Installed on the root logger in ``main.create_app()`` so it
-    applies to every existing and future ``logging.getLogger()``
-    caller without per-module wiring. The filter is fail-safe:
-    a missing var produces ``"-"`` rather than a KeyError.
-    """
+    """向输出 handler 收到的记录注入当前 request_id。"""
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
         record.request_id = _current_request_id.get()

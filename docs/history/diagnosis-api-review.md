@@ -1,16 +1,14 @@
-# 持仓诊断 API — 代码审查交接单
+# 持仓诊断 API：2026-08-30 审查与修复记录
 
-> **状态**：已修复并验证（2026-08-30）。本文列出的 13 条发现来自对 commit `2089022` 的独立代码审查，
-> 其中 4 条（#1 #2 #3 #5）已由第二人逐条对着源码复核确认成立，其余为审查结论、
-> 未逐条复核但机制描述可信。
->
-> **分支**：`worktree-feat-diagnosis-api`（worktree 位于
-> `.claude/worktrees/feat-diagnosis-api`，基线是 `feat/data-ingest-tushare-datayes`，
-> 均未合回 `dev`）。**所有命令从 worktree 目录跑，不要 cd 到主仓库。**
->
-> **设计契约真源**：`/home/neo/project/getrich-design/portfolio-analysis/` 下的
-> `持仓诊断_表与接口设计.md`（v0.2.2）与 `持仓诊断_架构设计.md`（v0.1.3）。
-> 判断「哪个是对的」以设计文档为准，不以现有代码为准。
+读者：追溯缺陷与回归用例的维护者；Agent 仅在修改相关逻辑时按需读取。
+状态：历史材料，审查基线 `2089022`，修复提交 `f57927c`。以下验证数字仅代表当时运行。
+当前接口见 [持仓诊断调用指南](../guides/diagnosis-api.md)，当前缓存约定见
+[决策记录](../../.agents/brain/DECISIONS.md) D-059。
+
+2026-09-07 的接口变更已取代文中的旧约定：幂等键、原始请求体与计算哈希分别处理；
+B/C/D 返回有类型的区块状态，不再返回裸 null。原 worktree 的执行指令已失效；
+下文命令、旧设计口径与“必须修复”措辞均属于审查快照，不是当前待办或执行授权。
+设计材料位于相邻 `getrich-design/portfolio-analysis/`，不依赖旧机器绝对路径。
 
 ## 修复结论（2026-08-30）
 
@@ -48,7 +46,7 @@
 
 ---
 
-# ⚠️ 动手前先读：三条不要「修错方向」的护栏
+# 审查时的三条护栏（部分已被后续契约取代）
 
 这三处是**刻意设计**，看起来像 bug 但不是。改错方向会毁掉设计意图且不会有任何报错。
 
@@ -295,5 +293,5 @@ curl -s -XPOST localhost:8021/v1/diagnosis/snapshots -H 'Content-Type: applicati
 
 # 收尾（已完成）
 
-已按 `AGENTS.md` §7 更新 `.agent/brain/NOTES.md`，并在 `.agent/brain/DECISIONS.md`
+已按 `AGENTS.md` §7 更新 `.agents/brain/NOTES.md`，并在 `.agents/brain/DECISIONS.md`
 追加 D-050（门控 PG 集成测试连接失败时的凭证泄漏防护）。

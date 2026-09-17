@@ -1,8 +1,14 @@
 # GetRich — AI 开发指令集
 
-本文件是 GetRich 项目约束的**唯一真源**，供 Claude Code、Codex、DeepSeek 等所有 harness 共用。`CLAUDE.md` 只是指向本文件的入口，不重复内容。
+本文件是 GetRich 项目约束的**唯一真源**。项目以 **Codex 为主，Antigravity（Gemini）为辅**，Claude Code 保留兼容入口。文件名固定为 `AGENTS.md`，不另建 `AGENT.md` 或复制规则正文。
 
-各 harness 自己的全局约定（`~/.claude/CLAUDE.md`、`~/.codex/AGENTS.md` 等）定义通用行为与 agent 调度；本文件只写 GetRich 特有的约束，更具体的指令优先。
+各工具的全局约定定义个人默认行为；本文件定义项目约束，更具体的目录级 `AGENTS.md` 定义局部约束。遵守当前用户授权与工具的系统指令、权限限制。
+
+- **Codex**：直接读取根目录 `AGENTS.md`；修改子目录前检查沿途是否有更具体的指令。
+- **Antigravity IDE**：`.agents/rules/project.md` 是 Always On 入口，引用本文件；共用编码规则与状态文档。
+- **Claude Code**：`CLAUDE.md` 导入本文件；`.claude/settings.json` 只配置 Claude 权限，不作为 Codex 或 Gemini 的规则来源。
+- `.agents/brain/` 是本项目约定的状态目录，按第 7 节主动读取；它不是自动发现的规则或技能目录。修改规则只改本文件，兼容入口保持简短。
+- 默认由主 Agent 完成工作，不设置固定多 Agent 流水线；子 Agent 的使用遵循当前工具与用户的授权。
 
 ---
 
@@ -21,8 +27,9 @@ packages/gr-tools     通用工具：文件系统、多格式表格读取、人�
 packages/gr-agent     空占位包（只有 pyproject.toml，尚无源码）
 deploy/               数据库基础设施部署模板，不在仓库内实例化
 scripts/              仅存 lint_migrations.py
+docs/                 人类阅读入口：指南、待决问题、历史材料（见 docs/README.md）
 archive/              历史脚手架，删除前必须得到明确确认
-.agent/brain/         跨会话开发进度（见第 7 节）
+.agents/brain/        跨会话开发进度（见第 7 节）
 ```
 
 **命名规则：发行名 = 目录名 = `gr-x`，import 名 = `gr_x`**，连字符与下划线一一对应，
@@ -135,13 +142,14 @@ gr-factor（独立）
 `ops.table_ownership`，ingest／stream 写库前校验。转移归属必须显式走
 `gr-data own release/set` —— 不同源的单位口径与复权规则可能不同，混写会让同一张表
 出现两套口径且事后无法分辨。
+唯一现有例外是 `meta.symbol_map`：按 `(source, source_symbol)` 隔离写入，见 D-037；不得据此放宽其他表的归属。
 
 **parquet 落地**：根目录 `$RAW_PARQUET_ROOT`（仓库外）。布局
 `<root>/<provider>/<dataset>/...`，路径解析统一走 `common/paths.py::RawPaths`，
 禁止散落硬编码。一律 zstd 压缩；**原子写**（先写 `*.tmp-<uuid>`，再 `os.replace()`）；
 追加按时间索引去重（新数据胜出）。
 
-**日志**：统一 `gr_data.logging.get_logger(name)`，**禁止 `print()` 做运行日志**。
+**日志**：模块使用 `logging.getLogger(__name__)`，provider／dataset 的动态 logger 名保留 `gr_data.` 前缀；**禁止 `print()` 做运行日志**。
 日志须能还原「处理了哪个 provider / dataset / 范围 / 目标」；**不记录密钥或完整 payload**。
 
 **命名**：行情表 `<asset>_bar_<freq>`（asset ∈ stock/etf/index/future/option，
@@ -156,6 +164,45 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 - **不引入 heavy ORM**：用 `psycopg3` 的 `AsyncConnectionPool` 手写原生 SQL。
 - 大批量写入优先 COPY 协议或 multi-values UPSERT（`ON CONFLICT DO UPDATE`）。
 - **绝对禁止**在没有 `try-except` 隔离的情况下在主线程中发起外部 API 调用或网络请求。
+
+### 4.1 类型与说明
+
+- 新增或修改的公开 API、跨模块调用边界必须有参数与返回值类型标注。
+- 公开类与核心函数使用 Google 风格 docstring，说明单位、时间语义、输入前提及异常；性能敏感算法注明复杂度或峰值内存依据，不为简单函数机械补写。
+- 最小复现优先放在对应包的测试中；不要求库模块逐文件添加 dummy data 或 `__main__`，不得覆盖真实 CLI／服务入口。
+
+### 4.2 数据完整性与性能
+
+- 对空数据、缺失值、`NaN`、`Inf`、除零显式定义行为。拒绝、保留、过滤或填充值须符合业务契约并说明原因，不静默改变样本或数值口径。
+- 标的代码保持字符串，保留前导零；数值 dtype 遵循 canonical contracts 与 DDL，不统一强转 `float64`，金额仍按第 3.2 节使用 `Decimal`。
+- 滚动、滞后、时序 join 前验证分组内时间排序与业务键重复情况；按明确规则排序／去重，不能把多标的时间序列当成一条全局序列。
+- 优先 Polars 表达式、DuckDB SQL 或 NumPy 向量化，避免大表 `.iterrows()`、逐行 Python 回调和可向量化的 `apply`；有状态的回测执行循环允许保留，正确性优先。
+- 大批量任务评估峰值内存并按可独立处理的分区分批；跨分区的 rolling／区间压缩必须保留必要上下文（见 D-056）。
+- 热路径优化用同一输入通过 `time.perf_counter()` 对比耗时，并检查结果一致性。只有测量证明必要时才考虑 JIT；新增 numba 等依赖先说明并取得授权。
+
+### 4.3 日志与异常
+
+- 各模块用标准库 logger 记录事件，不隐式配置 handler 或创建日志文件。通用格式化与输出配置在 `gr_tools.logging`，公共配置模型在 `gr_tools.config`；各包提供业务上下文，不各起一套日志配置。CLI 正常结果输出可以使用 `print()`。
+- 启动入口通过 `gr_data.config.setup_logging(settings)` 适配配置；API 在 lifespan、Celery 在日志启动信号中初始化。业务 filter 放输出 handler，才能处理子 logger 传播来的记录。旧 `gr_data.logging` 仅作无隐式初始化的兼容入口。
+- 日志消息英文，带可定位任务的字段；`DEBUG` 诊断、`INFO` 进度、`WARNING` 可恢复异常、`ERROR` 操作失败。记录异常时同样不得泄漏凭证或完整 payload。
+- 外部调用在请求／任务边界落实 `try-except` 隔离，明确超时、恢复或失败返回；底层仅在能够恢复或补充上下文时捕获，保留异常链向上传播。
+- 禁止裸 `except:`、`except Exception: pass` 或只记日志后伪装成功。批处理隔离独立任务的失败并汇总报告；具有原子性要求的任务整体回滚。
+
+### 4.4 测试与依赖
+
+- 核心数值逻辑按风险覆盖正常、空／单元素、极值、缺失值及 `NaN`／`Inf` 输入；时序逻辑覆盖排序、重复、分组和日期边界，修复缺陷时补能复现问题的回归用例。
+- 随机测试与基准显式固定所用随机数生成器的种子；不修改生产代码的全局随机状态来迎合测试。
+- 覆盖率以仓库配置和 CI 为准（当前 Python CI 为 75%），不另设模板阈值，不为提高覆盖率编写无行为断言的测试。
+- 依赖声明在对应包的 `pyproject.toml`，运行依赖与开发依赖分开，使用 `uv` 更新并同步 lock；不手改锁文件。
+- 自动修复和格式化仅限本次改动的文件；检查通过后停止，不顺手修复无关基线问题。纯指令／文档变更检查差异、链接与路径，不要求跑业务测试或连接真库。
+
+### 4.5 配置归属与环境来源
+
+- 公共配置模型／工具归 `gr-tools`，不得反向依赖领域包；不在仓库根新增不可独立安装的 Python config 模块。
+- 现有 `gr_data.config.Settings` 保留为应用组装及兼容入口；数据库／供应商等模型按领域维护，不为日志改造整体迁移公共 API。
+- 环境变量优先于本地 `.env`：连接、凭证、机器路径、环境开关、日志输出选项留在环境层；Python config 定义类型、校验与默认值；YAML 只放结构化采集参数，不再复制数据库或日志配置。
+- 当前默认只依赖 PostgreSQL，`GETRICH_WORKER_BACKEND=inproc`；仅启用 Celery 时才需要 Redis，CH 只在调用相关能力时需要。配置了连接地址不代表启动了服务。
+- CI 默认仅启动 PG；手动 workflow_dispatch 的 `extra_services` 可恢复 CH／Redis 服务与 CH 迁移／字典冒烟。CH 离线 DDL 与 mock 用例仍保留。
 
 ## 5. 前端编码规范（React 19 + TypeScript 6 + Vite 8 + Tailwind 4）
 
@@ -177,7 +224,7 @@ cp .env.example .env
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
 
 # 建库 / 迁移（DDL 唯一真源是 gr-db）
-uv run gr-db migrate --target all          # pg | ch | all
+uv run gr-db migrate --target pg           # 当前默认只运行 PostgreSQL；CH 启用后另迁移
 uv run gr-db status                        # 只看磁盘上有哪些 DDL
 uv run gr-db migrate --target pg --dry-run
 
@@ -192,9 +239,9 @@ uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-12 \
 uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-12 \
     --file picks.csv [--overwrite] [--allow-empty]
 
-# 后端：启动 FastAPI 开发服务器
-# find_project_root() 已修好，不再需要显式 --env-file（D-003）
-uv run uvicorn gr_api.main:app --reload --host 0.0.0.0 --port 8000
+# 后端：示例端口与 apps/web/vite.config.ts 的代理一致
+# find_project_root() 识别 workspace 根 .env；uvicorn --port 仍须显式指定（D-003）
+uv run uvicorn gr_api.main:app --reload --host 0.0.0.0 --port 8001
 
 # 全量测试（testpaths 覆盖全部七个有源码的包）
 uv run pytest -v
@@ -221,32 +268,40 @@ uv sync --frozen --all-packages
 # 前端（Node 要求 ^20.19.0 || >=22.12.0，Vite 8 的下限；CI 与本地都用 24）
 cd apps/web
 npm ci           # 按 lock 装，CI 用的就是它；日常加依赖才用 npm install
-npm run dev      # Vite 开发服务（3000，/v1 代理到 gr-api）
+npm run dev      # Vite 开发服务（3000，/v1 代理到 gr-api:8001）
 npm run build    # tsc -b && vite build
 npm run lint     # ESLint
 npm run preview  # 预览生产构建产物
 ```
 
 前端**没有测试框架**，`lint` + `build` 就是 CI 的全部门禁（`.github/workflows/web.yml`），
-两者当前都是绿的，**别把它们改红了再提交**。
+修改前后按任务验证，结果以实际运行及 CI 为准，不把历史通过当作当前基线。
 
-## 7. 开发进度文档（`.agent/brain/`）
+## 7. 文档与跨会话状态
 
-两个文件，职责不同，**不要混写**：
+文档按读者与用途组织，导航与新增规则见 [`docs/README.md`](docs/README.md)。
 
-| 文件 | 性质 | 写什么 |
+| 文件／目录 | 主要读者 | 维护内容 |
 |---|---|---|
-| `NOTES.md` | **状态快照**，可整体覆写 | 当前进行中的工作、未决 P0／P1、已知失败基线。历史沿革交给 `git log`，不在这里追加流水账 |
-| `DECISIONS.md` | **只增不改**的长期记录 | 技术决策及其理由、踩坑与防范策略、不可从代码推导的隐式约束 |
+| `AGENTS.md` | 执行任务的 Agent | 现行项目规则；工具入口只引用此文件 |
+| `.agents/brain/NOTES.md` | 接续任务的 Agent | 简短当前状态、阻塞、验证边界；可整体更新 |
+| `.agents/brain/DECISIONS.md` | Agent 与维护者 | 按主题索引的有效决策、取舍原因与防错说明 |
+| `docs/guides/` | 使用功能的开发者 | 操作与排障指南，不复制 DDL／响应字段目录 |
+| `docs/plans/` | 决定范围的维护者、执行已选任务的 Agent | 未决问题、证据、待定选择与验收条件 |
+| `docs/history/` | 追溯历史的维护者 | 已完成计划／审查快照，不能当作当前任务指令 |
 
-- **会话开始**：先读 `NOTES.md` 恢复状态，再读 `DECISIONS.md` 了解历史约束与坑。
-- **会话结束**：只要发生了实质性代码变更、表结构调整或技术方案抉择，必须在结束 turn 前更新 `NOTES.md`。
-- **自改进**：若出现 AI 误判导致的用户纠错或测试失败，把错误模式、根本原因、防范策略追加到 `DECISIONS.md`。
-- 写入前先核对：已经过期的条目要删掉，不要让互相矛盾的两条同时存在。
+- **会话开始**：先读 NOTES，再按任务查 DECISIONS 的主题索引及相关指南；不默认加载所有历史材料。
+- **会话结束**：实质性代码、schema 或技术方案变化后更新 NOTES；完成项从状态／待办中移除，长期原因写入 DECISIONS。
+- **新增文档**：先明确读者、用途、状态；优先更新已有文件。只有独立用途或用户要求时才新建，不为每次修复创建总结。
+- **决策维护**：日常以追加和明确取代为主；用户授权清理时可删除过期／无用条目，修复引用，保留其余编号，不重排或复用。
+- **自改进**：AI 误判或测试暴露的问题，只有具有项目特定、可复用防范价值时才记入决策；不要追加通用操作失误流水账。
+- **证据时效**：测试数字、数据库行数、机器路径与服务健康带日期和验证范围；未重查时标为历史，不写成实时状态。
+- **移动文档**：更新入口与相对链接；已记账 SQL 不为文档搬迁改 checksum，历史引用通过决策说明。
 
 ## 8. 改动边界与禁止事项
 
 - 不静默变更架构、依赖、凭证、数据路径、公开 API、表结构 —— 这几类必须先说。
+- 保留工作区已有修改，仅改任务所需文件；未获用户明确要求，不得 commit、push、publish、deploy、创建 PR 或发送外部消息。工具权限 allow 不等于用户授权。
 - **绝对禁止**输出或提交真实凭证、token、私钥，以及本地 `.env` 里的真实值。
 - **绝对禁止**用 `git reset --hard` 等 destructive 命令修改未提交的工作区代码。
 - **绝对禁止**在 `packages/gr-api/src/gr_api/main.py::create_app()` 中移除 `SecurityHeadersMiddleware` —— 这是协议级 XSS 兜底（`Content-Security-Policy` / `X-Frame-Options` / `nosniff` / `Referrer-Policy`），也是 OWASP 推荐做法。新增路由或中间件时，测试必须用 `TestClient` 验证响应仍带这 4 个头。

@@ -35,6 +35,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from datetime import date, timedelta
 from typing import Any, Protocol
@@ -42,7 +43,6 @@ from typing import Any, Protocol
 import pandas as pd
 
 from gr_data.common.retry import PermanentError, sleep_s
-from gr_data.logging import get_logger
 
 
 DEFAULT_BASE_URL = "https://api.wmcloud.com/data/v1"
@@ -61,7 +61,7 @@ _RETRYABLE = {-3, -4, -5, -8, -16}
 _PARAM_ERRORS = {-2, -9, -12, -13, -14}
 _QUOTA_ERRORS = {-6, -11, -15}
 
-log = get_logger("raw.datayes.client")
+log = logging.getLogger(__name__)
 
 
 class DatayesParamError(PermanentError):

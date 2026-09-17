@@ -34,8 +34,19 @@ Key Celery settings chosen for this workload:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from celery import Celery
-from gr_data.config.settings import settings
+from celery.signals import setup_logging as celery_setup_logging
+from gr_data.config.settings import settings, setup_logging
+
+
+@celery_setup_logging.connect
+def configure_worker_logging(
+    loglevel: int | None = None, logfile: str | None = None, **kwargs: object
+) -> None:
+    """在 Celery 真正启动的进程配置输出；显式 CLI 参数优先。"""
+    setup_logging(settings, level=loglevel, file_path=Path(logfile) if logfile else None)
 
 
 def make_celery_app() -> Celery:

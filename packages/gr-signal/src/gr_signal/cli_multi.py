@@ -14,6 +14,8 @@ import logging
 import os
 import sys
 
+from gr_data.config import settings, setup_logging
+
 from gr_signal.scheduler import (
     MultiStrategyRunner,
     StrategyConfig,
@@ -86,6 +88,7 @@ async def _main() -> None:
 
 
 def main() -> None:
+    setup_logging(settings)
     asyncio.run(_main())
 
 

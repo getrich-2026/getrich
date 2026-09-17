@@ -17,15 +17,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol
 
 import pandas as pd
 
 from gr_data.common.retry import PermanentError
-from gr_data.logging import get_logger
 
 
-log = get_logger("raw.yinhe.client")
+log = logging.getLogger(__name__)
 
 
 class YinheClient(Protocol):

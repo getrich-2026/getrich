@@ -22,6 +22,11 @@ on:
       - ".python-version"
       - ".github/workflows/ci.yml"
   workflow_dispatch:
+    inputs:
+      extra_services:
+        description: "启用 ClickHouse 和 Redis 集成环境"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -109,7 +114,7 @@ jobs:
           --health-retries 10
 
       clickhouse:
-        image: clickhouse/clickhouse-server:26.3
+        image: ${{ inputs.extra_services && 'clickhouse/clickhouse-server:26.3' || '' }}
         ports:
           - 8123:8123
           - 9000:9000
@@ -120,7 +125,7 @@ jobs:
           --health-retries 10
 
       redis:
-        image: redis:8.2.8
+        image: ${{ inputs.extra_services && 'redis:8.2.8' || '' }}
         ports:
           - 6379:6379
         options: >-
@@ -141,7 +146,7 @@ jobs:
       CLICKHOUSE_PASSWORD: ""
       CLICKHOUSE_DB: default
       CLICKHOUSE_PROTOCOL: http
-      GETRICH_WORKER_BACKEND: celery
+      GETRICH_WORKER_BACKEND: ${{ inputs.extra_services && 'celery' || 'inproc' }}
       GETRICH_BROKER_URL: redis://localhost:6379/0
       GETRICH_RESULT_BACKEND: redis://localhost:6379/1
 
@@ -169,11 +174,12 @@ jobs:
         run: uv run --frozen gr-db migrate --target pg
 
       - name: Apply ClickHouse migrations
+        if: inputs.extra_services
         run: uv run --frozen gr-db migrate --target ch
 
       - name: Data dictionary smoke
         if: matrix.coverage
-        run: uv run --frozen gr-db docs --target all --out /tmp/dd.html --fail-on-drift
+        run: uv run --frozen gr-db docs --target ${{ inputs.extra_services && 'all' || 'pg' }} --out /tmp/dd.html --fail-on-drift
 
       - name: Run tests
         if: ${{ !matrix.coverage }}

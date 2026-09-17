@@ -27,11 +27,10 @@ def main() -> None:
 
     Settings are loaded eagerly so the Celery app's broker URL is
     sourced from the same ``.env`` as the API process. Logging is
-    configured so worker log lines match the API log format.
+    configured in the new process by the Celery setup_logging signal.
     """
     cfg = load_settings()
-    if hasattr(cfg, "setup_logging"):
-        cfg.setup_logging()
+    # exec 后 Python 进程被替换；日志配置交给 Celery setup_logging 信号。
 
     if len(sys.argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -44,7 +43,7 @@ def main() -> None:
             "-A",
             "gr_api.worker.celery_app",
             "worker",
-            "--loglevel=INFO",
+            f"--loglevel={cfg.logging.level}",
             *sys.argv[2:],
         ]
     elif sub == "beat":
@@ -53,7 +52,7 @@ def main() -> None:
             "-A",
             "gr_api.worker.celery_app",
             "beat",
-            "--loglevel=INFO",
+            f"--loglevel={cfg.logging.level}",
             *sys.argv[2:],
         ]
     else:

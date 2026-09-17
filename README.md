@@ -2,13 +2,15 @@
 
 A 股量化平台：数据接入、回测引擎、实盘信号、面向前端的查询 API。
 
+读者：首次运行项目的开发者。功能操作说明和待办按下方导航查阅。
+
 开发约束的唯一真源是 [`AGENTS.md`](AGENTS.md)（所有 AI harness 共用）。本文只讲怎么跑起来。
 
 ---
 
 ## 仓库结构
 
-uv workspace，六个 Python 包 + 两个前端。**目录名 `gr-x` 与 import 名 `gr_x` 一一对应。**
+uv workspace，七个有源码的 Python 包、一个占位包与两个前端。**目录名 `gr-x` 与 import 名 `gr_x` 一一对应。**
 
 | 包 | import | 职责 |
 |---|---|---|
@@ -18,9 +20,11 @@ uv workspace，六个 Python 包 + 两个前端。**目录名 `gr-x` 与 import 
 | `packages/gr-signal` | `gr_signal` | 实盘信号生产与交易执行 |
 | `packages/gr-api` | `gr_api` | FastAPI 应用 + 回测作业队列 + Celery worker |
 | `packages/gr-factor` | `gr_factor` | 期权定价与因子分析 |
+| `packages/gr-tools` | `gr_tools` | 文件与表格工具，叶子包 |
+| `packages/gr-agent` | — | 占位包，尚无源码 |
 
 依赖方向单向：`gr-data ← gr-db`，`gr-data ← gr-backtest ← gr-signal ← gr-api`。
-六个包都能单独安装、单独 import。
+`gr-tools` 不依赖其他一方包；包边界由测试约束。
 
 前端：`apps/web`（主前端）、`apps/backtest-web`（回测前端，暂停维护）。
 
@@ -29,19 +33,19 @@ uv workspace，六个 Python 包 + 两个前端。**目录名 `gr-x` 与 import 
 ## 五分钟跑通
 
 数据库是**单独部署**的基础设施，不随应用构建。先有一个可连的 PostgreSQL
-（推荐 TimescaleDB 镜像），再按下面走。
+（推荐 TimescaleDB 镜像），再按下面走。默认 `GETRICH_WORKER_BACKEND=inproc`，此路径不需要 Redis 或 ClickHouse。
 
 ```bash
 # 1. 依赖
-uv sync --all-packages
+uv sync --frozen --all-packages
 
 # 2. 配置：填数据库连接与数据源凭证
 cp .env.example .env
 
-# 3. 建库：12 个业务 schema、92 张表
-uv run gr-db migrate --target all
+# 3. 建 PostgreSQL 表（若也配置了 ClickHouse，再执行 --target ch）
+uv run gr-db migrate --target pg
 
-# 4. 跑一个回测
+# 4. 跑一个回测（先按下文数据手册导入标的与该区间日线；空库无法运行此示例）
 uv run python - <<'PY'
 from datetime import datetime
 from decimal import Decimal
@@ -85,11 +89,13 @@ PY
 
 ```bash
 # 后端 API
-uv run uvicorn gr_api.main:app --reload --port 8000
+uv run uvicorn gr_api.main:app --reload --port 8001
 
 # 前端
-cd apps/web && cp .env.example .env.local && npm install && npm run dev
+cd apps/web && cp .env.example .env.local && npm ci && npm run dev
 ```
+
+后端示例端口 8001 与 `apps/web/vite.config.ts` 的代理目标一致；改变端口时同步代理。
 
 ### 灌数据
 
@@ -113,57 +119,20 @@ uv run python scripts/lint_migrations.py      # DDL 安全模式检查
 uv lock --check && uv sync --frozen --all-packages
 ```
 
-完整命令表见 `AGENTS.md` §6。
+完整命令表见 `AGENTS.md` §6。CI 默认只启动 PostgreSQL；手动运行 CI 时可勾选 `extra_services` 启用 ClickHouse／Redis。离线 CH 检查始终保留。
 
-### 数据字典
+## 文档导航
 
-```bash
-# 从活库生成 HTML / JSON；--target 可用 pg、ch、all
-uv run gr-db docs --target pg --out /tmp/data-dictionary.html --fail-on-drift
-uv run gr-db docs --target ch --format json --out - --fail-on-drift
+完整分类、读者与维护规则见 [文档目录](docs/README.md)。
 
-# CI 中检查新增建表或新增字段是否有 COMMENT ON
-uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/dev
-```
-
-数据字典只展示 `gr-db` 管理的 12 个业务 schema；`ch` 模式不依赖 PostgreSQL。开发环境的
-匿名快照地址为 `http://45.142.166.254:3000/data-dictionary.html`，后续将迁入登录态页面。
-
----
-
-### 持仓诊断：前端调用
-
-统一前缀 `/v1/diagnosis`，成功响应仍使用项目的 `{code, message, data, timestamp, request_id}` 信封。
-运行后可在 `/docs` 查看请求示例，在 `/openapi.json` 获取实际响应模型。
-
-1. `POST /snapshots` 提交 `plans`，每项包含唯一 `plan_id` 与 `holdings: [{symbol, weight?}]`。
-   权重要么全部提供，要么全部缺省；缺省时去重后等权。调仓意图须显式传入，
-   两个及以上方案缺省为 `multi_portfolio`。
-2. 使用返回的 `data.links.result` 读取数值、`data.links.report` 读取页面报告。
-   处理中返回 `202` 与 `Retry-After: 1`；终态返回 `200`，业务失败由 `run_status` 表达。
-3. `/report?user_level=retail|pro` 切换展示偏好，缺省 `retail`，不会重算。
-   `/data-quality` 提供同一快照的方案级缺失原因与覆盖率。
-4. `/stream` 提供可选 SSE。当前同步计算完成后订阅只发 `meta → complete`，
-   `complete` 携带与 `/result` 相同的完整终态，收到后关闭连接。
-
-每次新提交创建新快照；网络重试请复用 `Idempotency-Key: <UUIDv4>` 请求头。
-同键异体返回 `409`。错误响应为 `{request_id, error: {code, message, retryable, issues}}`，
-校验错误的 `issues[].path` 使用 JSON Pointer。`user_level` 和 `idempotency_key` 不放在 POST 请求体中。
-
-A–D 在各方案的 `section_a`–`section_d`，E 在顶层 `comparison`；压力测试在方案顶层
-`stress_scenarios`。区块状态为 `ready/unavailable/failed`，指标为 `ok/degraded/unavailable`，
-不可用状态没有 `value`，不能当作数字 0。当前 A 使用已有计算，B/C/D、压力测试及多方案比较
-明确返回未开放或口径未定的原因。报告提供有类型的指标卡、分布、输入持仓和文本组件，
-数值保持机器可读，百分比用小数表示；前端按 `format`、`decimals` 展示。
-
-## 文档去向
-
-| 内容 | 位置 |
+| 我想做什么 | 入口 |
 |---|---|
-| 开发约束、数据库职责、编码规范 | [`AGENTS.md`](AGENTS.md) |
-| 数据接入层怎么跑、排障 | [`packages/gr-data/README.md`](packages/gr-data/README.md) |
-| 数据库结构与数据字典命令 | 本 README「数据字典」 |
-| 基础设施部署模板 | [`deploy/README.md`](deploy/README.md) |
-| 当前进度、未决 TODO、已知失败 | `.agent/brain/NOTES.md` |
-| 技术决策与踩坑记录 | `.agent/brain/DECISIONS.md` |
-| 设计文档、厂商接口资料 | 独立仓库 `getrich-design` |
+| 让 Agent 开始工作 | [项目规则](AGENTS.md) → [当前状态](.agents/brain/NOTES.md) |
+| 启动主前端 | [前端开发指南](docs/guides/frontend-dev.md) |
+| 导入每日选股池 | [选股导入指南](docs/guides/pick-import.md) |
+| 接入持仓诊断页面 | [诊断 API 指南](docs/guides/diagnosis-api.md) |
+| 查数据库结构／生成字典 | [数据字典指南](docs/guides/data-dictionary.md) |
+| 抓取与入库数据 | [gr-data 手册](packages/gr-data/README.md) |
+| 配置数据库基础设施 | [部署模板](deploy/README.md) |
+| 决定下一步做什么 | [待决问题](docs/plans/backlog.md) |
+| 理解实现为何这样选 | [决策记录](.agents/brain/DECISIONS.md) |

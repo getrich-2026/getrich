@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 import psycopg
 
-from gr_data.logging import get_logger
 from gr_data.stream.base import TickEvent
 
 
-log = get_logger("stream.writer")
+log = logging.getLogger(__name__)
 
 _COLUMNS = (
     "instrument_id",

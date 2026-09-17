@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 from collections.abc import AsyncIterator
 
@@ -67,7 +66,7 @@ from gr_api.services import (
     backtest_walk_forward as wf_svc,
 )
 from gr_api.services.job_listener import BacktestJobListener
-from gr_data.config import settings
+from gr_data.config import settings, setup_logging
 from gr_data.db import pg_pool
 
 
@@ -96,6 +95,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     slightly higher latency). The lock is released explicitly in
     ``stop()``.
     """
+    setup_logging(settings, filters=(RequestIdLogFilter(),))
     await pg_pool.init()
 
     listener = BacktestJobListener()
@@ -141,16 +141,6 @@ def create_app() -> FastAPI:
         default_response_class=ORJSONResponse,
         lifespan=lifespan,
     )
-
-    # Install the per-request log filter on the ROOT logger so it
-    # applies to every existing ``logging.getLogger(__name__)``
-    # caller in the codebase. The filter is idempotent (adding
-    # the same instance twice is a no-op on subsequent calls
-    # because we check by identity), so re-creating the app
-    # under ``uvicorn --reload`` doesn't stack filters.
-    _root_logger = logging.getLogger()
-    if not any(isinstance(f, RequestIdLogFilter) for f in _root_logger.filters):
-        _root_logger.addFilter(RequestIdLogFilter())
 
     # RequestIdMiddleware MUST be the OUTERMOST layer so that
     # every other middleware (security headers, metrics, CORS)

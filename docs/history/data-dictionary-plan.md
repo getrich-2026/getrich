@@ -1,7 +1,11 @@
-# 实施计划：数据字典生成器（`gr-db docs`）+ DDL 注释门禁
+# 数据字典生成器：已完成实施计划
 
-> 本文档是给**执行 agent** 的自包含实施计划。开工前请先读 `AGENTS.md`（项目约束唯一真源）
-> 与 `.agent/brain/DECISIONS.md`。文中所有路径均相对仓库根目录。
+读者：追溯实现背景的维护者；Agent 仅在核查历史时按需读取。
+状态：历史材料，主体能力已实现，2026-09-08 对照 `gr_db/docs/`、测试与 CI 确认。
+当前用法见 [数据字典指南](../guides/data-dictionary.md)，当前规则见 [AGENTS.md](../../AGENTS.md)。
+
+下文是实施前快照：表数、schema 数、CLI 能力与待办描述不代表现状；存量注释后来也已补齐。
+其中命令和“新建／交付”段落仅供追溯，不构成执行授权。代码路径均相对仓库根目录。
 
 ## 1. 背景与目标
 
@@ -24,7 +28,7 @@ pick 2、fundamental 2、staging 1、realtime 1。
 本仓库。分仓即刻违反 `AGENTS.md` §2「全部 DDL 的唯一真源是 `gr_db/ddl/`」——DDL 一改，
 外仓字典就烂且无人知晓。
 
-## 2. 探索已确认的事实（不必重新验证）
+## 2. 实施前核查快照（复用前需重新验证）
 
 1. **ingest 层有统一注册表**。5 个 provider（`tushare` / `datayes` / `insight` / `ricequant` /
    `yinhe`）的 `packages/gr-data/src/gr_data/ingest/<provider>/__init__.py` 一律导出
@@ -272,8 +276,8 @@ uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/de
 
 ## 10. 交付后
 
-- 按 `AGENTS.md` §7 更新 `.agent/brain/NOTES.md`
-- 在 `.agent/brain/DECISIONS.md` 追加一条：「`common/contracts` 与 gr-db DDL 的对齐此前无人守，
+- 按 `AGENTS.md` §7 更新 `.agents/brain/NOTES.md`
+- 在 `.agents/brain/DECISIONS.md` 追加一条：「`common/contracts` 与 gr-db DDL 的对齐此前无人守，
   现由 `gr-db docs --fail-on-drift` 在 CI 承担」
 
 ## 11. 后续（不在本轮）

@@ -13,6 +13,7 @@ ingest 职责：读 raw parquet（或直连 SDK）→ 归一化为 canonical →
 from __future__ import annotations
 
 import abc
+import logging
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -27,7 +28,6 @@ from gr_data.common.ownership import OwnershipManager
 from gr_data.common.paths import RawPaths
 from gr_data.common.quality import check_dataframe
 from gr_data.db.copy import upsert_rows
-from gr_data.logging import get_logger
 
 
 def _json_safe(value: Any) -> Any:
@@ -104,7 +104,7 @@ class BaseImporter(abc.ABC):
         self.conn = conn
         self.ctx = ctx
         self.client = client  # 直连 SDK 时用；读 parquet 模式可为 None
-        self.log = get_logger(f"ingest.{self.PROVIDER}.{self.DATASET}")
+        self.log = logging.getLogger(f"gr_data.ingest.{self.PROVIDER}.{self.DATASET}")
 
     @property
     def paths(self) -> RawPaths:

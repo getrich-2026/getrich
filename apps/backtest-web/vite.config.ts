@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 
 // Vendor chunk categories for the production build. See
-// `.agent/brain/NOTES.md` (2026-06-03 Vite build chunk 拆分) for the
+// Git history (2026-06-03 Vite build chunk 拆分) for the
 // motivation. Function form lets us bucket node_modules paths by
 // package name; everything that doesn't match falls into the
 // auto-generated `index` (app code + tiny vendors).

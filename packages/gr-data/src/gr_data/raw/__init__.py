@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from gr_data.common.paths import RawPaths
 from gr_data.config.pipeline import Config
-from gr_data.logging import get_logger
 from gr_data.raw.base import RawContext
 from gr_data.raw.datayes.client import (
     DEFAULT_BASE_URL as DATAYES_DEFAULT_BASE_URL,
@@ -17,7 +17,7 @@ from gr_data.raw.datayes.client import (
 )
 
 
-log = get_logger("raw.runner")
+log = logging.getLogger(__name__)
 
 PROVIDERS = ("yinhe", "ricequant", "insight", "tushare", "datayes")
 

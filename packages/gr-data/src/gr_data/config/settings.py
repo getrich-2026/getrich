@@ -12,9 +12,13 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from gr_tools.config import LoggingConfig
+from gr_tools.logging import configure_logging
 
 
 # Optional: Load dotenv if available
@@ -311,28 +315,6 @@ class BacktestStorageConfig:
 
 
 @dataclass(frozen=True)
-class LoggingConfig:
-    """Logging Configuration"""
-
-    level: str
-    format: str
-    file_path: Path | None
-
-    @classmethod
-    def from_env(cls, project_root: Path) -> LoggingConfig:
-        level = _get_env("LOG_LEVEL", "INFO")
-        fmt = _get_env("LOG_FMT", "[%(asctime)s][%(name)s][%(levelname)s] %(message)s")
-        file_str = _get_env("LOG_FILE")
-
-        file_path = None
-        if file_str:
-            p = Path(file_str)
-            file_path = p if p.is_absolute() else project_root / p
-
-        return cls(level=(level or "INFO").upper(), format=fmt or "", file_path=file_path)
-
-
-@dataclass(frozen=True)
 class RiceQuantConfig:
     """RiceQuant Data Source Configuration"""
 
@@ -625,19 +607,20 @@ def load_settings(env_file: str | None = None) -> Settings:
     )
 
 
-def setup_logging(settings: Settings) -> None:
-    """
-    Applies the logging configuration globally.
-    Call this at the very start of your application entrypoint.
-    """
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
-
-    if settings.logging.file_path:
-        settings.logging.file_path.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(settings.logging.file_path, encoding="utf-8"))
-
-    logging.basicConfig(
-        level=settings.logging.level, format=settings.logging.format, handlers=handlers, force=True
+def setup_logging(
+    settings: Settings,
+    *,
+    level: str | int | None = None,
+    file_path: Path | None = None,
+    filters: Sequence[logging.Filter] = (),
+) -> None:
+    """入口将全局配置适配到通用日志工具；显式选项优先于环境配置。"""
+    configure_logging(
+        level=settings.logging.level if level is None else level,
+        file_path=settings.logging.file_path if file_path is None else file_path,
+        text_format=settings.logging.format,
+        json_format=settings.logging.json_format,
+        filters=filters,
     )
 
 

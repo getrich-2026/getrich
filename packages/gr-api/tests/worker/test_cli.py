@@ -6,7 +6,7 @@ into the canonical ``celery`` entrypoint. Its only jobs:
 
 1. Load settings eagerly so the Celery app's broker URL
    comes from the same ``.env`` as the API process.
-2. Optionally configure logging via ``cfg.setup_logging()``.
+2. Pass the configured log level to the new process.
 3. Build the right ``celery`` argv and ``os.execvp`` into it.
 
 We test by patching ``os.execvp`` so the test process is
@@ -36,7 +36,7 @@ def test_cli_worker_subcommand_builds_canonical_argv() -> None:
         patch.object(cli.os, "execvp") as fake_exec,
         patch.object(sys, "argv", ["cli", "worker"]),
     ):
-        fake_load.return_value = MagicMock(spec=[])  # no setup_logging attr
+        fake_load.return_value = MagicMock(logging=MagicMock(level="INFO"))  # no setup_logging attr
 
         cli.main()
 
@@ -59,7 +59,7 @@ def test_cli_beat_subcommand_builds_canonical_argv() -> None:
         patch.object(cli.os, "execvp") as fake_exec,
         patch.object(sys, "argv", ["cli", "beat"]),
     ):
-        fake_load.return_value = MagicMock(spec=[])
+        fake_load.return_value = MagicMock(logging=MagicMock(level="INFO"))
 
         cli.main()
 
@@ -80,7 +80,7 @@ def test_cli_passes_through_extra_args() -> None:
         patch.object(cli.os, "execvp") as fake_exec,
         patch.object(sys, "argv", ["cli", "worker", "--concurrency=4", "-Q", "high"]),
     ):
-        fake_load.return_value = MagicMock(spec=[])
+        fake_load.return_value = MagicMock(logging=MagicMock(level="INFO"))
 
         cli.main()
 
@@ -104,43 +104,24 @@ def test_cli_loads_settings_eagerly() -> None:
         patch.object(cli.os, "execvp"),
         patch.object(sys, "argv", ["cli", "worker"]),
     ):
-        fake_load.return_value = MagicMock(spec=[])
+        fake_load.return_value = MagicMock(logging=MagicMock(level="INFO"))
 
         cli.main()
 
     fake_load.assert_called_once()
 
 
-def test_cli_calls_setup_logging_when_present() -> None:
-    """If `load_settings()` returns a config that exposes
-    `setup_logging()` (the project convention), the CLI
-    calls it before exec'ing celery — so worker log lines
-    match the API log format."""
-    fake_cfg = MagicMock()
-    fake_cfg.setup_logging = MagicMock()
-
+def test_cli_passes_configured_level_to_new_process() -> None:
+    """配置必须通过 exec 参数传入新进程，不能只在即将退出的进程配置。"""
+    fake_cfg = MagicMock(logging=MagicMock(level="WARNING"))
     with (
         patch.object(cli, "load_settings", return_value=fake_cfg),
-        patch.object(cli.os, "execvp"),
+        patch.object(cli.os, "execvp") as fake_exec,
         patch.object(sys, "argv", ["cli", "worker"]),
     ):
         cli.main()
-
-    fake_cfg.setup_logging.assert_called_once()
-
-
-def test_cli_skips_setup_logging_when_absent() -> None:
-    """Some test/mock configurations don't have
-    `setup_logging`. The CLI must not crash — the
-    `hasattr(cfg, "setup_logging")` guard handles this."""
-    fake_cfg = MagicMock(spec=[])  # no setup_logging attr
-
-    with (
-        patch.object(cli, "load_settings", return_value=fake_cfg),
-        patch.object(cli.os, "execvp"),
-        patch.object(sys, "argv", ["cli", "worker"]),
-    ):
-        cli.main()  # should not raise
+    assert "--loglevel=WARNING" in fake_exec.call_args[0][1]
+    fake_cfg.setup_logging.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +138,7 @@ def test_cli_no_args_prints_doc_and_exits_2() -> None:
         patch.object(cli.os, "execvp") as fake_exec,
         patch.object(sys, "argv", ["cli"]),
     ):
-        fake_load.return_value = MagicMock(spec=[])
+        fake_load.return_value = MagicMock(logging=MagicMock(level="INFO"))
 
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -176,7 +157,7 @@ def test_cli_unknown_subcommand_exits_2() -> None:
         patch.object(cli.os, "execvp") as fake_exec,
         patch.object(sys, "argv", ["cli", "foo"]),
     ):
-        fake_load.return_value = MagicMock(spec=[])
+        fake_load.return_value = MagicMock(logging=MagicMock(level="INFO"))
 
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -193,7 +174,7 @@ def test_cli_unknown_subcommand_includes_subcommand_in_message() -> None:
         patch.object(cli.os, "execvp"),
         patch.object(sys, "argv", ["cli", "frobnicate"]),
     ):
-        fake_load.return_value = MagicMock(spec=[])
+        fake_load.return_value = MagicMock(logging=MagicMock(level="INFO"))
 
         with pytest.raises(SystemExit):
             cli.main()

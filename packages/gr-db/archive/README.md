@@ -7,7 +7,7 @@
 
 这些脚本建的是已经废弃的 `frontend` schema。当前的 schema 划分是
 `app`（业务）+ `backtest`（回测产物），`frontend` 已不复存在
-（见 `AGENTS.md` §2 与 `.agent/brain/DECISIONS.md` D-020）。在现有库上执行会
+（见 `AGENTS.md` §2 与 `.agents/brain/DECISIONS.md` D-020）。在现有库上执行会
 建出一套与应用完全对不上的影子表。
 
 其中还包含 `14_mock_data.sql` 这类演示数据，误跑到真库上会污染业务表。

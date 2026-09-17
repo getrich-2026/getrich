@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import psycopg
@@ -9,10 +10,9 @@ import psycopg
 from gr_data.common.paths import RawPaths
 from gr_data.config.pipeline import Config
 from gr_data.ingest.base import IngestContext, IngestResult
-from gr_data.logging import get_logger
 
 
-log = get_logger("ingest.runner")
+log = logging.getLogger(__name__)
 
 PROVIDERS = ("yinhe", "ricequant", "insight", "tushare", "datayes")
 

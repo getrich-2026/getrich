@@ -118,3 +118,37 @@ def test_logger_is_independent_per_module_name() -> None:
     assert a._logger is not b._logger
     assert a._logger.name == "module.a"
     assert b._logger.name == "module.b"
+
+
+def test_legacy_loggers_do_not_configure_handlers() -> None:
+    """旧兼容接口与 ClickHouse 包装类不能隐式配置任何输出。"""
+    from gr_data.logging import get_logger
+
+    root = logging.getLogger()
+    data = logging.getLogger("gr_data")
+    before = (root.handlers[:], data.handlers[:], root.level, data.propagate)
+    get_logger("test")
+    Logger("ClickHouseExample")
+    assert (root.handlers[:], data.handlers[:], root.level, data.propagate) == before
+
+
+def test_settings_adapter_respects_exact_filename_and_format(tmp_path, monkeypatch) -> None:
+    """回归 gr-data CLI 忽略 LOG_FILE basename 与 LOG_FMT 的问题。"""
+    from types import SimpleNamespace
+
+    from gr_data.config import LoggingConfig, setup_logging
+
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    monkeypatch.setattr(root, "level", logging.WARNING)
+    path = tmp_path / "chosen.log"
+    cfg = SimpleNamespace(logging=LoggingConfig(format="%(message)s", file_path=path))
+    try:
+        setup_logging(cfg)
+        logging.getLogger("gr_data.example").warning("exact-output")
+        assert path.read_text().strip() == "exact-output"
+        assert not (tmp_path / "gr_data.log").exists()
+    finally:
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+            handler.close()

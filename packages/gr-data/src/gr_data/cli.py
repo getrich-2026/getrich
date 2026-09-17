@@ -13,25 +13,22 @@ provider ∈ {yinhe, ricequant, insight, tushare}（stream 仅 yinhe/insight）�
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 
-from gr_data.config import settings
+from gr_data.config import settings, setup_logging
 from gr_data.config.pipeline import Config, load_config
 from gr_data.db.sync import PgConfig, connect
-from gr_data.logging import configure_logging, get_logger
 
 
-log = get_logger("cli")
+log = logging.getLogger(__name__)
 
 
 def _configure_logging_from(cfg: Config) -> None:
     """日志配置来自 settings（根 .env），不从 config.yaml 读。"""
     del cfg  # 保留签名，配置来源已统一到 settings
-    configure_logging(
-        level=settings.logging.level,
-        log_dir=str(settings.logging.file_path.parent) if settings.logging.file_path else None,
-    )
+    setup_logging(settings)
 
 
 #: 批量入库的 statement_timeout（毫秒）。``PgConfig`` 的默认值 60s 是给交互式短

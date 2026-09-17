@@ -11,13 +11,13 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 import time
 from pathlib import Path
 
 from gr_api.errors import ApiError
 from gr_api.services.pick_import import PickImportResult, import_picks_sync
+from gr_data.config import settings, setup_logging
 from gr_tools import human
 
 
@@ -71,10 +71,7 @@ def _report(result: PickImportResult, elapsed: float) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    setup_logging(settings, level="DEBUG" if args.verbose else None)
 
     started = time.monotonic()
     try:

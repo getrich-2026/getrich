@@ -10,6 +10,7 @@ PgTickWriter 批量 upsert 进 PG。本层不依赖具体 SDK，provider 子类�
 from __future__ import annotations
 
 import abc
+import logging
 import queue
 import threading
 from dataclasses import dataclass
@@ -18,7 +19,6 @@ from datetime import date, datetime
 import psycopg
 
 from gr_data.common.ownership import OwnershipManager
-from gr_data.logging import get_logger
 
 
 REALTIME_TARGET = "realtime.tick_buffer"
@@ -53,7 +53,7 @@ class CallbackBridge:
         try:
             self._q.put_nowait(event)
         except queue.Full:
-            get_logger("stream.bridge").warning(
+            logging.getLogger(__name__).warning(
                 "事件队列已满，丢弃一条 tick（source=%s）", event.source
             )
 
@@ -91,7 +91,7 @@ class BaseStreamHandler(abc.ABC):
     def __init__(self, conn: psycopg.Connection, bridge: CallbackBridge | None = None):
         self.conn = conn
         self.bridge = bridge or CallbackBridge()
-        self.log = get_logger(f"stream.{self.PROVIDER}")
+        self.log = logging.getLogger(f"gr_data.stream.{self.PROVIDER}")
 
     def claim_ownership(self, *, force: bool = False) -> None:
         """登记 realtime.tick_buffer 归属（channel='stream'）。"""

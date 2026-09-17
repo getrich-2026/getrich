@@ -3,8 +3,10 @@
 依赖图最底层的叶子：**不依赖任何一方包**（``gr_data`` / ``gr_api`` 等一律
 不许出现在这里），其它包可以自由依赖它。
 
-三个模块：
+公共模块：
 
+* :mod:`gr_tools.config` —— 公共配置模型，不加载全局配置
+* :mod:`gr_tools.logging` —— 启动入口使用的日志配置与格式化
 * :mod:`gr_tools.fs` —— 路径与文件操作
 * :mod:`gr_tools.io` —— 按后缀分发的表格读取（csv / parquet / excel / feather）
 * :mod:`gr_tools.human` —— 日志与 CLI 输出的人性化格式化

@@ -28,6 +28,7 @@ def _reload_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_three_run_job_tasks_registered() -> None:
     """All three task names are present in the Celery app registry."""
+    celery_app.app.loader.import_default_modules()
     names = {n for n in celery_app.app.tasks if not n.startswith("celery.")}
     assert {"backtest.run_job", "sweep.run_job", "walk_forward.run_job"}.issubset(names)
 
@@ -68,3 +69,34 @@ def test_serializer_is_json() -> None:
     assert celery_app.app.conf.task_serializer == "json"
     assert celery_app.app.conf.result_serializer == "json"
     assert "json" in celery_app.app.conf.accept_content
+
+
+def test_celery_startup_uses_shared_logging(tmp_path, monkeypatch) -> None:
+    """在 Celery 的真实日志启动阶段接管配置，不连接 broker。"""
+    import json
+    import logging
+    from dataclasses import replace
+
+    from celery.app.log import Logging
+    from gr_tools.config import LoggingConfig
+
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    monkeypatch.setattr(root, "level", logging.WARNING)
+    monkeypatch.setattr(Logging, "_setup", False)
+    monkeypatch.setattr(
+        celery_app,
+        "settings",
+        replace(app_settings, logging=LoggingConfig(json_format=True)),
+    )
+    output = tmp_path / "celery.json"
+    try:
+        celery_app.app.log.setup_logging_subsystem(loglevel="WARNING", logfile=str(output))
+        logging.getLogger("gr_api.worker.example").info("hidden")
+        logging.getLogger("gr_api.worker.example").warning("visible")
+        records = [json.loads(line) for line in output.read_text().splitlines()]
+        assert [record["msg"] for record in records] == ["visible"]
+    finally:
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+            handler.close()

@@ -106,3 +106,24 @@ uv run gr-data own release market.stock_bar_1d           # 解除
 
 数据接入的口径约定（时区语义、symbol 归一化、parquet 布局、日志、命名）见
 `AGENTS.md` §3.4；各供应商的接口设计文档在 `getrich-design/data-platform/`。
+
+
+## 配置与日志
+
+应用配置由 `gr_data.config.Settings` 组装；它是兼容入口，不要求其他包的业务代码为了记录日志依赖 gr-data。
+公共日志模型在 `gr_tools.config.LoggingConfig`，输出工具在 `gr_tools.logging`；模块直接用标准库 logger。
+
+| 来源 | 内容 | 示例 |
+|---|---|---|
+| 环境变量／本地 `.env` | 环境差异、连接、凭证、机器路径、输出选项 | PG_*、TUSHARE_TOKEN、RAW_PARQUET_ROOT、LOG_LEVEL／LOG_FMT／LOG_FILE／LOG_JSON |
+| Python config | 类型、校验、默认值与应用组装 | LoggingConfig、Settings |
+| `config.yaml` | 结构化采集参数 | provider、dataset 启用列表、抓取范围、重试与限频 |
+
+真实环境变量优先于 `.env`；YAML 不复制数据库与日志配置。默认使用 PostgreSQL 和 inproc 作业路径，
+Redis 仅在 Celery 模式需要，ClickHouse 仅在使用因子输出相关能力时需要。
+
+CLI／API／worker 启动入口统一配置日志，库模块导入不创建 handler 或日志文件。
+LOG_FILE 使用完整文件名，相对路径以 workspace 根解析；LOG_JSON=true 输出单行 JSON，
+否则使用 LOG_FMT。结构化字段使用 `extra` 或 `extra={"context": {...}}`，不得记录凭证或完整请求／供应商 payload。
+CLI 的 `--verbose` 优先于 LOG_LEVEL，Celery 显式 `--loglevel`／`--logfile` 优先于环境选项。
+重配只关闭本项目管理的 handler，保留测试／宿主框架的 handler；框架自身的访问日志配置仍由框架管理。

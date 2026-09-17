@@ -1,7 +1,8 @@
 # 前端启动指南（`apps/web`）
 
 Vite 8（Rolldown）+ React 19 + TypeScript 6 + Tailwind 4。本文只讲怎么把开发环境跑起来。
-编码规范在 `AGENTS.md` §5。
+读者：启动和维护主前端的开发者。编码规范见 [AGENTS.md](../../AGENTS.md) §5。
+下文命令除 `cd apps/web` 后的 npm 命令外均从仓库根目录执行。
 
 ---
 
@@ -16,12 +17,11 @@ cp .env.example .env      # 然后填 PG / CH / Redis 的真实连接信息
 # 全新库要先建表，否则接口全 500
 uv run gr-db migrate --target pg
 
-# 启动 FastAPI。端口取 .env 的 WEB_PORT
+# 启动 FastAPI。显式端口与 Vite 代理一致
 uv run uvicorn gr_api.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
-> **端口以 `.env` 的 `WEB_PORT` 为准**（当前是 8001）。`AGENTS.md` 的命令示例里写的是
-> 8000，那是默认值，两处不一致时以 `.env` 为准，前端代理也要跟着对上（§3）。
+> 示例显式使用 8001，与当前 Vite proxy 一致。uvicorn 的 `--port` 不会自动读取项目的 `WEB_PORT`；变更监听端口时同步代理配置。
 
 自检：
 
@@ -37,7 +37,7 @@ npm ci            # 按 package-lock 精确安装（CI 用的就是它）
 ```
 
 **Node 至少 `^20.19.0` 或 `>=22.12.0`** —— 这是 Vite 8 的硬性下限，低于它装不上。
-本地实测 Node v24.15.0 / npm 11.18.0，CI 也钉在 24，建议保持一致。
+CI 使用 Node 24，开发环境建议保持一致。
 `package.json` 自身没写 `engines`，约束来自 `vite` 与 `@vitejs/plugin-react`。
 
 > 日常新增依赖才用 `npm install`；复现构建、排查「本地能跑 CI 挂了」一律用 `npm ci`。
@@ -90,12 +90,12 @@ server: {
 其它命令：
 
 ```bash
-npm run lint      # ESLint（当前 0 error）
-npm run build     # tsc -b && vite build（当前通过，约 3–5s）
+npm run lint      # ESLint
+npm run build     # tsc -b && vite build
 npm run preview   # 预览生产构建产物
 ```
 
-`lint` + `build` 就是 CI 的全部门禁（前端没有测试框架），两者现在都是绿的。
+`lint` + `build` 就是 CI 的全部门禁（前端没有测试框架），结果以本次执行和 CI 为准。
 
 ## 5. 外网访问
 
@@ -150,24 +150,12 @@ Tailwind 4 把配置搬进了 CSS，构建走 `vite.config.ts` 里的 `@tailwind
 - `src/components/ui/` 由 shadcn CLI 托管，**不手改**。它本来就是按 v4 生成的，
   现在项目终于和它对齐，用 CLI 加新组件不会再出 v4-only 语法编译不了的问题。
 
-迁移的完整记录见 `.agent/brain/DECISIONS.md` D-033。
+迁移的完整记录见 [决策记录](../../.agents/brain/DECISIONS.md) D-033。
 
-## 7. 已知问题
+## 7. 尚未解决的接口问题
 
-- **接口契约与后端有系统性错位，部分尚未解决。** 最需要注意的是枚举取值域：
-  真库返回的 `signal_type: "stock"`、`urgency: "normal"` 都超出前端类型声明的
-  联合类型，**TypeScript 拦不住**，页面会静默走进兜底分支（显示成「预警」「普通」），
-  不报错但显示的是错的。全貌见 `.agent/brain/NOTES.md` 的
-  「⚠️ 待讨论：前后端接口契约的系统性错位」一章 —— 动接口相关代码前先读那一章。
-- **`/v1/signals/{id}` 缺 5 个前端已设计的字段**，对应 4 块 UI 现在是占位符，
-  源码里留了 `TODO(后端)` 注释，后端补齐后按注释恢复。
-- **`apps/backtest-web` 暂停维护**（缺 `src/lib/utils`、`src/lib/sanitize`），
-  等 API 稳定后重做，现在不用管它。它的 `package.json` 里版本号虽然也是
-  Vite 8 / Tailwind 4 / TS 6（依赖机器人抬上去的），但**没有人跑过、更没做过迁移**，
-  别把它的状态当成「已升级完成」。
-
-> 历史遗留的 `tsc` 失败与 45 个 lint 错误都已清零（见 `DECISIONS.md` D-031 / D-032），
-> 本节不再保留那些条目。
+信号枚举、详情缺字段与契约生成方案统一维护在 [待决问题](../plans/backlog.md)。
+修改相关页面前核查目标接口的实际返回。`apps/backtest-web` 暂停维护，不属于本文启动范围。
 
 ## 8. 排查
 

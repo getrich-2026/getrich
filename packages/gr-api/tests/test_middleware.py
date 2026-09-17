@@ -260,22 +260,61 @@ def test_request_id_filter_attaches_to_log_records() -> None:
         _current_request_id.reset(token)
 
 
-def test_create_app_installs_filter_and_middleware() -> None:
-    """End-to-end: ``create_app()`` wires the filter to the root
-    logger and the middleware to the app stack. Without this, no
-    log line in production carries the id."""
-    # Reload the web package to clear any per-test filter state
-    # installed by a previous test (the idempotency check in
-    # ``create_app()`` prevents double-add, so a fresh import
-    # gives a clean baseline).
-    from gr_api.main import create_app
+def test_api_lifespan_configures_request_logs_and_security_headers(tmp_path, monkeypatch) -> None:
+    """真实启动入口把子 logger 的 request_id 写入输出，保留四个安全头。"""
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
-    app = create_app()
-    client = TestClient(app)
+    import gr_api.main as main_module
+    from gr_tools.config import LoggingConfig
 
-    root_filters = logging.getLogger().filters
-    assert any(isinstance(f, RequestIdLogFilter) for f in root_filters)
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    monkeypatch.setattr(root, "level", logging.WARNING)
+    config = main_module.settings
+    # 使用现有配置的非日志字段，日志只写测试目录。
+    from dataclasses import replace
 
-    # The middleware emits X-Request-Id on /health.
-    r = client.get("/health")
-    assert "X-Request-Id" in r.headers
+    output = tmp_path / "api.json"
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        replace(config, logging=LoggingConfig(file_path=output, json_format=True)),
+    )
+    monkeypatch.setattr(main_module.pg_pool, "init", AsyncMock())
+    monkeypatch.setattr(main_module.pg_pool, "close", AsyncMock())
+    listener = SimpleNamespace(start=AsyncMock(), stop=AsyncMock(), is_holder=False)
+    monkeypatch.setattr(main_module, "BacktestJobListener", lambda: listener)
+    app = main_module.create_app()
+
+    @app.get("/logging-test")
+    async def log_request() -> dict[str, bool]:
+        logging.getLogger("gr_api.services.logging_test").warning("request-event")
+        return {"ok": True}
+
+    try:
+        with TestClient(app) as client:
+            for request_id in ("test-first", "test-second"):
+                response = client.get("/logging-test", headers={"X-Request-Id": request_id})
+                assert response.status_code == 200
+                assert response.headers["X-Request-Id"] == request_id
+                for header in (
+                    "Content-Security-Policy",
+                    "X-Frame-Options",
+                    "X-Content-Type-Options",
+                    "Referrer-Policy",
+                ):
+                    assert response.headers[header]
+            logging.getLogger("gr_api.services.logging_test").warning("outside-event")
+        records = [json.loads(line) for line in output.read_text().splitlines()]
+        events = [record for record in records if record["msg"] == "request-event"]
+        assert [record["request_id"] for record in events] == ["test-first", "test-second"]
+        assert (
+            next(record for record in records if record["msg"] == "outside-event")["request_id"]
+            == "-"
+        )
+    finally:
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+            handler.close()

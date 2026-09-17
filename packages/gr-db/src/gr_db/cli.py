@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-from gr_data.config import settings
+from gr_data.config import settings, setup_logging
 from gr_data.config.pipeline import load_config
 
 from .executors import (
@@ -107,10 +107,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _configure_logging(verbose: bool) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    setup_logging(settings, level="DEBUG" if verbose else None)
 
 
 def _print_status(directory: Path) -> int:
