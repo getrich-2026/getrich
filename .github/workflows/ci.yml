@@ -6,7 +6,6 @@ on:
     paths:
       - "packages/**"
       - "scripts/**"
-      - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
@@ -16,7 +15,6 @@ on:
     paths:
       - "packages/**"
       - "scripts/**"
-      - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
@@ -36,7 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.12"
+  UV_PYTHON: "3.12"
   UV_VERSION: "0.12.3"
 
 jobs:
@@ -61,10 +59,10 @@ jobs:
           cache-suffix: quality
 
       - name: Install Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
+        run: uv python install ${{ env.UV_PYTHON }}
 
       - name: Install workspace
-        run: uv sync --frozen --all-packages
+        run: uv sync --locked --all-packages
 
       # 2026-08-16 起 Ruff 已清零（此前有 362 个既有问题），因此去掉
       # continue-on-error，让新引入的问题真正阻塞 CI。
@@ -79,9 +77,17 @@ jobs:
         run: uv run --frozen python scripts/lint_migrations.py --db all
 
       - name: Migration comment coverage
-        run: >-
-          uv run --frozen python scripts/lint_migrations.py --db pg --comments
-          --base-ref origin/${{ github.base_ref || 'dev' }}
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+        run: |
+          # push 不能与已更新到当前提交的 origin/dev 比较，否则检查永远为空。
+          # 新分支的 before 为全零；手动运行与新分支均检查最后一次提交。
+          if [ "$BASE_REF" = "0000000000000000000000000000000000000000" ]; then
+            BASE_REF='HEAD^'
+          fi
+          git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null
+          uv run --frozen python scripts/lint_migrations.py --db pg --comments \
+            --base-ref "$BASE_REF"
 
   python-tests:
     name: Python tests (${{ matrix.python-version }})
@@ -92,8 +98,6 @@ jobs:
       matrix:
         include:
           - python-version: "3.10"
-            coverage: false
-          - python-version: "3.11"
             coverage: false
           - python-version: "3.12"
             coverage: true
@@ -114,7 +118,7 @@ jobs:
           --health-retries 10
 
       clickhouse:
-        image: ${{ inputs.extra_services && 'clickhouse/clickhouse-server:26.3' || '' }}
+        image: ${{ inputs.extra_services && matrix.coverage && 'clickhouse/clickhouse-server:26.3' || '' }}
         ports:
           - 8123:8123
           - 9000:9000
@@ -125,7 +129,7 @@ jobs:
           --health-retries 10
 
       redis:
-        image: ${{ inputs.extra_services && 'redis:8.2.8' || '' }}
+        image: ${{ inputs.extra_services && matrix.coverage && 'redis:8.2.8' || '' }}
         ports:
           - 6379:6379
         options: >-
@@ -135,6 +139,8 @@ jobs:
           --health-retries 10
 
     env:
+      # uv 默认读取根 .python-version；只安装解释器不会切换测试版本。
+      UV_PYTHON: ${{ matrix.python-version }}
       PG_HOST: localhost
       PG_PORT: "5432"
       PG_USER: quant
@@ -146,7 +152,7 @@ jobs:
       CLICKHOUSE_PASSWORD: ""
       CLICKHOUSE_DB: default
       CLICKHOUSE_PROTOCOL: http
-      GETRICH_WORKER_BACKEND: ${{ inputs.extra_services && 'celery' || 'inproc' }}
+      GETRICH_WORKER_BACKEND: ${{ inputs.extra_services && matrix.coverage && 'celery' || 'inproc' }}
       GETRICH_BROKER_URL: redis://localhost:6379/0
       GETRICH_RESULT_BACKEND: redis://localhost:6379/1
 
@@ -168,13 +174,13 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install workspace
-        run: uv sync --frozen --all-packages
+        run: uv sync --locked --all-packages
 
       - name: Apply PostgreSQL migrations
         run: uv run --frozen gr-db migrate --target pg
 
       - name: Apply ClickHouse migrations
-        if: inputs.extra_services
+        if: inputs.extra_services && matrix.coverage
         run: uv run --frozen gr-db migrate --target ch
 
       - name: Data dictionary smoke
@@ -187,14 +193,11 @@ jobs:
 
       - name: Run tests with coverage
         if: matrix.coverage
+        env:
+          # 在 CI 的临时数据库中启用选股与持仓诊断的端到端测试。
+          GETRICH_TEST_PG: "1"
         run: |
-          uv run --frozen pytest \
-            --cov=gr_api \
-            --cov=gr_backtest \
-            --cov=gr_data \
-            --cov=gr_db \
-            --cov=gr_factor \
-            --cov=gr_signal \
+          uv run --frozen pytest --cov \
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-fail-under=75

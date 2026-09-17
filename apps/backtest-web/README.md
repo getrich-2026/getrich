@@ -1,4 +1,15 @@
-# React + TypeScript + Vite
+# 回测前端（暂停维护）
+
+本目录等待回测 API 稳定后重做，当前主前端在 [`apps/web`](../web)。
+2026-09-17 起移除独立 CI 工作流，避免暂停维护的应用持续消耗 CI 资源。
+
+恢复维护前，须补齐缺失的 `src/lib/`（ESLint 安全插件、`sanitize.ts`、`utils.ts`），
+使用与主前端一致的 Node 24，验证 `npm ci`、`npm run lint`、`npm run test:cov`、
+`npm run build`，再恢复工作流。移除 CI 不代表现有代码已经可构建。
+
+以下保留原始模板说明。
+
+## React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

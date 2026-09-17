@@ -16,16 +16,18 @@
 - `diag.data_version` 的维护流程未完成；数据更新后如何推进版本必须与缓存策略一起处理。
 - 策略／信号接口仍有契约与管理导入缺口；不能把诊断接口已有响应模型推广为所有接口均已覆盖。
 - 回测 `oi` 映射、公司行为接入、Black-Litterman 建模口径及选股历史关联回填见待决问题。
-- `apps/backtest-web` 暂停维护；`gr-agent` 仍为空包。无需在无关任务中顺手修复。
+- `apps/backtest-web` 暂停维护，2026-09-17 移除独立 CI；其 `src/lib/` 缺失，恢复维护前需补齐安全插件、HTML 清洗及 UI 工具，并重跑 lint／测试／构建，见该目录 README。`gr-agent` 仍为空包。
 
 ## 日志与默认运行模式
 
 - 公共日志模型／输出工具已下沉 gr-tools；现有 gr_data.config 作为配置组装兼容入口。各模块直接记录 stdlib 日志，程序入口配置输出，详见 D-062。
 - 默认 worker backend 为 inproc；CI 默认仅 PG，手动 extra_services 可启用 CH／Redis。未启动或停止本机数据库服务。
+- 2026-09-17：Python CI 保留 3.10 最低版本与 3.12 开发版本，显式用 UV_PYTHON 选择解释器；3.12 开启选股／诊断 PG 集成测试与 75% 覆盖率检查，覆盖率包范围读取 pyproject.toml。手动 CH／Redis 环境仅在 3.12 运行。主前端 Node 24 的 lint／build 保留。
 - 本地 .env 仅更新 worker backend；连接与凭证未迁移到源码或 YAML。
 
 ## 验证边界
 
+- 2026-09-17：CI 调整通过 actionlint 1.7.12、YAML／shell 语法检查、Ruff、423 文件格式检查、43 个迁移静态检查、5 项迁移 lint 测试和离线 uv lock 检查。未运行 GitHub Actions、全量测试或真实数据库集成；未查询远程分支保护，若旧回测检查被设为 required，需同步移除该设置。
 - 2026-09-07 的历史记录：诊断单元／HTTP 契约 73 项、PG 集成 5 项通过；该记录不代表当前全仓测试或数据库状态。
 - 2026-09-08：日志／配置、API 中间件与 worker、CLI、包边界相关回归 157 项通过（9 条既有 mock 协程警告）。使用隔离配置目录，未连接真实数据库；没有执行全仓测试或远程 CI。
 - 同日 Ruff 检查与 423 文件格式检查、迁移静态检查（PG 42／CH 1）、`uv lock --check`、`git diff --check` 通过；CI YAML 与默认服务条件静态验证通过。98 个本地链接／锚点、50 个唯一决策编号检查通过。
