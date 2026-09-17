@@ -1,6 +1,13 @@
-# GetRich
+# GetRich 📈
 
-A 股量化平台：数据接入、回测引擎、实盘信号、面向前端的查询 API。
+> 现代化、全链路 A 股量化投研与实盘信号平台。  
+> 数据接入 · 向量化回测 · 实盘信号 · 持仓诊断 · React 19 现代化界面
+
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TimescaleDB](https://img.shields.io/badge/TimescaleDB-PostgreSQL-FDB515?logo=postgresql&logoColor=black)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 读者：首次运行项目的开发者。功能操作说明和待办按下方导航查阅。
 
