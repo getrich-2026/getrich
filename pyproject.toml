@@ -5,7 +5,7 @@ description = "GetRich monorepo workspace"
 readme = "README.md"
 authors = [{ name = "GetRich Team", email = "linnan@nebulastar.com.cn" }]
 license = { text = "MIT" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "gr-agent",
     "gr-api",
@@ -40,7 +40,7 @@ line-length = 100
 # 阶段 6 会整体移出到 getrich-design 仓，这里先不纳入 lint。
 exclude = ["packages/gr-data/reference"]
 # 目标 Python 版本
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 # 融合后的规则集：你的原版 + 推荐增强
@@ -52,7 +52,9 @@ target-version = "py310"
 # UP: 语法现代化
 # N: 命名规范 (PEP8)
 select = ["E", "F", "I", "B", "SIM", "NPY", "UP", "N"]
-ignore = ["D203"]
+# 提高最低版本不强制改写仍有效的 UTC／TimeoutError 别名；
+# str + Enum 改为 StrEnum 还会改变 str() 行为，留给独立迁移及验证。
+ignore = ["D203", "UP017", "UP041", "UP042"]
 
 [tool.ruff.format]
 # 类似 Black 的自动格式化
@@ -221,7 +223,7 @@ reportMissingTypeStubs = false
 reportUnusedImport = "warning"         # 让 Ruff 负责删除，但这里显示警告
 reportUnusedVariable = "warning"
 reportDuplicateImport = "error"
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 
 # 允许我写 "多余" 的 isinstance 检查
 # 在实盘中，我不信任上游数据，即使 Type Hint 说它是 int，我也要 check 它是 int
@@ -245,8 +247,4 @@ dev = [
     "pytest",
     "pytest-cov>=6.0.0",
     "ruff",
-    # ``tomllib`` is stdlib in 3.11+; the CI matrix still
-    # includes 3.10, so we keep ``tomli`` as the fallback for
-    # the test that reads pyproject.toml.
-    "tomli>=2.0; python_version < '3.11'",
 ]

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gr-tools"
 version = "0.1.2"
 description = "GetRich 通用工具：文件系统、多格式表格读取、人性化格式化。不依赖任何一方包"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.0",
     "polars",

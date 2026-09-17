@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gr-api"
 version = "0.1.2"
 description = "GetRich FastAPI 应用：给前端提供查询接口，并承载回测作业队列与 Celery worker"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "bcrypt>=4.0",
     "bleach>=6.3.0",

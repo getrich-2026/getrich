@@ -134,8 +134,8 @@ class UnavailableMetric(BaseModel):
 
 # 用 TypeAliasType 而不是裸的 ``MetricValue = Annotated[...]``：后者不是
 # generic class，写 ``MetricValue[float]`` 会直接 TypeError。TypeAliasType 是
-# PEP 695 泛型别名的 3.10 兼容写法（PEP 695 的 ``type X[T] = ...`` 语法要 3.12，
-# 本仓下限是 3.10），Pydantic v2 原生支持它做判别联合。
+# PEP 695 泛型别名的 3.11 兼容写法（PEP 695 的 ``type X[T] = ...`` 语法要 3.12，
+# 本仓下限是 3.11），Pydantic v2 原生支持它做判别联合。
 MetricValue = TypeAliasType(
     "MetricValue",
     Annotated[

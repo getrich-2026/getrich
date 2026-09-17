@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gr-agent"
 version = "0.1.2"
 description = "GetRich agent workspace placeholder"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [tool.setuptools]

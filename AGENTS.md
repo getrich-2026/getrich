@@ -52,7 +52,7 @@ gr-factor（独立）
 新增跨包 import 前先确认方向。gr-tools 里出现任何一方包的 import 都会让依赖成环
 （gr-data 想用它的读文件能力时会互相 import），后一个测试专门挡这个。
 
-- Python 3.10+，首行 `from __future__ import annotations`；依赖统一用 `uv` 管理，不用 pip。
+- Python 3.11+，首行 `from __future__ import annotations`；依赖统一用 `uv` 管理，不用 pip。
 - 数据处理优先 Polars / DuckDB；pandas 只留给小数据和兼容场景。
 - 后端服务用 FastAPI。
 - **数据库单独部署，不随应用一起构建**：`deploy/docker-compose.yml` + `deploy/config/` 只定义 PostgreSQL、ClickHouse、Redis 三个基础设施服务，是可复现的部署模板；GetRich 仓库内不创建 Docker 实例。真实 `.env`、数据卷、日志和运维脚本全部放在仓库外的部署目录，不进 git。仓库内不维护应用的 Dockerfile 或 systemd unit。

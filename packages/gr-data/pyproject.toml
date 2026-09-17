@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gr-data"
 version = "0.1.2"
 description = "GetRich 数据层：配置、数据库客户端，以及外部数据接入（raw → ingest → PostgreSQL/TimescaleDB，含 stream 实时层）"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "gr-tools",
     "akshare",

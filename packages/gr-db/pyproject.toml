@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gr-db"
 version = "0.1.2"
 description = "GetRich 数据库定义与迁移：全部 DDL 的唯一真源，PostgreSQL + ClickHouse 迁移执行器"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "clickhouse-connect",
     "gr-data",

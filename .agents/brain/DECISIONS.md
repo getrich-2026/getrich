@@ -618,7 +618,7 @@ InstrumentIndustryImporter 的区间压缩需要全历史，不能把每个月�
 
 <a id="d-046"></a>
 
-### D-046 泛型判别联合在 3.10 下要用 `TypeAliasType`，裸 `Annotated` 别名会 TypeError
+### D-046 泛型判别联合在 3.11 下保留 `TypeAliasType`，裸 `Annotated` 别名会 TypeError
 
 `MetricValue[T]`（`OkMetric[T] | DegradedMetric[T] | UnavailableMetric`，按
 `status` 判别）第一版写成：
@@ -632,7 +632,7 @@ MetricValue = Annotated[OkMetric[T] | DegradedMetric[T] | UnavailableMetric,
 `Annotated[...]` 的赋值别名**不是** generic class，不能再下标。
 
 PEP 695 的 `type MetricValue[T] = ...` 能解决，但那是 **3.12 语法**，本仓下限
-3.10。可用的写法是 `typing_extensions.TypeAliasType`：
+3.11。可用的写法是 `typing_extensions.TypeAliasType`：
 
 ```python
 MetricValue = TypeAliasType(
@@ -644,6 +644,11 @@ MetricValue = TypeAliasType(
 ```
 
 Pydantic v2 原生支持它做判别联合，`MetricValue[float]` 正常工作。
+
+2026-09-17：用户决定停止支持 Python 3.10，最低版本统一为 3.11，CI 保留
+3.11／3.12；诊断模型可直接使用标准库 `StrEnum`。提高 Ruff 目标版本时暂不
+强制 UP017／UP041／UP042 的风格迁移，尤其不能将现有 `str, Enum` 机械替换
+为 `StrEnum` 而改变字符串转换行为。PEP 695 语法仍需 3.12，因此保留上述写法。
 
 <a id="d-047"></a>
 
