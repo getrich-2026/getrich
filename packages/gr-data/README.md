@@ -98,15 +98,118 @@ uv run gr-data ingest tushare --only bars_1d,market_ext,fundamental,classify --m
 缺涨跌停价保留 NULL；未知标的告警后跳过。股票辅助表关联前统一 int8／字符串日期
 及代码首尾空格，再按键去重；期货成交量与持仓量保持「手」。
 
+### 米筐风险模型五件套
+
+DataYes 试用到期后的接替入口为 `rq_risk_model`，独立于 R1–R10 补充数据。
+支持米筐标准 `v1/v2/v2trd`、`sws_2021/citics_2019`，期限固定 `daily`，
+因子收益固定 `whole_market + implicit`。SDK 按日取暴露、因子收益、协方差、
+特异收益和特异波动率；不需要额外 SDK，也不修改现有 DDL。
+
+先填写 `providers.ricequant.risk_model`：显式起止日期、沪深股票代码清单、
+模型／行业体系、确认的模块权限及四项源单位和核对依据，再设置 `selected: true`。
+本地官方文档未明确全部数值单位，因此样例保持空值，不能照抄其他供应商的系数。
+`order_book_ids` 是本次完整采集范围；不会用当前股票名单回填历史，不自动跳过
+尚未上市、停牌或模型不覆盖的股票。范围内任一股票缺失时整日失败，应核对覆盖后
+分段配置。北交所、港股与需要额外包的定制风险模型暂不支持。
+raw 需要 `RICEQUANT_ENABLED=true` 和 `RICEQUANT_API_KEY`；离线 ingest 不需要密钥。
+
+```bash
+uv run gr-data --config /path/to/config.yaml raw ricequant --only rq_risk_model --mode init
+uv run gr-data --config /path/to/config.yaml ingest ricequant --only rq_risk_model --months 2024-01
+```
+
+`init` 跳过已完整采集日，`update` 重抓显式日期范围。每轮保存恢复进度，失败后
+同范围、同模式续跑只处理未完成日；日内尚未完成的批次重新请求。
+请求按 `batch_size` 分批，配额触及共享 `supplements.quota_reserve_fraction`
+（默认剩余 10%）时暂停。观察位于
+`$RAW_PARQUET_ROOT/ricequant/rq_risk_model/v1/<variant>/<YYYY-MM-DD>/<observation_id>/`。
+Parquet 使用 zstd，五份全部通过轴、完整性、有限值、行业哑变量、协方差对称与
+半正定检查后才发布 manifest；读取时复核哈希。未完成日不会入库，已完成日可以先入库。
+
+ingest 依赖已存在的 canonical 股票 `meta.instruments`，按 `.XSHG→.SH`、
+`.XSHE→.SZ` 严格关联并写入独立 `ricequant` 代码映射。五张数据表、模型元数据、
+映射和 ETL 流水在同一日事务内提交；映射缺失或写入失败则该日全部回滚。
+单位统一到现有契约：协方差与特异方差为年化 `%²`（日频按 252 换算，σ 先平方），
+因子收益为日频小数，特异收益为日频百分比。源单位和依据保存在 `model_run.units`。
+米筐使用独立模型身份；每次日度观察生成不可变 run，重复导入同一观察幂等。
+`available_at` 使用实际采集时间，历史回填不会伪装为当时已可得；全区间校准前
+始终 `calibrated=false`，不代表已经通过真实市场五表自洽验收。
+
+切换到米筐前需显式处理以下 8 张表的归属：`factor.model`、`factor.definition`、
+`factor.model_run`、`factor.exposure`、`factor.covariance`、`factor.factor_return`、
+`factor.specific_risk`、`factor.specific_return`。先查看 `gr-data own list`，
+确定切换后逐表执行 `gr-data own set <table> ricequant ingest`，并停止 DataYes 写入任务。
+风险 importer 不接受 `--force-ownership`，也不自动转移或删除旧数据。
+旧 CNE6 历史保留其 model/run 身份，下游需显式选择米筐模型，不能拼接为同一条模型历史。
+本次开发仅用 Fake SDK 和隔离 PG 验证；真实账号权限、单位与数据覆盖还需验收。
+
+### 米筐特色指数补充（R1–R3，待真实样本准入）
+
+已实现 `rq_index_daily`、`rq_index_components`、`rq_index_weights` 的离线契约、
+分片采集、观察版本存储和严格读取。它们是独立 `.RI` 数据集，保持原单位，不进入
+普通指数行情表或 `meta.instruments`。当前只验证 Fake SDK 链路；**新的 PostgreSQL
+表、代码映射及 importer 尚未实现**，补充 ingest 命令会在连接 PG 前明确拒绝。
+正式启用按设计的 P0 逐项确认权限、与 Tushare／Datayes 的差异、样本形态及日期区间，
+再推进对应 DDL／writer；R4–R10 保持未实现的条件候选。
+
+示例配置的 `providers.ricequant.supplements.datasets` 全部 `selected: false`。
+每个启用项要求 `tushare_overlap/datayes_overlap=distinct`、`rq_permission=confirmed`、
+`contract_status=verified`、证据引用和核对日期，且显式填写起止日期和代码白名单。
+这些值应来自实际核验，不能照抄测试 fixture。SDK 边界已按本地 3.2.5 核对，未升级依赖。
+成员接口须显式填写经样本确认的 `enable_bjse`；同批任务该值须一致，不一致时分批运行。
+raw 还要求入口环境快照中 `RICEQUANT_ENABLED=true` 和非空 `RICEQUANT_API_KEY`，
+密钥不写 YAML 或 manifest。连接／请求超时默认 5／60 秒。
+
+准入完成后只运行明确选中的补充数据，例如：
+
+```bash
+uv run gr-data --config /path/to/config.yaml raw ricequant --only rq_index_daily --mode init
+# 三项分别选定且通过准入后才可用组名
+uv run gr-data --config /path/to/config.yaml raw ricequant --only rq_indices --mode update
+```
+
+旧任务默认列表及 `all` 的范围保持不变。`--only ''` 或配置空列表执行零任务；
+未知、未选定、未准入或尚未实现的名称令整批预检失败，不会偷偷回退到旧行情任务。
+只做补充采集的配置可将 `enabled.raw.ricequant`、`enabled.ingest.ricequant` 都设为空，
+使用显式 `--only`；不要为了启用补充任务转移普通行情表的 owner。
+
+采集依赖现有 `tushare/calendar/SSE.parquet` 覆盖所选自然日区间，记录其哈希，不联网
+另造交易日历。日值按代码批×自然月，成分／权重按单指数单交易日切片；VX 成员接口
+标记不适用且不发请求。update 补缺片并回扫末月和最近 5 个交易日。请求重试后仍超时或响应超过内存预算时先二分日期、再二分代码；
+单代码单日仍失败则保留失败状态。父片仅在所有子片完成后计为覆盖。
+
+观察文件位于 `$RAW_PARQUET_ROOT/ricequant/<dataset>/v1/<variant>/<YYYY-MM>/<observation_id>/`，
+对应计划和 manifest 放在同一 variant 下的 `observations/<YYYY-MM>/<observation_id>/`。
+单主机文件锁保证一个 writer，Parquet 使用 zstd／原子发布，manifest 最后发布。
+已完成观察不可覆盖，A→B→A 修订保留三次观察；崩溃遗留文件不作为成功覆盖。
+配额触及 10% 安全余量时暂停并以非零码退出，保留计划和成功片。同范围续跑先补缺片，
+沿用 `rounds/` 下原子保存的本轮计划，并按观察序号区分历史覆盖与本轮完成片；恢复
+拆分任务时直接接续子片，成功片不重复下载。若在最后一片发布后暂停，下次运行仅
+确认本轮完成；再下一次运行才开启新一轮回扫。默认有限重试只针对
+暂态故障，认证／权限／契约错误不伪装成功。日值缺交易日、空响应、缺失收盘价
+（含 nullable 数值类型）或异常价格均阻塞；
+成分空列表只有带可信返回形态及 `create_tm` 才作为完整空快照。`create_tm` 保留原义，
+PIT 状态为未核实；权重只记查询日，不猜生效日、不自动归一到 1。
+
+`ingest.ricequant.supplement_adapter.iter_observations` 提供离线逐片读取和月份筛选，
+先校验 manifest、文件哈希、schema 和当前证据，再复核返回契约；它不会初始化 SDK
+或写库，不能替代尚待开发的 importer。
+
+离线回归命令（不读取真实账号、不访问业务库）：
+
+```bash
+uv run pytest packages/gr-data/tests/ricequant -v
+```
+
 ### 供应商 SDK
 
-只有 Tushare 在 PyPI 上，已列入主依赖。其余三家需要凭证与专用 wheel，手动安装：
+Tushare 与 rqdatac 已列入包依赖。银河和华泰的 SDK 按厂商方式安装：
 
 | provider | 包名 | 凭证环境变量 |
 |---|---|---|
 | tushare | `tushare`（已随包安装） | `TUSHARE_TOKEN` |
 | yinhe（银河） | `AmazingData`（厂商提供 wheel） | `YINHE_USER` / `YINHE_PASSWORD` / `YINHE_HOST` |
-| ricequant（米筐） | `rqdatac` | `RQ_LICENSE` |
+| ricequant（米筐） | `rqdatac`（已随包安装） | `RICEQUANT_API_KEY` |
 | insight（华泰） | `insight_python` | `INSIGHT_USER` / `INSIGHT_PASSWORD` |
 
 装好 SDK 且配好凭证后，用真实接口验证：

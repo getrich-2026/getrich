@@ -47,6 +47,22 @@ class RawPaths:
         """单文件数据集（如 calendar/instruments）。name 不含扩展名。"""
         return self.dataset_dir(provider, dataset) / f"{name}.parquet"
 
+    def ricequant_variant(self, dataset: str, version: str, variant: str) -> Path:
+        """补充观察的隔离目录；拒绝路径片段越界和目录符号链接逃逸。"""
+        import re
+
+        from gr_data.common.ricequant_specs import INDEX_SPECS, RawIntegrityError
+
+        if dataset not in {*INDEX_SPECS, "rq_risk_model"} or not re.fullmatch(r"v[0-9]+", version):
+            raise RawIntegrityError("未知米筐数据集或契约目录")
+        if not re.fullmatch(r"[0-9a-f]{64}", variant):
+            raise RawIntegrityError("非法米筐 variant")
+        root = self.root.resolve()
+        path = self.dataset_dir("ricequant", dataset) / version / variant
+        if not path.resolve().is_relative_to(root):
+            raise RawIntegrityError("米筐观察目录逃出 raw_root")
+        return path
+
     def code_month_file(self, provider: str, dataset: str, code: str, ym: str) -> Path:
         """按 code + 月分区的数据集（K 线）。ym 形如 '2024-01'。"""
         return self.dataset_dir(provider, dataset) / code / f"{ym}.parquet"

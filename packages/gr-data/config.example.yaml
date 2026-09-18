@@ -35,6 +35,86 @@ providers:
     username_env: null
     password_env: null
     market: cn
+    connect_timeout: 5
+    timeout: 60
+    # 风险五件套独立任务：--only rq_risk_model。真实核对后才能填写单位并启用。
+    # 仅支持标准沪深模型、daily horizon；不会自动继承 DataYes 的 factor.* 归属。
+    risk_model:
+      selected: false
+      permission_confirmed: false
+      model: null                  # v1 / v2 / v2trd；按已购买模型填写
+      industry_mapping: null       # sws_2021 / citics_2019
+      start_date: null             # YYYY-MM-DD，必须是已结束的日期
+      end_date: null
+      order_book_ids: []           # 显式股票范围，例如 000001.XSHE；最多 10000 只
+      batch_size: 200
+      units_evidence: null         # 官方说明或账户样本复核记录的引用
+      source_units:                # 不提供猜测默认值；specific_risk 是标准差 σ
+        factor_return: null       # dec_daily / pct_daily
+        specific_return: null     # dec_daily / pct_daily
+        covariance: null          # dec2_daily / pct2_daily / dec2_annual / pct2_annual
+        specific_risk: null       # dec_daily / pct_daily / dec_annual / pct_annual
+    # 特色指数补充任务默认关闭，不追加到下方旧任务的 enabled 集合。
+    # 仅在逐数据集完成两源去重、权限和样本验证后填写证据、日期并选定。
+    # 正式 raw 另需环境变量 RICEQUANT_ENABLED=true；ingest writer 尚未开放。
+    supplements:
+      quota_reserve_fraction: 0.1
+      datasets:
+        rq_index_daily:
+          selected: false
+          contract_version: v1
+          start_date: null
+          end_date: null
+          index_codes: [866001.RI, 866002.RI, 866006.RI, 866007.RI]
+          fields: [open, high, low, close, prev_close, volume, total_turnover]
+          enable_bjse: false
+          replay_trading_days: 5
+          max_symbols_per_request: 10
+          max_pending_bytes: 67108864
+          evidence:
+            tushare_overlap: unknown
+            datayes_overlap: unknown
+            rq_permission: unknown
+            contract_status: unknown
+            checked_on: null
+            references: []
+        rq_index_components:
+          selected: false
+          contract_version: v1
+          start_date: null
+          end_date: null
+          index_codes: [866001.RI, 866002.RI, 866006.RI, 866007.RI]
+          # 必须用样本核对是否需北交所成员；SDK 默认 False 会过滤北交所。
+          enable_bjse: false
+          evidence:
+            tushare_overlap: unknown
+            datayes_overlap: unknown
+            rq_permission: unknown
+            contract_status: unknown
+            checked_on: null
+            references: []
+        rq_index_weights:
+          selected: false
+          contract_version: v1
+          start_date: null
+          end_date: null
+          index_codes: [866001.RI, 866002.RI, 866006.RI, 866007.RI]
+          enable_bjse: false
+          evidence:
+            tushare_overlap: unknown
+            datayes_overlap: unknown
+            rq_permission: unknown
+            contract_status: unknown
+            checked_on: null
+            references: []
+        # 以下仅登记条件候选；选定会明确报错，尚无采集或入库实现。
+        option_greeks_1d: {selected: false}
+        option_indicators_1d: {selected: false}
+        future_dividend_points: {selected: false}
+        margin_haircut: {selected: false}
+        equity_incentive: {selected: false}
+        risk_descriptor_exposure: {selected: false}
+        risk_stock_beta: {selected: false}
 
   insight:
     username_env: INSIGHT_USER

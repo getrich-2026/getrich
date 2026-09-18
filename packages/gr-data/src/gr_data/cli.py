@@ -63,7 +63,7 @@ def _pg(cfg: Config) -> PgConfig:
 
 
 def _split(val: str | None) -> list[str] | None:
-    return [x.strip() for x in val.split(",") if x.strip()] if val else None
+    return [x.strip() for x in val.split(",") if x.strip()] if val is not None else None
 
 
 def _parse_months(val: str | None) -> tuple[str, ...] | None:
@@ -105,6 +105,12 @@ def cmd_raw(args: argparse.Namespace, cfg: Config) -> int:
 def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
     from gr_data.ingest import run_provider
 
+    if args.provider == "ricequant":
+        from gr_data.ingest import preflight_ricequant
+
+        if not preflight_ricequant(cfg, only=_split(args.only)):
+            print("ingest ricequant 完成: 未选择任务")
+            return 0
     with connect(_pg(cfg)) as conn:
         results = run_provider(
             args.provider,
