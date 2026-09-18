@@ -11,7 +11,7 @@ dependencies = [
     "bcrypt>=4.0",
     "bleach>=6.3.0",
     "celery[redis]>=5.4",
-    "fastapi>=0.115,<0.141",
+    "fastapi>=0.115,<0.142",
     "gr-backtest",
     "gr-data",
     "gr-tools",
