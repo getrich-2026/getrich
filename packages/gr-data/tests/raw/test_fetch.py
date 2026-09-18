@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pandas as pd
+import pytest
 from gr_data.common.parquet import read_parquet_if_exists
 from gr_data.ingest.datayes.factors import SW21_FACTORS as DY_SW21_FACTORS
 from gr_data.raw.base import RawContext
@@ -166,6 +168,216 @@ def test_tushare_fetches_by_trade_date_not_range(tmp_raw_root, fake_tushare):
     for c in daily_calls:
         assert "trade_date" in c, f"daily 应按 trade_date 调用，实际: {c}"
         assert "start_date" not in c and "end_date" not in c
+
+
+def test_tushare_partial_month_preserves_other_days(tmp_raw_root, fake_tushare, monkeypatch):
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240103)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    REGISTRY["daily"](fake_tushare, ctx).fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    before = pd.read_parquet(path)
+    original = fake_tushare.query_all
+
+    def revised(api_name, **params):
+        frame = original(api_name, **params)
+        frame["close"] = 12.0
+        return frame
+
+    monkeypatch.setattr(fake_tushare, "query_all", revised)
+    ctx.start_date = 20240103
+    REGISTRY["daily"](fake_tushare, ctx).fetch("update")
+    after = pd.read_parquet(path)
+    assert len(after) == len(before)
+    assert after.loc[after.trade_date.eq("20240102"), "close"].eq(10.5).all()
+    assert after.loc[after.trade_date.eq("20240103"), "close"].eq(12).all()
+
+
+@pytest.mark.parametrize("old_integer", [True, False])
+def test_tushare_partial_month_accepts_date_type_change(
+    tmp_raw_root, fake_tushare, monkeypatch, old_integer
+):
+    from gr_data.common.parquet import write_parquet
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240103)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    old = fake_tushare.query_all("daily", trade_date="20240102")
+    old["trade_date"] = old["trade_date"].astype(int if old_integer else str)
+    write_parquet(old, path)
+    original = fake_tushare.query_all
+
+    def revised(api_name, **params):
+        frame = original(api_name, **params)
+        frame["trade_date"] = frame["trade_date"].astype(str if old_integer else int)
+        frame["close"] = 12.0
+        return frame
+
+    monkeypatch.setattr(fake_tushare, "query_all", revised)
+    ctx.start_date = 20240103
+    fetcher = REGISTRY["daily"](fake_tushare, ctx)
+    for _ in range(2):
+        assert fetcher.fetch("update") == 1
+        after = pd.read_parquet(path)
+        assert len(after) == 4
+        assert set(after.trade_date) == {"20240102", "20240103"}
+        assert after.loc[after.trade_date.eq("20240102"), "close"].eq(10.5).all()
+        assert after.loc[after.trade_date.eq("20240103"), "close"].eq(12).all()
+        assert not after.duplicated(["ts_code", "trade_date"]).any()
+        assert after["vol"].eq(1000).all()  # raw 单位不变
+
+
+@pytest.mark.parametrize(
+    ("mode", "start", "today", "recover"),
+    [
+        ("init", 20240101, 20240131, True),
+        ("init", 20240103, 20240131, False),
+        ("init", 20240101, 20240103, False),
+        ("update", 20240101, 20240131, False),
+    ],
+)
+def test_tushare_corrupt_partition_requires_full_month_init(
+    tmp_raw_root, fake_tushare, monkeypatch, mode, start, today, recover
+):
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+    from pyarrow import ArrowInvalid
+
+    monkeypatch.setattr(market, "today_int", lambda: today)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = start
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    path.parent.mkdir(parents=True)
+    broken = b"broken parquet partition"
+    path.write_bytes(broken)
+    fetcher = REGISTRY["daily"](fake_tushare, ctx)
+    if recover:
+        assert fetcher.fetch(mode) == 1
+        after = pd.read_parquet(path)
+        assert len(after) == 4
+        assert set(after.trade_date) == {"20240102", "20240103"}
+    else:
+        with pytest.raises(ArrowInvalid):
+            fetcher.fetch(mode)
+        assert path.read_bytes() == broken
+
+
+@pytest.mark.parametrize("empty_response", [True, False])
+def test_tushare_corrupt_partition_not_replaced_by_incomplete_rebuild(
+    tmp_raw_root, fake_tushare, monkeypatch, empty_response
+):
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240131)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    path.parent.mkdir(parents=True)
+    broken = b"broken parquet partition"
+    path.write_bytes(broken)
+    original = fake_tushare.query_all
+
+    def incomplete(api_name, **params):
+        if params["trade_date"] == "20240103":
+            if empty_response:
+                return pd.DataFrame()
+            raise RuntimeError("request failed")
+        return original(api_name, **params)
+
+    monkeypatch.setattr(fake_tushare, "query_all", incomplete)
+    with pytest.raises((ValueError, RuntimeError)):
+        REGISTRY["daily"](fake_tushare, ctx).fetch("init")
+    assert path.read_bytes() == broken
+
+
+def test_tushare_empty_refresh_removes_stale_suspensions(tmp_raw_root, fake_tushare, monkeypatch):
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240103)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    fetcher = REGISTRY["suspend_d"](fake_tushare, ctx)
+    fetcher.fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "suspend_d", "2024-01")
+    assert not pd.read_parquet(path).empty
+    monkeypatch.setattr(fake_tushare, "query_all", lambda *a, **k: pd.DataFrame())
+    assert fetcher.fetch("update") == 1
+    assert pd.read_parquet(path).empty
+    assert "suspend_type" in pd.read_parquet(path).columns
+
+
+def test_tushare_failed_refresh_keeps_partition(tmp_raw_root, fake_tushare, monkeypatch):
+    import pytest
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240103)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    fetcher = REGISTRY["daily"](fake_tushare, ctx)
+    fetcher.fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    before = path.read_bytes()
+    original = fake_tushare.query_all
+
+    def fail_second_day(api_name, **params):
+        if params.get("trade_date") == "20240103":
+            raise RuntimeError("request failed")
+        return original(api_name, **params)
+
+    monkeypatch.setattr(fake_tushare, "query_all", fail_second_day)
+    with pytest.raises(RuntimeError, match="request failed"):
+        fetcher.fetch("update")
+    assert path.read_bytes() == before
+
+
+def test_tushare_calendar_leap_day(tmp_raw_root, fake_tushare, monkeypatch):
+    from gr_data.raw.tushare.fetchers import reference
+
+    monkeypatch.setattr(reference, "today_int", lambda: 20240229)
+    calls = []
+    original = fake_tushare.query_all
+
+    def record(api_name, **params):
+        calls.append(params)
+        return original(api_name, **params)
+
+    monkeypatch.setattr(fake_tushare, "query_all", record)
+    reference.CalendarFetcher(fake_tushare, _ctx(tmp_raw_root)).fetch()
+    assert [p["end_date"] for p in calls] == ["20250228", "20250228"]
+
+
+def test_tushare_empty_daily_cannot_erase_existing_bars(tmp_raw_root, fake_tushare, monkeypatch):
+    import pytest
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240103)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    fetcher = REGISTRY["daily"](fake_tushare, ctx)
+    fetcher.fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    before = path.read_bytes()
+    monkeypatch.setattr(fake_tushare, "query_all", lambda *a, **k: pd.DataFrame())
+    with pytest.raises(ValueError, match="拒绝覆盖"):
+        fetcher.fetch("update")
+    assert path.read_bytes() == before
 
 
 def test_datayes_fetch_flow(tmp_raw_root, fake_datayes):

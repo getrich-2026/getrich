@@ -77,6 +77,18 @@ def _parse_trade_date(df: pd.DataFrame, source: str) -> pd.Series:
     return parsed.dt.date
 
 
+def _daily_rows(raw: pd.DataFrame, source: str) -> pd.DataFrame:
+    """先归一代码与 int8／字符串日期，再按业务键保留最后一行。"""
+    out = raw.copy()
+    if out["ts_code"].isna().any():
+        raise ValueError(f"{source} 含空 ts_code")
+    out["ts_code"] = out["ts_code"].astype(str).str.strip()
+    if out["ts_code"].eq("").any():
+        raise ValueError(f"{source} 含空 ts_code")
+    out["trade_date"] = _parse_trade_date(out, source)
+    return out.drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+
+
 class _SymbolResolvingImporter(BaseImporter):
     """把 ``ts_code`` 解析成 ``instrument_id`` 的公共部分。
 
@@ -140,6 +152,8 @@ class _BaseBarsImporter(_SymbolResolvingImporter):
             raise ValueError(f"{source} 含非有限价格（{'/'.join(required)}）")
 
         values = df[list(self.PRICE_COLUMNS)].to_numpy(dtype=float)
+        if np.isinf(values).any():
+            raise ValueError(f"{source} 含非有限价格")
         # nan_to_num 只是为了让缺失值不参与「非正」判定，不改动任何入库值
         if (np.nan_to_num(values, nan=1.0) <= 0).any():
             raise ValueError(f"{source} 含非正价格")
@@ -188,10 +202,7 @@ class StockBars1dImporter(_BaseBarsImporter):
             {"ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "vol", "amount"},
             "daily",
         )
-        market = daily.drop_duplicates(subset=["ts_code", "trade_date"], keep="last").copy()
-        market["ts_code"] = market["ts_code"].astype(str).str.strip()
-        if market["ts_code"].eq("").any():
-            raise ValueError("daily 含空 ts_code")
+        market = _daily_rows(daily, "daily")
 
         market = self._merge_adj_factor(market, adapter)
 
@@ -200,7 +211,7 @@ class StockBars1dImporter(_BaseBarsImporter):
         if (market[["vol", "amount"]].to_numpy(dtype=float) < 0).any():
             raise ValueError("daily 含负成交量或成交额")
 
-        market["dt"] = _parse_trade_date(market, "daily")
+        market["dt"] = market["trade_date"]
         market = self._merge_limits(market, adapter)
         trading_status = self._trading_status(market, adapter)
         market = self._attach_ids(market, self._id_map())
@@ -239,9 +250,7 @@ class StockBars1dImporter(_BaseBarsImporter):
         if adj.empty:
             raise ValueError("缺少 adj_factor raw 数据；股票日线必须带复权因子")
         _require(adj, {"ts_code", "trade_date", "adj_factor"}, "adj_factor")
-        adj = adj.drop_duplicates(subset=["ts_code", "trade_date"], keep="last")[
-            ["ts_code", "trade_date", "adj_factor"]
-        ]
+        adj = _daily_rows(adj, "adj_factor")[["ts_code", "trade_date", "adj_factor"]]
         merged = market.merge(adj, on=["ts_code", "trade_date"], how="left", validate="one_to_one")
         missing = int(merged["adj_factor"].isna().sum())
         if missing:
@@ -268,8 +277,7 @@ class StockBars1dImporter(_BaseBarsImporter):
             return market
 
         _require(limits, {"ts_code", "trade_date", "up_limit", "down_limit"}, "stk_limit")
-        lim = limits.drop_duplicates(subset=["ts_code", "trade_date"], keep="last").copy()
-        lim["ts_code"] = lim["ts_code"].astype(str).str.strip()
+        lim = _daily_rows(limits, "stk_limit")
         keep = ["ts_code", "trade_date", "up_limit", "down_limit"]
         if "pre_close" in lim.columns:
             lim = lim.rename(columns={"pre_close": "limit_pre_close"})
@@ -280,12 +288,13 @@ class StockBars1dImporter(_BaseBarsImporter):
 
         _to_numeric(merged, ["up_limit", "down_limit"])
         bad = (
-            (merged["up_limit"] <= 0)
+            np.isinf(merged[["up_limit", "down_limit"]].to_numpy(dtype=float)).any(axis=1)
+            | (merged["up_limit"] <= 0)
             | (merged["down_limit"] <= 0)
             | (merged["up_limit"] < merged["down_limit"])
         )
         if bad.any():
-            self.log.warning("stk_limit 有 %d 行价格不合法，置 NULL", int(bad.sum()))
+            self.log.warning("Invalid price limits set to NULL rows=%d", int(bad.sum()))
             merged.loc[bad, ["up_limit", "down_limit"]] = np.nan
 
         if "limit_pre_close" in merged.columns:

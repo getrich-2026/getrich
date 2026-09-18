@@ -160,13 +160,51 @@ def _run_tushare_raw(paths, fake_tushare):
 
 
 def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
-    _run_tushare_raw(tmp_raw_root, fake_tushare)
-    ctx = IngestContext(paths=tmp_raw_root)
+    from unittest.mock import patch
 
+    from gr_data.config.pipeline import Config
+    from gr_data.ingest import run_provider as ingest_provider
     from gr_data.ingest.tushare import GROUPS, REGISTRY
+    from gr_data.raw import run_provider as raw_provider
+    from gr_data.raw.tushare import REGISTRY as RAW_REGISTRY
 
-    for name in GROUPS["all"]:
-        REGISTRY[name](pg_conn, ctx).run()
+    cfg = Config(
+        {
+            "paths": {"raw_root": str(tmp_raw_root.root)},
+            "providers": {
+                "tushare": {
+                    "start_date": 20240101,
+                    "rate_limit": {
+                        "sleep_between_requests_sec": 0,
+                        "max_retries": 1,
+                    },
+                }
+            },
+        }
+    )
+    with (
+        patch("gr_data.raw._build_client", return_value=fake_tushare),
+        patch.dict("os.environ", {"RAW_PARQUET_ROOT": str(tmp_raw_root.root)}),
+    ):
+        raw_provider("tushare", cfg, mode="init", only=list(reversed(RAW_REGISTRY)))
+        for _ in range(2):
+            results = ingest_provider("tushare", pg_conn, cfg, only=list(reversed(GROUPS["all"])))
+            assert [result.dataset for result in results] == GROUPS["all"]
+            assert all(result.ok for result in results)
+
+    assert set(fake_tushare.calls) == {
+        "stock_basic",
+        "index_basic",
+        "fut_basic",
+        "trade_cal",
+        "daily",
+        "adj_factor",
+        "stk_limit",
+        "suspend_d",
+        "index_daily",
+        "daily_basic",
+        "fut_daily",
+    }
 
     # 2 stock + 1 index + 1 future
     assert _count(pg_conn, "meta.instruments") == 4
@@ -175,6 +213,11 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     assert _count(pg_conn, "market.stock_bar_1d") == 4  # 2 codes x 2 days
     assert _count(pg_conn, "market.index_bar_1d") == 2
     assert _count(pg_conn, "market.future_bar_1d") == 2
+    assert _count(pg_conn, "market.stock_daily_basic") == 4
+    assert _count(pg_conn, "market.adj_factor_ts") == 4
+    assert _count(pg_conn, "fundamental.valuation_1d") == 4
+    assert _count(pg_conn, "classify.instrument_category") == 2
+    assert _count(pg_conn, "ops.etl_job_run") == 2 * len(GROUPS["all"])
 
     with pg_conn.cursor() as cur:
         # 单位换算落库正确：vol 1000 手 → 100000 股；amount 10500 千元 → 10500000 元
@@ -219,6 +262,16 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     assert owners["market.future_bar_1d"] == "tushare"
     assert owners["market.stock_daily_basic"] == "tushare"
     assert owners["market.adj_factor_ts"] == "tushare"
+
+    # 仅在临时测试库模拟他源占有，拒绝写入且保持原行情与 owner。
+    owner = OwnershipManager(pg_conn)
+    owner.claim("market.stock_bar_1d", "yinhe", force=True)
+    pg_conn.commit()
+    with pytest.raises(OwnershipError):
+        REGISTRY["stock_bar_1d"](pg_conn, IngestContext(paths=tmp_raw_root)).run()
+    pg_conn.rollback()
+    assert owner.owner("market.stock_bar_1d").provider == "yinhe"
+    assert _count(pg_conn, "market.stock_bar_1d") == 4
 
 
 def test_daily_basic_jsonb_roundtrip(pg_conn, tmp_raw_root, fake_tushare):

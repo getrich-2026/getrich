@@ -18,8 +18,8 @@ Tushare 的所有接口都通过 ``pro.<api_name>(**params)`` 调用，形态统
 - **单次返回行数上限**：多数接口单次最多 5000~6000 行。超出需要按
   ``offset`` 翻页，否则会**静默截断**——这是最危险的一类数据缺失，
   因为接口不会报错。``query_all`` 负责翻页直到取空。
-- **调用频次上限**：按积分分级限频，超限返回异常。限频由调用方
-  （fetcher）通过 ``RawContext.sleep_between_requests`` 控制。
+- **调用频次上限**：按积分分级限频，超限返回异常。统一入口将
+  ``RawContext.sleep_between_requests`` 传给客户端，逐页与重试均受限。
 - **offset 上限 100000**：实测 offset=100000 可用、100001 报
   「查询数据失败，请确认参数」。即单次查询最多只能翻出约 10 万行，
   再多的数据**取不到**。因此调用方必须把查询切小（见 fetchers/market.py
@@ -28,6 +28,8 @@ Tushare 的所有接口都通过 ``pro.<api_name>(**params)`` 调用，形态统
 
 from __future__ import annotations
 
+import math
+import time
 from typing import Any, Protocol
 
 import pandas as pd
@@ -64,11 +66,20 @@ class TushareClient(Protocol):
 
 
 class TushareProClient:
-    """真实 Tushare Pro SDK 封装。延迟 init。"""
+    """真实 Tushare Pro SDK 封装，按现有顺序抓取流程延迟初始化。
 
-    def __init__(self, token: str = ""):
+    Args:
+        token: 环境层提供的供应商凭证。
+        sleep_between_requests: 两次请求开始时刻的最小间隔（秒），必须有限且非负。
+    """
+
+    def __init__(self, token: str = "", *, sleep_between_requests: float = 1.5) -> None:
+        if not math.isfinite(sleep_between_requests) or sleep_between_requests < 0:
+            raise ValueError("sleep_between_requests must be finite and nonnegative")
         self._token = token
         self._pro: Any = None
+        self._request_interval = sleep_between_requests
+        self._last_request: float | None = None
 
     def _sdk(self) -> Any:
         if self._pro is None:
@@ -85,8 +96,15 @@ class TushareProClient:
         return self._pro
 
     def query(self, api_name: str, **params: Any) -> pd.DataFrame:
-        """单次调用，不翻页。返回结果可能被供应商截断。"""
-        df = getattr(self._sdk(), api_name)(**params)
+        """单次调用，不翻页；分页与重试共用请求间隔（秒）。"""
+        sdk = self._sdk()
+        if self._last_request is not None:
+            remaining = self._request_interval - (time.monotonic() - self._last_request)
+            if remaining > 0:
+                time.sleep(remaining)
+        # 失败的请求也消耗配额，重试不能绕过限流。
+        self._last_request = time.monotonic()
+        df = getattr(sdk, api_name)(**params)
         return df if df is not None else pd.DataFrame()
 
     def query_all(self, api_name: str, **params: Any) -> pd.DataFrame:
@@ -109,9 +127,9 @@ class TushareProClient:
             if offset > MAX_OFFSET:
                 # 到这里说明查询范围本身就太大了。继续翻只会撞供应商的通用报错，
                 # 悄悄返回已取到的部分则是静默丢数据——两者都不可接受。
-                raise RuntimeError(
+                raise PermanentError(
                     f"{api_name} 查询结果超过 Tushare 的 offset 上限 {MAX_OFFSET} 行"
-                    f"（params={ {k: v for k, v in params.items() if k != 'fields'} }）。"
+                    "。"
                     "请把查询范围切小，例如按单个交易日调用。"
                 )
         if not frames:

@@ -150,6 +150,98 @@ def test_stock_units_and_adj_factor(tmp_raw_root, monkeypatch):
     assert row["source"] == "tushare"
 
 
+def test_stock_join_normalizes_dates_and_duplicate_codes(tmp_raw_root, monkeypatch):
+    daily = pd.concat([_daily_df(), _daily_df()], ignore_index=True)
+    daily.loc[0, "ts_code"] = " 600000.SH "
+    daily.loc[1, "close"] = 10.6
+    _write(tmp_raw_root, "daily", daily)
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame(
+            [
+                {"ts_code": "600000.SH ", "trade_date": 20240102, "adj_factor": 1.25},
+            ]
+        ),
+    )
+    _write(
+        tmp_raw_root,
+        "stk_limit",
+        pd.DataFrame(
+            [
+                {
+                    "ts_code": " 600000.SH",
+                    "trade_date": 20240102,
+                    "up_limit": 10.78,
+                    "down_limit": 8.82,
+                },
+            ]
+        ),
+    )
+    imp = _stock_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    out = imp.build()
+    assert len(out) == 1
+    assert out.iloc[0]["close"] == 10.6
+    assert out.iloc[0]["adj_factor"] == 1.25
+    assert out.iloc[0]["limit_up"] == 10.78
+
+
+@pytest.mark.parametrize("bad", [float("inf"), -float("inf")])
+def test_stock_infinite_pre_close_rejected(tmp_raw_root, monkeypatch, bad):
+    daily = _daily_df()
+    daily["pre_close"] = bad
+    _write(tmp_raw_root, "daily", daily)
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame(
+            [
+                {"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": 1.25},
+            ]
+        ),
+    )
+    with pytest.raises(ValueError, match="非有限价格"):
+        _stock_importer(tmp_raw_root).build()
+
+
+@pytest.mark.parametrize("bad", [float("inf"), -float("inf"), float("nan")])
+def test_stock_nonfinite_limits_become_null(tmp_raw_root, monkeypatch, bad):
+    _write(tmp_raw_root, "daily", _daily_df())
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame(
+            [
+                {"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": 1.25},
+            ]
+        ),
+    )
+    _write(
+        tmp_raw_root,
+        "stk_limit",
+        pd.DataFrame(
+            [
+                {
+                    "ts_code": "600000.SH",
+                    "trade_date": "20240102",
+                    "up_limit": bad,
+                    "down_limit": 8.82,
+                },
+            ]
+        ),
+    )
+    imp = _stock_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+    out = imp.build()
+    assert len(out) == 1
+    assert out["limit_up"].isna().all()
+    if pd.isna(bad):
+        assert out.iloc[0]["limit_down"] == 8.82  # 单边缺失不丢弃另一边有效值
+    else:
+        assert out["limit_down"].isna().all()
+
+
 def test_missing_adj_factor_raises(tmp_raw_root, monkeypatch):
     """复权因子在目标表是 NOT NULL，缺失不能用 1 兜底。"""
     _write(tmp_raw_root, "daily", _daily_df())

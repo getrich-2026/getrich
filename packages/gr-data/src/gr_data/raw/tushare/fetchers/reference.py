@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import calendar
+
 import pandas as pd
 
 from gr_data.common.parquet import write_parquet
@@ -106,7 +108,11 @@ class CalendarFetcher(BaseFetcher):
     def fetch(self, mode: str = "update") -> int:
         start = int_to_date(self.ctx.start_date or CALENDAR_INIT_START)
         # 多取一年缓冲，供 ingest 推导区间尾部的 next_trading_day
-        end = int_to_date(today_int()).replace(year=int_to_date(today_int()).year + 1)
+        today = int_to_date(today_int())
+        next_year = today.year + 1
+        end = today.replace(
+            year=next_year, day=min(today.day, calendar.monthrange(next_year, today.month)[1])
+        )
         n = 0
         for exchange in CALENDAR_EXCHANGES:
             df = retry_call(

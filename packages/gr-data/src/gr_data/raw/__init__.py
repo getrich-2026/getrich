@@ -68,7 +68,10 @@ def _build_client(provider: str, cfg: Config) -> Any:
     if provider == "tushare":
         from gr_data.raw.tushare import TushareProClient
 
-        return TushareProClient(token=pconf.get("token", ""))
+        return TushareProClient(
+            token=pconf.get("token", ""),
+            sleep_between_requests=_build_context(provider, cfg).sleep_between_requests,
+        )
     if provider == "datayes":
         from gr_data.raw.datayes import DatayesHttpClient
 
@@ -100,6 +103,10 @@ def run_provider(
     """运行某 provider 下启用的（或 only 指定的）所有 fetcher。返回 {dataset: 写入数}。"""
     registry = _registry(provider)
     enabled = only or cfg.get("enabled", "raw", provider, default=list(registry.keys()))
+    if provider == "tushare":
+        # 显式选择的集合不变，按注册顺序保证日历先于逐日抓取。
+        order = {name: index for index, name in enumerate(registry)}
+        enabled = sorted(dict.fromkeys(enabled), key=lambda name: order.get(name, len(order)))
     client = _build_client(provider, cfg)
     ctx = _build_context(provider, cfg)
 

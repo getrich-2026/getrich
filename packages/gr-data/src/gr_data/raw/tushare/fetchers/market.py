@@ -27,6 +27,7 @@ Tushare 对一次查询的 ``offset`` 有 **100000 的硬上限**（实测：off
 
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date
 
 import pandas as pd
@@ -81,7 +82,7 @@ class _DailyFetcher(BaseFetcher):
         cal = read_parquet_if_exists(path)
         if cal is None or cal.empty:
             raise RuntimeError(
-                f"缺少交易日历 {path}。请先运行 `getrich raw tushare --only calendar`。"
+                f"缺少交易日历 {path}。请先运行 `gr-data raw tushare --only calendar`。"
             )
         open_days = cal[pd.to_numeric(cal["is_open"], errors="coerce") == 1]
         days = pd.to_datetime(open_days["cal_date"], format="%Y%m%d", errors="coerce")
@@ -126,23 +127,72 @@ class _DailyFetcher(BaseFetcher):
             if not days:
                 continue
 
+            out = self.paths.dataset_file(self.PROVIDER, self.DATASET, ym)
+            full_rebuild = (
+                mode == "init"
+                and first.day == 1
+                and last.day == monthrange(last.year, last.month)[1]
+            )
+            # 仅整月 init 可以不读取旧分区；局部更新必须保住未请求日。
+            old = None
+            if out.exists() and not full_rebuild:
+                old = pd.read_parquet(out)
+
             frames: list[pd.DataFrame] = []
+            empty_days: set[date] = set()
             for day in days:
                 df = self._fetch_day(day)
                 sleep_s(self.ctx.sleep_between_requests)
                 if df is not None and not df.empty:
                     frames.append(df)
+                else:
+                    empty_days.add(day)
 
-            if not frames:
-                # 整月无数据对稀疏数据集（如 suspend_d）是正常的
-                self.log.debug("%s[%s] %d 个交易日均无数据", self.DATASET, ym, len(days))
+            if full_rebuild and empty_days and self.DATASET != "suspend_d" and out.exists():
+                # 非稀疏数据返回空响应时，仍需旧数据证明不会擦掉已有日期。
+                # 旧文件不可读则拒绝重建；完整的新响应不依赖旧文件能否读取。
+                old = pd.read_parquet(out)
+            # start_date 可能落在月中；只替换已请求的交易日，保留月内其余日期。
+            # 空响应同样替换对应日期，避免已撤销的 suspend_d 事件一直残留。
+            if old is not None and not old.empty:
+                old_dates = pd.to_datetime(old["trade_date"], format="%Y%m%d", errors="raise")
+                if self.DATASET != "suspend_d" and old_dates.dt.date.isin(empty_days).any():
+                    raise ValueError(
+                        f"{self.DATASET}[{ym}] 已有数据的交易日返回空响应，拒绝覆盖；"
+                        "请核对供应商后重试"
+                    )
+                preserved = old.loc[~old_dates.dt.date.isin(days)]
+                if not preserved.empty:
+                    frames.insert(0, preserved)
+            if not frames and self.DATASET != "suspend_d":
+                self.log.warning(
+                    "Empty raw response provider=%s dataset=%s month=%s days=%d",
+                    self.PROVIDER,
+                    self.DATASET,
+                    ym,
+                    len(days),
+                )
                 continue
-
-            out_df = pd.concat(frames, axis=0, ignore_index=True)
-            out = self.paths.dataset_file(self.PROVIDER, self.DATASET, ym)
+            out_df = (
+                pd.concat(frames, axis=0, ignore_index=True)
+                if frames
+                else pd.DataFrame(columns=self.FIELDS.split(","))
+            )
+            if not out_df.empty:
+                # 新旧 raw 可能分别使用 int8／字符串日期，Arrow 不能序列化混合列。
+                # 仅统一为 YYYYMMDD 字符串，不改源日期含义、字段名或数值单位。
+                dates = pd.to_datetime(out_df["trade_date"], format="%Y%m%d", errors="raise")
+                if dates.isna().any():
+                    raise ValueError(f"{self.DATASET}[{ym}] 含空 trade_date，拒绝覆盖")
+                out_df["trade_date"] = dates.dt.strftime("%Y%m%d")
             write_parquet(out_df, out, append=False)
             self.log.info(
-                "%s[%s] 写入 %d 行（%d 个交易日）", self.DATASET, ym, len(out_df), len(days)
+                "Raw partition written provider=%s dataset=%s month=%s rows=%d days=%d",
+                self.PROVIDER,
+                self.DATASET,
+                ym,
+                len(out_df),
+                len(days),
             )
             n += 1
         return n

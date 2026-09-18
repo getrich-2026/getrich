@@ -28,7 +28,7 @@ class _FakePro:
 
 
 def _client(total: int) -> tuple[TushareProClient, _FakePro]:
-    c = TushareProClient(token="x")
+    c = TushareProClient(token="x", sleep_between_requests=0)
     pro = _FakePro(total)
     c._pro = pro  # 绕过真实 SDK 初始化
     return c, pro
@@ -94,3 +94,58 @@ def test_query_all_ok_just_below_cap():
     total = MAX_OFFSET - limit  # 末页在 offset<=MAX_OFFSET 处结束
     c, _ = _client(total)
     assert len(c.query_all("daily")) == total
+
+
+def test_rate_limit_applies_to_pages_and_failed_requests(monkeypatch):
+    from gr_data.raw.tushare import client as module
+
+    now = [0.0]
+    waits = []
+
+    def sleep(seconds):
+        waits.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(module.time, "sleep", sleep)
+    client = TushareProClient("x", sleep_between_requests=2)
+    client._pro = _FakePro(PAGE_LIMITS["daily"])
+    client.query_all("daily")
+    assert waits == [2]  # 整页后的空页探测同样消耗配额
+    now[0] += 3  # fetcher 已经等待时，客户端不重复等待
+    client.query("daily", limit=1, offset=0)
+    assert waits == [2]
+
+    def fail(**params):
+        raise RuntimeError("temporary failure")
+
+    monkeypatch.setattr(client._pro, "daily", fail)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="temporary failure"):
+            client.query("daily")
+    assert waits == [2, 2, 2]
+
+
+def test_offset_limit_is_not_retried(monkeypatch):
+    from gr_data.common.retry import PermanentError, retry_call
+    from gr_data.raw.tushare import client as module
+
+    monkeypatch.setattr(module, "MAX_OFFSET", 0)
+    client, pro = _client(PAGE_LIMITS["daily"])
+    with pytest.raises(PermanentError, match="offset 上限"):
+        retry_call(client.query_all, "daily", max_retries=3, backoff_base=0)
+    assert len(pro.calls) == 1
+
+
+def test_pipeline_passes_request_interval():
+    from gr_data.config.pipeline import Config
+    from gr_data.raw import _build_client
+
+    cfg = Config({"providers": {"tushare": {"rate_limit": {"sleep_between_requests_sec": 3}}}})
+    assert _build_client("tushare", cfg)._request_interval == 3
+
+
+@pytest.mark.parametrize("interval", [-1, float("inf"), float("nan")])
+def test_invalid_request_interval_rejected(interval):
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        TushareProClient(sleep_between_requests=interval)

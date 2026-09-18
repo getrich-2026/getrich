@@ -44,7 +44,7 @@ cp .env.example .env                                   # 仓库根，填 PG 与�
 cp packages/gr-data/config.example.yaml config.yaml    # 填抓取范围与限频
 
 # 2. 建库（DDL 归 gr-db）
-uv run gr-db migrate --target all
+uv run gr-db migrate --target pg
 
 # 3. 抓取 + 入库（以 tushare 为例）
 uv run gr-data raw tushare --mode update    # 增量抓取落 parquet
@@ -52,6 +52,51 @@ uv run gr-data ingest tushare               # 归一化入库
 ```
 
 `raw update` 之后接 `ingest`，多 provider 各自一条链，适合放进 cron。
+
+### Tushare 已实现范围与导入顺序
+
+当前覆盖 11 个接口：`stock_basic`、`index_basic`、`fut_basic`、`trade_cal`、
+`daily`、`adj_factor`、`stk_limit`、`suspend_d`、`index_daily`、`daily_basic`、`fut_daily`。
+财报、宏观和 ETF／期权扩展不在这一批接口范围内。
+
+| ingest 组别 | importer → 目标表 |
+|---|---|
+| `reference` | `instruments` → `meta.instruments`；`symbol_map` → `meta.symbol_map`；`calendar` → `meta.trading_calendar` |
+| `bars_1d` | `stock_bar_1d`／`index_bar_1d`／`future_bar_1d` → 对应 `market.*_bar_1d` |
+| `market_ext` | `daily_basic` → `market.stock_daily_basic`；`adj_factor_ts` → `market.adj_factor_ts` |
+| `fundamental` | `valuation_1d` → `fundamental.valuation_1d` |
+| `classify` | `instrument_category` → `classify.instrument_category` |
+
+raw 先抓日历，再按 `trade_date` 逐日请求全市场，按自然月落盘。
+每页请求（包含末尾空页探测与失败后的重试）都遵守
+`providers.tushare.rate_limit.sleep_between_requests_sec`；遇到 offset 硬上限直接失败，
+不把同一超大查询重试数遍。
+
+`update` 补缺失月份并重抓最新已有月份。`start_date` 落在月中时，重抓保留月内
+未请求日期，只替换本次已请求的日期。空 `suspend_d` 响应会清除对应日期的旧事件；
+其他逐日数据集若在已有数据的日期返回空响应，会拒绝覆盖，避免把历史行情擦掉。
+任意一天请求失败时不替换该月文件。
+
+月内合并时，`trade_date` 的整数／字符串表示统一保存为 `YYYYMMDD` 字符串，
+日期含义与行情单位保持不变。损坏的月文件可通过覆盖完整自然月的 `--mode init`
+重建；该月起点须为月初，且已到月末。非稀疏数据存在空响应时不以不完整结果
+重建损坏文件。月中起抓、尚未到月末或 `update` 仍需读出旧文件，读取失败时
+明确报错并保留原文件，以免丢掉未请求日期。
+
+```bash
+uv run gr-data raw tushare --only instruments,calendar --mode update
+uv run gr-data raw tushare --only daily,adj_factor,stk_limit,suspend_d,index_daily,daily_basic,fut_daily --mode update
+uv run gr-data own list
+uv run gr-data ingest tushare --only reference
+uv run gr-data ingest tushare --only bars_1d,market_ext,fundamental,classify --months 2024-01
+```
+
+选中的数据集按依赖顺序执行，即使 `--only` 顺序相反也先处理依赖；未选中的依赖
+不会自动启用。历史数据建议逐月导入，避免一次加载全部月份。
+`daily_basic` 和 `valuation_1d` 共用原始文件，各自在目标金额列做万元→元转换；
+未提升字段在 `raw_payload` 中保持供应商原单位。缺复权因子或股票 OHLC 会中断；
+缺涨跌停价保留 NULL；未知标的告警后跳过。股票辅助表关联前统一 int8／字符串日期
+及代码首尾空格，再按键去重；期货成交量与持仓量保持「手」。
 
 ### 供应商 SDK
 
@@ -89,8 +134,9 @@ uv run gr-data own release market.stock_bar_1d           # 解除
 
 **切主源是高风险操作**：不同源的单位口径、复权规则、停牌处理都可能不同，
 混写会让同一张表里出现两套口径且事后无法分辨。转移前先逐表核对数据一致性。
-`config.yaml` 里 `enabled.ingest.tushare` 默认为空就是这个原因 —— 那些目标表
-当前归 yinhe，打开即等于切主源。
+示例配置已列出 Tushare 的五个 ingest 组别。启用列表只决定执行哪些 importer，
+实际 owner 以 `gr-data own list` 为准；归属冲突时失败，不会自动切主源。
+`meta.symbol_map` 是唯一例外：按包含 `source` 的主键隔离多源记录，见 D-012。
 
 ---
 
@@ -100,7 +146,7 @@ uv run gr-data own release market.stock_bar_1d           # 解除
 |---|---|
 | `缺少 Tushare token` | 没设 `TUSHARE_TOKEN`，或 `config.yaml` 的 `token_env` 指向了别的变量名 |
 | `未安装 AmazingData SDK` | 银河 SDK 不在 PyPI，需厂商 wheel 手动安装 |
-| `schema "meta" does not exist` | 没建库，先跑 `uv run gr-db migrate --target all` |
+| `schema "meta" does not exist` | 没建库，先跑 `uv run gr-db migrate --target pg` |
 | ingest 报归属冲突 | 目标表归属别的 provider，见上一节 |
 | 读不到根 `.env` | 确认在 workspace 内运行；可用 `GETRICH_ROOT` 显式指定根目录 |
 

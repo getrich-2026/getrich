@@ -62,6 +62,9 @@ def run_provider(
     registry, groups = _registry_groups(provider)
     enabled = only or cfg.get("enabled", "ingest", provider, default=list(registry.keys()))
     names = _expand(enabled, registry, groups)
+    if provider == "tushare":
+        # --only 的排列不能颠倒 instruments → symbol_map → 其余数据的依赖。
+        names.sort(key=list(registry).index)
 
     ctx = IngestContext(
         paths=RawPaths(cfg.raw_root), force_ownership=force_ownership, months=months
