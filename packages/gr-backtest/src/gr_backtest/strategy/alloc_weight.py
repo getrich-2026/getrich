@@ -821,7 +821,7 @@ class BlackLitterman:
         分别归一化过，且两次归一化互不自洽 —— Π 被压到 L1=1（O(1)），Q 却被
         压到 L1=`pi_norm`（日收益量级，O(1e-5)）。结果是 `ts_inv @ Π` 恒定压过
         `omega_inv @ Q` 五个数量级，观点的符号被完全抹掉，score=-1 的标的照样
-        拿到正的后验收益。详见 DECISIONS.md D-027。
+        拿到正的后验收益。详见 DECISIONS.md D-009。
         """
         n = len(mu_scores)
 
@@ -829,7 +829,7 @@ class BlackLitterman:
         w_eq = np.ones(n) / n
         pi_prior = self.delta * cov @ w_eq
 
-        # Views: P = I, Q = mu_scores（score 直接当预期收益用，口径见 D-027）
+        # Views: P = I, Q = mu_scores（score 直接当预期收益用，口径见 D-009）
         q_vec = np.asarray(mu_scores, dtype=float)
 
         # omega = diag(P @ Sigma @ P' * tau) — view uncertainty

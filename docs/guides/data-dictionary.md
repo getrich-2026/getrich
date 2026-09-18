@@ -22,5 +22,5 @@ uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/de
 - HTML／JSON 是生成产物，按需重建，不提交活库快照。访问地址、表行数和服务健康状态应在运行时确认。
 
 实现：`packages/gr-db/src/gr_db/docs/`；CI：`.github/workflows/ci.yml`。
-设计理由见 [决策记录](../../.agents/brain/DECISIONS.md) D-051、D-054、D-058。
+设计理由见 [决策记录](../../.agents/brain/DECISIONS.md) D-006。
 实施过程仅在需要追溯时查 [历史计划](../history/data-dictionary-plan.md)。

@@ -24,7 +24,7 @@ from gr_data.config.settings import find_project_root
 
 # workspace 根目录的 .env 文件（若存在则自动加载到 os.environ）。
 # 必须走 find_project_root()，不能用 parents[N] 硬数层级 —— 本模块所在的包
-# 目录深度会随重构变化，硬编码层级会静默指到成员包根（见 DECISIONS.md D-003）。
+# 目录深度会随重构变化，硬编码层级会静默指到成员包根（见 DECISIONS.md D-002）。
 _project_root = find_project_root()
 _dotenv_path = _project_root / ".env"
 if _dotenv_path.is_file():
@@ -98,7 +98,7 @@ class Config:
         ``$RAW_PARQUET_ROOT`` 写成落地根目录的真源，但这里过去只读
         ``config.yaml``，而随包发布的 ``config.example.yaml`` 里 ``raw_root``
         恒等于 ``/opt/raw_parquet`` —— 于是环境变量**永远不生效**，配了也没用，
-        新机器上一律撞 `/opt` 的权限错。方向同 D-023：环境变量优先。
+        新机器上一律撞 `/opt` 的权限错。方向同 D-002：环境变量优先。
         """
         env_root = os.environ.get("RAW_PARQUET_ROOT", "").strip()
         if env_root:

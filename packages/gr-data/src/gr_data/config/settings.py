@@ -56,7 +56,7 @@ def find_project_root(start_path: Path | None = None) -> Path:
 
     第 2 条是关键：不能只找 ``pyproject.toml``，否则会先命中
     ``packages/gr-data/pyproject.toml`` 这类成员包，导致读不到根 ``.env``，
-    回测 artifact 也会落到 ``packages/gr-data/tmp/artifacts``（见 DECISIONS.md D-003）。
+    回测 artifact 也会落到 ``packages/gr-data/tmp/artifacts``（见 DECISIONS.md D-002）。
     """
     override = os.environ.get("GETRICH_ROOT")
     if override:

@@ -34,4 +34,4 @@ A–D 在各方案的 `section_a`–`section_d`，E 在顶层 `comparison`；压
 - 报告组装：`packages/gr-api/src/gr_api/services/diagnosis_presentation.py`。
 - 计算／幂等：`packages/gr-api/src/gr_api/services/diagnosis.py`。
 - 尚未提供的计算与供数工作见 [待决问题](../plans/backlog.md)。
-- 设计取舍见 [决策记录](../../.agents/brain/DECISIONS.md) D-035、D-047、D-059。
+- 设计取舍见 [决策记录](../../.agents/brain/DECISIONS.md) D-010、D-017、D-018。

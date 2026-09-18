@@ -285,5 +285,5 @@ uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/de
 1. 按 schema 补齐存量 `COMMENT ON`，market / meta / factor 优先，补完后可考虑把门禁从
    「只管新增」升级为全量强制
 2. FastAPI 的 OpenAPI 导出进仓库 + CI 一致性校验，Apifox 改为从该 spec 单向导入
-   （方向锁死为 代码 → Apifox）。动机与 `DECISIONS.md` D-032 同源：手维护的响应结构会与真实
+   （方向锁死为 代码 → Apifox）。动机与 `DECISIONS.md` D-007 同源：手维护的响应结构会与真实
    返回漂移，**而漂移不报错**

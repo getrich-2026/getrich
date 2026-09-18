@@ -10,7 +10,7 @@ from gr_data.config.settings import ClickHouseConfig, WorkerConfig, make_pg_dsn
 def test_from_env_defaults(monkeypatch: object) -> None:
     """Defaults: backend=inproc, broker=localhost, flower=localhost:5555."""
     # 必须显式清空环境：本仓根目录有真实 .env，且 find_project_root() 修好后
-    # 会真的把它加载进 os.environ（见 DECISIONS.md D-003）。不清空的话这个用例
+    # 会真的把它加载进 os.environ（见 DECISIONS.md D-002）。不清空的话这个用例
     # 测的是开发者本机配置，不是 dataclass 默认值。
     monkeypatch.setattr(os, "environ", {})  # type: ignore[attr-defined]
     cfg = WorkerConfig.from_env(strict=False)

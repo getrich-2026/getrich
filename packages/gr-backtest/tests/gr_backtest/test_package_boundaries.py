@@ -5,7 +5,7 @@ re-export 了实盘信号（``SignalProducer`` 等）和回测作业队列
 （``PgBacktestJobStore``），于是：
 
 * ``import gr_backtest`` 会把 FastAPI、Celery、Redis 一起拖进纯计算路径；
-* 单独安装 ``gr-backtest`` 直接 ``ModuleNotFoundError``（见 DECISIONS.md D-004）。
+* 单独安装 ``gr-backtest`` 直接 ``ModuleNotFoundError``（见 DECISIONS.md D-001）。
 
 这里用静态 AST 扫描，而不是 ``import`` 后看属性 —— 后者只能发现「已经被导入」
 的情况，发现不了藏在函数体里的延迟 import。

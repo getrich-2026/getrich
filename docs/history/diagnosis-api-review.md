@@ -3,7 +3,7 @@
 读者：追溯缺陷与回归用例的维护者；Agent 仅在修改相关逻辑时按需读取。
 状态：历史材料，审查基线 `2089022`，修复提交 `f57927c`。以下验证数字仅代表当时运行。
 当前接口见 [持仓诊断调用指南](../guides/diagnosis-api.md)，当前缓存约定见
-[决策记录](../../.agents/brain/DECISIONS.md) D-059。
+[决策记录](../../.agents/brain/DECISIONS.md) D-018。
 
 2026-09-07 的接口变更已取代文中的旧约定：幂等键、原始请求体与计算哈希分别处理；
 B/C/D 返回有类型的区块状态，不再返回裸 null。原 worktree 的执行指令已失效；
@@ -62,7 +62,7 @@ B/C/D 返回有类型的区块状态，不再返回裸 null。原 worktree 的�
 
 **护栏 3：B/C/D 三节返回 `null` + `reason_code` 是对的。**
 模块 B/D 需要历史协方差（架构篇 P0-b 的 L1 全市场日收益矩阵），模块 C 卡在缺口 G6
-的产品决策。不要为了「让接口好看」给它们填估算值——设计文档 §7.6 和 D-047 明确
+的产品决策。不要为了「让接口好看」给它们填估算值——设计文档 §7.6 和 D-017 明确
 要求「不得静默估算」。
 
 ---
@@ -294,4 +294,4 @@ curl -s -XPOST localhost:8021/v1/diagnosis/snapshots -H 'Content-Type: applicati
 # 收尾（已完成）
 
 已按 `AGENTS.md` §7 更新 `.agents/brain/NOTES.md`，并在 `.agents/brain/DECISIONS.md`
-追加 D-050（门控 PG 集成测试连接失败时的凭证泄漏防护）。
+补充门控 PG 集成测试连接失败时的凭证泄漏防护（现由连接 helper 与测试维护，不再单列决策）。

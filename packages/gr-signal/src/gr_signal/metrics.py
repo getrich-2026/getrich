@@ -1,7 +1,7 @@
 """实盘信号链路的 Prometheus 指标。
 
 这些指标原先定义在 ``gr_api.metrics`` 里，导致 gr-signal 反向 import gr-api
-（DECISIONS.md D-004 记录的问题），单独安装 gr-signal 直接 ImportError。
+（DECISIONS.md D-001 记录的问题），单独安装 gr-signal 直接 ImportError。
 ``LIVE_*`` 描述的是实盘运行状况，属于本包，因此定义收归这里。
 
 prometheus_client 用的是**进程级全局 REGISTRY**，所以只要 gr-signal 被导入，

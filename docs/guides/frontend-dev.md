@@ -150,7 +150,7 @@ Tailwind 4 把配置搬进了 CSS，构建走 `vite.config.ts` 里的 `@tailwind
 - `src/components/ui/` 由 shadcn CLI 托管，**不手改**。它本来就是按 v4 生成的，
   现在项目终于和它对齐，用 CLI 加新组件不会再出 v4-only 语法编译不了的问题。
 
-迁移的完整记录见 [决策记录](../../.agents/brain/DECISIONS.md) D-033。
+主题与构建配置以 `apps/web/src/index.css` 和 `apps/web/vite.config.ts` 为准。
 
 ## 7. 尚未解决的接口问题
 
@@ -184,7 +184,7 @@ Tailwind 4 把配置搬进了 CSS，构建走 `vite.config.ts` 里的 `@tailwind
 | 组件 | 用 react-query 调用；面向视图的形状转换写在这里，**不要写进 api 层** |
 
 > 曾经还有一套并行的 `src/lib/api.ts`（裸 `fetch`），与 `src/api/` 九个函数完全重复
-> 且两边都有 bug，已删除。**不要再另起第二套接口层**，原委见 `DECISIONS.md` D-034。
+> 且两边都有 bug，已删除。**不要再另起第二套接口层**，原委见 `DECISIONS.md` D-007。
 
 后端接口文档：<http://127.0.0.1:8001/docs>
 

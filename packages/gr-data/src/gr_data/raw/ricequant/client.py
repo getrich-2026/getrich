@@ -79,7 +79,7 @@ class RqdatacClient:
                 # 不退化成无凭证的 rqdatac.init()：那样既不报错也不提示，
                 # 表现成「配了 key 但取数失败」，极难定位。曾因 config.yaml 写
                 # license_env: RQ_LICENSE 而环境变量叫 RICEQUANT_API_KEY，
-                # 名字对不上就静默走到这一支（见 DECISIONS.md D-023）。
+                # 名字对不上就静默走到这一支（见 DECISIONS.md D-002）。
                 raise PermanentError(
                     "缺少米筐凭证：请设置环境变量 RICEQUANT_API_KEY，"
                     "并确认 config.yaml 的 providers.ricequant.license_env 指向同一个变量名"

@@ -34,7 +34,7 @@ archive/              历史脚手架，删除前必须得到明确确认
 
 **命名规则：发行名 = 目录名 = `gr-x`，import 名 = `gr_x`**，连字符与下划线一一对应，
 看目录就知道 import 什么。**不要再用 `getrich.*` 命名空间包** —— 它曾导致两个包往同一
-目录装文件、单个包装不起来（见 `DECISIONS.md` D-018）。
+目录装文件、单个包装不起来（见 `DECISIONS.md` D-001）。
 
 依赖方向单向，不得出现反向 import：
 
@@ -57,7 +57,7 @@ gr-factor（独立）
 - 后端服务用 FastAPI。
 - **数据库单独部署，不随应用一起构建**：`deploy/docker-compose.yml` + `deploy/config/` 只定义 PostgreSQL、ClickHouse、Redis 三个基础设施服务，是可复现的部署模板；GetRich 仓库内不创建 Docker 实例。真实 `.env`、数据卷、日志和运维脚本全部放在仓库外的部署目录，不进 git。仓库内不维护应用的 Dockerfile 或 systemd unit。
 - 不要在 GetRich 仓库内执行 `docker compose up`、`down` 或 `restart`。改动 `deploy/` 后，需将其中的文件同步到仓库外的部署目录根，不保留外层 `deploy/`，再从部署目录校验和重启容器。
-- **三个数据库的数据目录只能用 named volume，绝不 bind mount 宿主机目录。** bind mount 走虚拟机的文件共享层（VirtioFS），在 macOS 上会丢 POSIX 语义 —— PostgreSQL 曾因此在 autovacuum 里报 `could not open file`，整库不可用（见 `DECISIONS.md` D-029）。代价是数据不能从宿主机翻目录看，**备份必须走 `pg_dump` / `clickhouse-client` / `BGSAVE` 这类逻辑导出，不要拷贝数据目录文件**。日志目录可以继续 bind。
+- **三个数据库的数据目录只能用 named volume，绝不 bind mount 宿主机目录。** bind mount 走虚拟机的文件共享层（VirtioFS），在 macOS 上会丢 POSIX 语义 —— PostgreSQL 曾因此在 autovacuum 里报 `could not open file`，整库不可用（见 `DECISIONS.md` D-004）。代价是数据不能从宿主机翻目录看，**备份必须走 `pg_dump` / `clickhouse-client` / `BGSAVE` 这类逻辑导出，不要拷贝数据目录文件**。日志目录可以继续 bind。
 
 ## 2. 数据库职责划分（铁律）
 
@@ -70,7 +70,7 @@ gr-factor（独立）
 
 **行情是 PostgreSQL 不是 ClickHouse。** 早期版本把 K 线放在 ClickHouse
 （`md_bars_1m`／`md_bars_1d`），与数据接入层的 `market.*_bar_*` 并存且互相冲突；
-现已统一到 PostgreSQL/TimescaleDB，CH 的行情表已删除（见 `DECISIONS.md` D-019）。
+现已统一到 PostgreSQL/TimescaleDB，CH 的行情表已删除（见 `DECISIONS.md` D-003）。
 
 ### PostgreSQL schema 划分
 
@@ -95,7 +95,7 @@ gr-factor（独立）
   前必须经 `gr_api/services/pick_symbols.py` 转换 —— 写错不报错，只会让
   `instrument_id` 整批为 NULL、交易日历一条都查不到。
 - 引用其它表的 id 列，类型必须与被引用主键一致。曾因 `strategies.id` 是 VARCHAR 而
-  引用方是 UUID，导致整个策略／信号接口在全新库上恒 500（`DECISIONS.md` D-020）。
+  引用方是 UUID，导致整个策略／信号接口在全新库上恒 500（`DECISIONS.md` D-006）。
 
 **绝对禁止**在 ClickHouse 中执行事务更新或行级频繁删除。
 
@@ -142,7 +142,7 @@ gr-factor（独立）
 `ops.table_ownership`，ingest／stream 写库前校验。转移归属必须显式走
 `gr-data own release/set` —— 不同源的单位口径与复权规则可能不同，混写会让同一张表
 出现两套口径且事后无法分辨。
-唯一现有例外是 `meta.symbol_map`：按 `(source, source_symbol)` 隔离写入，见 D-037；不得据此放宽其他表的归属。
+唯一现有例外是 `meta.symbol_map`：按 `(source, source_symbol)` 隔离写入，见 D-012；不得据此放宽其他表的归属。
 
 **parquet 落地**：根目录 `$RAW_PARQUET_ROOT`（仓库外）。布局
 `<root>/<provider>/<dataset>/...`，路径解析统一走 `common/paths.py::RawPaths`，
@@ -177,7 +177,7 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 - 标的代码保持字符串，保留前导零；数值 dtype 遵循 canonical contracts 与 DDL，不统一强转 `float64`，金额仍按第 3.2 节使用 `Decimal`。
 - 滚动、滞后、时序 join 前验证分组内时间排序与业务键重复情况；按明确规则排序／去重，不能把多标的时间序列当成一条全局序列。
 - 优先 Polars 表达式、DuckDB SQL 或 NumPy 向量化，避免大表 `.iterrows()`、逐行 Python 回调和可向量化的 `apply`；有状态的回测执行循环允许保留，正确性优先。
-- 大批量任务评估峰值内存并按可独立处理的分区分批；跨分区的 rolling／区间压缩必须保留必要上下文（见 D-056）。
+- 大批量任务评估峰值内存并按可独立处理的分区分批；跨分区的 rolling／区间压缩必须保留必要上下文（见 D-016）。
 - 热路径优化用同一输入通过 `time.perf_counter()` 对比耗时，并检查结果一致性。只有测量证明必要时才考虑 JIT；新增 numba 等依赖先说明并取得授权。
 
 ### 4.3 日志与异常
@@ -206,12 +206,12 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 
 ## 5. 前端编码规范（React 19 + TypeScript 6 + Vite 8 + Tailwind 4）
 
-- **禁止 `any`**：严格推导类型。对接无类型外部遗留包时必须附详细说明。API 类型放 `src/types/`，**照后端 service 的 return 语句写，不要照设计稿或 openapi 草案写**（教训见 `DECISIONS.md` D-032）。
-- **数据请求**：接口函数模块化写在 `src/api/`（走 `src/api/client.ts`），组件一律通过 `@tanstack/react-query` 的 `useQuery`／`useMutation` 管理异步数据与加载态。**禁止**组件内 `useEffect` + `useState` 手写轮询，禁止 inline `fetch`／`axios`，**禁止再另起一套并行的接口层**（`src/lib/api.ts` 已因此删除，见 D-034）。
+- **禁止 `any`**：严格推导类型。对接无类型外部遗留包时必须附详细说明。API 类型放 `src/types/`，**照后端 service 的 return 语句写，不要照设计稿或 openapi 草案写**（教训见 `DECISIONS.md` D-007）。
+- **数据请求**：接口函数模块化写在 `src/api/`（走 `src/api/client.ts`），组件一律通过 `@tanstack/react-query` 的 `useQuery`／`useMutation` 管理异步数据与加载态。**禁止**组件内 `useEffect` + `useState` 手写轮询，禁止 inline `fetch`／`axios`，**禁止再另起一套并行的接口层**（`src/lib/api.ts` 已因此删除，见 D-007）。
   - 分层：`client.ts` 负责认证头／401／校验 `code`／剥信封；`src/api/<domain>.ts` 只发请求、返回 `Promise<T>`（`T` 即后端 `data`）；**面向视图的形状转换放组件里，不放 api 层**。
 - **表单校验**：`react-hook-form` + `zod`。
 - **UI 与图表**：优先用 `src/components/ui/`（shadcn/ui + Radix UI）+ **Tailwind CSS 4**，由 CLI 统一管理，不手改 UI 源码。时序／权益曲线用 `echarts`，其余常规图表用 `recharts`。
-  - Tailwind 4 是 **CSS-first**：主题写在 `src/index.css` 的 `@theme` 块，**没有 `tailwind.config.js`，也没有 `postcss.config.js`**（构建走 `@tailwindcss/vite` 插件）。不要再添加这两个文件，也不要重新引入 `autoprefixer`（v4 内置）。迁移细节见 D-033。
+  - Tailwind 4 是 **CSS-first**：主题写在 `src/index.css` 的 `@theme` 块，**没有 `tailwind.config.js`，也没有 `postcss.config.js`**（构建走 `@tailwindcss/vite` 插件）。不要再添加这两个文件，也不要重新引入 `autoprefixer`（v4 内置）。构建与主题配置见前端指南。
 - **XSS 防御**：渲染用户或作者提供的 HTML（如 `strategy.detail_html`）必须先过 DOMPurify 或等效方案再传给 `dangerouslySetInnerHTML`。后端同时用 Pydantic 长度限制和 bleach 归一化。
 
 ## 6. 常用命令
@@ -240,7 +240,7 @@ uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-12 \
     --file picks.csv [--overwrite] [--allow-empty]
 
 # 后端：示例端口与 apps/web/vite.config.ts 的代理一致
-# find_project_root() 识别 workspace 根 .env；uvicorn --port 仍须显式指定（D-003）
+# find_project_root() 识别 workspace 根 .env；uvicorn --port 仍须显式指定（D-002）
 uv run uvicorn gr_api.main:app --reload --host 0.0.0.0 --port 8001
 
 # 全量测试（testpaths 覆盖全部七个有源码的包）
@@ -293,8 +293,8 @@ npm run preview  # 预览生产构建产物
 - **会话开始**：先读 NOTES，再按任务查 DECISIONS 的主题索引及相关指南；不默认加载所有历史材料。
 - **会话结束**：实质性代码、schema 或技术方案变化后更新 NOTES；完成项从状态／待办中移除，长期原因写入 DECISIONS。
 - **新增文档**：先明确读者、用途、状态；优先更新已有文件。只有独立用途或用户要求时才新建，不为每次修复创建总结。
-- **决策维护**：日常以追加和明确取代为主；用户授权清理时可删除过期／无用条目，修复引用，保留其余编号，不重排或复用。
-- **自改进**：AI 误判或测试暴露的问题，只有具有项目特定、可复用防范价值时才记入决策；不要追加通用操作失误流水账。
+- **决策维护**：只记录业务口径、数据可信度、架构边界等关键取舍；实现技巧与单次排错留在代码／测试／指南。日常以追加和明确取代为主；用户授权清理时可删除、合并并按要求重编号，同时同步索引、锚点及现行引用。已记账 SQL 的历史编号另注明映射，不改 checksum。
+- **自改进**：AI 误判或测试暴露的问题，优先补回归测试或相邻注释；只有需要维护者理解、会影响业务结果或架构边界的取舍才记入决策。
 - **证据时效**：测试数字、数据库行数、机器路径与服务健康带日期和验证范围；未重查时标为历史，不写成实时状态。
 - **移动文档**：更新入口与相对链接；已记账 SQL 不为文档搬迁改 checksum，历史引用通过决策说明。
 

@@ -678,7 +678,7 @@ class TestBlackLitterman:
         assert abs(abs(w_a) + abs(w_b) - 1.0) < 0.01
 
     def test_view_sign_survives_posterior(self) -> None:
-        """非退化协方差下，观点的符号必须传导到后验和最终权重（D-027 回归）。
+        """非退化协方差下，观点的符号必须传导到后验和最终权重（D-009 回归）。
 
         历史上 ``_compute_posterior`` 对 Π 和 Q 分别归一化，且两次归一化互不
         自洽（Π→L1=1，Q→L1=pi_norm≈1e-5），先验压过观点五个数量级，
@@ -718,7 +718,7 @@ class TestBlackLitterman:
             (Σ⁻¹/τ + D/τ)⁻¹ (Σ⁻¹Π/τ + DQ/τ) ≡ (Σ⁻¹ + D)⁻¹ (Σ⁻¹Π + DQ)
 
         τ 精确约掉。要让 τ 重新起作用必须改 Ω 的取法（Idzorek 置信度等），
-        属于建模口径选择，记在 DECISIONS.md D-027 待定。这条用例钉住现状：
+        属于建模口径选择，记在 DECISIONS.md D-009 待定。这条用例钉住现状：
         谁改了 Ω 公式，它会先失败，提醒同步更新文档。
         """
         close_a = [100.0 + 2.0 * math.sin(i * 0.30) for i in range(61)]
