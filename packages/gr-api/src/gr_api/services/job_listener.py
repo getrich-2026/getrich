@@ -37,7 +37,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING
 
 import psycopg
-from gr_data.config.settings import make_pg_dsn, settings
+from gr_data.config import PostgresConfig, make_pg_dsn
 
 
 if TYPE_CHECKING:
@@ -91,7 +91,8 @@ class BacktestJobListener:
     :class:`asyncio.Event` keyed on the id.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, postgres: PostgresConfig | None = None) -> None:
+        self._postgres = postgres
         # The dedicated long-lived conn. Acquired in ``start()`` and
         # in ``_pump`` after a reconnect. Closed in ``stop()`` and
         # best-effort in ``_drop_conn``. We never use the pool's
@@ -300,7 +301,9 @@ class BacktestJobListener:
         so the holder's ``stop()`` must explicitly release it
         (otherwise restarts leak it until the conn is reaped).
         """
-        dsn = make_pg_dsn(settings.postgres)
+        dsn = make_pg_dsn(
+            self._postgres if self._postgres is not None else PostgresConfig.from_env(strict=False)
+        )
         # ``autocommit=True`` so LISTEN takes effect immediately
         # (LISTEN is a transaction-control command and only fires
         # at COMMIT) and notifications arrive on every commit by

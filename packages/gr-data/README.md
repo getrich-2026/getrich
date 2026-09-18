@@ -110,16 +110,20 @@ uv run gr-data own release market.stock_bar_1d           # 解除
 
 ## 配置与日志
 
-应用配置由 `gr_data.config.Settings` 组装；它是兼容入口，不要求其他包的业务代码为了记录日志依赖 gr-data。
-公共日志模型在 `gr_tools.config.LoggingConfig`，输出工具在 `gr_tools.logging`；模块直接用标准库 logger。
+配置按使用者组装：数据连接与供应商模型在 `gr_data.config`，API／worker 模型在 `gr_api.config`；公共环境加载、路径与日志模型在 `gr_tools.config`。模型导入不加载 `.env`，不会创建用户目录配置文件。
+日志输出工具在 `gr_tools.logging`；模块直接用标准库 logger，由启动入口调用 `gr_tools.config.setup_logging(logging_config)`。
 
 | 来源 | 内容 | 示例 |
 |---|---|---|
 | 环境变量／本地 `.env` | 环境差异、连接、凭证、机器路径、输出选项 | PG_*、TUSHARE_TOKEN、RAW_PARQUET_ROOT、LOG_LEVEL／LOG_FMT／LOG_FILE／LOG_JSON |
-| Python config | 类型、校验、默认值与应用组装 | LoggingConfig、Settings |
+| Python config | 类型、校验、默认值与应用组装 | LoggingConfig、PostgresConfig、ApiSettings／WorkerSettings |
 | `config.yaml` | 结构化采集参数 | provider、dataset 启用列表、抓取范围、重试与限频 |
 
-真实环境变量优先于 `.env`；YAML 不复制数据库与日志配置。默认使用 PostgreSQL 和 inproc 作业路径，
+`load_environment()` 显式读取一个环境快照，默认不修改 `os.environ`。真实环境变量优先于文件；显式传 `env_file` 时只使用该文件，否则依次选择 workspace `.env`、`~/.config/getrich/.env`。自动候选都不存在时仅使用进程环境；显式文件不存在则报错，不自动创建文件。首次运行仍执行 `cp .env.example .env`。
+
+YAML 不复制数据库与日志配置；`load_config(environment=env)` 的占位符、`*_env` 凭证字段、raw 路径与连接配置共用同一快照。数据／信号 CLI 在启动时显式安装环境，兼容直接读进程环境的 SDK；模型和库导入不做此操作。
+
+只加载当前命令需要的模型：raw 抓取不强制 PG，`gr-db status` 不校验连接，PG 命令不校验 CH／Web。默认使用 PostgreSQL 和 inproc 作业路径，
 Redis 仅在 Celery 模式需要，ClickHouse 仅在使用因子输出相关能力时需要。
 
 CLI／API／worker 启动入口统一配置日志，库模块导入不创建 handler 或日志文件。
@@ -127,3 +131,22 @@ LOG_FILE 使用完整文件名，相对路径以 workspace 根解析；LOG_JSON=
 否则使用 LOG_FMT。结构化字段使用 `extra` 或 `extra={"context": {...}}`，不得记录凭证或完整请求／供应商 payload。
 CLI 的 `--verbose` 优先于 LOG_LEVEL，Celery 显式 `--loglevel`／`--logfile` 优先于环境选项。
 重配只关闭本项目管理的 handler，保留测试／宿主框架的 handler；框架自身的访问日志配置仍由框架管理。
+
+### Python 调用迁移
+
+旧 `gr_data.config.Settings`、全量 `load_settings()`／`settings` 单例和 `gr_data.config.setup_logging` 已移除。数据模型与 `find_project_root` 仍可从 gr-data 配置入口导入；WebConfig、WorkerConfig、BacktestStorageConfig 改从 `gr_api.config` 导入。数据库连接池改为 `await pg_pool.init(postgres_config)`，ClickHouse 构造器可传 `config=clickhouse_config`。
+
+```python
+from gr_data.config import load_postgres
+from gr_data.config.pipeline import load_config
+from gr_tools.config import LoggingConfig, load_environment, setup_logging
+
+env = load_environment()  # 或显式指定 env_file
+setup_logging(LoggingConfig.from_env(env.root, env.values))
+pipeline = load_config(environment=env)
+postgres = load_postgres(env)  # 只在需要 PG 的通路中调用
+```
+
+API 由 `load_api_settings(env)` 组装，`create_app(config)` 将配置绑定到应用实例；请求依赖与后台任务使用该配置。原 `uvicorn gr_api.main:app` 命令保持可用，默认应用在访问 ASGI 入口时创建，单独导入工厂不加载配置。Celery 工厂接收 `WorkerSettings`，CLI 入口加载一次并绑定到 Celery 应用；exec 后在新进程配置日志。
+
+配置对象的 repr 隐藏凭证字段，旧全量 `to_dict()` 已删除；不要自行对环境快照或配置做全量序列化输出。

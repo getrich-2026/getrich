@@ -15,7 +15,6 @@ from gr_api.schemas.backtest import (
     WalkForwardRunRequest,
 )
 from gr_api.services import backtest_job as job_svc
-from gr_data.config.settings import settings
 
 
 if TYPE_CHECKING:
@@ -119,7 +118,7 @@ async def cancel_job(
 # ---------------------------------------------------------------- execution
 
 
-def _enqueue(background: BackgroundTasks, job_id: str, *, task_name: str) -> None:
+def _enqueue(background: BackgroundTasks, job_id: str, *, task_name: str, request: Request) -> None:
     """Dispatch a newly created job to inproc BackgroundTasks or Celery.
 
     The transport is selected at call time via
@@ -143,18 +142,18 @@ def _enqueue(background: BackgroundTasks, job_id: str, *, task_name: str) -> Non
     job, only one wins; the loser gets ``claimed=False`` and exits
     cleanly.
     """
+    settings = request.app.state.settings
     if settings.worker.backend == "celery":
-        from gr_api.worker.celery_app import app
-
-        app.send_task(task_name, args=[job_id])
+        request.app.state.task_queue.send_task(task_name, args=[job_id])
         return
-    background.add_task(job_svc.run_job_synchronously, job_id)
+    background.add_task(job_svc.run_job_synchronously, job_id, postgres=settings.postgres)
 
 
 @router.post("/backtest", status_code=202)
 async def run_backtest(
     body: BacktestRunRequest,
     background: BackgroundTasks,
+    request: Request,
     user_id: str | None = Depends(get_current_user),
     db: AsyncConnection = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -166,7 +165,7 @@ async def run_backtest(
         user_id=user_id,
         idempotency_key=idempotency_key,
     )
-    _enqueue(background, job_id, task_name="backtest.run_job")
+    _enqueue(background, job_id, task_name="backtest.run_job", request=request)
     return success({"job_id": job_id, "ref_id": ref_id, "status": "queued"}, rid)
 
 
@@ -174,6 +173,7 @@ async def run_backtest(
 async def run_sweep(
     body: SweepRunRequest,
     background: BackgroundTasks,
+    request: Request,
     user_id: str | None = Depends(get_current_user),
     db: AsyncConnection = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -185,7 +185,7 @@ async def run_sweep(
         user_id=user_id,
         idempotency_key=idempotency_key,
     )
-    _enqueue(background, job_id, task_name="sweep.run_job")
+    _enqueue(background, job_id, task_name="sweep.run_job", request=request)
     return success({"job_id": job_id, "ref_id": ref_id, "status": "queued"}, rid)
 
 
@@ -193,6 +193,7 @@ async def run_sweep(
 async def run_walk_forward(
     body: WalkForwardRunRequest,
     background: BackgroundTasks,
+    request: Request,
     user_id: str | None = Depends(get_current_user),
     db: AsyncConnection = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -204,5 +205,5 @@ async def run_walk_forward(
         user_id=user_id,
         idempotency_key=idempotency_key,
     )
-    _enqueue(background, job_id, task_name="walk_forward.run_job")
+    _enqueue(background, job_id, task_name="walk_forward.run_job", request=request)
     return success({"job_id": job_id, "ref_id": ref_id, "status": "queued"}, rid)

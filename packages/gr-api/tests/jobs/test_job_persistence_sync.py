@@ -17,6 +17,8 @@ from typing import Any
 
 import pytest
 from gr_api.jobs.persistence import PgBacktestJobStore, sync_is_cancelled_status
+from gr_data.config import load_postgres
+from gr_tools.config import load_environment
 
 
 # Only run when the dev / CI Postgres is reachable.
@@ -59,7 +61,7 @@ async def _seeded_job() -> dict[str, Any]:
 
     # ``PgBacktestJobStore`` 走的是全局异步连接池，池子没 init 过就直接
     # RuntimeError。生产里由 FastAPI 的 lifespan 负责，用例得自己开关。
-    await pg_pool.init()
+    await pg_pool.init(load_postgres(load_environment()))
 
     store = PgBacktestJobStore()
     payload = {"strategy_name": "demo", "symbols": ["000001.SZ"]}

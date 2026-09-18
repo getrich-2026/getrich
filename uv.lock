@@ -1118,7 +1118,6 @@ dependencies = [
     { name = "polars" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pyarrow" },
-    { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "rqdatac" },
@@ -1137,7 +1136,6 @@ requires-dist = [
     { name = "polars" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "pyarrow", specifier = ">=14" },
-    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich" },
     { name = "rqdatac" },
@@ -1224,6 +1222,7 @@ dependencies = [
     { name = "pandas" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "python-dotenv" },
     { name = "tqdm" },
 ]
 
@@ -1232,6 +1231,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0" },
     { name = "polars" },
     { name = "pyarrow", specifier = ">=14" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "tqdm" },
 ]
 

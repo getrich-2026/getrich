@@ -31,6 +31,7 @@ from gr_api.errors import Conflict, NotFound
 from gr_api.jobs.ops import get_op_for_job_type
 from gr_api.jobs.persistence import PgBacktestJobStore
 from gr_api.jobs.runner import BacktestJobRunner
+from gr_data.config import PostgresConfig
 
 
 if TYPE_CHECKING:
@@ -353,7 +354,9 @@ async def create_walk_forward_job(
     )
 
 
-async def run_job_synchronously(job_id: str) -> dict[str, Any]:
+async def run_job_synchronously(
+    job_id: str, *, postgres: PostgresConfig | None = None
+) -> dict[str, Any]:
     """Execute one queued job to completion via ``BacktestJobRunner``.
 
     Looks up the job to determine its ``job_type``, instantiates the
@@ -369,7 +372,7 @@ async def run_job_synchronously(job_id: str) -> dict[str, Any]:
     is threaded into the runner so its per-trial cancel probe can
     observe DB-side ``status='cancelled'`` writes from any process.
     """
-    from gr_data.config.settings import make_pg_dsn, settings
+    from gr_data.config import make_pg_dsn
 
     row = await _STORE.get_job(job_id, user_id=_SYSTEM_USER_ID)
     if row is None:
@@ -380,7 +383,9 @@ async def run_job_synchronously(job_id: str) -> dict[str, Any]:
         op,
         job_type=row["job_type"],
         sleep_seconds=0,
-        db_conninfo=make_pg_dsn(settings.postgres),
+        db_conninfo=make_pg_dsn(
+            postgres if postgres is not None else PostgresConfig.from_env(strict=False)
+        ),
     )
     result = await asyncio.to_thread(_run_once_sync, runner)
     return result.to_dict()

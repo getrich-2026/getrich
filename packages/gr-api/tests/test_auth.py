@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone as tz
 
 import bcrypt
+from gr_api.config import load_api_settings
 from gr_api.errors import BadRequest, Unauthorized
 from gr_api.routers.auth import (
     LoginRequest,
@@ -76,7 +77,7 @@ class TestLogin:
         conn = _FakeConn(cur)
 
         body = LoginRequest(email="demo@getrich.io", password="password")
-        result = _run(login(body=body, db=conn, rid="rid-1"))
+        result = _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         assert result["code"] == 0
         data = result["data"]
@@ -110,7 +111,7 @@ class TestLogin:
         conn = _FakeConn(cur)
 
         body = LoginRequest(email="demo@getrich.io", password="password")
-        result = _run(login(body=body, db=conn, rid="rid-1"))
+        result = _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         assert result["code"] == 0
         data = result["data"]
@@ -139,7 +140,7 @@ class TestLogin:
 
         body = LoginRequest(email="demo@getrich.io", password="WrongPassword")
         try:
-            _run(login(body=body, db=conn, rid="rid-1"))
+            _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected Unauthorized")
         except Unauthorized as e:
             assert "invalid email or password" in e.message.lower()
@@ -161,7 +162,7 @@ class TestLogin:
 
         body = LoginRequest(email="demo@getrich.io", password="WrongPassword")
         try:
-            _run(login(body=body, db=conn, rid="rid-1"))
+            _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected Unauthorized")
         except Unauthorized as e:
             assert "invalid email or password" in e.message.lower()
@@ -173,7 +174,7 @@ class TestLogin:
 
         body = LoginRequest(email="inactive@test.com", password="password")
         try:
-            _run(login(body=body, db=conn, rid="rid-1"))
+            _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected Unauthorized")
         except Unauthorized as e:
             assert "invalid email or password" in e.message.lower()
@@ -185,7 +186,7 @@ class TestLogin:
 
         body = LoginRequest(email="nobody@test.com", password="password")
         try:
-            _run(login(body=body, db=conn, rid="rid-1"))
+            _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected Unauthorized")
         except Unauthorized as e:
             assert "invalid email or password" in e.message.lower()
@@ -204,7 +205,7 @@ class TestLogin:
         conn = _FakeConn(cur)
 
         body = LoginRequest(email="  DEMO@GETRICH.IO  ", password="password")
-        result = _run(login(body=body, db=conn, rid="rid-1"))
+        result = _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         assert result["code"] == 0
         select_params = cur.executed[0][1]
@@ -226,7 +227,7 @@ class TestLogin:
         conn = _FakeConn(cur)
 
         body = LoginRequest(email="  DEMO@GETRICH.IO  ", password="password")
-        result = _run(login(body=body, db=conn, rid="rid-1"))
+        result = _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         assert result["code"] == 0
         # user_auth query used normalized email
@@ -246,7 +247,7 @@ class TestLogin:
 
         body = LoginRequest(email="oauth@test.com", password="password")
         try:
-            _run(login(body=body, db=conn, rid="rid-1"))
+            _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected Unauthorized")
         except Unauthorized as e:
             assert "invalid email or password" in e.message.lower()
@@ -279,7 +280,7 @@ class TestRegister:
             password="Str0ngPass!",
             name="Alice",
         )
-        result = _run(register(body=body, db=conn, rid="rid-1"))
+        result = _run(register(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         assert result["code"] == 0
         assert result["message"] == "registration successful"
@@ -318,7 +319,7 @@ class TestRegister:
             name="Alice",
         )
         try:
-            _run(register(body=body, db=conn, rid="rid-1"))
+            _run(register(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected BadRequest")
         except BadRequest as e:
             assert "already exists" in e.message.lower()
@@ -340,7 +341,7 @@ class TestRegister:
             name="Alice",
         )
         try:
-            _run(register(body=body, db=conn, rid="rid-1"))
+            _run(register(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected BadRequest")
         except BadRequest as e:
             assert "already exists" in e.message.lower()
@@ -362,7 +363,7 @@ class TestRegister:
             password="Str0ngPass!",
             name="Alice",
         )
-        result = _run(register(body=body, db=conn, rid="rid-1"))
+        result = _run(register(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         assert result["data"]["user"]["email"] == "alice@test.com"
 
@@ -388,7 +389,7 @@ class TestRegister:
             password="Str0ngPass!",
             name="  Bob  ",
         )
-        result = _run(register(body=body, db=conn, rid="rid-1"))
+        result = _run(register(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
         assert result["data"]["user"]["name"] == "Bob"
         insert_users = cur.executed[2]
         assert insert_users[1]["name"] == "Bob"
@@ -408,7 +409,7 @@ class TestRegister:
             email="anon@test.com",
             password="Str0ngPass!",
         )
-        result = _run(register(body=body, db=conn, rid="rid-1"))
+        result = _run(register(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
         assert result["data"]["user"]["name"] == ""
 
     def test_password_is_hashed(self) -> None:
@@ -427,7 +428,7 @@ class TestRegister:
             password="Secret123",
             name="Eve",
         )
-        _run(register(body=body, db=conn, rid="rid-1"))
+        _run(register(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         # Check INSERT INTO user_auth credential is bcrypt
         insert_auth = cur.executed[3]
@@ -458,7 +459,7 @@ class TestRefresh:
         conn = _FakeConn(cur)
 
         body = RefreshRequest(refresh_token="some-raw-refresh-token")
-        result = _run(refresh(body=body, db=conn, rid="rid-1"))
+        result = _run(refresh(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         assert result["code"] == 0
         data = result["data"]
@@ -489,7 +490,7 @@ class TestRefresh:
 
         body = RefreshRequest(refresh_token="bogus-token")
         try:
-            _run(refresh(body=body, db=conn, rid="rid-1"))
+            _run(refresh(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected Unauthorized")
         except Unauthorized as e:
             assert "invalid or expired" in e.message.lower()
@@ -511,7 +512,7 @@ class TestRefresh:
 
         body = RefreshRequest(refresh_token="expired-token")
         try:
-            _run(refresh(body=body, db=conn, rid="rid-1"))
+            _run(refresh(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected Unauthorized")
         except Unauthorized as e:
             assert "expired" in e.message.lower()
@@ -523,7 +524,7 @@ class TestRefresh:
 
         body = RefreshRequest(refresh_token="inactive-user-token")
         try:
-            _run(refresh(body=body, db=conn, rid="rid-1"))
+            _run(refresh(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
             raise AssertionError("expected Unauthorized")
         except Unauthorized as e:
             assert "invalid or expired" in e.message.lower()
@@ -542,7 +543,7 @@ class TestRefresh:
         conn = _FakeConn(cur)
 
         body = LoginRequest(email="demo@getrich.io", password="password")
-        result = _run(login(body=body, db=conn, rid="rid-1"))
+        result = _run(login(body=body, db=conn, rid="rid-1", settings=load_api_settings()))
 
         assert "refresh_token" in result["data"]
         assert len(result["data"]["refresh_token"]) == 64  # secrets.token_hex(32)

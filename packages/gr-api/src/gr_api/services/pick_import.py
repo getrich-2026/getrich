@@ -31,7 +31,9 @@ import polars as pl
 from gr_api.errors import BadRequest, Conflict
 from gr_api.services import pick_symbols
 from gr_api.services.resolver import resolve_strategy_ref
+from gr_data.config import PostgresConfig, load_postgres
 from gr_tools import cast_all_utf8, read_frame
+from gr_tools.config import load_environment
 
 
 if TYPE_CHECKING:
@@ -220,7 +222,7 @@ async def import_picks(
     )
 
 
-def import_picks_sync(**kwargs: Any) -> PickImportResult:
+def import_picks_sync(*, postgres: PostgresConfig | None = None, **kwargs: Any) -> PickImportResult:
     """:func:`import_picks` 的同步封装，给脚本 / CLI / notebook 用。
 
     自己负责连接池的开关，所以**不要**在已经跑着事件循环的进程里调用它
@@ -229,7 +231,7 @@ def import_picks_sync(**kwargs: Any) -> PickImportResult:
     from gr_data.db import pg_pool
 
     async def _run() -> PickImportResult:
-        await pg_pool.init()
+        await pg_pool.init(postgres if postgres is not None else load_postgres(load_environment()))
         try:
             async with pg_pool.connection() as conn:
                 return await import_picks(conn, **kwargs)

@@ -19,10 +19,10 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from gr_api.config import BacktestStorageConfig
 from gr_api.deps import get_db, require_user
 from gr_api.response import register_exception_handlers
 from gr_api.routers.backtest_runs import backtest_storage_dep, router
-from gr_data.config.settings import BacktestStorageConfig
 
 
 _TZ = ZoneInfo("Asia/Shanghai")

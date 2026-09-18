@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 from typing import TYPE_CHECKING, Any
 
 from gr_api.errors import BadRequest, NotFound, Unauthorized
@@ -15,12 +14,11 @@ if TYPE_CHECKING:
     from psycopg import AsyncConnection
 
 
-def verify_signature(raw_body: bytes, signature: str | None) -> None:
+def verify_signature(raw_body: bytes, signature: str | None, *, secret: str | None = None) -> None:
     """HMAC-SHA256 验签。
 
-    通过环境变量 PAYMENT_WEBHOOK_SECRET 注入；未设置则跳过验签（开发模式）。
+    由应用配置传入 PAYMENT_WEBHOOK_SECRET；未设置时保留既有的开发模式行为。
     """
-    secret = os.environ.get("PAYMENT_WEBHOOK_SECRET")
     if not secret:
         return
     if not signature:

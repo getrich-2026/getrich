@@ -10,12 +10,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from gr_api.config import BacktestStorageConfig
 from gr_api.errors import BadRequest, NotFound
 from gr_api.pagination import PageParams
 from gr_api.routers.backtest_runs import router
 from gr_api.services import backtest_run
 from gr_api.services.backtest_run import ArtifactFileContent
-from gr_data.config.settings import BacktestStorageConfig
 
 
 _TZ = ZoneInfo("Asia/Shanghai")

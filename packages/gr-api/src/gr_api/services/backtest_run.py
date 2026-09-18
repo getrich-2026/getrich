@@ -25,8 +25,8 @@ from gr_api.errors import BadRequest, NotFound
 
 
 if TYPE_CHECKING:
+    from gr_api.config import BacktestStorageConfig
     from gr_api.pagination import PageParams
-    from gr_data.config.settings import BacktestStorageConfig
     from psycopg import AsyncConnection
 
 

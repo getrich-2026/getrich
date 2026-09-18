@@ -21,7 +21,7 @@ uv workspace，七个有源码的 Python 包、一个占位包与两个前端。
 
 | 包 | import | 职责 |
 |---|---|---|
-| `packages/gr-data` | `gr_data` | 配置、数据库连接、外部数据接入（raw → ingest → PG） |
+| `packages/gr-data` | `gr_data` | 数据配置、数据库连接、外部数据接入（raw → ingest → PG） |
 | `packages/gr-db` | `gr_db` | 全部 DDL 与迁移，数据库结构的唯一真源 |
 | `packages/gr-backtest` | `gr_backtest` | 回测引擎（纯库，不含 Web / 实盘 / 调度） |
 | `packages/gr-signal` | `gr_signal` | 实盘信号生产与交易执行 |
@@ -48,6 +48,7 @@ uv sync --frozen --all-packages
 
 # 2. 配置：填数据库连接与数据源凭证
 cp .env.example .env
+# 配置只在应用／CLI 入口显式加载；不会自动生成用户目录 .env
 
 # 3. 建 PostgreSQL 表（若也配置了 ClickHouse，再执行 --target ch）
 uv run gr-db migrate --target pg
@@ -61,10 +62,11 @@ import psycopg
 from gr_backtest import Backtest, PgBarLoader, compute_metrics
 from gr_backtest.report import TearSheet
 from gr_backtest.strategies.ma_cross import MACross
-from gr_data.config import settings
+from gr_data.config import load_postgres
+from gr_tools.config import load_environment
 
 TZ = ZoneInfo("Asia/Shanghai")
-cfg = settings.postgres
+cfg = load_postgres(load_environment())
 conn = psycopg.connect(
     f"host={cfg.host} port={cfg.port} dbname={cfg.database} "
     f"user={cfg.user} password={cfg.password}"

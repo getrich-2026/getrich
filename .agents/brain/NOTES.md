@@ -20,14 +20,16 @@
 
 ## 日志与默认运行模式
 
-- 2026-09-18 配置职责复核：全量 Settings 暂留兼容入口；建议由 API、数据 CLI 等入口按需组装，通用加载能力归 gr-tools。尚未迁移运行代码，设计与验收边界见 backlog 的“配置组装入口”。
-
-- 公共日志模型／输出工具已下沉 gr-tools；现有 gr_data.config 作为配置组装兼容入口。各模块直接记录 stdlib 日志，程序入口配置输出，详见 D-002。
+- 2026-09-18 配置入口拆分已实施：gr-tools 提供无导入副作用的环境快照／日志能力；gr-data 保留数据模型；gr-api 组装 API／worker 配置，其他 CLI 按需加载。旧全量 Settings／settings／load_settings 已移除，导入不再创建 `.env`；Python 调用迁移见 gr-data 手册。
+- API 请求、支付验签与后台任务使用应用实例配置；Celery 使用队列应用配置，数据库池接收显式参数。公共日志入口为 gr_tools.config.setup_logging，详见 D-002。
 - 默认 worker backend 为 inproc；CI 默认仅 PG，手动 extra_services 可启用 CH／Redis。未启动或停止本机数据库服务。
 - 2026-09-17：按用户决定，最低 Python 版本统一为 3.11，停止支持 3.10；各包声明、uv.lock、Ruff／类型检查配置已对齐，开发默认仍为 3.12。CI 保留 3.11／3.12 并显式用 UV_PYTHON 选择解释器；3.12 开启选股／诊断 PG 集成测试与 75% 覆盖率检查，覆盖率包范围读取 pyproject.toml。手动 CH／Redis 环境仅在 3.12 运行。主前端 Node 24 的 lint／build 保留。泛型兼容说明见 `gr_api/schemas/diagnosis.py` 的相邻注释。
 - 本地 .env 仅更新 worker backend；连接与凭证未迁移到源码或 YAML。
 
 ## 验证边界
+
+- 2026-09-18 配置组装迁移：Python 3.12 受影响包离线回归 1385 项通过、6 项跳过、42 项排除；Python 3.11.16 相关回归 408 项通过。末轮调整另通过 69 项定向检查及 10 项 API 配置／ASGI 入口检查。测试使用隔离环境目录，保留既有 mock 协程警告；未执行全仓测试、真库集成或远程 CI。
+- 本次 Ruff、429 文件格式检查、PG 42／CH 1 迁移静态检查、uv lock 检查、差异检查通过。独立 Python 3.11 wheel 环境验证 gr-tools 配置不依赖 gr-data、gr-data 配置不依赖 gr-api；这不是完整包运行时集成验证。18 个决策编号、69 处有效引用及 68 个本地链接／锚点通过检查。
 
 - 2026-09-18 决策清理：18 个连续编号与锚点、72 处有效引用、68 个本地链接／锚点检查通过；唯一旧编号为已记账 040 迁移的历史引用，在决策文档注明映射。8 个 Python 文件仅注释／docstring 变化，可执行 AST 一致；全部 DDL 未改，Redis 仅改引用与说明、运行配置未变，`git diff --check` 通过。本次未运行交易／数据库业务测试或连接服务。
 

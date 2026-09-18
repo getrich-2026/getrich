@@ -166,13 +166,13 @@ def test_configure_logging_preserves_configured_level() -> None:
     """不带 verbose 时保持 LOG_LEVEL，而不是强制 INFO。"""
     with patch.object(cli, "setup_logging") as configure:
         cli._configure_logging(verbose=False)
-    configure.assert_called_once_with(cli.settings, level=None)
+    assert configure.call_args.kwargs == {"level": None}
 
 
 def test_configure_logging_debug_when_verbose() -> None:
     with patch.object(cli, "setup_logging") as configure:
         cli._configure_logging(verbose=True)
-    configure.assert_called_once_with(cli.settings, level="DEBUG")
+    assert configure.call_args.kwargs == {"level": "DEBUG"}
 
 
 # ---------------------------------------------------------------------------
@@ -248,11 +248,11 @@ def test_run_postgres_success_prints_summary(tmp_path: Path, capsys) -> None:
     fake_psycopg.connect.return_value.__exit__.return_value = False
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_postgres") as fake_pg,
         patch.dict("sys.modules", {"psycopg": fake_psycopg}),
         patch("gr_db.cli.asyncio") as fake_asyncio,
     ):
-        fake_settings.postgres = _fake_settings_postgres()
+        fake_pg.return_value = _fake_settings_postgres()
         fake_asyncio.run.return_value = plan
 
         args = argparse.Namespace(
@@ -279,11 +279,11 @@ def test_run_postgres_no_migrations_prints_already_up_to_date(tmp_path: Path, ca
     fake_psycopg.connect.return_value.__exit__.return_value = False
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_postgres") as fake_pg,
         patch.dict("sys.modules", {"psycopg": fake_psycopg}),
         patch("gr_db.cli.asyncio") as fake_asyncio,
     ):
-        fake_settings.postgres = _fake_settings_postgres()
+        fake_pg.return_value = _fake_settings_postgres()
         fake_asyncio.run.return_value = plan
 
         args = argparse.Namespace(
@@ -319,11 +319,11 @@ def test_run_postgres_dry_run_prints_dry_run_message(tmp_path: Path, capsys) -> 
     fake_psycopg.connect.return_value.__exit__.return_value = False
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_postgres") as fake_pg,
         patch.dict("sys.modules", {"psycopg": fake_psycopg}),
         patch("gr_db.cli.asyncio") as fake_asyncio,
     ):
-        fake_settings.postgres = _fake_settings_postgres()
+        fake_pg.return_value = _fake_settings_postgres()
         fake_asyncio.run.return_value = plan
 
         args = argparse.Namespace(
@@ -347,11 +347,11 @@ def test_run_postgres_migration_error_returns_1(tmp_path: Path) -> None:
     fake_psycopg.connect.return_value.__exit__.return_value = False
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_postgres") as fake_pg,
         patch.dict("sys.modules", {"psycopg": fake_psycopg}),
         patch("gr_db.cli.asyncio") as fake_asyncio,
     ):
-        fake_settings.postgres = _fake_settings_postgres()
+        fake_pg.return_value = _fake_settings_postgres()
         fake_asyncio.run.side_effect = MigrationError("table create failed")
 
         args = argparse.Namespace(
@@ -373,10 +373,10 @@ def test_run_postgres_connection_error_returns_2(tmp_path: Path) -> None:
     fake_psycopg.connect.side_effect = RuntimeError("connection refused")
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_postgres") as fake_pg,
         patch.dict("sys.modules", {"psycopg": fake_psycopg}),
     ):
-        fake_settings.postgres = _fake_settings_postgres()
+        fake_pg.return_value = _fake_settings_postgres()
 
         args = argparse.Namespace(
             migrations_dir=tmp_path,
@@ -421,11 +421,11 @@ def test_run_clickhouse_success_returns_0(tmp_path: Path, capsys) -> None:
     fake_chc.get_client.return_value = MagicMock()
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_clickhouse") as fake_ch,
         patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
         patch("gr_db.cli.asyncio") as fake_asyncio,
     ):
-        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_ch.return_value = _fake_settings_clickhouse()
         fake_asyncio.run.return_value = plan
 
         args = argparse.Namespace(
@@ -448,11 +448,11 @@ def test_run_clickhouse_no_migrations_prints_up_to_date(tmp_path: Path, capsys) 
     fake_chc.get_client.return_value = MagicMock()
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_clickhouse") as fake_ch,
         patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
         patch("gr_db.cli.asyncio") as fake_asyncio,
     ):
-        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_ch.return_value = _fake_settings_clickhouse()
         fake_asyncio.run.return_value = plan
 
         args = argparse.Namespace(
@@ -483,11 +483,11 @@ def test_run_clickhouse_dry_run(tmp_path: Path, capsys) -> None:
     fake_chc.get_client.return_value = MagicMock()
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_clickhouse") as fake_ch,
         patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
         patch("gr_db.cli.asyncio") as fake_asyncio,
     ):
-        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_ch.return_value = _fake_settings_clickhouse()
         fake_asyncio.run.return_value = plan
 
         args = argparse.Namespace(
@@ -506,11 +506,11 @@ def test_run_clickhouse_migration_error_returns_1(tmp_path: Path) -> None:
     fake_chc.get_client.return_value = MagicMock()
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_clickhouse") as fake_ch,
         patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
         patch("gr_db.cli.asyncio") as fake_asyncio,
     ):
-        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_ch.return_value = _fake_settings_clickhouse()
         fake_asyncio.run.side_effect = MigrationError("DDL failed")
 
         args = argparse.Namespace(
@@ -528,10 +528,10 @@ def test_run_clickhouse_connect_failure_returns_2(tmp_path: Path) -> None:
     fake_chc.get_client.side_effect = RuntimeError("DNS resolution failed")
 
     with (
-        patch.object(cli, "settings") as fake_settings,
+        patch.object(cli, "load_clickhouse") as fake_ch,
         patch.dict("sys.modules", {"clickhouse_connect": fake_chc}),
     ):
-        fake_settings.clickhouse = _fake_settings_clickhouse()
+        fake_ch.return_value = _fake_settings_clickhouse()
 
         args = argparse.Namespace(
             migrations_dir=tmp_path,
@@ -638,4 +638,27 @@ def test_main_verbose_passes_through(tmp_path: Path) -> None:
         cli.main(
             ["migrate", "-v", "--migrations-dir", str(tmp_path), "--clickhouse-dir", str(tmp_path)],
         )
-    fake_cfg.assert_called_once_with(True)
+    fake_cfg.assert_called_once()
+    assert fake_cfg.call_args.args[0] is True
+
+
+def test_status_only_needs_logging_environment(tmp_path, monkeypatch, capsys):
+    """严格模式的磁盘查询不校验未用到的 PG／CH／Web 配置。"""
+    from gr_tools.config import Environment
+
+    monkeypatch.setattr(
+        cli,
+        "load_environment",
+        lambda: Environment(
+            tmp_path,
+            {
+                "APP_ENV": "prod",
+                "PG_PORT": "invalid",
+                "CLICKHOUSE_PORT": "invalid",
+                "WEB_PORT": "invalid",
+                "BACKTEST_ARTIFACT_DIR": "/nonexistent",
+            },
+        ),
+    )
+    assert cli.main(["status", "--target", "pg"]) == 0
+    assert "migration" in capsys.readouterr().out

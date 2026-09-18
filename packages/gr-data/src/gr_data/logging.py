@@ -16,7 +16,7 @@ def configure_logging(
     console: bool = True,
     filename: str = "gr_data.log",
 ) -> None:
-    """兼容旧签名；新入口使用 gr_data.config.setup_logging。"""
+    """兼容旧签名；新入口使用 gr_tools.config.setup_logging。"""
     _configure_logging(
         level,
         file_path=Path(log_dir) / filename if log_dir is not None else None,

@@ -19,13 +19,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 from uuid import uuid4
 
-from gr_data.config import settings, setup_logging
+from gr_data.config import load_clickhouse, load_postgres
 from gr_data.config.pipeline import load_config
+from gr_tools.config import Environment, LoggingConfig, load_environment, setup_logging
 
 from .executors import (
     ClickHouseMigrationExecutor,
@@ -106,8 +106,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _configure_logging(verbose: bool) -> None:
-    setup_logging(settings, level="DEBUG" if verbose else None)
+def _configure_logging(verbose: bool, environment: Environment | None = None) -> None:
+    env = environment if environment is not None else load_environment()
+    setup_logging(LoggingConfig.from_env(env.root, env.values), level="DEBUG" if verbose else None)
 
 
 def _print_status(directory: Path) -> int:
@@ -125,11 +126,11 @@ def _print_status(directory: Path) -> int:
     return 0
 
 
-def _run_postgres(args: argparse.Namespace) -> int:
+def _run_postgres(args: argparse.Namespace, environment: Environment | None = None) -> int:
     """Apply PostgreSQL migrations. Returns process exit code."""
     import psycopg
 
-    cfg = settings.postgres
+    cfg = load_postgres(environment if environment is not None else load_environment())
     dsn = (
         f"host={cfg.host} port={cfg.port} user={cfg.user} "
         f"password={cfg.password} dbname={cfg.database}"
@@ -158,11 +159,11 @@ def _run_postgres(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_clickhouse(args: argparse.Namespace) -> int:
+def _run_clickhouse(args: argparse.Namespace, environment: Environment | None = None) -> int:
     """Apply ClickHouse migrations. Returns process exit code."""
     import clickhouse_connect
 
-    cfg = settings.clickhouse
+    cfg = load_clickhouse(environment if environment is not None else load_environment())
     try:
         # ``clickhouse_connect`` 1.x takes a bare hostname (no URL
         # scheme) and a separate ``secure=`` boolean to pick HTTP
@@ -205,7 +206,7 @@ def _run_clickhouse(args: argparse.Namespace) -> int:
     return 0
 
 
-def _open_postgres_connection() -> object:
+def _open_postgres_connection(environment: Environment | None = None) -> object:
     """按迁移 CLI 相同配置建立 PostgreSQL 连接。
 
     Time Complexity: O(1)。
@@ -213,7 +214,7 @@ def _open_postgres_connection() -> object:
     """
     import psycopg
 
-    cfg = settings.postgres
+    cfg = load_postgres(environment if environment is not None else load_environment())
     dsn = (
         f"host={cfg.host} port={cfg.port} user={cfg.user} "
         f"password={cfg.password} dbname={cfg.database}"
@@ -221,7 +222,7 @@ def _open_postgres_connection() -> object:
     return psycopg.connect(dsn, autocommit=True)
 
 
-def _open_clickhouse_client() -> object:
+def _open_clickhouse_client(environment: Environment | None = None) -> object:
     """按迁移 CLI 相同配置建立 ClickHouse 客户端。
 
     Time Complexity: O(1)。
@@ -229,7 +230,7 @@ def _open_clickhouse_client() -> object:
     """
     import clickhouse_connect
 
-    cfg = settings.clickhouse
+    cfg = load_clickhouse(environment if environment is not None else load_environment())
     return clickhouse_connect.get_client(
         host=cfg.host,
         port=cfg.port,
@@ -240,16 +241,17 @@ def _open_clickhouse_client() -> object:
     )
 
 
-def _default_docs_out() -> Path:
+def _default_docs_out(environment: Environment | None = None) -> Path:
     """返回数据字典默认产物路径。
 
     Time Complexity: O(1)。
     Space Complexity: O(1)。
     """
-    configured = os.environ.get("GETRICH_DOCS_OUT", "").strip()
+    env = environment if environment is not None else load_environment()
+    configured = env.values.get("GETRICH_DOCS_OUT", "").strip()
     if configured:
         return Path(configured)
-    return load_config().raw_root / "_docs" / "data-dictionary.html"
+    return load_config(environment=env).raw_root / "_docs" / "data-dictionary.html"
 
 
 def _write_atomically(path: Path, content: str) -> None:
@@ -268,7 +270,7 @@ def _write_atomically(path: Path, content: str) -> None:
             temporary.unlink()
 
 
-def _run_docs(args: argparse.Namespace) -> int:
+def _run_docs(args: argparse.Namespace, environment: Environment | None = None) -> int:
     """反射所选活库并输出数据字典。
 
     Time Complexity: O(t + c + r)，由数据库 catalog 与契约规模决定。
@@ -282,9 +284,9 @@ def _run_docs(args: argparse.Namespace) -> int:
     clickhouse_client = None
     try:
         if target in ("postgres", "all"):
-            postgres_conn = _open_postgres_connection()
+            postgres_conn = _open_postgres_connection(environment)
         if target in ("clickhouse", "all"):
-            clickhouse_client = _open_clickhouse_client()
+            clickhouse_client = _open_clickhouse_client(environment)
         dictionary = build_dictionary(postgres_conn, clickhouse_client)
     except Exception as exc:  # noqa: BLE001
         logger.error("cannot build data dictionary: %s", exc)
@@ -296,7 +298,7 @@ def _run_docs(args: argparse.Namespace) -> int:
             clickhouse_client.close()
 
     content = render_json(dictionary) if args.output_format == "json" else render_html(dictionary)
-    output = args.out or _default_docs_out()
+    output = args.out or _default_docs_out(environment)
     if str(output) == "-":
         sys.stdout.write(content)
         if not content.endswith("\n"):
@@ -309,7 +311,8 @@ def _run_docs(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    _configure_logging(args.verbose)
+    environment = load_environment()
+    _configure_logging(args.verbose, environment)
 
     target = {"pg": "postgres", "ch": "clickhouse"}.get(args.target, args.target)
     want_pg = target in ("postgres", "all")
@@ -324,15 +327,15 @@ def main(argv: list[str] | None = None) -> int:
         return rc
 
     if args.command == "docs":
-        return _run_docs(args)
+        return _run_docs(args, environment)
 
     rc = 0
     if want_pg:
-        rc = _run_postgres(args)
+        rc = _run_postgres(args, environment)
         if rc != 0:
             return rc
     if want_ch:
-        rc = _run_clickhouse(args)
+        rc = _run_clickhouse(args, environment)
     return rc
 
 

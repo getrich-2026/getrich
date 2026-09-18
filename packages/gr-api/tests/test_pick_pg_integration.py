@@ -22,7 +22,8 @@ from uuid import uuid4
 import pytest
 from gr_api.pagination import make_page_params
 from gr_api.services import pick as pick_svc, pick_import
-from gr_data.config import settings
+from gr_data.config import load_postgres
+from gr_tools.config import load_environment
 
 from .fixture_picks import PICK_COLUMNS, day_slice, load_frame, trading_days
 
@@ -51,7 +52,7 @@ _EMPTY_DAY = _DAYS[19]
 
 
 def _dsn() -> str:
-    cfg = settings.postgres
+    cfg = load_postgres(load_environment())
     return f"postgresql://{cfg.user}:{cfg.password}@{cfg.host}:{cfg.port}/{cfg.database}"
 
 

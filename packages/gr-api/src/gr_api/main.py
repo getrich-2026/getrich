@@ -36,6 +36,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response
+from gr_api.config import ApiSettings, load_api_settings
 from gr_api.logging_middleware import (
     RequestIdLogFilter,
     RequestIdMiddleware,
@@ -66,12 +67,12 @@ from gr_api.services import (
     backtest_walk_forward as wf_svc,
 )
 from gr_api.services.job_listener import BacktestJobListener
-from gr_data.config import settings, setup_logging
 from gr_data.db import pg_pool
+from gr_tools.config import setup_logging
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize the PG pool, start the LISTEN pump, serve, then tear down.
 
     Order matters: ``pg_pool.init()`` must come first (the listener
@@ -95,10 +96,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     slightly higher latency). The lock is released explicitly in
     ``stop()``.
     """
-    setup_logging(settings, filters=(RequestIdLogFilter(),))
-    await pg_pool.init()
+    settings = app.state.settings
+    setup_logging(settings.logging, filters=(RequestIdLogFilter(),))
+    await pg_pool.init(settings.postgres)
 
-    listener = BacktestJobListener()
+    listener = BacktestJobListener(settings.postgres)
     await listener.start()  # may silently fail to be the holder
 
     if listener.is_holder:
@@ -134,13 +136,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await pg_pool.close()
 
 
-def create_app() -> FastAPI:
+def create_app(settings: ApiSettings | None = None) -> FastAPI:
+    settings = settings if settings is not None else load_api_settings()
     app = FastAPI(
         title="GetRich API",
         version="1.1.0",
         default_response_class=ORJSONResponse,
         lifespan=lifespan,
     )
+
+    app.state.settings = settings
+    app.state.task_queue = None
+    if settings.worker.backend == "celery":
+        from gr_api.worker.factory import make_celery_app
+
+        app.state.task_queue = make_celery_app(settings)
 
     # RequestIdMiddleware MUST be the OUTERMOST layer so that
     # every other middleware (security headers, metrics, CORS)
@@ -227,4 +237,10 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+def __getattr__(name: str) -> FastAPI:
+    """兼容 uvicorn 的 main:app 入口；导入工厂时不加载默认配置。"""
+    if name != "app":
+        raise AttributeError(name)
+    application = create_app()
+    globals()["app"] = application
+    return application

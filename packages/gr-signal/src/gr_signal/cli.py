@@ -27,8 +27,9 @@ from datetime import datetime
 from gr_backtest import get_shanghai_tz
 from gr_backtest.calendar import DEFAULT_FUTURES_SESSIONS
 from gr_backtest.registry import get_registry
-from gr_data.config import settings, setup_logging
+from gr_data.config import load_postgres
 from gr_data.db.pool import pg_pool
+from gr_tools.config import LoggingConfig, load_environment, setup_logging
 
 from gr_signal.account_loader import AccountStateLoader
 from gr_signal.live_runner import LiveSignalRunner
@@ -75,7 +76,8 @@ def _is_trading_time() -> bool:
 
 async def main() -> int:
     """Run one signal generation cycle.  Returns the process exit code."""
-    setup_logging(settings)
+    environment = load_environment(install=True)
+    setup_logging(LoggingConfig.from_env(environment.root, environment.values))
     strategy_name = os.environ.get(_ENV_STRATEGY, "").strip()
     strategy_id = os.environ.get(_ENV_STRATEGY_ID, "").strip()
     symbols_env = os.environ.get(_ENV_SYMBOLS, "").strip()
@@ -102,7 +104,7 @@ async def main() -> int:
 
     # --- pg pool init ------------------------------------------------------
     try:
-        await pg_pool.init()
+        await pg_pool.init(load_postgres(environment))
     except Exception as exc:
         _emit({"status": "error", "message": f"pg_pool init failed: {exc}"})
         return 1

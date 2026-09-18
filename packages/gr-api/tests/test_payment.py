@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -116,7 +117,7 @@ def test_verify_signature_skips_when_secret_unset(
     """
     monkeypatch.delenv("PAYMENT_WEBHOOK_SECRET", raising=False)
     # No exception raised.
-    verify_signature(b"{}", signature=None)
+    verify_signature(b"{}", signature=None, secret=os.environ.get("PAYMENT_WEBHOOK_SECRET"))
 
 
 def test_verify_signature_rejects_missing_header(
@@ -124,7 +125,7 @@ def test_verify_signature_rejects_missing_header(
 ) -> None:
     monkeypatch.setenv("PAYMENT_WEBHOOK_SECRET", "super-secret")
     with pytest.raises(Unauthorized):
-        verify_signature(b"{}", signature=None)
+        verify_signature(b"{}", signature=None, secret=os.environ.get("PAYMENT_WEBHOOK_SECRET"))
 
 
 def test_verify_signature_rejects_bad_signature(
@@ -135,7 +136,7 @@ def test_verify_signature_rejects_bad_signature(
     """
     monkeypatch.setenv("PAYMENT_WEBHOOK_SECRET", "super-secret")
     with pytest.raises(Unauthorized):
-        verify_signature(b"{}", signature="0" * 64)
+        verify_signature(b"{}", signature="0" * 64, secret=os.environ.get("PAYMENT_WEBHOOK_SECRET"))
 
 
 def test_verify_signature_accepts_valid_signature(
@@ -149,7 +150,7 @@ def test_verify_signature_accepts_valid_signature(
     body = b'{"order_id":"ORD_1"}'
     expected = hmac.new(b"super-secret", body, hashlib.sha256).hexdigest()
     # No exception raised.
-    verify_signature(body, signature=expected)
+    verify_signature(body, signature=expected, secret=os.environ.get("PAYMENT_WEBHOOK_SECRET"))
 
 
 # ---------------------------------------------------------------------------

@@ -9,10 +9,10 @@ from datetime import datetime, timezone as tz
 import bcrypt
 from fastapi import APIRouter, Depends
 from gr_api.auth import create_token
-from gr_api.deps import get_db, request_id
+from gr_api.config import ApiSettings, WebConfig
+from gr_api.deps import get_db, get_settings, request_id
 from gr_api.errors import BadRequest, Unauthorized
 from gr_api.response import success
-from gr_data.config import settings
 from psycopg import AsyncConnection
 from pydantic import BaseModel, Field
 
@@ -50,11 +50,11 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-async def create_refresh_token(user_id: str, db: AsyncConnection) -> str:
+async def create_refresh_token(user_id: str, db: AsyncConnection, web: WebConfig) -> str:
     """Generate a random refresh token, store its hash, return the raw token."""
     raw = secrets.token_hex(32)  # 64-char hex string
     token_hash = _hash_token(raw)
-    expire_seconds = settings.web.jwt_refresh_expire_hours * 3600
+    expire_seconds = web.jwt_refresh_expire_hours * 3600
     async with db.cursor() as cur:
         await cur.execute(
             """
@@ -131,6 +131,7 @@ async def login(
     body: LoginRequest,
     db: AsyncConnection = Depends(get_db),
     rid: str = Depends(request_id),
+    settings: ApiSettings = Depends(get_settings),
 ):
     """Authenticate with email + password, return a JWT access token.
 
@@ -157,7 +158,7 @@ async def login(
             settings.web.jwt_secret,
             expires_in=settings.web.jwt_expire_minutes * 60,
         )
-        refresh_token_val = await create_refresh_token(user_id, db)
+        refresh_token_val = await create_refresh_token(user_id, db, settings.web)
 
         return success(
             {
@@ -188,7 +189,7 @@ async def login(
         settings.web.jwt_secret,
         expires_in=settings.web.jwt_expire_minutes * 60,
     )
-    refresh_token_val = await create_refresh_token(user_id, db)
+    refresh_token_val = await create_refresh_token(user_id, db, settings.web)
 
     return success(
         {
@@ -215,6 +216,7 @@ async def register(
     body: RegisterRequest,
     db: AsyncConnection = Depends(get_db),
     rid: str = Depends(request_id),
+    settings: ApiSettings = Depends(get_settings),
 ):
     """Register a new user account. Returns a JWT so the user is logged in immediately.
 
@@ -277,7 +279,7 @@ async def register(
         settings.web.jwt_secret,
         expires_in=settings.web.jwt_expire_minutes * 60,
     )
-    refresh_token_val = await create_refresh_token(user_id, db)
+    refresh_token_val = await create_refresh_token(user_id, db, settings.web)
 
     return success(
         {
@@ -305,6 +307,7 @@ async def refresh(
     body: RefreshRequest,
     db: AsyncConnection = Depends(get_db),
     rid: str = Depends(request_id),
+    settings: ApiSettings = Depends(get_settings),
 ):
     """Exchange a valid refresh token for a new access token + rotated refresh token."""
     token_hash = _hash_token(body.refresh_token)
@@ -341,7 +344,7 @@ async def refresh(
         settings.web.jwt_secret,
         expires_in=settings.web.jwt_expire_minutes * 60,
     )
-    new_refresh_token = await create_refresh_token(user_id, db)
+    new_refresh_token = await create_refresh_token(user_id, db, settings.web)
 
     return success(
         {

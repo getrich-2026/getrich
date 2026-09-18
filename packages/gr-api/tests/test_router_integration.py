@@ -24,6 +24,8 @@ to, plus the auth / envelope / request-id plumbing.
 
 from __future__ import annotations
 
+import os
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -193,7 +195,9 @@ def test_payments_webhook_skips_signature_when_secret_unset(
     """When PAYMENT_WEBHOOK_SECRET is not set, ``verify_signature`` is a no-op."""
     monkeypatch.delenv("PAYMENT_WEBHOOK_SECRET", raising=False)
     # Should not raise.
-    payment_svc.verify_signature(b"{}", "any-signature")
+    payment_svc.verify_signature(
+        b"{}", "any-signature", secret=os.environ.get("PAYMENT_WEBHOOK_SECRET")
+    )
 
 
 def test_payments_webhook_rejects_bad_signature(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -202,7 +206,9 @@ def test_payments_webhook_rejects_bad_signature(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setenv("PAYMENT_WEBHOOK_SECRET", "test-secret-xyz")
     with pytest.raises(Unauthorized):
-        payment_svc.verify_signature(b'{"foo":1}', "wrong-signature")
+        payment_svc.verify_signature(
+            b'{"foo":1}', "wrong-signature", secret=os.environ.get("PAYMENT_WEBHOOK_SECRET")
+        )
 
 
 def test_payments_webhook_accepts_correct_hmac(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -216,7 +222,7 @@ def test_payments_webhook_accepts_correct_hmac(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("PAYMENT_WEBHOOK_SECRET", secret)
 
     # Should not raise.
-    payment_svc.verify_signature(body, sig)
+    payment_svc.verify_signature(body, sig, secret=os.environ.get("PAYMENT_WEBHOOK_SECRET"))
 
 
 async def test_payments_webhook_route_envelopes_handle_result(
@@ -258,6 +264,7 @@ async def test_payments_webhook_route_envelopes_handle_result(
         x_webhook_signature=None,
         db=_FakeConn(_FakeCursor()),
         rid="rid-wh",
+        settings=SimpleNamespace(payment_webhook_secret=""),
     )
 
     assert response["code"] == 0
@@ -346,14 +353,15 @@ async def test_user_orders_route_passes_user_id_to_service(
 @pytest.fixture
 def _inproc_dispatch(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Force inproc backend and capture the BackgroundTasks.add_task call."""
-    from fastapi import BackgroundTasks
-    from gr_api.routers import backtest_jobs as router_mod
+    from fastapi import BackgroundTasks, FastAPI
+    from starlette.requests import Request
 
     settings = MagicMock()
     settings.worker.backend = "inproc"
-    monkeypatch.setattr(router_mod, "settings", settings)
+    request = Request({"type": "http", "app": FastAPI()})
+    request.app.state.settings = settings
 
-    captured: dict[str, Any] = {"calls": []}
+    captured: dict[str, Any] = {"calls": [], "request": request}
 
     def fake_add(self: Any, func: Any, *args: Any, **kwargs: Any) -> None:
         captured["calls"].append((func.__name__, args, kwargs))
@@ -408,6 +416,7 @@ async def test_backtest_job_inproc_dispatches_via_background_tasks(
     response = await run_backtest(
         body=body,
         background=BackgroundTasks(),
+        request=_inproc_dispatch["request"],
         user_id="user-1",
         db=None,
         idempotency_key=None,
@@ -418,7 +427,11 @@ async def test_backtest_job_inproc_dispatches_via_background_tasks(
     assert response["data"]["job_id"] == "job-x"
     assert response["data"]["status"] == "queued"
     assert _inproc_dispatch["calls"] == [
-        ("run_job_synchronously", ("job-x",), {}),
+        (
+            "run_job_synchronously",
+            ("job-x",),
+            {"postgres": _inproc_dispatch["request"].app.state.settings.postgres},
+        ),
     ]
 
 
@@ -444,6 +457,7 @@ async def test_backtest_sweep_inproc_enqueues_sweep_run(
     response = await run_sweep(
         body=body,
         background=BackgroundTasks(),
+        request=_inproc_dispatch["request"],
         user_id="user-1",
         db=None,
         idempotency_key=None,
@@ -455,7 +469,11 @@ async def test_backtest_sweep_inproc_enqueues_sweep_run(
     # the celery task_name (covered in test_backtest_jobs_router.py),
     # not in the inproc path.
     assert _inproc_dispatch["calls"] == [
-        ("run_job_synchronously", ("job-x",), {}),
+        (
+            "run_job_synchronously",
+            ("job-x",),
+            {"postgres": _inproc_dispatch["request"].app.state.settings.postgres},
+        ),
     ]
 
 
@@ -480,6 +498,7 @@ async def test_backtest_job_inproc_envelope_request_id_preserved(
     response = await run_backtest(
         body=body,
         background=BackgroundTasks(),
+        request=_inproc_dispatch["request"],
         user_id="user-1",
         db=None,
         idempotency_key=None,

@@ -11,59 +11,55 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
-from dotenv import load_dotenv
+from gr_tools.config import Environment, load_environment
 
 from gr_data.common.paths import DEFAULT_RAW_ROOT
-from gr_data.config.settings import find_project_root
 
-
-# workspace 根目录的 .env 文件（若存在则自动加载到 os.environ）。
-# 必须走 find_project_root()，不能用 parents[N] 硬数层级 —— 本模块所在的包
-# 目录深度会随重构变化，硬编码层级会静默指到成员包根（见 DECISIONS.md D-002）。
-_project_root = find_project_root()
-_dotenv_path = _project_root / ".env"
-if _dotenv_path.is_file():
-    load_dotenv(_dotenv_path)
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def _expand_env(value: Any) -> Any:
+def _expand_env(value: Any, environ: Mapping[str, str] | None = None) -> Any:
     """递归把 ``${VAR}`` 占位替换为环境变量值（缺失则保留原串并由调用方校验）。"""
+    source = os.environ if environ is None else environ
     if isinstance(value, str):
 
         def repl(m: re.Match[str]) -> str:
-            return os.environ.get(m.group(1), m.group(0))
+            return source.get(m.group(1), m.group(0))
 
         return _ENV_PATTERN.sub(repl, value)
     if isinstance(value, dict):
-        return {k: _expand_env(v) for k, v in value.items()}
+        return {k: _expand_env(v, source) for k, v in value.items()}
     if isinstance(value, list):
-        return [_expand_env(v) for v in value]
+        return [_expand_env(v, source) for v in value]
     return value
 
 
-def resolve_secret_fields(cfg: dict[str, Any]) -> dict[str, Any]:
+def resolve_secret_fields(
+    cfg: dict[str, Any], environ: Mapping[str, str] | None = None
+) -> dict[str, Any]:
     """对任意 ``*_env`` 字段，注入同级去掉 ``_env`` 后缀的明文键。
 
     例：``password_env: PGPASSWORD`` → 额外得到 ``password: <env值>``（若环境变量存在）。
     原 ``*_env`` 字段保留，便于排查。
     """
+    source = os.environ if environ is None else environ
     if not isinstance(cfg, dict):
         return cfg
     out: dict[str, Any] = {}
     for k, v in cfg.items():
         if isinstance(v, dict):
-            out[k] = resolve_secret_fields(v)
+            out[k] = resolve_secret_fields(v, source)
         else:
             out[k] = v
         if k.endswith("_env") and isinstance(v, str) and v:
-            secret = os.environ.get(v)
+            secret = source.get(v)
             if secret is not None:
                 out[k[:-4]] = secret
     return out
@@ -73,7 +69,8 @@ def resolve_secret_fields(cfg: dict[str, Any]) -> dict[str, Any]:
 class Config:
     """已解析配置的薄包装，提供按路径取值的便捷方法。"""
 
-    data: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict, repr=False)
+    environment: Environment | None = field(default=None, repr=False)
 
     def get(self, *keys: str, default: Any = None) -> Any:
         node: Any = self.data
@@ -100,14 +97,19 @@ class Config:
         恒等于 ``/opt/raw_parquet`` —— 于是环境变量**永远不生效**，配了也没用，
         新机器上一律撞 `/opt` 的权限错。方向同 D-002：环境变量优先。
         """
-        env_root = os.environ.get("RAW_PARQUET_ROOT", "").strip()
+        source = self.environment.values if self.environment is not None else os.environ
+        env_root = source.get("RAW_PARQUET_ROOT", "").strip()
         if env_root:
             return Path(env_root)
         return Path(self.get("paths", "raw_root", default=str(DEFAULT_RAW_ROOT)))
 
 
-def load_config(path: str | Path | None = None) -> Config:
+def load_config(
+    path: str | Path | None = None, *, environment: Environment | None = None
+) -> Config:
     """加载配置文件。path 为空时按 ``config.yaml`` → ``config.example.yaml`` 顺序查找。"""
+    env = environment if environment is not None else load_environment()
+    _project_root = env.root
     candidates: list[Path] = []
     if path:
         candidates.append(Path(path))
@@ -122,9 +124,9 @@ def load_config(path: str | Path | None = None) -> Config:
     for cand in candidates:
         if cand.is_file():
             raw = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
-            expanded = _expand_env(raw)
-            resolved = resolve_secret_fields(expanded)
-            return Config(resolved)
+            expanded = _expand_env(raw, env.values)
+            resolved = resolve_secret_fields(expanded, env.values)
+            return Config(resolved, env)
 
     # 没有配置文件时返回空配置，调用方各自给默认值。
-    return Config({})
+    return Config({}, env)

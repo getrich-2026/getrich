@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 
-from gr_data.config import settings, setup_logging
+from gr_tools.config import LoggingConfig, load_environment, setup_logging
+
+from gr_data.config import load_postgres
 from gr_data.config.pipeline import Config, load_config
 from gr_data.db.sync import PgConfig, connect
 
@@ -26,9 +27,9 @@ log = logging.getLogger(__name__)
 
 
 def _configure_logging_from(cfg: Config) -> None:
-    """日志配置来自 settings（根 .env），不从 config.yaml 读。"""
-    del cfg  # 保留签名，配置来源已统一到 settings
-    setup_logging(settings)
+    """日志选项来自入口的环境快照，不从 config.yaml 读。"""
+    env = cfg.environment if cfg.environment is not None else load_environment()
+    setup_logging(LoggingConfig.from_env(env.root, env.values))
 
 
 #: 批量入库的 statement_timeout（毫秒）。``PgConfig`` 的默认值 60s 是给交互式短
@@ -37,25 +38,27 @@ def _configure_logging_from(cfg: Config) -> None:
 #: 部分整批回滚，重跑还是同样的结果。这里放宽到 30 分钟，只影响 gr-data CLI 这
 #: 条批处理通路，服务侧的连接池不受影响。可用 ``GR_DATA_STATEMENT_TIMEOUT_MS``
 #: 覆盖（跑全量历史回补时可能还要更大）。
-_INGEST_STATEMENT_TIMEOUT_MS = int(os.environ.get("GR_DATA_STATEMENT_TIMEOUT_MS", "1800000"))
+_INGEST_STATEMENT_TIMEOUT_MS = 1800000
 
 
 def _pg(cfg: Config) -> PgConfig:
-    """PostgreSQL 连接来自 settings（根 .env 的 PG_*）。
+    """PostgreSQL 连接来自入口快照中的 PG_*。
 
     以前这里读 config.yaml 的 postgres 段，而那份配置用的是 PGHOST/PGPASSWORD，
     与应用侧的 PG_HOST/PG_PASSWORD 是两套变量名 —— 同一个仓库里 CLI 和服务
-    可能连到不同的库上。现在统一走 settings，config.yaml 只管采集参数。
+    可能连到不同的库上。现在共用环境快照，config.yaml 只管采集参数。
     """
-    del cfg
-    pg = settings.postgres
+    env = cfg.environment if cfg.environment is not None else load_environment()
+    pg = load_postgres(env)
     return PgConfig(
         host=pg.host,
         port=pg.port,
         dbname=pg.database,
         user=pg.user,
         password=pg.password,
-        statement_timeout_ms=_INGEST_STATEMENT_TIMEOUT_MS,
+        statement_timeout_ms=int(
+            env.values.get("GR_DATA_STATEMENT_TIMEOUT_MS", str(_INGEST_STATEMENT_TIMEOUT_MS))
+        ),
     )
 
 
@@ -190,7 +193,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
-    cfg = load_config(args.config)
+    environment = load_environment(install=True)
+    cfg = load_config(args.config, environment=environment)
     _configure_logging_from(cfg)
     try:
         return args.func(args, cfg)

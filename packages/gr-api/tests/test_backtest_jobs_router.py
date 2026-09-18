@@ -23,8 +23,9 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI
 from gr_api.services import backtest_job as job_svc
+from starlette.requests import Request
 
 
 pytestmark = pytest.mark.anyio
@@ -129,11 +130,11 @@ def _store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 @pytest.fixture
 def _inproc_backend(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Force ``GETRICH_WORKER_BACKEND=inproc`` and capture add_task calls."""
-    from gr_api.routers import backtest_jobs as router_mod
 
-    monkeypatch.setattr(router_mod, "settings", _make_settings("inproc"))
+    request = Request({"type": "http", "app": FastAPI()})
+    request.app.state.settings = _make_settings("inproc")
 
-    captured: dict[str, Any] = {"calls": []}
+    captured: dict[str, Any] = {"calls": [], "request": request}
 
     def fake_add(self: Any, func: Any, *args: Any, **kwargs: Any) -> None:
         captured["calls"].append((func.__name__, args, kwargs))
@@ -148,13 +149,13 @@ def _inproc_backend(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 @pytest.fixture
 def _celery_backend(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Force ``GETRICH_WORKER_BACKEND=celery`` and replace the Celery app."""
-    from gr_api.routers import backtest_jobs as router_mod
-    from gr_api.worker import celery_app as celery_mod
 
-    monkeypatch.setattr(router_mod, "settings", _make_settings("celery"))
+    request = Request({"type": "http", "app": FastAPI()})
+    request.app.state.settings = _make_settings("celery")
     fake_app = MagicMock()
     fake_app.send_task = MagicMock()
-    monkeypatch.setattr(celery_mod, "app", fake_app)
+    request.app.state.task_queue = fake_app
+    fake_app.request = request
     return fake_app
 
 
@@ -172,6 +173,7 @@ async def test_post_backtest_inproc_enqueues_background_task(
     response = await run_backtest(
         body=body,
         background=BackgroundTasks(),
+        request=_inproc_backend["request"],
         user_id="user-1",
         db=None,
         idempotency_key=None,
@@ -190,7 +192,13 @@ async def test_post_backtest_inproc_enqueues_background_task(
     assert _store["created"][0]["job_type"] == "backtest"
     assert _store["created"][0]["user_id"] == "user-1"
     # BackgroundTasks was called with the new job_id.
-    assert _inproc_backend["calls"] == [("run_job_synchronously", ("job-1",), {})]
+    assert _inproc_backend["calls"] == [
+        (
+            "run_job_synchronously",
+            ("job-1",),
+            {"postgres": _inproc_backend["request"].app.state.settings.postgres},
+        )
+    ]
 
 
 async def test_post_sweep_inproc_enqueues_background_task(
@@ -204,6 +212,7 @@ async def test_post_sweep_inproc_enqueues_background_task(
     response = await run_sweep(
         body=body,
         background=BackgroundTasks(),
+        request=_inproc_backend["request"],
         user_id="user-1",
         db=None,
         idempotency_key=None,
@@ -211,7 +220,13 @@ async def test_post_sweep_inproc_enqueues_background_task(
     )
     assert response["code"] == 0
     assert _store["created"][0]["job_type"] == "sweep"
-    assert _inproc_backend["calls"] == [("run_job_synchronously", ("job-1",), {})]
+    assert _inproc_backend["calls"] == [
+        (
+            "run_job_synchronously",
+            ("job-1",),
+            {"postgres": _inproc_backend["request"].app.state.settings.postgres},
+        )
+    ]
 
 
 async def test_post_walk_forward_inproc_enqueues_background_task(
@@ -225,6 +240,7 @@ async def test_post_walk_forward_inproc_enqueues_background_task(
     response = await run_walk_forward(
         body=body,
         background=BackgroundTasks(),
+        request=_inproc_backend["request"],
         user_id="user-1",
         db=None,
         idempotency_key=None,
@@ -232,7 +248,13 @@ async def test_post_walk_forward_inproc_enqueues_background_task(
     )
     assert response["code"] == 0
     assert _store["created"][0]["job_type"] == "walk_forward"
-    assert _inproc_backend["calls"] == [("run_job_synchronously", ("job-1",), {})]
+    assert _inproc_backend["calls"] == [
+        (
+            "run_job_synchronously",
+            ("job-1",),
+            {"postgres": _inproc_backend["request"].app.state.settings.postgres},
+        )
+    ]
 
 
 # ---------------------------------------------------------------- celery tests
@@ -249,6 +271,7 @@ async def test_post_backtest_celery_dispatches_backtest_run_job(
     response = await run_backtest(
         body=body,
         background=BackgroundTasks(),
+        request=_celery_backend.request,
         user_id="user-1",
         db=None,
         idempotency_key=None,
@@ -269,6 +292,7 @@ async def test_post_sweep_celery_dispatches_sweep_run_job(
     await run_sweep(
         body=body,
         background=BackgroundTasks(),
+        request=_celery_backend.request,
         user_id="user-1",
         db=None,
         idempotency_key=None,
@@ -288,6 +312,7 @@ async def test_post_walk_forward_celery_dispatches_walk_forward_run_job(
     await run_walk_forward(
         body=body,
         background=BackgroundTasks(),
+        request=_celery_backend.request,
         user_id="user-1",
         db=None,
         idempotency_key=None,
@@ -323,6 +348,7 @@ async def test_post_backtest_idempotency_key_replays(
     response = await run_backtest(
         body=body,
         background=BackgroundTasks(),
+        request=_inproc_backend["request"],
         user_id="user-1",
         db=None,
         idempotency_key="key-1",
@@ -337,4 +363,10 @@ async def test_post_backtest_idempotency_key_replays(
     # BackgroundTasks still enqueued the existing job_id (the operator
     # may want to re-run, but for the inproc path we mirror what the
     # service returned: the existing job_id).
-    assert _inproc_backend["calls"] == [("run_job_synchronously", ("existing-job",), {})]
+    assert _inproc_backend["calls"] == [
+        (
+            "run_job_synchronously",
+            ("existing-job",),
+            {"postgres": _inproc_backend["request"].app.state.settings.postgres},
+        )
+    ]

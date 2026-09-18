@@ -48,7 +48,8 @@ from gr_api.worker.lifespan import (
     init_cancel_listener,
     init_pg_pool,
 )
-from gr_data.config.settings import make_pg_dsn, settings
+from gr_api.worker.runtime import get_worker_settings
+from gr_data.config import make_pg_dsn
 
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ def _run_job_sync(job_id: str) -> dict[str, Any]:
                 op,
                 job_type=row["job_type"],
                 sleep_seconds=0,
-                db_conninfo=make_pg_dsn(settings.postgres),
+                db_conninfo=make_pg_dsn(get_worker_settings().postgres),
             )
             result = await runner.run_once()
             return result.to_dict()

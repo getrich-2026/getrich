@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from gr_data.config import PostgresConfig
+
 
 if TYPE_CHECKING:
     from psycopg import AsyncConnection
@@ -27,15 +29,11 @@ class PgConnectionPool:
     def __init__(self) -> None:
         self._pool: AsyncConnectionPool | None = None
 
-    async def init(self) -> None:
+    async def init(self, cfg: PostgresConfig) -> None:
         """初始化连接池并预热连接。重复调用会被忽略。"""
         if self._pool is not None:
             return
 
-        # 延迟导入 settings，避免在模块加载阶段触发配置校验
-        from gr_data.config import settings
-
-        cfg = settings.postgres
         dsn = (
             f"postgresql://{cfg.user}:{cfg.password}@{cfg.host}:{cfg.port}/{cfg.database}"
             f"?application_name=getrich-web"

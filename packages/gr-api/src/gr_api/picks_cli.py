@@ -17,8 +17,9 @@ from pathlib import Path
 
 from gr_api.errors import ApiError
 from gr_api.services.pick_import import PickImportResult, import_picks_sync
-from gr_data.config import settings, setup_logging
+from gr_data.config import load_postgres
 from gr_tools import human
+from gr_tools.config import LoggingConfig, load_environment, setup_logging
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -71,11 +72,16 @@ def _report(result: PickImportResult, elapsed: float) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    setup_logging(settings, level="DEBUG" if args.verbose else None)
+    environment = load_environment(install=True)
+    setup_logging(
+        LoggingConfig.from_env(environment.root, environment.values),
+        level="DEBUG" if args.verbose else None,
+    )
 
     started = time.monotonic()
     try:
         result = import_picks_sync(
+            postgres=load_postgres(environment),
             strategy=args.strategy,
             trading_day=args.trading_day,
             source=args.file,

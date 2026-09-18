@@ -21,7 +21,8 @@ from zoneinfo import ZoneInfo
 import pytest
 from gr_api.schemas.diagnosis import HoldingItem, PortfolioPlan, SnapshotRequest
 from gr_api.services import diagnosis as svc
-from gr_data.config import settings
+from gr_data.config import load_postgres
+from gr_tools.config import load_environment
 
 
 if TYPE_CHECKING:
@@ -47,7 +48,7 @@ _EMAIL_PREFIX = "diagnosis-pg-test-"
 
 
 def _dsn() -> str:
-    cfg = settings.postgres
+    cfg = load_postgres(load_environment())
     return f"postgresql://{cfg.user}:{cfg.password}@{cfg.host}:{cfg.port}/{cfg.database}"
 
 

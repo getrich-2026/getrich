@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from threading import RLock
 from typing import Any
 
-from gr_data.config.settings import settings
+from gr_data.config import ClickHouseConfig
 from gr_data.logging import Logger
 
 from .database import ClickHouseClient
@@ -121,6 +121,7 @@ class ClickHouseConnectionPool:
         max_lifetime: float = 3600.0,  # 1小时
         connect_timeout: float = 10.0,
         health_check_interval: float = 60.0,  # 1分钟
+        config: ClickHouseConfig | None = None,
     ):
         """
         初始化连接池。
@@ -150,13 +151,14 @@ class ClickHouseConnectionPool:
         self.connect_timeout = connect_timeout
         self.health_check_interval = health_check_interval
 
-        # 连接配置：优先使用传入参数，否则回退到 DEFAULT_DB_CONFIG
+        cfg = config if config is not None else ClickHouseConfig.from_env(strict=False)
+        # 连接配置：优先使用传入参数，否则使用注入配置或当前进程的 CH 环境配置
         self._config: dict[str, Any] = {
-            "host": host or settings.clickhouse.host,
-            "port": port or settings.clickhouse.port,
-            "user": user or settings.clickhouse.user,
-            "password": password or settings.clickhouse.password,
-            "database": database or settings.clickhouse.database,
+            "host": cfg.host if host is None else host,
+            "port": cfg.port if port is None else port,
+            "user": cfg.user if user is None else user,
+            "password": cfg.password if password is None else password,
+            "database": cfg.database if database is None else database,
         }
         # 过滤 None 值 (虽然有了默认值通常不会是None，但为了健壮性保留)
         self._config = {k: v for k, v in self._config.items() if v is not None}

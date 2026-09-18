@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import sys
 
-from gr_data.config.settings import load_settings
+from gr_tools.config import LoggingConfig, load_environment
 
 
 def main() -> None:
@@ -29,7 +29,6 @@ def main() -> None:
     sourced from the same ``.env`` as the API process. Logging is
     configured in the new process by the Celery setup_logging signal.
     """
-    cfg = load_settings()
     # exec 后 Python 进程被替换；日志配置交给 Celery setup_logging 信号。
 
     if len(sys.argv) < 2:
@@ -37,13 +36,18 @@ def main() -> None:
         sys.exit(2)
 
     sub = sys.argv[1]
+    if sub not in {"worker", "beat"}:
+        print(f"unknown subcommand: {sub!r} (expected worker or beat)", file=sys.stderr)
+        sys.exit(2)
+    environment = load_environment(install=True)
+    cfg = LoggingConfig.from_env(environment.root, environment.values)
     if sub == "worker":
         argv = [
             "celery",
             "-A",
             "gr_api.worker.celery_app",
             "worker",
-            f"--loglevel={cfg.logging.level}",
+            f"--loglevel={cfg.level}",
             *sys.argv[2:],
         ]
     elif sub == "beat":
@@ -52,7 +56,7 @@ def main() -> None:
             "-A",
             "gr_api.worker.celery_app",
             "beat",
-            f"--loglevel={cfg.logging.level}",
+            f"--loglevel={cfg.level}",
             *sys.argv[2:],
         ]
     else:

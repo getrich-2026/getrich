@@ -1,54 +1,10 @@
-"""Tests for the ``WorkerConfig`` block in ``gr_data.config.settings``."""
+"""数据连接模型与 DSN 行为回归。"""
 
 from __future__ import annotations
 
 import os
 
-from gr_data.config.settings import ClickHouseConfig, WorkerConfig, make_pg_dsn
-
-
-def test_from_env_defaults(monkeypatch: object) -> None:
-    """Defaults: backend=inproc, broker=localhost, flower=localhost:5555."""
-    # 必须显式清空环境：本仓根目录有真实 .env，且 find_project_root() 修好后
-    # 会真的把它加载进 os.environ（见 DECISIONS.md D-002）。不清空的话这个用例
-    # 测的是开发者本机配置，不是 dataclass 默认值。
-    monkeypatch.setattr(os, "environ", {})  # type: ignore[attr-defined]
-    cfg = WorkerConfig.from_env(strict=False)
-    assert cfg.backend == "inproc"
-    assert cfg.broker_url == "redis://localhost:6379/0"
-    assert cfg.result_backend == "redis://localhost:6379/0"
-    assert cfg.flower_url == "http://localhost:5555"
-
-
-def test_from_env_celery_backend(monkeypatch: object) -> None:
-    """Switching to celery with a non-default broker URL is reflected."""
-    monkeypatch.setattr(  # type: ignore[attr-defined]
-        os,
-        "environ",
-        {
-            "GETRICH_WORKER_BACKEND": "celery",
-            "GETRICH_BROKER_URL": "redis://broker.internal:6379/3",
-            "GETRICH_RESULT_BACKEND": "redis://broker.internal:6379/4",
-        },
-    )
-    cfg = WorkerConfig.from_env(strict=False)
-    assert cfg.backend == "celery"
-    assert cfg.broker_url == "redis://broker.internal:6379/3"
-    assert cfg.result_backend == "redis://broker.internal:6379/4"
-
-
-def test_from_env_invalid_backend_falls_back(monkeypatch: object) -> None:
-    """Unknown backend values fall back to ``inproc`` with a warning."""
-    monkeypatch.setattr(os, "environ", {"GETRICH_WORKER_BACKEND": "rabbitmq"})  # type: ignore[attr-defined]
-    cfg = WorkerConfig.from_env(strict=False)
-    assert cfg.backend == "inproc"
-
-
-def test_from_env_backend_case_insensitive(monkeypatch: object) -> None:
-    """``CELERY`` (uppercase) normalises to ``celery``."""
-    monkeypatch.setattr(os, "environ", {"GETRICH_WORKER_BACKEND": "CELERY"})  # type: ignore[attr-defined]
-    cfg = WorkerConfig.from_env(strict=False)
-    assert cfg.backend == "celery"
+from gr_data.config.settings import ClickHouseConfig, make_pg_dsn
 
 
 def test_make_pg_dsn_with_password() -> None:

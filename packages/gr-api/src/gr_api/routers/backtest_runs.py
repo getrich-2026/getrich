@@ -8,12 +8,11 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from gr_api.deps import get_db, page_dep, request_id, require_user
+from gr_api.config import ApiSettings, BacktestStorageConfig
+from gr_api.deps import get_db, get_settings, page_dep, request_id, require_user
 from gr_api.pagination import make_pagination
 from gr_api.response import success
 from gr_api.services import backtest_run as backtest_run_svc
-from gr_data.config import settings
-from gr_data.config.settings import BacktestStorageConfig
 
 
 if TYPE_CHECKING:
@@ -26,7 +25,7 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/backtest-runs", tags=["backtest"])
 
 
-def backtest_storage_dep() -> BacktestStorageConfig:
+def backtest_storage_dep(settings: ApiSettings = Depends(get_settings)) -> BacktestStorageConfig:
     """Dependency-injected artifact storage configuration.
 
     Exposed as a function so tests can override it via

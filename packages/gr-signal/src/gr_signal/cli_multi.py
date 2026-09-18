@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 
-from gr_data.config import settings, setup_logging
+from gr_tools.config import LoggingConfig, load_environment, setup_logging
 
 from gr_signal.scheduler import (
     MultiStrategyRunner,
@@ -88,7 +88,8 @@ async def _main() -> None:
 
 
 def main() -> None:
-    setup_logging(settings)
+    environment = load_environment(install=True)
+    setup_logging(LoggingConfig.from_env(environment.root, environment.values))
     asyncio.run(_main())
 
 

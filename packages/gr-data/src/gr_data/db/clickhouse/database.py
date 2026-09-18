@@ -6,22 +6,11 @@ import clickhouse_connect
 import pandas as pd
 from clickhouse_connect.driver.client import Client
 
-from gr_data.config.settings import settings
+from gr_data.config import ClickHouseConfig
 from gr_data.logging import Logger
 
 
 log = Logger(module_name="ClickhouseClient")
-
-
-# 在模块加载时读取配置
-DEFAULT_DB_CONFIG = settings.clickhouse
-
-# 从配置中获取默认值,如果配置不存在则使用硬编码的备用值
-DEFAULT_HOST = DEFAULT_DB_CONFIG.host
-DEFAULT_PORT = DEFAULT_DB_CONFIG.port
-DEFAULT_USER = DEFAULT_DB_CONFIG.user
-DEFAULT_PASSWORD = DEFAULT_DB_CONFIG.password
-DEFAULT_DATABASE = DEFAULT_DB_CONFIG.database
 
 
 class ClickHouseClient:
@@ -46,11 +35,13 @@ class ClickHouseClient:
 
     def __init__(
         self,
-        host: str = DEFAULT_HOST,
-        port: int = DEFAULT_PORT,
-        user: str = DEFAULT_USER,
-        password: str = DEFAULT_PASSWORD,
-        database: str = DEFAULT_DATABASE,
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
+        *,
+        config: ClickHouseConfig | None = None,
     ):
         """
         初始化 ClickHouse 客户端。
@@ -62,13 +53,14 @@ class ClickHouseClient:
             password: 密码
             database: 数据库名
         """
+        cfg = config if config is not None else ClickHouseConfig.from_env(strict=False)
         # 存储配置
         self._config: dict[str, Any] = {
-            "host": host,
-            "port": port,
-            "user": user,
-            "password": password,
-            "database": database,
+            "host": cfg.host if host is None else host,
+            "port": cfg.port if port is None else port,
+            "user": cfg.user if user is None else user,
+            "password": cfg.password if password is None else password,
+            "database": cfg.database if database is None else database,
         }
 
         # 底层连接对象

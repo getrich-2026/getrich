@@ -10,7 +10,7 @@ PgConnectionPool is a thin wrapper over
 - ``connection()`` raises ``RuntimeError`` if ``init()``
   has not been called — a defensive guard against
   use-before-init bugs at request time.
-- The connection DSN is built from ``settings.postgres``
+- The connection DSN is built from 显式传入的 PostgreSQL 配置
   and forces ``application_name=getrich-web``.
 - The pool kwargs set ``row_factory=dict_row`` and
   force the session timezone to ``Asia/Shanghai`` plus a
@@ -24,6 +24,7 @@ itself, so no live Postgres is required.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -67,7 +68,7 @@ def _make_fake_async_pool() -> MagicMock:
 
 
 class _FakePgSettings:
-    """Mimics ``gr_data.config.settings.postgres`` shape."""
+    """Mimics PostgresConfig shape."""
 
     def __init__(
         self,
@@ -88,14 +89,11 @@ class _FakePgSettings:
         self.max_size = max_size
 
 
-def _patch_settings(pg_settings: _FakePgSettings | None = None):
-    """Patch ``gr_data.config.settings`` so the lazy import
-    inside ``PgConnectionPool.init()`` returns our fake."""
+def _config_context(pg_settings: _FakePgSettings | None = None):
+    """显式提供配置，不修改模块全局状态。"""
     if pg_settings is None:
         pg_settings = _FakePgSettings()
-    fake_settings = MagicMock()
-    fake_settings.postgres = pg_settings
-    return patch("gr_data.config.settings", fake_settings)
+    return nullcontext(pg_settings)
 
 
 # ---------------------------------------------------------------------------
@@ -152,13 +150,13 @@ async def test_init_creates_pool_with_expected_dsn_and_kwargs() -> None:
     )
 
     with (
-        _patch_settings(fake_settings),
+        _config_context(fake_settings) as config,
         patch(
             "gr_data.db.pool.AsyncConnectionPool",
             return_value=fake_pool,
         ) as acp_cls,
     ):
-        await pool.init()
+        await pool.init(config)
 
     acp_cls.assert_called_once()
     args, kwargs = acp_cls.call_args
@@ -194,13 +192,13 @@ async def test_init_stores_underlying_pool() -> None:
     fake_pool = _make_fake_async_pool()
 
     with (
-        _patch_settings(),
+        _config_context() as config,
         patch(
             "gr_data.db.pool.AsyncConnectionPool",
             return_value=fake_pool,
         ),
     ):
-        await pool.init()
+        await pool.init(config)
 
     assert pool._pool is fake_pool
 
@@ -219,12 +217,12 @@ async def test_init_is_idempotent() -> None:
     pool._pool = fake_pool  # pretend init() already ran
 
     with (
-        _patch_settings(),
+        _config_context() as config,
         patch(
             "gr_data.db.pool.AsyncConnectionPool",
         ) as acp_cls,
     ):
-        await pool.init()
+        await pool.init(config)
 
     acp_cls.assert_not_called()
     # And we did NOT call .open() on the existing pool.
@@ -312,13 +310,13 @@ async def test_full_lifecycle_init_connection_close() -> None:
     )
 
     with (
-        _patch_settings(),
+        _config_context() as config,
         patch(
             "gr_data.db.pool.AsyncConnectionPool",
             return_value=fake_pool,
         ),
     ):
-        await pool.init()
+        await pool.init(config)
 
     assert pool.is_ready is True
     async with pool.connection() as conn:

@@ -36,6 +36,8 @@ import asyncio
 import logging
 import sys
 
+from gr_api.worker.runtime import get_worker_settings
+
 
 # Round #1204 (Tier 1): same psycopg3 / ProactorEventLoop guard as
 # ``tasks.py`` — the lifespan helpers also call ``asyncio.run(...)``
@@ -57,9 +59,9 @@ def init_pg_pool() -> None:
     as FAILED and the operator sees a clear error in the worker log.
     """
     try:
-        asyncio.run(pg_pool.init())
+        asyncio.run(pg_pool.init(get_worker_settings().postgres))
     except Exception:
-        logger.exception("pg_pool.init() failed in worker process")
+        logger.exception("pg_pool.init(get_worker_settings().postgres) failed in worker process")
         raise
 
 
@@ -88,7 +90,7 @@ def init_cancel_listener() -> None:
     """
     from gr_api.worker.cancel_listener import get_cancel_listener
 
-    listener = get_cancel_listener()
+    listener = get_cancel_listener(get_worker_settings().postgres)
     try:
         asyncio.run(listener.start())
     # silent-fail-ok: a failed LISTEN start is recoverable via the
@@ -110,7 +112,7 @@ def close_cancel_listener() -> None:
     """
     from gr_api.worker.cancel_listener import get_cancel_listener
 
-    listener = get_cancel_listener()
+    listener = get_cancel_listener(get_worker_settings().postgres)
     try:
         asyncio.run(listener.stop())
     # silent-fail-ok: see ``close_pg_pool`` — teardown is best-effort.

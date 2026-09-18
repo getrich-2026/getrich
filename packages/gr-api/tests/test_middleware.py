@@ -272,21 +272,17 @@ def test_api_lifespan_configures_request_logs_and_security_headers(tmp_path, mon
     root = logging.getLogger()
     monkeypatch.setattr(root, "handlers", [])
     monkeypatch.setattr(root, "level", logging.WARNING)
-    config = main_module.settings
+    config = main_module.load_api_settings()
     # 使用现有配置的非日志字段，日志只写测试目录。
     from dataclasses import replace
 
     output = tmp_path / "api.json"
-    monkeypatch.setattr(
-        main_module,
-        "settings",
-        replace(config, logging=LoggingConfig(file_path=output, json_format=True)),
-    )
+    config = replace(config, logging=LoggingConfig(file_path=output, json_format=True))
     monkeypatch.setattr(main_module.pg_pool, "init", AsyncMock())
     monkeypatch.setattr(main_module.pg_pool, "close", AsyncMock())
     listener = SimpleNamespace(start=AsyncMock(), stop=AsyncMock(), is_holder=False)
-    monkeypatch.setattr(main_module, "BacktestJobListener", lambda: listener)
-    app = main_module.create_app()
+    monkeypatch.setattr(main_module, "BacktestJobListener", lambda config: listener)
+    app = main_module.create_app(config)
 
     @app.get("/logging-test")
     async def log_request() -> dict[str, bool]:

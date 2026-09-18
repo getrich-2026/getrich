@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 from uuid import uuid4
 
 from fastapi import Depends, Header, Query, Request
+from gr_api.config import ApiSettings
 from gr_api.pagination import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
     PageParams,
     make_page_params,
 )
-from gr_data.config import settings
 from gr_data.db import pg_pool
 
 
 if TYPE_CHECKING:
     from psycopg import AsyncConnection
+
+
+def get_settings(request: Request) -> ApiSettings:
+    """读取所属应用的配置，避免请求之间共享全局配置。"""
+    return request.app.state.settings
 
 
 async def get_db() -> AsyncIterator[AsyncConnection]:
@@ -50,10 +54,9 @@ async def get_current_user(request: Request) -> str | None:
     token = _extract_bearer_token(request)
     if token:
         from gr_api.auth import verify_token
-        from gr_data.config import settings
 
         try:
-            payload = verify_token(token, settings.web.jwt_secret)
+            payload = verify_token(token, get_settings(request).web.jwt_secret)
             return payload["sub"]
         # silent-fail-ok: token invalid/expired — fall through to the
         # legacy X-User-Id header so dev mock auth still works.
@@ -79,6 +82,7 @@ async def require_user(request: Request) -> str:
 
 
 async def require_admin(
+    settings: Annotated[ApiSettings, Depends(get_settings)],
     user_id: str = Depends(require_user),
 ) -> str:
     """要求当前用户具备后台导入权限。
@@ -86,9 +90,7 @@ async def require_admin(
     开发环境允许已登录用户访问，生产环境必须通过
     ``GETRICH_ADMIN_USER_IDS`` 显式配置管理员用户 ID。
     """
-    admin_ids = {
-        item.strip() for item in os.getenv("GETRICH_ADMIN_USER_IDS", "").split(",") if item.strip()
-    }
+    admin_ids = settings.admin_user_ids
     if user_id in admin_ids:
         return user_id
     if settings.is_dev:

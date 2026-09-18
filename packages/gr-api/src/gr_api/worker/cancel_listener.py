@@ -64,7 +64,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING
 
 import psycopg
-from gr_data.config.settings import make_pg_dsn, settings
+from gr_data.config import PostgresConfig, make_pg_dsn
 
 
 if TYPE_CHECKING:
@@ -114,7 +114,8 @@ class WorkerCancelListener:
     the DB read for every trial (still correct, just slower).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, postgres: PostgresConfig | None = None) -> None:
+        self._postgres = postgres
         # The dedicated long-lived conn. Acquired in ``start()``
         # and in ``_pump`` after a reconnect. Closed in ``stop()``
         # and best-effort in ``_drop_conn``. The listener owns
@@ -285,7 +286,9 @@ class WorkerCancelListener:
         "no listener" — the runner's probe then returns ``False``
         and the DB-read fallback takes over.
         """
-        dsn = make_pg_dsn(settings.postgres)
+        dsn = make_pg_dsn(
+            self._postgres if self._postgres is not None else PostgresConfig.from_env(strict=False)
+        )
         # ``autocommit=True`` so LISTEN takes effect immediately
         # (LISTEN is a transaction-control command and only fires
         # at COMMIT) and notifications arrive on every commit by
@@ -332,7 +335,7 @@ _LISTENER: WorkerCancelListener | None = None
 _LISTENER_LOCK = threading.Lock()
 
 
-def get_cancel_listener() -> WorkerCancelListener:
+def get_cancel_listener(postgres: PostgresConfig | None = None) -> WorkerCancelListener:
     """Return the process-local :class:`WorkerCancelListener`.
 
     Lazy-creates the listener on first access. The listener is
@@ -344,7 +347,7 @@ def get_cancel_listener() -> WorkerCancelListener:
     if _LISTENER is None:
         with _LISTENER_LOCK:
             if _LISTENER is None:
-                _LISTENER = WorkerCancelListener()
+                _LISTENER = WorkerCancelListener(postgres)
     return _LISTENER
 
 

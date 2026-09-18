@@ -1,31 +1,30 @@
-"""
-配置模块入口。
-提供全局配置单例 settings 及其相关的初始化函数。
-"""
+"""数据配置模型与按需加载入口；无导入副作用。"""
+
+from __future__ import annotations
 
 from .settings import (
     ClickHouseConfig,
     DuckDBConfig,
     HdbConfig,
     InsightConfig,
-    LoggingConfig,
+    PostgresConfig,
     RiceQuantConfig,
-    Settings,
-    load_settings,
-    settings,
-    setup_logging,
+    find_project_root,
+    load_clickhouse,
+    load_postgres,
+    make_pg_dsn,
 )
 
 
 __all__ = [
-    "settings",
-    "load_settings",
-    "setup_logging",
-    "Settings",
     "ClickHouseConfig",
     "DuckDBConfig",
-    "LoggingConfig",
-    "RiceQuantConfig",
     "HdbConfig",
     "InsightConfig",
+    "PostgresConfig",
+    "RiceQuantConfig",
+    "find_project_root",
+    "load_clickhouse",
+    "load_postgres",
+    "make_pg_dsn",
 ]

@@ -1,11 +1,11 @@
 """Smoke tests for the Celery app factory.
 
-The Celery app is mostly a thin config wrapper around ``gr_data.config.settings``.
+The Celery app is mostly a thin config wrapper around ``gr_api.config``.
 These tests assert the three public surfaces:
 
 * The three ``run_job`` tasks are registered under their stable names
   (``backtest.run_job`` / ``sweep.run_job`` / ``walk_forward.run_job``).
-* The broker URL is sourced from ``Settings.worker.broker_url``.
+* The broker URL is sourced from ``WorkerSettings.worker.broker_url``.
 * ``task_routes`` groups all three into the default queue.
 * The reliability knobs (acks_late, prefetch_multiplier, etc.) are set
   so a worker restart in production does not lose in-flight tasks.
@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import pytest
 from gr_api.worker import celery_app
-from gr_data.config.settings import settings as app_settings
+
+
+app_settings = celery_app.app.getrich_settings
 
 
 @pytest.fixture(autouse=True)
@@ -85,8 +87,8 @@ def test_celery_startup_uses_shared_logging(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(root, "level", logging.WARNING)
     monkeypatch.setattr(Logging, "_setup", False)
     monkeypatch.setattr(
-        celery_app,
-        "settings",
+        celery_app.app,
+        "getrich_settings",
         replace(app_settings, logging=LoggingConfig(json_format=True)),
     )
     output = tmp_path / "celery.json"

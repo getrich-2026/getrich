@@ -17,13 +17,13 @@
 ```
 apps/web              主前端（Vite 8 + React 19 + TypeScript 6 + Tailwind 4）
 apps/backtest-web     回测前端（暂停维护，待 API 稳定后重做）
-packages/gr-data      配置、数据库连接、外部数据接入（raw → ingest → PG）
+packages/gr-data      数据配置、数据库连接、外部数据接入（raw → ingest → PG）
 packages/gr-db        全部 DDL 与迁移，数据库结构的唯一真源
 packages/gr-backtest  回测引擎（纯库，不含 Web / 实盘 / 调度）
 packages/gr-signal    实盘信号生产与交易执行
 packages/gr-api       FastAPI 应用 + 回测作业队列 + Celery worker
 packages/gr-factor    期权与因子分析
-packages/gr-tools     通用工具：文件系统、多格式表格读取、人性化格式化（无一方依赖的叶子）
+packages/gr-tools     通用工具：环境加载、日志、文件系统、多格式表格读取、人性化格式化（无一方依赖的叶子）
 packages/gr-agent     空占位包（只有 pyproject.toml，尚无源码）
 deploy/               数据库基础设施部署模板，不在仓库内实例化
 scripts/              仅存 lint_migrations.py
@@ -183,7 +183,7 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 ### 4.3 日志与异常
 
 - 各模块用标准库 logger 记录事件，不隐式配置 handler 或创建日志文件。通用格式化与输出配置在 `gr_tools.logging`，公共配置模型在 `gr_tools.config`；各包提供业务上下文，不各起一套日志配置。CLI 正常结果输出可以使用 `print()`。
-- 启动入口通过 `gr_data.config.setup_logging(settings)` 适配配置；API 在 lifespan、Celery 在日志启动信号中初始化。业务 filter 放输出 handler，才能处理子 logger 传播来的记录。旧 `gr_data.logging` 仅作无隐式初始化的兼容入口。
+- 启动入口通过 `gr_tools.config.setup_logging(logging_config)` 配置输出；API 在 lifespan、Celery 在日志启动信号中初始化。业务 filter 放输出 handler，才能处理子 logger 传播来的记录。旧 `gr_data.logging` 仅作无隐式初始化的兼容入口。
 - 日志消息英文，带可定位任务的字段；`DEBUG` 诊断、`INFO` 进度、`WARNING` 可恢复异常、`ERROR` 操作失败。记录异常时同样不得泄漏凭证或完整 payload。
 - 外部调用在请求／任务边界落实 `try-except` 隔离，明确超时、恢复或失败返回；底层仅在能够恢复或补充上下文时捕获，保留异常链向上传播。
 - 禁止裸 `except:`、`except Exception: pass` 或只记日志后伪装成功。批处理隔离独立任务的失败并汇总报告；具有原子性要求的任务整体回滚。
@@ -199,8 +199,9 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 ### 4.5 配置归属与环境来源
 
 - 公共配置模型／工具归 `gr-tools`，不得反向依赖领域包；不在仓库根新增不可独立安装的 Python config 模块。
-- 现有 `gr_data.config.Settings` 保留为应用组装及兼容入口；数据库／供应商等模型按领域维护，不为日志改造整体迁移公共 API。
-- 环境变量优先于本地 `.env`：连接、凭证、机器路径、环境开关、日志输出选项留在环境层；Python config 定义类型、校验与默认值；YAML 只放结构化采集参数，不再复制数据库或日志配置。
+- 数据连接／供应商模型归 `gr_data.config`，API／worker 的应用组合归 `gr_api.config`；其他 CLI 在入口按需组装。旧全量 Settings／settings／load_settings 已移除，不恢复全局配置单例或让数据包反向依赖 API。
+- 环境变量优先于 `.env`；入口显式调用 `load_environment()` 得到快照。文件选择顺序为显式文件、workspace `.env`、用户配置目录 `.env`；显式缺失报错，自动候选缺失不创建文件。连接、凭证、机器路径、开关、日志选项在环境层，Python config 做类型与校验，YAML 只存结构化采集参数并复用同一快照。
+- 配置模型导入不读写 dotenv；库设施接收窄配置，API 配置绑定应用实例，Celery 配置绑定队列应用。只校验启用的能力，PG-only 命令不依赖 CH／Redis／Web。凭证字段不进入 repr，不全量序列化配置用于日志。
 - 当前默认只依赖 PostgreSQL，`GETRICH_WORKER_BACKEND=inproc`；仅启用 Celery 时才需要 Redis，CH 只在调用相关能力时需要。配置了连接地址不代表启动了服务。
 - CI 默认仅启动 PG；手动 workflow_dispatch 的 `extra_services` 可恢复 CH／Redis 服务与 CH 迁移／字典冒烟。CH 离线 DDL 与 mock 用例仍保留。
 
