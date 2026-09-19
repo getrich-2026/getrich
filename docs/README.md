@@ -18,6 +18,16 @@
 | 安排工作的人 | [待决问题](plans/backlog.md) | 缺口、证据、待定选择、验收条件 |
 | 追溯历史的维护者 | [数据字典旧计划](history/data-dictionary-plan.md)、[诊断旧审查](history/diagnosis-api-review.md) | 已完成快照，不作为当前指令或待办 |
 
+## 项目介绍页与 GitHub Pages
+
+面向项目访客的 [静态首页](index.html) 提供项目简介、模块概览与文档入口；开发说明仍以现有 Markdown 为准。页面使用内嵌 CSS，无需构建、外部字体或后端服务，文档链接直接指向 GitHub 的 `dev` 分支。
+
+本地预览，从仓库根运行 `python3 -m http.server 8088 --bind 127.0.0.1 --directory docs`，然后打开 `http://127.0.0.1:8088/`；也可以用浏览器直接打开 `docs/index.html`。
+
+发布时，先将页面文件推送至选定分支，再在仓库 **Settings → Pages → Build and deployment** 中选择 **Deploy from a branch**，分支选择含该页面的分支（当前开发分支为 `dev`），目录选择 **/docs**。`docs/.nojekyll` 使其直接按静态文件发布，无需恢复旧 MkDocs 工作流。文档更新后页面入口保持有效，模块简介变化时同步更新 HTML。
+
+默认项目网址为 `https://getrich-2026.github.io/getrich/`，实际发布成功与否以 Pages 设置和部署记录为准。GitHub Free 支持公开仓库的 Pages；私有仓库是否支持取决于账户方案，详见 [GitHub 官方说明](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)。
+
 ## 留在模块旁的文档
 
 这些文件与代码／配置共同维护，通过本页发现，不为了集中目录而搬走。
