@@ -55,6 +55,8 @@
 
 macOS 文件共享层的 bind 数据目录曾使 PostgreSQL 出现文件／POSIX 语义异常。PG、CH、Redis 数据使用 named volume，配置与日志可以 bind；备份走数据库逻辑导出，不拷运行中的数据目录。此选择牺牲宿主机直接浏览数据文件的便利，换取数据完整性。
 
+2026-10-10 用户确认：PostgreSQL 使用 TimescaleDB 非 `-oss` 镜像（Timescale License），部署、CI 与测试 fixture 同一版本。`-oss` 版缺压缩、保留策略和后台作业；gr-db 的相关 DDL 用 `EXCEPTION` 兜底，迁移会成功但分钟行情不压缩、`realtime.tick_buffer` 不清理，问题不报错。该许可允许自行部署与内部商用，不得把 TimescaleDB 作为托管数据库服务对外提供。同时在本机首次部署、尚无数据时选定 PostgreSQL 18，避免日后为大版本升级做导出／重建；数据目录以数据页校验和与 builtin C.UTF-8 排序规则初始化，这两项初始化后不可更改。
+
 <a id="d-005"></a>
 
 ### D-005 Redis 缓存与锁共存时禁止自动淘汰

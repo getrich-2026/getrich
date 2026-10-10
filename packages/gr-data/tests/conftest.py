@@ -563,7 +563,7 @@ def fake_datayes():
 # --------------------------------------------------------------------------- #
 # PostgreSQL (docker)
 # --------------------------------------------------------------------------- #
-PG_IMAGE = os.environ.get("GETRICH_TEST_PG_IMAGE", "timescale/timescaledb:latest-pg17-oss")
+PG_IMAGE = os.environ.get("GETRICH_TEST_PG_IMAGE", "timescale/timescaledb:2.30.1-pg18")
 _CONTAINER = f"getrich-test-pg-{uuid.uuid4().hex[:8]}"
 
 
@@ -665,6 +665,13 @@ def pg_conn(pg_dsn):
         autocommit=False,
     )
     migrate_postgres(conn)
+    # 非 oss 镜像会真正调度压缩／保留策略：tick_buffer 的 7 天保留会删掉用例写入的
+    # 历史日期数据。暂停全部策略作业，测试结果不依赖后台调度时机。
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT alter_job(job_id, scheduled => false) "
+            "FROM timescaledb_information.jobs WHERE proc_name LIKE 'policy_%'"
+        )
     # 每个测试前清空业务数据，保证隔离（容器为 session 级，importer 会 commit）。
     with conn.cursor() as cur:
         cur.execute(

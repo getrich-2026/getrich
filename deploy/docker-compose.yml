@@ -4,16 +4,31 @@
 #
 # 【铁律】三个数据库的数据目录一律用 named volume，绝不 bind mount 宿主机目录。
 # 文件末尾 volumes: 固定卷名；日志目录可以继续 bind，方便宿主机直接查看。
+#
+# 默认只启动 PostgreSQL。ClickHouse / Redis 放在同名 profile 里，按需启用：
+#   docker compose --profile clickhouse --profile redis up -d
+# 或在 .env 设置 COMPOSE_PROFILES=clickhouse,redis。
 name: ${COMPOSE_PROJECT_NAME:-getrich}
 services:
   postgres:
-    image: timescale/timescaledb:2.30.1-pg17-oss
-    container_name: ${POSTGRES_CONTAINER_NAME:-getrich-pg17}
+    # 非 -oss 版（Timescale License）：压缩、保留策略、后台作业只在此版本可用。
+    # -oss 版下 gr-db 的压缩／保留 DDL 会被 EXCEPTION 吞掉，迁移成功但功能缺失。
+    image: timescale/timescaledb:2.30.1-pg18
+    container_name: ${POSTGRES_CONTAINER_NAME:-getrich-pg18}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${PG_USER:?Set PG_USER in .env}
+      # 密码、initdb 参数、timescaledb-tune 只在数据目录首次初始化时生效，之后改这里无效
       POSTGRES_PASSWORD: ${PG_PASSWORD:?Set PG_PASSWORD in .env}
       POSTGRES_DB: ${PG_DB:?Set PG_DB in .env}
+      # builtin C.UTF-8：排序结果不依赖 libc，换镜像／系统不会让索引顺序失效；
+      # 显式开启数据页校验和，及早发现存储层损坏
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8 --data-checksums"
+      # 留空则按整个 Docker 虚拟机的内存／核数调优；与 CH／Redis 共用虚拟机时应显式限定
+      TS_TUNE_MEMORY: ${PG_TUNE_MEMORY:-}
+      TS_TUNE_NUM_CPUS: ${PG_TUNE_NUM_CPUS:-}
+      # 留空时 tune 按内存推算（4GB 只给 50）；work_mem 按此连接数反推
+      TS_TUNE_MAX_CONNS: ${PG_TUNE_MAX_CONNS:-}
       TZ: ${TZ:-Asia/Shanghai}
     # 全部参数见 config/postgres/postgresql.conf
     command:
@@ -23,10 +38,14 @@ services:
     ports:
       - "${DOCKER_BIND_HOST:-127.0.0.1}:${PG_PORT:-5432}:5432"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      # PG18 起镜像的 PGDATA 是 /var/lib/postgresql/18/docker，卷挂在上一级，
+      # 以后大版本升级可在同一卷内并存新旧数据目录（pg_upgrade --link）
+      - pg_data:/var/lib/postgresql
       - ${POSTGRES_LOG_DIR:-./.docker/postgres/logs}:/var/log/postgresql
       - ./config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     shm_size: 1gb
+    # 默认 10s 后 SIGKILL；shared_buffers 较大时关机 checkpoint 来不及完成，下次启动要走崩溃恢复
+    stop_grace_period: 2m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 10s
@@ -38,8 +57,10 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:26.8.6.5
+    profiles: ["clickhouse"]
     container_name: ${CLICKHOUSE_CONTAINER_NAME:-getrich-ch26}
     restart: unless-stopped
+    stop_grace_period: 2m
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:?Set CLICKHOUSE_DB in .env}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:?Set CLICKHOUSE_USER in .env}
@@ -76,6 +97,7 @@ services:
 
   redis:
     image: redis:8.10.1
+    profiles: ["redis"]
     container_name: ${REDIS_CONTAINER_NAME:-getrich-redis82}
     restart: unless-stopped
     environment:
