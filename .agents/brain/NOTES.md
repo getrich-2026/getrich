@@ -11,7 +11,7 @@
 
 ## 当前方向与阻塞
 
-- 2026-09-19：新增 `docs/index.html` 静态项目介绍页与 `.nojekyll`，Pages 发布步骤见 docs README。已检查桌面／手机布局及页面链接对应的本地文件；仅本地预览，尚未提交、推送或修改 GitHub Pages 设置。
+- 2026-09-19：新增 `docs/index.html` 静态项目介绍页与 `.nojekyll`，Pages 发布步骤见 docs README。已检查桌面／手机布局及页面链接对应的本地文件。页面已随 `75f3292` 提交并推送到 `dev`；GitHub Pages 设置与部署结果本仓未核实。
 - 2026-10-20：持仓诊断一期口径已在相邻设计仓 `getrich-design` 确认（`governance/scope.md` PA-01～PA-20），并整理了一期数据集清单（`data-platform/portfolio-diagnosis-phase1-datasets.md`）。本仓现有实现仍按旧设计（A 已有计算，B/C/D、压力测试与多方案 E 未开放），对齐缺口见 backlog「持仓诊断与数据供给」。用户决定先完成 gr-data 一期数据；盲点阈值与画像规则等真实数据后再定。不能用估算值填满界面。
 - 2026-10-18 设计仓 DP-02 供应商方向：Tushare 为主要来源，风险因子先选米筐，DataYes 为第二档备用，银河为最后备用，INSIGHT 不再使用（代码与历史资料保留）。运行配置与表归属未随之改变。
 - 数据接入 P0–P2 已有实现；P6 五表自洽校验、SW14/SW21 模型切换、行业分类真源仍需推进。后续 P3–P5 的历史规划需先核实现有能力与数据权限。
