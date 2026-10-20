@@ -3,6 +3,7 @@
 读者：接入诊断页面的前端开发者、接口使用者；Agent 修改接口时参考。
 范围：当前调用流程与状态语义；请求／响应字段以运行应用的 `/openapi.json` 和后端响应模型为准。
 代码核对：2026-09-08；本文不代表服务正在运行或数据库供数已达标。
+设计更新：2026-10-20 设计仓已确认新版契约（请求 `options`、`POST /snapshots/{id}/recompute`、一期只诊断最新日期、新的响应结构等，见[表与接口设计](../../../getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md) v0.3.4），**尚未实现**。本文仍描述当前实现，差异见[待决问题](../plans/backlog.md)。
 
 统一前缀 `/v1/diagnosis`，成功响应仍使用项目的 `{code, message, data, timestamp, request_id}` 信封。
 运行后可在 `/docs` 查看请求示例，在 `/openapi.json` 获取实际响应模型。

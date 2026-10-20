@@ -5,6 +5,7 @@
 > **日期 / 证据版本**：2026-10-06；本机代码 HEAD `b4fe01e87f0708e94145da0e9e004720a5ceb07c`，审计时 `packages/gr-data` 无未提交改动。  
 > **修订**：2026-10-06 按计划审查意见调整阶段顺序与优先级口径、A0 状态模型、C1 manifest 字段、测试环境前置、遗漏项与故障场景；仍未开工。  
 > **依据**：[实现审计](../../../getrich-design/data-platform/gr-data-implementation-audit-2026-10-06.md)、[可靠采集架构](../../../getrich-design/data-platform/dataapi-reliable-pipeline-design.md)、本仓 [AGENTS.md](../../AGENTS.md)。相邻仓库链接用于本地双仓布局，不是已发布远端链接。  
+> **范围参考（2026-10-20 补充）**：持仓诊断一期需要哪些数据集、各自的核验要点与建议顺序，见设计仓 [一期数据集清单](../../../getrich-design/data-platform/portfolio-diagnosis-phase1-datasets.md)；本计划的可靠性方案不因此改变。\
 > **验证边界**：静态调用链审计＋7 项未改函数体的隔离 stub 局部复现；未运行原 pytest 或真实 PG / 供应商验收，未证明生产可用。
 
 ## 1. 目标与保留能力

@@ -43,7 +43,7 @@
 | [gr-factor 测试说明](../packages/gr-factor/tests/README.md) | 修复数值模块的人：测试入口占位 |
 | [旧 SQL 归档说明](../packages/gr-db/archive/README.md) | 数据库维护者：辨别历史 SQL，不能当现行迁移 |
 | `packages/gr-data/reference/design/` | 接入维护者：供应商资料；按 provider 查，不默认全读 |
-| 相邻仓库 `getrich-design/` | 产品／架构设计者：需求与供应商接口设计；落地前核对本仓代码和 DDL |
+| 相邻仓库 `getrich-design/` | 产品／架构设计者：需求与供应商接口设计；落地前核对本仓代码和 DDL。持仓诊断一期口径见其 `governance/scope.md`，一期所需数据见 `data-platform/portfolio-diagnosis-phase1-datasets.md` |
 
 `CLAUDE.md` 与 `.agents/rules/project.md` 只负责工具入口，不另存编码规则。
 `archive/` 和 `packages/gr-db/archive/` 的代码归档保持原位；删除需单独授权。
