@@ -79,9 +79,14 @@ def test_celery_startup_uses_shared_logging(tmp_path, monkeypatch) -> None:
     import logging
     from dataclasses import replace
 
+    from celery import current_app
     from celery.app.log import Logging
     from gr_tools.config import LoggingConfig
 
+    # 日志钩子按 current_app 取配置。worker 后端为 celery 时，其他用例里的
+    # create_app() 会另建 Celery 实例并成为 current_app，这里显式钉回被测实例。
+    previous_app = current_app._get_current_object()
+    celery_app.app.set_current()
     root = logging.getLogger()
     monkeypatch.setattr(root, "handlers", [])
     monkeypatch.setattr(root, "level", logging.WARNING)
@@ -99,6 +104,7 @@ def test_celery_startup_uses_shared_logging(tmp_path, monkeypatch) -> None:
         records = [json.loads(line) for line in output.read_text().splitlines()]
         assert [record["msg"] for record in records] == ["visible"]
     finally:
+        previous_app.set_current()
         for handler in root.handlers[:]:
             root.removeHandler(handler)
             handler.close()
