@@ -47,7 +47,8 @@ CALENDAR_EXCHANGE = "SSE"
 DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount"
 ADJ_FACTOR_FIELDS = "ts_code,trade_date,adj_factor"
 STK_LIMIT_FIELDS = "trade_date,ts_code,pre_close,up_limit,down_limit"
-SUSPEND_FIELDS = "ts_code,trade_date,suspend_type,suspend_reason"
+# 官方输出字段（doc_id=214）。suspend_timing 仅日内停牌有值，是区分日内与全天停牌的唯一依据。
+SUSPEND_FIELDS = "ts_code,trade_date,suspend_timing,suspend_type"
 INDEX_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount"
 FUT_DAILY_FIELDS = (
     "ts_code,trade_date,pre_close,pre_settle,open,high,low,close,settle,vol,amount,oi"

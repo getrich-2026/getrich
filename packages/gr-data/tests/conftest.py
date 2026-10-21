@@ -359,14 +359,14 @@ class FakeTushareClient:
         days = self._days_in(params)
         if not days:
             return pd.DataFrame()
-        # 仅 600000.SH 在首日停牌
+        # 仅 600000.SH 在首日全天停牌；官方 suspend_timing 只在日内停牌时有值
         return pd.DataFrame(
             [
                 {
                     "ts_code": "600000.SH",
                     "trade_date": days[0],
+                    "suspend_timing": None,
                     "suspend_type": "S",
-                    "suspend_reason": "重大事项",
                 }
             ]
         )

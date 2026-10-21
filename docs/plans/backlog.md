@@ -28,7 +28,7 @@
 
 | 级别 | 问题（位置） | 已定处理 |
 |---|---|---|
-| P0 | T1 `trading_status` 语义错：`daily` 全天停牌日无行，HALTED 只落在日内停牌日；抓取请求不存在的 `suspend_reason`、漏 `suspend_timing`（`raw/tushare/fetchers/market.py`、`ingest/tushare/importers/market.py::_trading_status`） | 先修抓取字段并重抓历史；入库按 D-023 改事件表 |
+| P0 | T1 `trading_status` 语义错：`daily` 全天停牌日无行，HALTED 只落在日内停牌日；抓取请求不存在的 `suspend_reason`、漏 `suspend_timing`（`raw/tushare/fetchers/market.py`、`ingest/tushare/importers/market.py::_trading_status`） | 抓取字段 2026-10-21 已改为官方字段（补 `suspend_timing`、去 `suspend_reason`），此前落地的 raw 需重抓；入库按 D-023 改事件表，未完成前 `trading_status` 语义仍错 |
 | P1 | D1 风格分布覆盖率只看"有估值行"，PB≤0 或市值无效的持仓未计入缺失（`services/diagnosis.py::_style_distribution`） | 按实际覆盖权重判阈值 |
 | P1 | D2 解析接受 ETF 与北交所个股并照常出数，穿透覆盖率显示 0%，违反 PA-01／PA-02（`_resolve_symbols`） | 范围外资产返回 422，删除穿透覆盖率分支 |
 | P1 | D3 估值、行业、类别取数截止用 `now()`，与 `data_fingerprint` 脱钩 | 改用数据版本发布时刻 |

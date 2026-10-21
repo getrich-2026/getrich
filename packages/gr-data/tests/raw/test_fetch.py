@@ -170,6 +170,36 @@ def test_tushare_fetches_by_trade_date_not_range(tmp_raw_root, fake_tushare):
         assert "start_date" not in c and "end_date" not in c
 
 
+def test_tushare_suspend_d_requests_official_fields(tmp_raw_root, fake_tushare):
+    """suspend_d 只请求官方输出字段（doc_id=214）。
+
+    `suspend_timing` 区分日内与全天停牌，漏抓则历史无法补回；官方没有
+    `suspend_reason` 字段，不能请求。
+    """
+    from gr_data.raw.tushare import REGISTRY
+
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+
+    seen: list[dict] = []
+    orig = fake_tushare.query_all
+    fake_tushare.query_all = lambda api, **p: (seen.append({"api": api, **p}), orig(api, **p))[1]
+    REGISTRY["suspend_d"](fake_tushare, ctx).fetch("init")
+
+    calls = [c for c in seen if c["api"] == "suspend_d"]
+    assert calls, "未发出 suspend_d 请求"
+    for c in calls:
+        assert set(c["fields"].split(",")) == {
+            "ts_code",
+            "trade_date",
+            "suspend_timing",
+            "suspend_type",
+        }
+    path = tmp_raw_root.dataset_file("tushare", "suspend_d", "2024-01")
+    assert "suspend_timing" in pd.read_parquet(path).columns
+
+
 def test_tushare_partial_month_preserves_other_days(tmp_raw_root, fake_tushare, monkeypatch):
     from gr_data.raw.tushare import REGISTRY
     from gr_data.raw.tushare.fetchers import market
