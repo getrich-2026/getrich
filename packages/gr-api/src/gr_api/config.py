@@ -8,7 +8,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gr_data.config import PostgresConfig, load_postgres
-from gr_tools.config import Environment, LoggingConfig, load_environment, warn_config
+from gr_tools.config import (
+    Environment,
+    LoggingConfig,
+    SettingsError,
+    load_environment,
+    parse_bool,
+    warn_config,
+)
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,9 @@ class WebConfig:
     jwt_expire_minutes: int
     jwt_refresh_expire_hours: int
     csp_policy: str
+    # 开发期 mock 认证：开启后无 Bearer token 的请求按 X-User-Id 头识别用户。
+    # 任何人都能伪造该头，默认关闭，且只允许在 APP_ENV=dev 时开启。
+    allow_mock_auth: bool = False
 
     @classmethod
     def from_env(cls, strict: bool, environ: Mapping[str, str] | None = None) -> WebConfig:
@@ -108,6 +118,7 @@ class WebConfig:
             jwt_expire_minutes=jwt_expire_minutes,
             jwt_refresh_expire_hours=jwt_refresh_expire_hours,
             csp_policy=csp_policy,
+            allow_mock_auth=parse_bool(source.get("GETRICH_ALLOW_MOCK_AUTH")),
         )
 
 
@@ -189,6 +200,11 @@ def load_worker_settings(environment: Environment | None = None) -> WorkerSettin
 def load_api_settings(environment: Environment | None = None) -> ApiSettings:
     """应用创建时加载；不缓存成跨应用全局单例。"""
     env = environment if environment is not None else load_environment()
+    app_env = env.values.get("APP_ENV", "dev")
+    web = WebConfig.from_env(env.strict, env.values)
+    if web.allow_mock_auth and app_env != "dev":
+        # 先于其余校验，且不论是否严格模式都拒绝启动：误开即任何人可冒充任意用户。
+        raise SettingsError("GETRICH_ALLOW_MOCK_AUTH is only allowed when APP_ENV=dev")
     common = load_worker_settings(env)
     return ApiSettings(
         root=common.root,
@@ -196,9 +212,9 @@ def load_api_settings(environment: Environment | None = None) -> ApiSettings:
         postgres=common.postgres,
         worker=common.worker,
         backtest_storage=common.backtest_storage,
-        env=env.values.get("APP_ENV", "dev"),
+        env=app_env,
         payment_webhook_secret=env.values.get("PAYMENT_WEBHOOK_SECRET", ""),
-        web=WebConfig.from_env(env.strict, env.values),
+        web=web,
         admin_user_ids=frozenset(
             x.strip() for x in env.values.get("GETRICH_ADMIN_USER_IDS", "").split(",") if x.strip()
         ),

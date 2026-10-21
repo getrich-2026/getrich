@@ -56,7 +56,7 @@ cp .env.example .env.local
 | 变量 | 值 | 说明 |
 |---|---|---|
 | `VITE_API_BASE_URL` | `/v1` | 相对路径，走 Vite 代理转发到本机 `gr-api`（见 §4） |
-| `VITE_DEMO_USER_ID` | `app.users.id` 的 UUID | 开发期 mock 认证：后端读 `X-User-Id` 头识别用户。留空则匿名访问，`is_subscribed` 恒为 false。切到真实 JWT 后可删 |
+| `VITE_DEMO_USER_ID` | `app.users.id` 的 UUID | 开发期 mock 认证：后端读 `X-User-Id` 头识别用户，须在根 `.env` 同时设 `GETRICH_ALLOW_MOCK_AUTH=true`（仅 `APP_ENV=dev` 可开），否则该头被忽略。留空则匿名访问，`is_subscribed` 恒为 false。切到真实 JWT 后可删 |
 
 拿一个可用的 user id：
 
@@ -109,8 +109,9 @@ npm run preview   # 预览生产构建产物
 还需要防火墙放行 3000。因为走同源代理，**只需要开这一个端口**，后端 8001 可以只对
 本机开放（`sudo ufw deny 8001`，或用 `--host 127.0.0.1` 启动 uvicorn）。
 
-> **别长期对公网敞着**。这是明文 HTTP，认证还是 `X-User-Id` 头的 mock 模式——任何能
-> 访问 3000 的人都可以填任意 UUID 冒充任意用户，Vite dev server 本身也不是为公网设计的。
+> **别长期对公网敞着**。这是明文 HTTP；如果后端开了 `GETRICH_ALLOW_MOCK_AUTH`，认证就是
+> `X-User-Id` 头的 mock 模式——任何能访问 3000 的人都可以填任意 UUID 冒充任意用户，
+> Vite dev server 本身也不是为公网设计的。
 > 临时给人看没问题；要长期开放，前面套 Nginx + HTTPS + Basic Auth，或者干脆走 SSH 隧道：
 >
 > ```bash
@@ -163,7 +164,7 @@ Tailwind 4 把配置搬进了 CSS，构建走 `vite.config.ts` 里的 `@tailwind
 |---|---|
 | 接口 500，报 `relation "xxx" does not exist` | 库没建表，跑 `uv run gr-db migrate --target pg` |
 | 接口 502 / 代理报错 | 后端没起，或 `vite.config.ts` 的 proxy 目标端口与实际不符 |
-| 页面能开但列表全空 | 库是空的，没有策略数据；`is_subscribed` 恒 false 则是 `VITE_DEMO_USER_ID` 没填 |
+| 页面能开但列表全空 | 库是空的，没有策略数据；`is_subscribed` 恒 false 则是 `VITE_DEMO_USER_ID` 没填，或后端 `.env` 没设 `GETRICH_ALLOW_MOCK_AUTH=true` |
 | 改了 `.env.local` 不生效 | Vite 会自动重启并打印 `.env.local changed, restarting server...`；没看到就手动重启 |
 | 端口被占 | `ss -ltnp \| grep 3000` 找到进程，或改 `vite.config.ts` 的 `port` |
 | 外网连不上 | 确认 `host: '0.0.0.0'` 生效（看启动日志有没有 Network 行）+ 防火墙放行 |

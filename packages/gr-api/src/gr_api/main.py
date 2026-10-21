@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from collections.abc import AsyncIterator
 
@@ -71,6 +72,9 @@ from gr_data.db import pg_pool
 from gr_tools.config import setup_logging
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize the PG pool, start the LISTEN pump, serve, then tear down.
@@ -98,6 +102,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     settings = app.state.settings
     setup_logging(settings.logging, filters=(RequestIdLogFilter(),))
+    if settings.web.allow_mock_auth:
+        logger.warning("mock auth enabled: X-User-Id header is trusted (app_env=%s)", settings.env)
     await pg_pool.init(settings.postgres)
 
     listener = BacktestJobListener(settings.postgres)

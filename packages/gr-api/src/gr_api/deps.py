@@ -46,33 +46,35 @@ def _extract_bearer_token(request: Request) -> str | None:
 
 
 async def get_current_user(request: Request) -> str | None:
-    """Try JWT Bearer token first, then fall back to X-User-Id header.
+    """解析当前用户：先认 JWT，dev 显式开启 mock 认证时才读 X-User-Id 头。
 
-    Returns the user UUID string, or None if unauthenticated.
+    Returns:
+        用户 UUID 字符串；未携带任何凭证时返回 None（匿名）。
+
+    Raises:
+        Unauthorized: 携带了 Bearer token 但无效或过期。此时不回退到
+            X-User-Id，避免过期会话被伪造的请求头接管。
     """
-    # 1) Try JWT Bearer token
     token = _extract_bearer_token(request)
     if token:
         from gr_api.auth import verify_token
+        from gr_api.errors import Unauthorized
 
         try:
             payload = verify_token(token, get_settings(request).web.jwt_secret)
-            return payload["sub"]
-        # silent-fail-ok: token invalid/expired — fall through to the
-        # legacy X-User-Id header so dev mock auth still works.
-        # Real auth failures surface as 401 from require_user
-        # when no header is present either.
-        except ValueError:
-            # Token invalid/expired — fall through to legacy header
-            pass
+        except ValueError as exc:
+            raise Unauthorized("invalid or expired token") from exc
+        return payload["sub"]
 
-    # 2) Fallback: legacy X-User-Id header (dev mock auth)
+    # 开发期 mock 认证：任何人都能伪造该头，只在 GETRICH_ALLOW_MOCK_AUTH 开启时信任。
     x_user_id = request.headers.get("X-User-Id")
-    return x_user_id or None
+    if x_user_id and get_settings(request).web.allow_mock_auth:
+        return x_user_id
+    return None
 
 
 async def require_user(request: Request) -> str:
-    """Require valid JWT (or legacy X-User-Id header). Returns user UUID string."""
+    """要求已登录（JWT，或 dev 开启 mock 认证时的 X-User-Id 头），返回用户 UUID。"""
     user_id = await get_current_user(request)
     if not user_id:
         from gr_api.errors import Unauthorized
