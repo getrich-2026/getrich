@@ -217,6 +217,11 @@ DataYes 试用到期后的接替入口为 `rq_risk_model`，独立于 R1–R10 �
 分段配置。北交所、港股与需要额外包的定制风险模型暂不支持。
 raw 需要 `RICEQUANT_ENABLED=true` 和 `RICEQUANT_API_KEY`；离线 ingest 不需要密钥。
 
+写库前需应用迁移 047：`factor_order`、载荷、协方差、因子收益数组必须非空、一维、
+长度与 `factor_count` 一致、元素非 NULL 且有限，由数据库约束拒绝。明细行的
+`factor_count` 必须等于所属 `model_run` 的因子数，这条跨表规则由入库门禁检查，
+不一致时整日回滚；通联的载荷、协方差、因子收益导入同样适用。
+
 ```bash
 uv run gr-data --config /path/to/config.yaml raw ricequant --only rq_risk_model --mode init
 uv run gr-data --config /path/to/config.yaml ingest ricequant --only rq_risk_model --months 2024-01

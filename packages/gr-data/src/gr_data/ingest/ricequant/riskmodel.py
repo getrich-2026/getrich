@@ -22,6 +22,7 @@ from gr_data.common.ricequant_specs import ContractViolationError
 from gr_data.config.ricequant_risk import RiskOptions
 from gr_data.db.copy import upsert_rows
 from gr_data.ingest.base import IngestContext, IngestResult
+from gr_data.ingest.factor_gate import check_factor_counts
 from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
 from gr_data.raw.ricequant.riskmodel import read_bundles
 
@@ -213,6 +214,7 @@ def run_risk_ingest(
     Raises:
         OwnershipError: 风险表属于其他供应商或请求隐式强制切换。
         ContractViolationError: 映射缺失、数值溢出或不可变观测不一致。
+        IngestGateError: 明细行的 factor_count 与所属 model_run 不一致。
         ValueError: 连接已有事务，避免提交或回滚调用者的其他操作。
 
     峰值内存为一个交易日的股票数乘因子数；风险数据 available_at 始终采用
@@ -288,6 +290,14 @@ def run_risk_ingest(
                     for i, instrument_id in enumerate(ids)
                 ],
             }
+            for contract in (contracts.EXPOSURE, contracts.COVARIANCE, contracts.FACTOR_RETURN):
+                run_col = contract.columns.index("run_id")
+                count_col = contract.columns.index("factor_count")
+                check_factor_counts(
+                    conn,
+                    contract.qualified,
+                    ((row[run_col], row[count_col]) for row in rows[contract]),
+                )
             written = sum(upsert_rows(conn, contract, data) for contract, data in rows.items())
             with conn.cursor() as cur:
                 cur.execute(

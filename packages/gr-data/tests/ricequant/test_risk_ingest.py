@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import uuid
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, datetime
@@ -75,6 +76,15 @@ class MemoryCursor:
             state["runs"].setdefault(params[0], row)
         elif sql.startswith("SELECT run_id, model_id"):
             self.result = [state["runs"][params[0]]]
+        elif sql.startswith("SELECT run_id::text, factor_count FROM factor.model_run"):
+            # 跨表 factor_count 门禁：门禁传带连字符的 UUID 文本，runs 的键统一后再比较。
+            count_col = writer.contracts.MODEL_RUN.columns.index("factor_count")
+            wanted = set(params[0])
+            self.result = [
+                (str(uuid.UUID(str(key))), row[count_col])
+                for key, row in state["runs"].items()
+                if str(uuid.UUID(str(key))) in wanted
+            ]
         elif sql.startswith("INSERT INTO ops.etl_job_run"):
             state["etl"].append(params)
         else:

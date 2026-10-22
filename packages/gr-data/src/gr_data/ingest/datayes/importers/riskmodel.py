@@ -28,11 +28,12 @@ import pandas as pd
 
 from gr_data.common import contracts
 from gr_data.ingest import pit
-from gr_data.ingest.base import BaseImporter
+from gr_data.ingest.base import BaseImporter, IngestGateError
 from gr_data.ingest.datayes import factors as fx, model_run as mr
 from gr_data.ingest.datayes.adapter import DatayesAdapter
 from gr_data.ingest.datayes.scaling import Scaling
 from gr_data.ingest.datayes.symbols import to_tushare_symbol
+from gr_data.ingest.factor_gate import check_factor_counts
 from gr_data.ingest.resolve import resolve_by_instrument, resolve_by_symbol_map
 
 
@@ -95,11 +96,31 @@ def _available_at(df: pd.DataFrame) -> pd.Series:
     return pit.from_vendor_timestamp(parsed, default_hour=VENDOR_PUBLISH_HOUR)
 
 
+def _reject_nonfinite(
+    values: np.ndarray, trading_days: pd.Series, labels: pd.Series | None, target: str
+) -> None:
+    """数组元素含 NaN／Inf 的行硬失败（047 也会拒收），在写库前给出日期与样例。
+
+    不把 NaN 当 0：通联原始数据里 NaN 是「非该行业」还是真缺失尚未核实。
+    """
+    bad = ~np.isfinite(values).all(axis=1)
+    if not bad.any():
+        return
+    days = sorted({str(day) for day in trading_days.to_numpy()[bad]})
+    samples = sorted({str(x) for x in labels.to_numpy()[bad]})[:5] if labels is not None else []
+    raise IngestGateError(
+        f"{target}: {int(bad.sum())} rows contain NaN/Inf elements, "
+        f"days {days[:3]}, samples {samples}"
+    )
+
+
 class _DatayesImporter(BaseImporter):
     """datayes importer 的公共部分：配置、raw 读取、model_run、数据质量记账。"""
 
     PROVIDER = PROVIDER
     DATASET_RAW: str = ""  # 对应的 raw dataset 名
+    #: 带 factor_count 的数组表（载荷／协方差／因子收益）写库前核对所属 model_run。
+    FACTOR_COUNT_GATE: bool = False
 
     def __init__(self, conn, ctx, client: Any | None = None, scaling: Scaling | None = None):
         super().__init__(conn, ctx, client)
@@ -122,6 +143,18 @@ class _DatayesImporter(BaseImporter):
 
     def _empty(self) -> pd.DataFrame:
         return pd.DataFrame(columns=list(self.contract.columns))
+
+    def _check_quality(self, df: pd.DataFrame) -> list[str]:
+        warnings = super()._check_quality(df)
+        if self.FACTOR_COUNT_GATE and not df.empty and {"run_id", "factor_count"} <= set(df):
+            # 全历史载荷可达千万行，门禁只需要不同的 (run_id, factor_count) 组合。
+            pairs = df[["run_id", "factor_count"]].drop_duplicates()
+            check_factor_counts(
+                self.conn,
+                self.contract.qualified,
+                zip(pairs["run_id"], pairs["factor_count"], strict=True),
+            )
+        return warnings
 
     def _record_dq(self, rule: str, severity: str, detail: dict) -> None:
         """写一条 ops.data_quality_check。
@@ -319,6 +352,7 @@ class ExposureImporter(_DatayesImporter):
     DATASET = "exposure"
     DATASET_RAW = "exposure_cne6_sw21"
     CONTRACT = contracts.EXPOSURE
+    FACTOR_COUNT_GATE = True
     NOT_NULL_COLUMNS = ("run_id", "instrument_id", "trading_day", "exposure")
     ARRAY_COLUMNS = ("exposure",)
 
@@ -334,6 +368,7 @@ class ExposureImporter(_DatayesImporter):
             return self._empty()
 
         values = fx.reindex_wide(df, factor_order)
+        _reject_nonfinite(values, _trading_day(df), df["instrument_id"], self.contract.qualified)
         self._check_industry_dummies(df, factor_order, values)
 
         return pd.DataFrame(
@@ -377,6 +412,7 @@ class FactorReturnImporter(_DatayesImporter):
     DATASET = "factor_return"
     DATASET_RAW = "factor_ret_cne6_sw21"
     CONTRACT = contracts.FACTOR_RETURN
+    FACTOR_COUNT_GATE = True
     NOT_NULL_COLUMNS = ("run_id", "trading_day", "ret_vector")
     ARRAY_COLUMNS = ("ret_vector",)
 
@@ -388,6 +424,7 @@ class FactorReturnImporter(_DatayesImporter):
 
         run_id, factor_order = self._run_and_order(raw)
         values = fx.reindex_wide(raw, factor_order)
+        _reject_nonfinite(values, _trading_day(raw), None, self.contract.qualified)
         out = pd.DataFrame(
             {
                 "run_id": run_id,
@@ -406,6 +443,7 @@ class CovarianceImporter(_DatayesImporter):
     DATASET = "covariance"
     DATASET_RAW = "factor_cov_cne6_sw21"
     CONTRACT = contracts.COVARIANCE
+    FACTOR_COUNT_GATE = True
     NOT_NULL_COLUMNS = ("run_id", "trading_day", "cov_flat")
     ARRAY_COLUMNS = ("cov_flat",)
 
