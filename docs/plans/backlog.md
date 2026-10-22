@@ -51,6 +51,8 @@ D-023 审查剩余（暂缓）：P2-3 当日 `suspend_d` 未发布时空响应�
 
 2026-10-22 涨跌停哨兵（D-024）：用新门禁重导 9 月时发现 `stk_limit` 以哨兵值表示不设涨跌幅，沪深 54 行曾作为涨跌停价写入。已以 045 新增 `price_limit_status` 并改写入库规则；本机工作库须先 `gr-db migrate` 再重导 9 月才会修正。待办：历史回补时复核更早年份的哨兵取值；设计仓 DS05 的「新股无涨跌幅限制期如何表达」可按 D-024 更新（尚未同步）。
 
+2026-10-22 Tushare 链路人工审核疑点：#12（raw 过去交易日空响应静默缺天）、#36（股票成交量／成交额缺失写 NULL）、#46（daily_basic／估值缺列整列写 NULL）已修复。仍待处理的复现用例以 strict xfail 留在 `packages/gr-data/tests/test_tushare_review_findings.py`：force 转移归属无日志（#4）、坏日历报成缺日历（#5）、未知上市状态默认 active 与期货一律 active（#26，下游暂无读取方）、`is_open` 非法值当休市（#29）、收盘价超出高低价区间未校验（#37）、指数先去重后去空白（#42，后果为硬失败）、丢弃指数／期货行不计软告警（#43）。待定口径：日线 raw 重复键静默保留最后一行（#35，现有测试锁定该设计）。
+
 数据接入历史规划为 P0–P2 已完成，P3 财报、P4 reference/macro/sentiment、P5 ETF/期权扩容、P6 校准。
 这些是旧规划名称，不表示相关模块完全不存在；开工前对照 provider 的 raw／ingest 注册表检查具体缺口。
 优先级建议由依赖决定：先按 [一期数据集清单](../../../getrich-design/data-platform/portfolio-diagnosis-phase1-datasets.md) 第 4 节的顺序补齐一期诊断所需数据，再决定 P3–P5 排期，不沿用旧的人天估计。

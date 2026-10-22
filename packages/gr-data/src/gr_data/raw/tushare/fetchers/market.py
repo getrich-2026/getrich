@@ -133,6 +133,8 @@ class _DailyFetcher(BaseFetcher):
 
     def fetch(self, mode: str = "update") -> int:
         trading_days = self._trading_days()
+        # 同一次运行只取一次「今天」，跨过午夜也不会让各月的判定口径不同。
+        today = int_to_date(today_int())
         n = 0
         for ym, first, last in self._months_to_fetch(mode):
             days = [d for d in trading_days if first <= d <= last]
@@ -194,6 +196,8 @@ class _DailyFetcher(BaseFetcher):
                 preserved = old.loc[~old_dates.dt.date.isin(days)]
                 if not preserved.empty:
                     frames.insert(0, preserved)
+            if self.DATASET != "suspend_d":
+                self._reject_past_empty_days(ym, empty_days, today)
             if not frames and self.DATASET != "suspend_d":
                 self.log.warning(
                     "Empty raw response provider=%s dataset=%s month=%s days=%d",
@@ -228,6 +232,28 @@ class _DailyFetcher(BaseFetcher):
             )
             n += 1
         return n
+
+    def _reject_past_empty_days(self, ym: str, empty_days: set[date], today: date) -> None:
+        """非稀疏数据集：今天以前的交易日返回空响应即拒绝写出该月分区。
+
+        不完整的分区一旦写出，这个月不再是最新月后 ``update`` 就不会重抓，缺口会永久
+        留下。今天的空响应可能只是供应商尚未发布，留给下次 ``update`` 重抓最新月补齐。
+        """
+        missing = sorted(d for d in empty_days if d < today)
+        if missing:
+            raise ValueError(
+                f"{self.DATASET}[{ym}] 有 {len(missing)} 个过去的交易日返回空响应，"
+                f"样例 {[d.isoformat() for d in missing[:5]]}；"
+                "拒绝写出不完整分区，请核对供应商后重试"
+            )
+        if empty_days:
+            self.log.info(
+                "Trading day not yet published provider=%s dataset=%s month=%s days=%s",
+                self.PROVIDER,
+                self.DATASET,
+                ym,
+                [d.isoformat() for d in sorted(empty_days)],
+            )
 
 
 class Bars1dFetcher(_DailyFetcher):

@@ -118,11 +118,23 @@ class _SymbolResolvingImporter(BaseImporter):
         notices = adapter.notices if adapter is not None else []
         return [*super().collect_soft_warnings(), *notices]
 
-    def _read_selected(self, dataset: str) -> pd.DataFrame:
-        """读取本次所选月份；所选月份缺分区即硬失败。"""
+    def _read_selected(self, dataset: str, required: frozenset[str] = frozenset()) -> pd.DataFrame:
+        """读取本次所选月份；所选月份缺分区即硬失败。
+
+        ``required`` 按分区逐个校验：拼接后再查会被列齐全的月份掩盖，缺列月份的行
+        在 concat 后成为 NaN，经 UPSERT 覆盖库内已有值。
+        """
         adapter = self._adapter()
-        adapter.selected_months(dataset)
-        return adapter.read_all_months(dataset)
+        frames = []
+        for ym in adapter.selected_months(dataset):
+            df = adapter.read_month(dataset, ym)
+            if df is None or df.empty:
+                continue
+            _require(df, set(required), f"{dataset}[{ym}]")
+            frames.append(df)
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, axis=0, ignore_index=True)
 
     def _id_map(self) -> dict[str, int]:
         return resolve_by_symbol_map(self.conn, PROVIDER)
@@ -230,7 +242,11 @@ class StockBars1dImporter(_BaseBarsImporter):
 
         _to_numeric(market, ["open", "high", "low", "close", "pre_close", "vol", "amount"])
         self._validate_prices(market, "daily")
-        if (market[["vol", "amount"]].to_numpy(dtype=float) < 0).any():
+        flow = market[["vol", "amount"]].to_numpy(dtype=float)
+        # 缺失或非数值（coerce 后为 NaN）不能静默写成 NULL：无成交应是 0，不是「不知道」。
+        if not np.isfinite(flow).all():
+            raise ValueError("daily 含缺失、非数值或非有限的成交量或成交额")
+        if (flow < 0).any():
             raise ValueError("daily 含负成交量或成交额")
 
         market["dt"] = market["trade_date"]
@@ -684,12 +700,15 @@ class DailyBasicImporter(_SymbolResolvingImporter):
     )
 
     def build(self) -> pd.DataFrame:
-        raw = self._read_selected("daily_basic")
+        # 提升列缺失时整列会写成 NULL，再经 UPSERT 覆盖库内已有值，所以缺列必须硬失败。
+        raw = self._read_selected(
+            "daily_basic",
+            frozenset({"ts_code", "trade_date", "close", "turnover_rate", "circ_mv", "total_mv"}),
+        )
         if raw.empty:
             self.log.warning("daily_basic 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
 
-        _require(raw, {"ts_code", "trade_date", "close"}, "daily_basic")
         df = raw.copy()
         df["ts_code"] = df["ts_code"].astype(str).str.strip()
         df["trading_day"] = _parse_trade_date(df, "daily_basic")
@@ -697,7 +716,7 @@ class DailyBasicImporter(_SymbolResolvingImporter):
         if df.empty:
             return pd.DataFrame(columns=list(self.contract.columns))
 
-        _to_numeric(df, [c for c in ("close", "turnover_rate", "circ_mv", "total_mv") if c in df])
+        _to_numeric(df, ["close", "turnover_rate", "circ_mv", "total_mv"])
 
         payload_cols = [c for c in df.columns if c not in self._PROMOTED]
         payload = df[payload_cols].to_dict("records")
@@ -707,10 +726,10 @@ class DailyBasicImporter(_SymbolResolvingImporter):
                 "instrument_id": df["instrument_id"].astype("int64"),
                 "trading_day": df["trading_day"],
                 "close": df["close"],
-                "turnover_rate": df.get("turnover_rate"),
+                "turnover_rate": df["turnover_rate"],
                 # 万元 → 元
-                "float_market_cap": df["circ_mv"] * 10000.0 if "circ_mv" in df else None,
-                "total_market_cap": df["total_mv"] * 10000.0 if "total_mv" in df else None,
+                "float_market_cap": df["circ_mv"] * 10000.0,
+                "total_market_cap": df["total_mv"] * 10000.0,
                 "source": PROVIDER,
                 "raw_payload": payload,
             }
@@ -746,12 +765,15 @@ class ValuationImporter(_SymbolResolvingImporter):
     PUBLISH_HOUR = 17
 
     def build(self) -> pd.DataFrame:
-        raw = self._read_selected("daily_basic")
+        # 缺列整列写 NULL 会经 UPSERT 覆盖库内已有值，必须硬失败；pe_ttm 的 NULL 只能来自源值。
+        raw = self._read_selected(
+            "daily_basic",
+            frozenset({"ts_code", "trade_date", "total_mv", "circ_mv", "pb", "pe_ttm"}),
+        )
         if raw.empty:
             self.log.warning("daily_basic 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
 
-        _require(raw, {"ts_code", "trade_date"}, "daily_basic")
         df = raw.copy()
         df["ts_code"] = df["ts_code"].astype(str).str.strip()
         df["trading_day"] = _parse_trade_date(df, "daily_basic")
@@ -759,17 +781,17 @@ class ValuationImporter(_SymbolResolvingImporter):
         if df.empty:
             return pd.DataFrame(columns=list(self.contract.columns))
 
-        _to_numeric(df, [c for c in ("total_mv", "circ_mv", "pb", "pe_ttm") if c in df])
+        _to_numeric(df, ["total_mv", "circ_mv", "pb", "pe_ttm"])
 
         out = pd.DataFrame(
             {
                 "instrument_id": df["instrument_id"].astype("int64"),
                 "trading_day": df["trading_day"],
                 # 万元 → 元。换算只在这里发生一次，计算层与文档都不再乘除。
-                "total_mv": df["total_mv"] * 10000.0 if "total_mv" in df else None,
-                "circ_mv": df["circ_mv"] * 10000.0 if "circ_mv" in df else None,
-                "pb": df.get("pb"),
-                "pe_ttm": df.get("pe_ttm"),
+                "total_mv": df["total_mv"] * 10000.0,
+                "circ_mv": df["circ_mv"] * 10000.0,
+                "pb": df["pb"],
+                "pe_ttm": df["pe_ttm"],
                 "currency": "CNY",
                 "source": PROVIDER,
                 "available_at": pit.from_trading_day(
