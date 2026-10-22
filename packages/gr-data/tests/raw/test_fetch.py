@@ -353,6 +353,51 @@ def test_tushare_empty_refresh_removes_stale_suspensions(tmp_raw_root, fake_tush
     assert read_coverage(path)[0] == [date(2024, 1, 2), date(2024, 1, 3)]
 
 
+def test_tushare_update_ignores_stray_tmp_partition(tmp_raw_root, fake_tushare, monkeypatch):
+    """残留 YYYY-MM.tmp-* 不能被当成最新月，否则真正的最新月不再重抓。"""
+    from gr_data.common.parquet import write_parquet
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240102)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    fetcher = REGISTRY["daily"](fake_tushare, ctx)
+    fetcher.fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    write_parquet(pd.read_parquet(path), path.with_name("2024-01.tmp-deadbeef.parquet"))
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240103)
+    assert fetcher.fetch("update") == 1
+    assert sorted(pd.read_parquet(path)["trade_date"].unique()) == ["20240102", "20240103"]
+
+
+def test_tushare_invalid_coverage_rebuilds_month(tmp_raw_root, fake_tushare, monkeypatch):
+    """分区已替换、凭据未写就中断：下次 update 自动整月重建，不需手工删凭据。"""
+    from gr_data.common.parquet import write_parquet
+    from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.fetchers import market
+    from gr_data.raw.tushare.suspension_store import InvalidCoverageError, read_coverage
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240102)
+    ctx = _ctx(tmp_raw_root)
+    ctx.start_date = 20240101
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    fetcher = REGISTRY["suspend_d"](fake_tushare, ctx)
+    fetcher.fetch("init")
+    path = tmp_raw_root.dataset_file("tushare", "suspend_d", "2024-01")
+    # 模拟中断：Parquet 已换成新内容，凭据仍是旧哈希。
+    write_parquet(pd.read_parquet(path).iloc[0:0], path)
+    with pytest.raises(InvalidCoverageError):
+        read_coverage(path)
+
+    monkeypatch.setattr(market, "today_int", lambda: 20240103)
+    assert fetcher.fetch("update") == 1
+    assert read_coverage(path)[0] == [date(2024, 1, 2), date(2024, 1, 3)]
+    assert not pd.read_parquet(path).empty
+
+
 @pytest.mark.parametrize("dataset", ["daily", "suspend_d"])
 def test_tushare_failed_refresh_keeps_partition(tmp_raw_root, fake_tushare, monkeypatch, dataset):
     import pytest

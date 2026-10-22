@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from gr_data.common import contracts
-from gr_data.ingest.base import BaseImporter
+from gr_data.ingest.base import BaseImporter, IngestGateError
 from gr_data.ingest.tushare.adapter import (
     ASSETS,
     CALENDAR_EXCHANGE_MAP,
@@ -59,6 +59,7 @@ class InstrumentsImporter(BaseImporter):
     DATASET = "instruments"
     CONTRACT = contracts.INSTRUMENTS
     NOT_NULL_COLUMNS = ("symbol", "asset", "exchange")
+    STRICT_QUALITY = True
 
     def build(self) -> pd.DataFrame:
         adapter = TushareAdapter(self.paths)
@@ -66,7 +67,10 @@ class InstrumentsImporter(BaseImporter):
         for asset in ASSETS:
             raw = adapter.read_instruments(asset)
             if raw is None or raw.empty:
-                self.log.warning("instruments[%s] 无 raw 数据，跳过", asset)
+                if asset == "stock":
+                    # 股票标的是一期全部按月数据的映射前提，缺失时后续导入都会落空。
+                    raise IngestGateError("instruments[stock] raw is missing or empty")
+                self._soft(f"instruments[{asset}] raw is missing or empty; skipped")
                 continue
             frames.append(getattr(self, f"_build_{asset}")(raw))
         if not frames:
@@ -134,6 +138,7 @@ class SymbolMapImporter(BaseImporter):
     DATASET = "symbol_map"
     CONTRACT = contracts.SYMBOL_MAP
     NOT_NULL_COLUMNS = ("instrument_id", "source", "source_symbol")
+    STRICT_QUALITY = True
 
     def build(self) -> pd.DataFrame:
         with self.conn.cursor() as cur:
@@ -155,6 +160,7 @@ class CalendarImporter(BaseImporter):
     DATASET = "calendar"
     CONTRACT = contracts.TRADING_CALENDAR
     NOT_NULL_COLUMNS = ("exchange", "trading_day")
+    STRICT_QUALITY = True
 
     def build(self) -> pd.DataFrame:
         adapter = TushareAdapter(self.paths)
@@ -162,8 +168,8 @@ class CalendarImporter(BaseImporter):
         for exchange in CALENDAR_EXCHANGES:
             raw = adapter.read_calendar(exchange)
             if raw is None or raw.empty:
-                self.log.warning("calendar[%s] 无 raw 数据，跳过", exchange)
-                continue
+                # 沪深各自的日历都是状态推导与覆盖检查的依据，缺一个不能静默跳过。
+                raise IngestGateError(f"calendar[{exchange}] raw is missing or empty")
             frames.append(self._build_one(raw, CALENDAR_EXCHANGE_MAP[exchange]))
         if not frames:
             return pd.DataFrame(columns=list(self.contract.columns))

@@ -15,6 +15,25 @@ from pathlib import Path
 import pandas as pd
 
 
+class CorruptRawError(ValueError):
+    """raw 文件存在但无法读取；不能当作缺失处理，也不在读取端删除或覆盖。"""
+
+
+def read_parquet_strict(path: Path) -> pd.DataFrame | None:
+    """读取 raw 分区：不存在返回 None，存在但不可读抛 CorruptRawError。
+
+    错误信息只带「数据集目录/文件名」和异常类型，不含根目录与文件内容。
+    """
+    if not path.exists():
+        return None
+    try:
+        return pd.read_parquet(path)
+    except Exception as exc:  # pyarrow／OSError 等多种失败形态，统一为可定位的硬失败
+        raise CorruptRawError(
+            f"Corrupt raw parquet: {path.parent.name}/{path.name} ({type(exc).__name__})"
+        ) from exc
+
+
 def read_parquet_if_exists(path: Path) -> pd.DataFrame | None:
     if not path.exists():
         return None

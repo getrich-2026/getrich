@@ -21,11 +21,11 @@ import pandas as pd
 from gr_data.common import contracts
 from gr_data.common.trading_status import event_flags, resolve_trading_status
 from gr_data.ingest import pit
-from gr_data.ingest.base import BaseImporter
+from gr_data.ingest.base import BaseImporter, IngestGateError
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.importers.reference import _require, parse_date
-from gr_data.ingest.tushare.suspensions import read_suspensions
+from gr_data.raw.tushare.suspension_store import read_coverage
 
 
 PROVIDER = "tushare"
@@ -99,32 +99,43 @@ class _SymbolResolvingImporter(BaseImporter):
     """
 
     PROVIDER = PROVIDER
+    STRICT_QUALITY = True
 
     def _adapter(self) -> TushareAdapter:
-        return TushareAdapter(self.paths, self.ctx.months)
+        # 同一 importer 共用一个适配器，残留文件等软告警才能汇总到运行结果。
+        if getattr(self, "_tushare_adapter", None) is None:
+            self._tushare_adapter = TushareAdapter(self.paths, self.ctx.months)
+        return self._tushare_adapter
+
+    def collect_soft_warnings(self) -> list[str]:
+        adapter = getattr(self, "_tushare_adapter", None)
+        notices = adapter.notices if adapter is not None else []
+        return [*super().collect_soft_warnings(), *notices]
+
+    def _read_selected(self, dataset: str) -> pd.DataFrame:
+        """读取本次所选月份；所选月份缺分区即硬失败。"""
+        adapter = self._adapter()
+        adapter.selected_months(dataset)
+        return adapter.read_all_months(dataset)
 
     def _id_map(self) -> dict[str, int]:
         return resolve_by_symbol_map(self.conn, PROVIDER)
 
     def _attach_ids(self, df: pd.DataFrame, id_map: dict[str, int]) -> pd.DataFrame:
-        """按 symbol_map 解析 instrument_id，未登记的标的丢弃并记警告。
+        """按 symbol_map 解析 instrument_id；存在未登记标的即硬失败。
 
-        丢弃是必要的：instrument_id 是外键，未登记的标的写不进去。
-        但**必须让丢弃可见**，否则会伪装成「这段时间没数据」。
+        instrument_id 是外键，未登记的标的写不进去；丢掉这些行又会伪装成
+        「这段时间没数据」。所以整批拒绝，先补 instruments + symbol_map 再导入。
         """
         df = df.copy()
         df["instrument_id"] = df["ts_code"].map(id_map)
         unknown = df["instrument_id"].isna()
         if unknown.any():
             codes = sorted(set(df.loc[unknown, "ts_code"]))
-            self.log.warning(
-                "%d 行（%d 个标的）在 meta.symbol_map 中无登记，已跳过；样例: %s。"
-                "请先运行 instruments + symbol_map importer。",
-                int(unknown.sum()),
-                len(codes),
-                codes[:5],
+            raise IngestGateError(
+                f"{self.DATASET}: {int(unknown.sum())} rows ({len(codes)} symbols) are not in "
+                f"meta.symbol_map, samples {codes[:5]}; run instruments and symbol_map first"
             )
-            df = df[~unknown]
         return df
 
 
@@ -194,9 +205,12 @@ class StockBars1dImporter(_BaseBarsImporter):
 
     def build(self) -> pd.DataFrame:
         adapter = self._adapter()
+        months = adapter.selected_months("daily")
+        # 复权因子与涨跌停按月与日线配套；缺整月不能静默写 NULL 覆盖库内已有值。
+        for companion in ("adj_factor", "stk_limit"):
+            adapter.require_months(companion, months)
         daily = adapter.read_all_months("daily")
         if daily.empty:
-            self.log.warning("daily 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
 
         _require(
@@ -215,11 +229,8 @@ class StockBars1dImporter(_BaseBarsImporter):
 
         market["dt"] = market["trade_date"]
         market = self._merge_limits(market, adapter)
-        trading_status = self._trading_status(market, adapter)
         market = self._attach_ids(market, self._id_map())
-        if market.empty:
-            return pd.DataFrame(columns=list(self.contract.columns))
-        trading_status = trading_status.loc[market.index]
+        trading_status = self._trading_status(market, months)
 
         out = pd.DataFrame(
             {
@@ -273,7 +284,8 @@ class StockBars1dImporter(_BaseBarsImporter):
         """
         limits = adapter.read_all_months("stk_limit")
         if limits.empty:
-            self.log.warning("缺少 stk_limit raw 数据，limit_up/limit_down 将为 NULL")
+            # 分区存在（build 已校验）但为空：涨跌停整体缺失，留 NULL 并要求复核。
+            self._soft(f"stk_limit partitions are empty; {len(market)} rows keep NULL limits")
             market["limit_up"] = None
             market["limit_down"] = None
             return market
@@ -296,42 +308,108 @@ class StockBars1dImporter(_BaseBarsImporter):
             | (merged["up_limit"] < merged["down_limit"])
         )
         if bad.any():
-            self.log.warning("Invalid price limits set to NULL rows=%d", int(bad.sum()))
+            self._soft(f"invalid price limits set to NULL rows={int(bad.sum())}")
             merged.loc[bad, ["up_limit", "down_limit"]] = np.nan
 
+        dp = merged["pre_close"].to_numpy(dtype=float)
+        # 首日上市无前收盘（_validate_prices 已记 info 与 data_quality_check），
+        # 也没有涨跌幅限制；不计入软告警，否则常规全量导入几乎必然退出码 3。
+        first_day = ~np.isfinite(dp)
         if "limit_pre_close" in merged.columns:
             lp = pd.to_numeric(merged["limit_pre_close"], errors="coerce").to_numpy(dtype=float)
-            dp = merged["pre_close"].to_numpy(dtype=float)
-            comparable = np.isfinite(lp)
+            comparable = np.isfinite(lp) & np.isfinite(dp)
             mismatch = comparable & ~np.isclose(dp, lp, atol=PRE_CLOSE_TOLERANCE, rtol=0)
             if mismatch.any():
-                self.log.warning(
-                    "daily 与 stk_limit 的 pre_close 有 %d 行不一致（容差 %.3f），"
-                    "该批涨跌停价置 NULL",
-                    int(mismatch.sum()),
-                    PRE_CLOSE_TOLERANCE,
+                self._soft(
+                    f"pre_close of daily and stk_limit differ on {int(mismatch.sum())} rows "
+                    f"(tolerance {PRE_CLOSE_TOLERANCE:.3f}); their price limits set to NULL"
                 )
                 merged.loc[mismatch, ["up_limit", "down_limit"]] = np.nan
 
-        missing = int(merged["up_limit"].isna().sum())
+        no_limit = merged["up_limit"].isna().to_numpy()
+        missing = int((no_limit & ~first_day).sum())
         if missing:
-            self.log.warning("%d 行无可用涨跌停价，留 NULL", missing)
+            self._soft(f"{missing} rows have no usable price limit and keep NULL")
+        first_day_null = int((no_limit & first_day).sum())
+        if first_day_null:
+            self.log.info("First listing day rows keep NULL price limits rows=%d", first_day_null)
 
         merged["limit_up"] = merged["up_limit"]
         merged["limit_down"] = merged["down_limit"]
         return merged
 
-    def _trading_status(self, market: pd.DataFrame, adapter: TushareAdapter) -> pd.Series:
-        """只为实际存在的 bar 派生状态；缺采集覆盖为 UNKNOWN。"""
-        months = tuple(sorted({day.strftime("%Y-%m") for day in market["dt"]}))
-        events, coverage = read_suspensions(self.paths, months, required=False)
-        keys = ["ts_code", "trade_date"]
-        evidence = market[["ts_code", "dt"]].rename(columns={"dt": "trade_date"})
-        evidence = evidence.merge(event_flags(events, keys), on=keys, how="left")
+    def _trading_status(self, market: pd.DataFrame, months: list[str]) -> pd.Series:
+        """只为实际存在的 bar 派生状态，证据只取库内事件与覆盖表；库内缺覆盖为 UNKNOWN。
+
+        与 ``SuspensionImporter`` 刷新已有 bar、``load_stock_trading_status`` 读取
+        共用同一份库内证据，避免 raw 与库各推一套状态（D-023）。
+        """
+        self._check_suspension_coverage(months)
+        keys = ["instrument_id", "trading_day"]
+        evidence = market[["instrument_id", "dt"]].rename(columns={"dt": "trading_day"})
+        days = sorted(set(evidence["trading_day"]))
+        events, covered = self._status_evidence(sorted(set(evidence["instrument_id"])), days)
+        flags = ["full_suspend", "intraday_suspend", "resumed"]
+        if events.empty:
+            for col in flags:
+                evidence[col] = False
+        else:
+            evidence = evidence.merge(event_flags(events, keys), on=keys, how="left")
         evidence["has_bar"] = True
-        evidence["covered"] = evidence["trade_date"].isin(coverage["trading_day"])
+        evidence["covered"] = evidence["trading_day"].isin(covered)
         result = resolve_trading_status(evidence.drop(columns=keys))
         return pd.Series(result.to_numpy(), index=market.index)
+
+    def _check_suspension_coverage(self, months: list[str]) -> None:
+        """raw 停复牌凭据与库内覆盖不一致时拒绝：说明 raw 已更新而库内事件未重导。
+
+        raw 有有效凭据时，凭据内每个日期都必须在库内有相同哈希的覆盖，库内缺覆盖
+        或哈希不同均硬失败。raw 缺分区或没有凭据（旧格式）时不比较，此时库内无覆盖的
+        日期按 UNKNOWN 处理。
+        """
+        if self.conn is None:  # 离线单测不比较库内覆盖
+            return
+        for month in months:
+            path = self.paths.dataset_file(PROVIDER, "suspend_d", month)
+            if not path.exists():
+                continue
+            proof = read_coverage(path)
+            if proof is None:
+                continue
+            days, _, digest = proof
+            rows = self.conn.execute(
+                "SELECT trading_day, raw_sha256 FROM market.stock_suspend_coverage "
+                "WHERE source=%s AND trading_day=ANY(%s)",
+                (PROVIDER, days),
+            ).fetchall()
+            stored = dict(rows)
+            if any(stored.get(day) != digest for day in days):
+                raise IngestGateError(
+                    f"suspend_d raw coverage for {month} differs from the database; "
+                    "run the suspend_d importer before stock_bar_1d"
+                )
+
+    def _status_evidence(self, instrument_ids: list[int], days: list) -> tuple[pd.DataFrame, set]:
+        """读取库内停复牌事件与已覆盖交易日。"""
+        if self.conn is None:  # 单测里不带连接：等同库内尚无覆盖
+            return pd.DataFrame(), set()
+        cur = self.conn.execute(
+            "SELECT instrument_id, trading_day, suspend_type, suspend_timing "
+            "FROM market.stock_suspend_event "
+            "WHERE source=%s AND instrument_id=ANY(%s) AND trading_day=ANY(%s)",
+            (PROVIDER, instrument_ids, days),
+        )
+        columns = ["instrument_id", "trading_day", "suspend_type", "suspend_timing"]
+        events = pd.DataFrame(cur.fetchall(), columns=columns)
+        covered = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT trading_day FROM market.stock_suspend_coverage "
+                "WHERE source=%s AND trading_day=ANY(%s)",
+                (PROVIDER, days),
+            ).fetchall()
+        }
+        return events, covered
 
 
 class IndexBars1dImporter(_BaseBarsImporter):
@@ -350,8 +428,7 @@ class IndexBars1dImporter(_BaseBarsImporter):
     CONTRACT = contracts.bar_1d("index")
 
     def build(self) -> pd.DataFrame:
-        adapter = self._adapter()
-        raw = adapter.read_all_months("index_daily")
+        raw = self._read_selected("index_daily")
         if raw.empty:
             self.log.warning("index_daily 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
@@ -419,8 +496,7 @@ class FutureBars1dImporter(_BaseBarsImporter):
     CONTRACT = contracts.bar_1d("future")
 
     def build(self) -> pd.DataFrame:
-        adapter = self._adapter()
-        raw = adapter.read_all_months("fut_daily")
+        raw = self._read_selected("fut_daily")
         if raw.empty:
             self.log.warning("fut_daily 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
@@ -548,7 +624,7 @@ class DailyBasicImporter(_SymbolResolvingImporter):
     )
 
     def build(self) -> pd.DataFrame:
-        raw = self._adapter().read_all_months("daily_basic")
+        raw = self._read_selected("daily_basic")
         if raw.empty:
             self.log.warning("daily_basic 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
@@ -610,7 +686,7 @@ class ValuationImporter(_SymbolResolvingImporter):
     PUBLISH_HOUR = 17
 
     def build(self) -> pd.DataFrame:
-        raw = self._adapter().read_all_months("daily_basic")
+        raw = self._read_selected("daily_basic")
         if raw.empty:
             self.log.warning("daily_basic 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
@@ -659,7 +735,7 @@ class AdjFactorTsImporter(_SymbolResolvingImporter):
     NOT_NULL_COLUMNS = ("instrument_id", "trading_day", "adj_factor", "source")
 
     def build(self) -> pd.DataFrame:
-        raw = self._adapter().read_all_months("adj_factor")
+        raw = self._read_selected("adj_factor")
         if raw.empty:
             self.log.warning("adj_factor 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))

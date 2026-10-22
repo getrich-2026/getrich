@@ -96,12 +96,13 @@ def test_conflicting_event_timing_and_unknown_type_rejected():
 
 
 def test_partial_month_coverage_does_not_mark_other_days_normal(tmp_raw_root):
-    _partition(tmp_raw_root, [], days=[DAY])
+    # 证据来自库内覆盖表（P2-2）：只覆盖了 DAY，其余日期不能推断为 NORMAL。
     market = pd.DataFrame(
-        {"ts_code": ["600000.SH"] * 3, "dt": [DAY, date(2024, 1, 3), date(2024, 2, 1)]}
+        {"instrument_id": [1] * 3, "dt": [DAY, date(2024, 1, 3), date(2024, 2, 1)]}
     )
     importer = StockBars1dImporter(None, IngestContext(paths=tmp_raw_root))
-    assert importer._trading_status(market, None).tolist() == ["NORMAL", "UNKNOWN", "UNKNOWN"]
+    importer._status_evidence = lambda ids, days: (pd.DataFrame(), {DAY})
+    assert importer._trading_status(market, []).tolist() == ["NORMAL", "UNKNOWN", "UNKNOWN"]
 
 
 def test_events_outside_manifest_rejected(tmp_raw_root):

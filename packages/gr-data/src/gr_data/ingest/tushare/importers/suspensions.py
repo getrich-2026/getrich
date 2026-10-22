@@ -29,7 +29,10 @@ class SuspensionImporter(BaseImporter):
     def build(self) -> pd.DataFrame:
         months = self.ctx.months
         if months is None:
-            months = tuple(TushareAdapter(self.paths).list_months("suspend_d"))
+            adapter = TushareAdapter(self.paths)
+            months = tuple(adapter.list_months("suspend_d"))
+            # 残留 *.tmp-* 等软告警并入运行结果，与其他 Tushare importer 一致。
+            self.soft_warnings.extend(adapter.notices)
         if not months:
             raise ValueError("No suspension partitions selected")
         raw, self.coverage = read_suspensions(self.paths, months, required=True)
@@ -82,13 +85,14 @@ class SuspensionImporter(BaseImporter):
             coverage_rows = list(self.coverage.itertuples(index=False, name=None))
             upsert_rows(self.conn, contracts.STOCK_SUSPEND_COVERAGE, coverage_rows)
             self._refresh_bars(events, days)
-            self._record_run(written, [])
+            warnings = self.collect_soft_warnings()
+            self._record_run(written, warnings)
             self.conn.commit()
         except Exception:
             self.conn.rollback()
             raise
         self.log.info("Suspension import completed: events=%d covered_days=%d", written, len(days))
-        return IngestResult(self.DATASET, self.contract.qualified, written, [])
+        return IngestResult(self.DATASET, self.contract.qualified, written, warnings)
 
     def _refresh_bars(self, events: pd.DataFrame, days: list[date]) -> None:
         cur = self.conn.execute(

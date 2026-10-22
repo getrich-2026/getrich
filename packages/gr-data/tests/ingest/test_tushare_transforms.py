@@ -94,6 +94,20 @@ def _write(paths, dataset, df):
     write_parquet(df, paths.dataset_file("tushare", dataset, "2024-01"), append=False)
 
 
+def _write_limits(paths, codes=("600000.SH",)):
+    """与日线配套的涨跌停分区（门禁要求同月必须存在）。"""
+    _write(
+        paths,
+        "stk_limit",
+        pd.DataFrame(
+            [
+                {"ts_code": c, "trade_date": "20240102", "up_limit": 10.78, "down_limit": 8.82}
+                for c in codes
+            ]
+        ),
+    )
+
+
 def _daily_df():
     return pd.DataFrame(
         [
@@ -192,6 +206,7 @@ def test_stock_infinite_pre_close_rejected(tmp_raw_root, monkeypatch, bad):
     daily = _daily_df()
     daily["pre_close"] = bad
     _write(tmp_raw_root, "daily", daily)
+    _write_limits(tmp_raw_root)
     _write(
         tmp_raw_root,
         "adj_factor",
@@ -245,6 +260,7 @@ def test_stock_nonfinite_limits_become_null(tmp_raw_root, monkeypatch, bad):
 def test_missing_adj_factor_raises(tmp_raw_root, monkeypatch):
     """复权因子在目标表是 NOT NULL，缺失不能用 1 兜底。"""
     _write(tmp_raw_root, "daily", _daily_df())
+    _write_limits(tmp_raw_root)
     _write(
         tmp_raw_root,
         "adj_factor",
@@ -290,8 +306,13 @@ def test_pre_close_mismatch_drops_limits(tmp_raw_root, monkeypatch):
     assert df.iloc[0]["close"] == 10.5
 
 
-def test_missing_stk_limit_leaves_null(tmp_raw_root, monkeypatch):
-    """涨跌停价在目标表可为 NULL，缺失只警告，不阻断整批。"""
+def test_missing_stk_limit_month_fails(tmp_raw_root, monkeypatch):
+    """缺整月 stk_limit 硬失败：写 NULL 会覆盖库内已有涨跌停价（导入门禁）。
+
+    个别代码缺涨跌停价仍留 NULL 并记软告警，见 test_import_gates。
+    """
+    from gr_data.ingest.base import IngestGateError
+
     _write(tmp_raw_root, "daily", _daily_df())
     _write(
         tmp_raw_root,
@@ -301,13 +322,12 @@ def test_missing_stk_limit_leaves_null(tmp_raw_root, monkeypatch):
 
     imp = _stock_importer(tmp_raw_root)
     monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
-    df = imp.build()
-    assert len(df) == 1
-    assert pd.isna(df.iloc[0]["limit_up"])
+    with pytest.raises(IngestGateError, match="stk_limit"):
+        imp.build()
 
 
 def test_trading_status_from_suspensions(tmp_raw_root, monkeypatch):
-    """有行情但全天 S 冲突为 UNKNOWN；日内 S/R 不互相覆盖。"""
+    """状态证据取自库内事件与覆盖（D-023，P2-2）；日内 S/R 不互相覆盖。"""
     daily = pd.DataFrame(
         [
             {
@@ -335,41 +355,28 @@ def test_trading_status_from_suspensions(tmp_raw_root, monkeypatch):
             ]
         ),
     )
-    _write(
-        tmp_raw_root,
-        "suspend_d",
-        pd.DataFrame(
-            [
-                {
-                    "ts_code": "600000.SH",
-                    "trade_date": "20240102",
-                    "suspend_type": "S",
-                    "suspend_timing": "09:30-10:00",
-                },
-                {
-                    "ts_code": "600004.SH",
-                    "trade_date": "20240102",
-                    "suspend_type": "S",
-                    "suspend_timing": "09:30-10:00",
-                },
-                {
-                    "ts_code": "600004.SH",
-                    "trade_date": "20240102",
-                    "suspend_type": "R",
-                    "suspend_timing": None,
-                },
-            ]
-        ),
-    )
-
-    from gr_data.raw.tushare.suspension_store import publish_coverage
-
-    publish_coverage(
-        tmp_raw_root.dataset_file("tushare", "suspend_d", "2024-01"),
-        [pd.Timestamp("2024-01-02").date()],
+    _write_limits(tmp_raw_root, ("600000.SH", "000001.SZ", "600004.SH"))
+    day = pd.Timestamp("2024-01-02").date()
+    events = pd.DataFrame(
+        [
+            {
+                "instrument_id": 1,
+                "trading_day": day,
+                "suspend_type": "S",
+                "suspend_timing": "09:30-10:00",
+            },
+            {
+                "instrument_id": 3,
+                "trading_day": day,
+                "suspend_type": "S",
+                "suspend_timing": "09:30-10:00",
+            },
+            {"instrument_id": 3, "trading_day": day, "suspend_type": "R", "suspend_timing": None},
+        ]
     )
     imp = _stock_importer(tmp_raw_root)
     monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 1, "000001.SZ": 2, "600004.SH": 3})
+    monkeypatch.setattr(imp, "_status_evidence", lambda ids, days: (events, {day}))
     df = imp.build().set_index("instrument_id")
 
     assert df.loc[1, "trading_status"] == "INTRADAY_HALTED"  # 日内停牌
@@ -377,22 +384,12 @@ def test_trading_status_from_suspensions(tmp_raw_root, monkeypatch):
     assert df.loc[3, "trading_status"] == "INTRADAY_HALTED"  # 同日复牌不抹掉日内停牌
 
 
-class _RecordingLog:
-    """记录 warning 调用。项目 logger 不向 root 传播，caplog 抓不到。"""
+def test_unknown_symbols_fail_not_silently_dropped(tmp_raw_root, monkeypatch):
+    """symbol_map 里没有的标的写不进外键，丢行又会伪装成「没数据」，故整批硬失败。"""
+    from gr_data.ingest.base import IngestGateError
 
-    def __init__(self):
-        self.warnings: list[str] = []
-
-    def warning(self, msg, *args):
-        self.warnings.append(msg % args if args else msg)
-
-    def __getattr__(self, _name):
-        return lambda *a, **k: None
-
-
-def test_unknown_symbols_are_skipped_not_silently(tmp_raw_root, monkeypatch):
-    """symbol_map 里没有的标的必须跳过（外键约束），但要留下可见的警告。"""
     _write(tmp_raw_root, "daily", _daily_df())
+    _write_limits(tmp_raw_root)
     _write(
         tmp_raw_root,
         "adj_factor",
@@ -401,12 +398,8 @@ def test_unknown_symbols_are_skipped_not_silently(tmp_raw_root, monkeypatch):
 
     imp = _stock_importer(tmp_raw_root)
     monkeypatch.setattr(imp, "_id_map", lambda: {})
-    rec = _RecordingLog()
-    monkeypatch.setattr(imp, "log", rec)
-
-    df = imp.build()
-    assert df.empty
-    assert any("meta.symbol_map" in w and "600000.SH" in w for w in rec.warnings)
+    with pytest.raises(IngestGateError, match=r"meta\.symbol_map.*600000\.SH"):
+        imp.build()
 
 
 def test_future_units(tmp_raw_root, monkeypatch):
@@ -850,6 +843,7 @@ def test_first_listing_day_missing_pre_close_is_kept(tmp_raw_root, monkeypatch):
     df.loc[0, "ts_code"] = "920000.BJ"
     df.loc[0, "pre_close"] = None
     _write(tmp_raw_root, "daily", df)
+    _write_limits(tmp_raw_root)
     _write(
         tmp_raw_root,
         "adj_factor",
@@ -872,6 +866,7 @@ def test_missing_ohlc_still_aborts(tmp_raw_root, monkeypatch, col):
     df = _daily_df()
     df.loc[0, col] = None
     _write(tmp_raw_root, "daily", df)
+    _write_limits(tmp_raw_root)
     _write(
         tmp_raw_root,
         "adj_factor",
@@ -889,6 +884,7 @@ def test_nonpositive_pre_close_still_aborts(tmp_raw_root, monkeypatch):
     df = _daily_df()
     df.loc[0, "pre_close"] = 0.0
     _write(tmp_raw_root, "daily", df)
+    _write_limits(tmp_raw_root)
     _write(
         tmp_raw_root,
         "adj_factor",

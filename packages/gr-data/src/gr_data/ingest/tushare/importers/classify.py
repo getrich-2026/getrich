@@ -48,6 +48,7 @@ class InstrumentCategoryImporter(BaseImporter):
     DATASET = "instrument_category"
     CONTRACT = contracts.INSTRUMENT_CATEGORY
     NOT_NULL_COLUMNS = ("instrument_id", "asset_category", "market", "in_date", "source")
+    STRICT_QUALITY = True
 
     def build(self) -> pd.DataFrame:
         with self.conn.cursor() as cur:

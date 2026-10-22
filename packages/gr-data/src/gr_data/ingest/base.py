@@ -52,6 +52,13 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+class IngestGateError(ValueError):
+    """导入门禁硬失败：坏文件、缺必需分区、未知代码或质量问题，本次不写库。
+
+    消息只含数据集、月份、计数与少量样例代码，不含完整 payload。
+    """
+
+
 @dataclass
 class IngestContext:
     paths: RawPaths
@@ -91,6 +98,11 @@ class BaseImporter(abc.ABC):
     # quality 校验参数（子类可覆盖）
     NOT_NULL_COLUMNS: tuple[str, ...] = ()
 
+    #: True 时质量问题（空集、缺列、重复键、必需列 null）为硬失败，拒绝写库。
+    #: 一期供数的 Tushare 已开启；尚未启用的其他供应商保持旧的「记警告后写入」，
+    #: 启用前须先接入门禁。
+    STRICT_QUALITY: bool = False
+
     # 需要特殊装箱的列（必须是 contract.columns 的子集）。
     # 普通列走 `astype(object).where(notna)` 的标量化路径就够了，但这两类不行：
     #   ARRAY_COLUMNS：值可能是 np.ndarray，psycopg 不认，得先 .tolist()
@@ -105,6 +117,16 @@ class BaseImporter(abc.ABC):
         self.ctx = ctx
         self.client = client  # 直连 SDK 时用；读 parquet 模式可为 None
         self.log = logging.getLogger(f"gr_data.ingest.{self.PROVIDER}.{self.DATASET}")
+        self.soft_warnings: list[str] = []
+
+    def _soft(self, message: str) -> None:
+        """记录软告警：照常写库，运行状态为 partial，CLI 退出码 3。"""
+        self.soft_warnings.append(message)
+        self.log.warning("Soft quality warning: %s", message)
+
+    def collect_soft_warnings(self) -> list[str]:
+        """本次 build 产生的软告警；子类可并入适配器等来源。"""
+        return list(self.soft_warnings)
 
     @property
     def paths(self) -> RawPaths:
@@ -161,6 +183,9 @@ class BaseImporter(abc.ABC):
 
         df = self.build()
         warnings = self._check_quality(df)
+        if warnings and self.STRICT_QUALITY:
+            raise IngestGateError(f"{self.PROVIDER}.{self.DATASET} quality gate failed: {warnings}")
+        warnings += self.collect_soft_warnings()
 
         rows = (
             self._df_to_rows(df) if not df.empty and "缺少必需列" not in " ".join(warnings) else []

@@ -27,6 +27,7 @@ Tushare 对一次查询的 ``offset`` 有 **100000 的硬上限**（实测：off
 
 from __future__ import annotations
 
+import re
 from calendar import monthrange
 from datetime import date
 
@@ -35,7 +36,14 @@ import pandas as pd
 from gr_data.common.parquet import read_parquet_if_exists, write_parquet
 from gr_data.common.retry import int_to_date, retry_call, sleep_s, today_int
 from gr_data.raw.base import BaseFetcher, month_range
-from gr_data.raw.tushare.suspension_store import publish_coverage, read_coverage
+from gr_data.raw.tushare.suspension_store import (
+    InvalidCoverageError,
+    publish_coverage,
+    read_coverage,
+)
+
+
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
 PROVIDER = "tushare"
@@ -95,7 +103,9 @@ class _DailyFetcher(BaseFetcher):
         d = self.paths.dataset_dir(self.PROVIDER, self.DATASET)
         if not d.exists():
             return set()
-        return {f.stem for f in d.glob("*.parquet")}
+        # 只认 YYYY-MM 分区：中断残留的 YYYY-MM.tmp-* 按字典序排在月份之后，
+        # 会被误当成「最新月」，导致真正的最新月不再重抓。
+        return {f.stem for f in d.glob("*.parquet") if _MONTH_RE.match(f.stem)}
 
     def _months_to_fetch(self, mode: str) -> list[tuple[str, date, date]]:
         start = int_to_date(self.ctx.start_date or INIT_START_DATE)
@@ -138,12 +148,25 @@ class _DailyFetcher(BaseFetcher):
             # 仅整月 init 可以不读取旧分区；局部更新必须保住未请求日。
             old = None
             covered_days = list(days)
-            if out.exists() and not full_rebuild:
-                old = pd.read_parquet(out)
-                if self.DATASET == "suspend_d":
+            if out.exists() and not full_rebuild and self.DATASET == "suspend_d":
+                try:
                     previous = read_coverage(out)
+                except InvalidCoverageError:
+                    # 分区已替换、凭据未写就中断：旧内容无法证明，只信本次请求的日期，
+                    # 不保留旧行，凭据随新分区重新发布。
+                    self.log.warning(
+                        "Invalid suspension coverage, rebuilding requested days "
+                        "dataset=%s month=%s days=%d",
+                        self.DATASET,
+                        ym,
+                        len(days),
+                    )
+                    full_rebuild = True
+                else:
                     if previous is not None:
                         covered_days = sorted(set(covered_days) | set(previous[0]))
+            if out.exists() and not full_rebuild:
+                old = pd.read_parquet(out)
 
             frames: list[pd.DataFrame] = []
             empty_days: set[date] = set()

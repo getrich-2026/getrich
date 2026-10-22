@@ -45,6 +45,10 @@
 
 主要 P2（暂缓）：分档参数超出两档时被静默截断、缺键静默用默认值；NaN／Inf 估值未防御；缓存键不含算法版本；披露语描述了未执行的回放；`updated_at` 不随 UPSERT 刷新；表归属 claim 先查后插无锁；米筐 `model_run.units` 未写期限、每日每次观察各一个 run；`adj_factor` 单次行数上限未核实。
 
+2026-10-22 导入最低门禁（Tushare）已落地，行为与退出码见 gr-data README「导入门禁与退出码」：坏文件、所选月份缺必需分区、未知代码、质量问题、缺股票标的或沪深日历均硬失败并记 `failed`；软告警退出码 3。同时修复 D-023 审查 P2-1（凭据失效后抓取端自动按请求日期重建）、P2-2（股票行情状态只从库内事件与覆盖推导，raw 与库不一致硬失败），以及残留 `*.tmp-*` 被当作月份读入（ingest 重复读入、raw `update` 误判最新月）的问题。仍未做：quarantine、可靠性计划 A0 状态机、开始记录与本地 spool、其他供应商接入门禁。
+
+D-023 审查剩余（暂缓）：P2-3 当日 `suspend_d` 未发布时空响应也记为已覆盖（`update` 重抓最新月可自愈，月末最后一日仅在下次运行修正）；P3 局部重抓会刷新整个分区的观察时间、月中起点的旧 raw 会阻断导入、`load_stock_trading_status` 对 `list_date` 为空静默不出行且退市当日记 UNKNOWN、完整重导一次性刷新全部覆盖日的 bar、缺覆盖记 UNKNOWN 时无日志、事件表未以外键约束到覆盖表、上市前／退市后／北交所／跨月停牌／凭据损坏恢复的测试缺口、测试 PG named volume 可能残留。
+
 数据接入历史规划为 P0–P2 已完成，P3 财报、P4 reference/macro/sentiment、P5 ETF/期权扩容、P6 校准。
 这些是旧规划名称，不表示相关模块完全不存在；开工前对照 provider 的 raw／ingest 注册表检查具体缺口。
 优先级建议由依赖决定：先按 [一期数据集清单](../../../getrich-design/data-platform/portfolio-diagnosis-phase1-datasets.md) 第 4 节的顺序补齐一期诊断所需数据，再决定 P3–P5 排期，不沿用旧的人天估计。

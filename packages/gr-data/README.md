@@ -96,8 +96,46 @@ uv run gr-data ingest tushare --only events,bars_1d,market_ext,fundamental,class
 不会自动启用。历史数据建议逐月导入，避免一次加载全部月份。
 `daily_basic` 和 `valuation_1d` 共用原始文件，各自在目标金额列做万元→元转换；
 未提升字段在 `raw_payload` 中保持供应商原单位。缺复权因子或股票 OHLC 会中断；
-缺涨跌停价保留 NULL；未知标的告警后跳过。股票辅助表关联前统一 int8／字符串日期
+个别代码缺涨跌停价保留 NULL 并记软告警。股票辅助表关联前统一 int8／字符串日期
 及代码首尾空格，再按键去重；期货成交量与持仓量保持「手」。
+
+### 导入门禁与退出码（Tushare）
+
+Tushare importer 严格校验，下列情况**硬失败**：本 importer 不写库并回滚，
+`ops.etl_job_run` 记一条 `failed`（`error` 只含错误类别、数据集、月份、计数与少量样例代码），
+其后的 importer 不再执行；之前已提交的 importer 保留。
+
+| 硬失败 | 说明 |
+|---|---|
+| raw Parquet 存在但不可读 | 报 `Corrupt raw parquet: <数据集>/<文件>`，不删除、不覆盖该文件 |
+| 所选月份缺必需分区 | `--months` 指定的月份或主数据集现有月份缺分区；`stock_bar_1d` 还要求同月的 `adj_factor`、`stk_limit` |
+| 未知代码 | 不在 `meta.symbol_map` 的行整批拒绝，不丢行；先跑 `instruments`、`symbol_map` |
+| 质量问题 | 空数据集、缺必需列、主键重复、必需列为空 |
+| 股票标的或沪深日历缺失 | `instruments[stock]`、`calendar[SSE]`、`calendar[SZSE]` |
+| 停复牌 raw 与库不一致 | raw `suspend_d` 有有效凭据，但库内缺这些日期的覆盖或哈希不同，说明未重导停复牌，先跑 `suspend_d` |
+| 表归属冲突 | 目标表已归属其他 provider；记 `failed`，退出码 1（此前为 2） |
+
+配置里写了不存在的 importer 名属于配置问题：在连接数据库之前报错，退出码 2，不写流水。
+
+**软告警**照常写库，运行记为 `partial`：个别代码缺涨跌停价、`pre_close` 不一致
+导致丢弃涨跌停价、非法涨跌停价、残留 `*.tmp-*` 文件（不读入）、指数或期货标的缺失。
+首日上市无前收盘、因而无涨跌停价的行不算软告警，只记 info 与 `ops.data_quality_check`。
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 全部成功 |
+| 1 | 有 importer 硬失败；stderr 列出已提交与未执行的 importer |
+| 2 | 配置问题（缺凭证、缺 SDK、未知 importer 名等） |
+| 3 | 完成但有软告警，stderr 列出需复核的表 |
+
+预期内的失败（门禁、坏文件、归属冲突）日志只记摘要；其他异常多为程序缺陷，日志保留完整堆栈。
+
+指数／期货标的缺失只是软告警，但此时 `index_bar_1d`／`future_bar_1d` 的行情代码全部未知，
+会按未知代码硬失败并停止其后的 importer。一期不需要指数与期货时，不要把它们列入 ingest 名单
+（不要用 `bars_1d`、`all` 组名）。
+
+其他供应商（银河、米筐旧链路、DataYes、INSIGHT）一期不使用，仍为旧的「记警告后写入」，
+启用前须先接入同样的门禁。
 
 ### 停复牌事件与逐日状态（D-023）
 
@@ -124,7 +162,11 @@ Parquet 哈希及分区观察时间。缺凭据须重抓，哈希不符拒绝导
 `gr_data.db.trading_status.load_stock_trading_status(conn, instrument_ids, start, end)`
 结合标的上市区间及开市日历读取完整日级状态；缺日历时报错，不将沪深日历套用于北交所。
 该函数和行情派生列共用状态规则，不跨日填充，不以日级状态推断开盘可买性。
-单独导股票行情时，缺失停复牌分区／覆盖的日期写 `UNKNOWN`；有损坏凭据则中断。
+股票行情的 `trading_status` 只从库内事件与覆盖表推导（不再读 raw）。raw 有有效凭据时，
+库内缺这些日期的覆盖或哈希不同即硬失败，须先跑 `suspend_d`；raw 缺分区或没有凭据时不比较，
+库内无覆盖的日期写 `UNKNOWN`。
+抓取端遇到与分区不符的凭据（例如写完分区、未写凭据即中断）时记 WARNING，并按本次请求的
+日期重建该月分区与凭据，无需手工删除凭据；读取端仍拒绝不符的凭据。
 这些状态仍需接入具体回测／诊断调用方，不代表已发布诊断数据版本。
 
 ### 米筐风险模型五件套
@@ -280,6 +322,11 @@ uv run gr-data own release market.stock_bar_1d           # 解除
 | `未安装 AmazingData SDK` | 银河 SDK 不在 PyPI，需厂商 wheel 手动安装 |
 | `schema "meta" does not exist` | 没建库，先跑 `uv run gr-db migrate --target pg` |
 | ingest 报归属冲突 | 目标表归属别的 provider，见上一节 |
+| `Corrupt raw parquet` | 该分区文件损坏。先把坏文件手工移出该数据集目录（保留作证据），再 `raw … --mode update` 补抓缺失月份；抓取端在非整月或有空响应时也会读旧分区，坏文件留在原处会让重抓失败 |
+| `missing raw partitions` | 所选月份缺分区；补抓该数据集，或调整 `--months` |
+| `not in meta.symbol_map` | 先跑 `ingest tushare --only reference`；历史换码需先补映射 |
+| `differs from the database; run the suspend_d importer` | raw 停复牌已更新但库内未重导，先跑 `--only suspend_d` |
+| 退出码 3 | 有软告警，查看 stderr 的「需复核」行和 `ops.etl_job_run` 中的 `partial` 记录 |
 | 读不到根 `.env` | 确认在 workspace 内运行；可用 `GETRICH_ROOT` 显式指定根目录 |
 
 数据接入的口径约定（时区语义、symbol 归一化、parquet 布局、日志、命名）见

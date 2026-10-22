@@ -11,26 +11,40 @@ from uuid import uuid4
 import pandas as pd
 
 
+class InvalidCoverageError(ValueError):
+    """凭据与分区不一致或内容非法；读取端拒绝消费，抓取端据此整月重建。"""
+
+
 def read_coverage(
     path: Path, *, content: bytes | None = None
 ) -> tuple[list[date], datetime, str] | None:
-    """校验文件哈希并读取实际请求日期；旧分区返回 None，损坏凭据拒绝消费。"""
+    """校验文件哈希并读取实际请求日期；旧分区返回 None，损坏凭据拒绝消费。
+
+    Raises:
+        InvalidCoverageError: 哈希不符（如写完分区、未写凭据即中断）或凭据内容非法。
+    """
     manifest = path.with_suffix(".coverage.json")
     if not manifest.exists():
         return None
-    value = json.loads(manifest.read_text())
+    try:
+        value = json.loads(manifest.read_text())
+    except json.JSONDecodeError as exc:
+        raise InvalidCoverageError(f"Invalid suspension coverage: {path.name}") from exc
     digest = hashlib.sha256(path.read_bytes() if content is None else content).hexdigest()
     if value.get("version") != 1 or value.get("sha256") != digest:
-        raise ValueError(f"Invalid suspension coverage: {path.name}")
-    days = [date.fromisoformat(day) for day in value["requested_dates"]]
-    observed = datetime.fromisoformat(value["observed_at"])
+        raise InvalidCoverageError(f"Invalid suspension coverage: {path.name}")
+    try:
+        days = [date.fromisoformat(day) for day in value["requested_dates"]]
+        observed = datetime.fromisoformat(value["observed_at"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InvalidCoverageError(f"Invalid suspension coverage dates: {path.name}") from exc
     if (
         not days
         or len(days) != len(set(days))
         or any(day.strftime("%Y-%m") != path.stem for day in days)
         or observed.utcoffset() is None
     ):
-        raise ValueError(f"Invalid suspension coverage dates: {path.name}")
+        raise InvalidCoverageError(f"Invalid suspension coverage dates: {path.name}")
     return sorted(days), observed, digest
 
 

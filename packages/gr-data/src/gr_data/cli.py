@@ -102,30 +102,46 @@ def cmd_raw(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
+#: ingest 退出码：0 全部成功；1 有 importer 硬失败；2 配置问题（见 main）；
+#: 3 完成但有软告警，需要人工复核。
+EXIT_INGEST_FAILED = 1
+EXIT_INGEST_WARNINGS = 3
+
+
 def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
-    from gr_data.ingest import run_provider
+    from gr_data import ingest
 
-    if args.provider == "ricequant":
-        from gr_data.ingest import preflight_ricequant
-
-        if not preflight_ricequant(cfg, only=_split(args.only)):
-            print("ingest ricequant 完成: 未选择任务")
-            return 0
-    with connect(_pg(cfg)) as conn:
-        results = run_provider(
-            args.provider,
-            conn,
-            cfg,
-            only=_split(args.only),
-            force_ownership=args.force_ownership,
-            months=_parse_months(args.months),
-        )
+    # 先解析 importer 名单：配置写错在连库之前就报错。
+    if not ingest.plan_importers(args.provider, cfg, only=_split(args.only)):
+        print(f"ingest {args.provider} 完成: 未选择任务")
+        return 0
+    try:
+        with connect(_pg(cfg)) as conn:
+            results = ingest.run_provider(
+                args.provider,
+                conn,
+                cfg,
+                only=_split(args.only),
+                force_ownership=args.force_ownership,
+                months=_parse_months(args.months),
+            )
+    except ingest.IngestRunError as exc:
+        done = ", ".join(f"{r.target}={r.rows_written}" for r in exc.completed) or "无"
+        print(f"ingest {args.provider} 失败: {exc.importer}: {exc.error}", file=sys.stderr)
+        print(f"  已提交: {done}", file=sys.stderr)
+        print(f"  未执行: {', '.join(exc.skipped) or '无'}", file=sys.stderr)
+        return EXIT_INGEST_FAILED
     for r in results:
         log.info("ingest %s -> rows=%d warnings=%d", r.target, r.rows_written, len(r.warnings))
     print(
         f"ingest {args.provider} 完成: "
         + ", ".join(f"{r.target}={r.rows_written}" for r in results)
     )
+    warned = [r for r in results if r.warnings]
+    if warned:
+        for r in warned:
+            print(f"  需复核 {r.target}: {'; '.join(r.warnings)}", file=sys.stderr)
+        return EXIT_INGEST_WARNINGS
     return 0
 
 

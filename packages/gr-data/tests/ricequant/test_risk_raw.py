@@ -313,8 +313,12 @@ def test_risk_fake_sdk_parquet_pg_pipeline(risk_config, pg_conn, monkeypatch):
             "UPDATE ops.table_ownership SET provider='datayes' WHERE target='factor.exposure'"
         )
     pg_conn.commit()
-    with pytest.raises(OwnershipError):
+    from gr_data.ingest import IngestRunError
+
+    # run_provider 把 importer 失败包成 IngestRunError（已记 failed 流水），根因保留在 __cause__。
+    with pytest.raises(IngestRunError) as info:
         ingest_provider("ricequant", pg_conn, risk_config, only=["rq_risk_model"])
+    assert isinstance(info.value.__cause__, OwnershipError)
     with pg_conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM factor.model_run")
         assert cur.fetchone()[0] == 2
