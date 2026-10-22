@@ -307,7 +307,7 @@ def test_missing_stk_limit_leaves_null(tmp_raw_root, monkeypatch):
 
 
 def test_trading_status_from_suspensions(tmp_raw_root, monkeypatch):
-    """S=停牌 → HALTED；同日同时有 R 则以复牌为准；无记录 → NORMAL。"""
+    """有行情但全天 S 冲突为 UNKNOWN；日内 S/R 不互相覆盖。"""
     daily = pd.DataFrame(
         [
             {
@@ -340,20 +340,41 @@ def test_trading_status_from_suspensions(tmp_raw_root, monkeypatch):
         "suspend_d",
         pd.DataFrame(
             [
-                {"ts_code": "600000.SH", "trade_date": "20240102", "suspend_type": "S"},
-                {"ts_code": "600004.SH", "trade_date": "20240102", "suspend_type": "S"},
-                {"ts_code": "600004.SH", "trade_date": "20240102", "suspend_type": "R"},
+                {
+                    "ts_code": "600000.SH",
+                    "trade_date": "20240102",
+                    "suspend_type": "S",
+                    "suspend_timing": "09:30-10:00",
+                },
+                {
+                    "ts_code": "600004.SH",
+                    "trade_date": "20240102",
+                    "suspend_type": "S",
+                    "suspend_timing": "09:30-10:00",
+                },
+                {
+                    "ts_code": "600004.SH",
+                    "trade_date": "20240102",
+                    "suspend_type": "R",
+                    "suspend_timing": None,
+                },
             ]
         ),
     )
 
+    from gr_data.raw.tushare.suspension_store import publish_coverage
+
+    publish_coverage(
+        tmp_raw_root.dataset_file("tushare", "suspend_d", "2024-01"),
+        [pd.Timestamp("2024-01-02").date()],
+    )
     imp = _stock_importer(tmp_raw_root)
     monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 1, "000001.SZ": 2, "600004.SH": 3})
     df = imp.build().set_index("instrument_id")
 
-    assert df.loc[1, "trading_status"] == "HALTED"  # 仅停牌
+    assert df.loc[1, "trading_status"] == "INTRADAY_HALTED"  # 日内停牌
     assert df.loc[2, "trading_status"] == "NORMAL"  # 无记录
-    assert df.loc[3, "trading_status"] == "NORMAL"  # 停牌当日复牌
+    assert df.loc[3, "trading_status"] == "INTRADAY_HALTED"  # 同日复牌不抹掉日内停牌
 
 
 class _RecordingLog:

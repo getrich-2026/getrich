@@ -62,6 +62,7 @@ uv run gr-data ingest tushare               # 归一化入库
 | ingest 组别 | importer → 目标表 |
 |---|---|
 | `reference` | `instruments` → `meta.instruments`；`symbol_map` → `meta.symbol_map`；`calendar` → `meta.trading_calendar` |
+| `events` | `suspend_d` → `market.stock_suspend_event`、`market.stock_suspend_coverage` |
 | `bars_1d` | `stock_bar_1d`／`index_bar_1d`／`future_bar_1d` → 对应 `market.*_bar_1d` |
 | `market_ext` | `daily_basic` → `market.stock_daily_basic`；`adj_factor_ts` → `market.adj_factor_ts` |
 | `fundamental` | `valuation_1d` → `fundamental.valuation_1d` |
@@ -88,7 +89,7 @@ uv run gr-data raw tushare --only instruments,calendar --mode update
 uv run gr-data raw tushare --only daily,adj_factor,stk_limit,suspend_d,index_daily,daily_basic,fut_daily --mode update
 uv run gr-data own list
 uv run gr-data ingest tushare --only reference
-uv run gr-data ingest tushare --only bars_1d,market_ext,fundamental,classify --months 2024-01
+uv run gr-data ingest tushare --only events,bars_1d,market_ext,fundamental,classify --months 2024-01
 ```
 
 选中的数据集按依赖顺序执行，即使 `--only` 顺序相反也先处理依赖；未选中的依赖
@@ -97,6 +98,34 @@ uv run gr-data ingest tushare --only bars_1d,market_ext,fundamental,classify --m
 未提升字段在 `raw_payload` 中保持供应商原单位。缺复权因子或股票 OHLC 会中断；
 缺涨跌停价保留 NULL；未知标的告警后跳过。股票辅助表关联前统一 int8／字符串日期
 及代码首尾空格，再按键去重；期货成交量与持仓量保持「手」。
+
+### 停复牌事件与逐日状态（D-023）
+
+先执行 `uv run gr-db migrate --target pg` 应用 044，再重抓没有覆盖凭据的旧
+`suspend_d`：`uv run gr-data raw tushare --only suspend_d --mode init`。
+该命令仍按配置起点抓到今天；分月导入用
+`uv run gr-data ingest tushare --only suspend_d --months 2026-09`。
+本机配置的 ingest 列表须包含 `suspend_d`（或 `events`／`all`）；注册表使它先于股票行情执行。
+
+每个停复牌月分区配有 `.coverage.json`，记录实际成功请求日期（含空响应）、
+Parquet 哈希及分区观察时间。缺凭据须重抓，哈希不符拒绝导入；它是当前 raw
+覆盖证据，不是 D-022 发布版本，也不能证明历史时点已经获知这些事件。
+事件与覆盖按已证实日期在一个事务内替换，同时刷新已有日线的状态；有效空响应
+可以撤销旧事件，失败回滚。其他月份和价格列不动，未知标的直接拒绝。
+
+| 当天证据（须有成功采集覆盖） | 状态 |
+|---|---|
+| 有 bar，无停牌 S（可以有 R） | `NORMAL` |
+| 无 bar，只有无时段 S | `HALTED` |
+| 有 bar，S 提供日内时段；同日 R 不抹掉该事件 | `INTRADAY_HALTED` |
+| 缺覆盖、既无 bar 也无事件、无时段 S/R 同日、其他冲突 | `UNKNOWN` |
+
+全天停牌通常没有 bar，不插入无价格行。使用
+`gr_data.db.trading_status.load_stock_trading_status(conn, instrument_ids, start, end)`
+结合标的上市区间及开市日历读取完整日级状态；缺日历时报错，不将沪深日历套用于北交所。
+该函数和行情派生列共用状态规则，不跨日填充，不以日级状态推断开盘可买性。
+单独导股票行情时，缺失停复牌分区／覆盖的日期写 `UNKNOWN`；有损坏凭据则中断。
+这些状态仍需接入具体回测／诊断调用方，不代表已发布诊断数据版本。
 
 ### 米筐风险模型五件套
 
@@ -237,7 +266,7 @@ uv run gr-data own release market.stock_bar_1d           # 解除
 
 **切主源是高风险操作**：不同源的单位口径、复权规则、停牌处理都可能不同，
 混写会让同一张表里出现两套口径且事后无法分辨。转移前先逐表核对数据一致性。
-示例配置已列出 Tushare 的五个 ingest 组别。启用列表只决定执行哪些 importer，
+示例配置已列出 Tushare 的六个 ingest 组别。启用列表只决定执行哪些 importer，
 实际 owner 以 `gr-data own list` 为准；归属冲突时失败，不会自动切主源。
 `meta.symbol_map` 是唯一例外：按包含 `source` 的主键隔离多源记录，见 D-012。
 

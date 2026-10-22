@@ -19,11 +19,13 @@ import numpy as np
 import pandas as pd
 
 from gr_data.common import contracts
+from gr_data.common.trading_status import event_flags, resolve_trading_status
 from gr_data.ingest import pit
 from gr_data.ingest.base import BaseImporter
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.importers.reference import _require, parse_date
+from gr_data.ingest.tushare.suspensions import read_suspensions
 
 
 PROVIDER = "tushare"
@@ -320,35 +322,16 @@ class StockBars1dImporter(_BaseBarsImporter):
         return merged
 
     def _trading_status(self, market: pd.DataFrame, adapter: TushareAdapter) -> pd.Series:
-        """由 suspend_d 事件推导交易状态。
-
-        同一标的同一天可能同时有停牌(S)与复牌(R)记录，此时以 R 为准
-        （盘中复牌，当日实际有成交）。无记录视为 NORMAL。
-        """
-        default = pd.Series("NORMAL", index=market.index, dtype=object)
-        susp = adapter.read_all_months("suspend_d")
-        if susp.empty:
-            self.log.warning("缺少 suspend_d raw 数据，trading_status 一律记为 NORMAL")
-            return default
-
-        _require(susp, {"ts_code", "trade_date", "suspend_type"}, "suspend_d")
-        s = susp.copy()
-        s["ts_code"] = s["ts_code"].astype(str).str.strip()
-        s["suspend_type"] = s["suspend_type"].astype(str).str.strip()
-        invalid = ~s["suspend_type"].isin(("S", "R"))
-        if invalid.any():
-            self.log.warning("suspend_d 有 %d 行 suspend_type 非法，已忽略", int(invalid.sum()))
-            s = s[~invalid]
-        s["dt"] = _parse_trade_date(s, "suspend_d")
-
-        halted = set(map(tuple, s.loc[s["suspend_type"].eq("S"), ["ts_code", "dt"]].to_numpy()))
-        resumed = set(map(tuple, s.loc[s["suspend_type"].eq("R"), ["ts_code", "dt"]].to_numpy()))
-        keys = list(zip(market["ts_code"], market["dt"], strict=False))
-        return pd.Series(
-            ["HALTED" if (k in halted and k not in resumed) else "NORMAL" for k in keys],
-            index=market.index,
-            dtype=object,
-        )
+        """只为实际存在的 bar 派生状态；缺采集覆盖为 UNKNOWN。"""
+        months = tuple(sorted({day.strftime("%Y-%m") for day in market["dt"]}))
+        events, coverage = read_suspensions(self.paths, months, required=False)
+        keys = ["ts_code", "trade_date"]
+        evidence = market[["ts_code", "dt"]].rename(columns={"dt": "trade_date"})
+        evidence = evidence.merge(event_flags(events, keys), on=keys, how="left")
+        evidence["has_bar"] = True
+        evidence["covered"] = evidence["trade_date"].isin(coverage["trading_day"])
+        result = resolve_trading_status(evidence.drop(columns=keys))
+        return pd.Series(result.to_numpy(), index=market.index)
 
 
 class IndexBars1dImporter(_BaseBarsImporter):

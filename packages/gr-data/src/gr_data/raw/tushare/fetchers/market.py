@@ -35,6 +35,7 @@ import pandas as pd
 from gr_data.common.parquet import read_parquet_if_exists, write_parquet
 from gr_data.common.retry import int_to_date, retry_call, sleep_s, today_int
 from gr_data.raw.base import BaseFetcher, month_range
+from gr_data.raw.tushare.suspension_store import publish_coverage, read_coverage
 
 
 PROVIDER = "tushare"
@@ -136,8 +137,13 @@ class _DailyFetcher(BaseFetcher):
             )
             # 仅整月 init 可以不读取旧分区；局部更新必须保住未请求日。
             old = None
+            covered_days = list(days)
             if out.exists() and not full_rebuild:
                 old = pd.read_parquet(out)
+                if self.DATASET == "suspend_d":
+                    previous = read_coverage(out)
+                    if previous is not None:
+                        covered_days = sorted(set(covered_days) | set(previous[0]))
 
             frames: list[pd.DataFrame] = []
             empty_days: set[date] = set()
@@ -187,6 +193,8 @@ class _DailyFetcher(BaseFetcher):
                     raise ValueError(f"{self.DATASET}[{ym}] 含空 trade_date，拒绝覆盖")
                 out_df["trade_date"] = dates.dt.strftime("%Y%m%d")
             write_parquet(out_df, out, append=False)
+            if self.DATASET == "suspend_d":
+                publish_coverage(out, covered_days)
             self.log.info(
                 "Raw partition written provider=%s dataset=%s month=%s rows=%d days=%d",
                 self.PROVIDER,

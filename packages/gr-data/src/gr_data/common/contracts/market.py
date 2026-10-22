@@ -47,6 +47,27 @@ _DERIV_EXTRA = ("open_interest", "settle", "pre_settle")
 
 VALID_ASSETS = ("stock", "etf", "index", "future", "option", "fund")
 
+STOCK_SUSPEND_EVENT = TableContract(
+    schema="market",
+    table="stock_suspend_event",
+    columns=(
+        "instrument_id",
+        "trading_day",
+        "suspend_type",
+        "suspend_timing",
+        "source_symbol",
+        "source",
+        "observed_at",
+    ),
+    conflict_keys=("instrument_id", "trading_day", "suspend_type", "source"),
+)
+STOCK_SUSPEND_COVERAGE = TableContract(
+    schema="market",
+    table="stock_suspend_coverage",
+    columns=("trading_day", "source", "raw_sha256", "observed_at"),
+    conflict_keys=("trading_day", "source"),
+)
+
 
 def bar_1d(asset: str) -> TableContract:
     """日线表契约。asset ∈ {stock, etf, index, future, option}。"""

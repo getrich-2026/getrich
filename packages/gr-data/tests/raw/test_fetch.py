@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import pytest
 from gr_data.common.parquet import read_parquet_if_exists
@@ -334,6 +336,7 @@ def test_tushare_corrupt_partition_not_replaced_by_incomplete_rebuild(
 def test_tushare_empty_refresh_removes_stale_suspensions(tmp_raw_root, fake_tushare, monkeypatch):
     from gr_data.raw.tushare import REGISTRY
     from gr_data.raw.tushare.fetchers import market
+    from gr_data.raw.tushare.suspension_store import read_coverage
 
     monkeypatch.setattr(market, "today_int", lambda: 20240103)
     ctx = _ctx(tmp_raw_root)
@@ -347,9 +350,11 @@ def test_tushare_empty_refresh_removes_stale_suspensions(tmp_raw_root, fake_tush
     assert fetcher.fetch("update") == 1
     assert pd.read_parquet(path).empty
     assert "suspend_type" in pd.read_parquet(path).columns
+    assert read_coverage(path)[0] == [date(2024, 1, 2), date(2024, 1, 3)]
 
 
-def test_tushare_failed_refresh_keeps_partition(tmp_raw_root, fake_tushare, monkeypatch):
+@pytest.mark.parametrize("dataset", ["daily", "suspend_d"])
+def test_tushare_failed_refresh_keeps_partition(tmp_raw_root, fake_tushare, monkeypatch, dataset):
     import pytest
     from gr_data.raw.tushare import REGISTRY
     from gr_data.raw.tushare.fetchers import market
@@ -358,10 +363,12 @@ def test_tushare_failed_refresh_keeps_partition(tmp_raw_root, fake_tushare, monk
     ctx = _ctx(tmp_raw_root)
     ctx.start_date = 20240101
     REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
-    fetcher = REGISTRY["daily"](fake_tushare, ctx)
+    fetcher = REGISTRY[dataset](fake_tushare, ctx)
     fetcher.fetch("init")
-    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    path = tmp_raw_root.dataset_file("tushare", dataset, "2024-01")
     before = path.read_bytes()
+    manifest = path.with_suffix(".coverage.json")
+    proof = manifest.read_bytes() if manifest.exists() else None
     original = fake_tushare.query_all
 
     def fail_second_day(api_name, **params):
@@ -373,6 +380,8 @@ def test_tushare_failed_refresh_keeps_partition(tmp_raw_root, fake_tushare, monk
     with pytest.raises(RuntimeError, match="request failed"):
         fetcher.fetch("update")
     assert path.read_bytes() == before
+    if proof is not None:
+        assert manifest.read_bytes() == proof
 
 
 def test_tushare_calendar_leap_day(tmp_raw_root, fake_tushare, monkeypatch):

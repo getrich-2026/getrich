@@ -14,12 +14,14 @@ from gr_data.ingest.tushare.importers.reference import (
     InstrumentsImporter,
     SymbolMapImporter,
 )
+from gr_data.ingest.tushare.importers.suspensions import SuspensionImporter
 
 
 REGISTRY = {
     "instruments": InstrumentsImporter,
     "symbol_map": SymbolMapImporter,
     "calendar": CalendarImporter,
+    "suspend_d": SuspensionImporter,
     "stock_bar_1d": StockBars1dImporter,
     "index_bar_1d": IndexBars1dImporter,
     "future_bar_1d": FutureBars1dImporter,
@@ -33,6 +35,7 @@ REGISTRY = {
 # bars 需要 symbol_map 解析 instrument_id。
 GROUPS = {
     "reference": ["instruments", "symbol_map", "calendar"],
+    "events": ["suspend_d"],
     "bars_1d": ["stock_bar_1d", "index_bar_1d", "future_bar_1d"],
     # 参考行情：不进 canonical K 线表，但同样需要 symbol_map 解析 instrument_id
     "market_ext": ["daily_basic", "adj_factor_ts"],
@@ -44,6 +47,7 @@ GROUPS = {
         "instruments",
         "symbol_map",
         "calendar",
+        "suspend_d",
         "stock_bar_1d",
         "index_bar_1d",
         "future_bar_1d",

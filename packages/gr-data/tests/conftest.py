@@ -565,6 +565,7 @@ def fake_datayes():
 # --------------------------------------------------------------------------- #
 PG_IMAGE = os.environ.get("GETRICH_TEST_PG_IMAGE", "timescale/timescaledb:2.30.1-pg18")
 _CONTAINER = f"getrich-test-pg-{uuid.uuid4().hex[:8]}"
+_PG_VOLUME = f"{_CONTAINER}-data"
 
 
 def _docker_available() -> bool:
@@ -604,6 +605,8 @@ def pg_dsn():
             "--rm",
             "--name",
             _CONTAINER,
+            "--mount",
+            f"type=volume,source={_PG_VOLUME},target=/var/lib/postgresql",
             "-e",
             "POSTGRES_PASSWORD=test",
             "-e",
@@ -616,6 +619,7 @@ def pg_dsn():
         text=True,
     )
     if proc.returncode != 0:
+        subprocess.run(["docker", "volume", "rm", _PG_VOLUME], capture_output=True)
         pytest.skip(f"无法启动 PG 容器: {proc.stderr.strip()}")
 
     dsn = {
@@ -646,6 +650,7 @@ def pg_dsn():
         yield dsn
     finally:
         subprocess.run(["docker", "stop", _CONTAINER], capture_output=True)
+        subprocess.run(["docker", "volume", "rm", _PG_VOLUME], capture_output=True)
 
 
 @pytest.fixture
@@ -678,7 +683,8 @@ def pg_conn(pg_dsn):
             """
             TRUNCATE
               meta.instruments, meta.symbol_map, meta.trading_calendar,
-              market.stock_bar_1d, market.etf_bar_1d, market.index_bar_1d,
+              market.stock_bar_1d, market.stock_suspend_event, market.stock_suspend_coverage,
+              market.etf_bar_1d, market.index_bar_1d,
               market.future_bar_1d, market.stock_daily_basic, market.adj_factor_ts,
               factor.model, factor.definition, factor.model_run,
               factor.exposure, factor.covariance, factor.factor_return,

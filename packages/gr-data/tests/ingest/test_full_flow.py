@@ -231,7 +231,7 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
         assert float(amount) == 10500.0 * 1000
         assert float(adj) == 1.25
         assert float(limit_up) == 10.78
-        assert status == "HALTED"  # Fake 让 600000.SH 首日停牌
+        assert status == "UNKNOWN"  # Fake 同日有行情和全天 S，证据冲突
         assert source == "tushare"
 
         # 期货：amount 万元 → 元；vol/oi 保持手

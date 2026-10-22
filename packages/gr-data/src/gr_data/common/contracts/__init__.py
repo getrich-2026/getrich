@@ -31,6 +31,8 @@ from gr_data.common.contracts.fundamental import VALUATION_1D
 from gr_data.common.contracts.market import (
     ADJ_FACTOR_TS,
     STOCK_DAILY_BASIC,
+    STOCK_SUSPEND_COVERAGE,
+    STOCK_SUSPEND_EVENT,
     VALID_ASSETS,
     bar_1d,
     bar_1m,
@@ -54,6 +56,8 @@ __all__ = [
     "SPECIFIC_RETURN",
     "SPECIFIC_RISK",
     "STOCK_DAILY_BASIC",
+    "STOCK_SUSPEND_COVERAGE",
+    "STOCK_SUSPEND_EVENT",
     "SYMBOL_MAP",
     "TRADING_CALENDAR",
     "VALID_ASSETS",
