@@ -1,21 +1,15 @@
--- 一次性升级脚本：把旧的 frontend schema 拆成 app + backtest。
+-- 旧库升级：把重构前的 frontend schema 拆成 app + backtest。已定稿，不再修改。
 --
--- 只给「重构前就已存在、且里面有数据」的库用。全新的库直接跑
--- `gr-db migrate --target postgres` 即可，不要执行本文件。
+-- 前缀 000 是有意的：必须先于 001_extensions 执行 —— 001 会建空的 app schema，
+-- 之后再跑本文件就不会把 frontend 改名，旧数据会被留在 frontend 里。
 --
--- 本文件**不在** ddl/postgres/ 目录下，因此不会被迁移 runner 自动发现，
--- 也不会进 ops.schema_migrations 记账 —— 它是运维动作，不是 schema 定义。
+-- 三步都先探测再执行，全新的库或已是新结构的库上什么都不做，只记一条账。
+-- 不写 BEGIN/COMMIT：runner 把本文件与记账放在同一事务里，自带 COMMIT 会提前提交。
 --
--- 用法（先备份）：
---   pg_dump -Fc -d getrich > getrich-before-schema-split.dump
---   psql -d getrich -v ON_ERROR_STOP=1 \
---        -f packages/gr-db/src/gr_db/ddl/upgrade/001_frontend_to_app_backtest.sql
---   gr-db migrate --target all
+-- 旧库执行前先备份：pg_dump -Fc -d getrich > getrich-before-schema-split.dump
 --
 -- 之后应用侧的连接池 search_path 会变成 app,market,meta,public，
 -- 回测相关 SQL 显式写 backtest. 前缀。
-
-BEGIN;
 
 -- 1) frontend -> app（整体改名，保留所有对象、索引、约束与数据）
 DO $$
@@ -75,5 +69,3 @@ BEGIN
         RAISE NOTICE 'kept legacy ledger as app.schema_migrations_legacy_prefix';
     END IF;
 END $$;
-
-COMMIT;
