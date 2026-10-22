@@ -56,6 +56,16 @@ class InstrumentsFetcher(BaseFetcher):
             write_parquet(frame, out, append=False)
             self.log.info("instruments[%s] 写入 %d 行", asset, len(frame))
             n += 1
+            if asset == "stock" and frame["ts_code"].str.endswith(".BJ").any():
+                # 供应商历史停复牌仍可能使用旧代码；原样保存官方对照，不推测号段。
+                mapping = self._collect("bse_mapping", "name,o_code,n_code,list_date", [{}])
+                if mapping.empty or not {"o_code", "n_code"} <= set(mapping.columns):
+                    raise ValueError("Missing BSE code mapping")
+                write_parquet(
+                    mapping, self.paths.dataset_file(self.PROVIDER, self.DATASET, "bse_mapping")
+                )
+                self.log.info("instruments[bse_mapping] rows=%d", len(mapping))
+                n += 1
         return n
 
     def _collect(self, api_name: str, fields: str, param_sets: list[dict]) -> pd.DataFrame:

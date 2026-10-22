@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -340,10 +341,21 @@ def _index_row(**overrides) -> dict:
     return row
 
 
+class _EmptyQueryConn:
+    """查询一律返回空结果；换码合并遇到重复键时会查 meta.instruments。"""
+
+    def cursor(self):
+        cursor = MagicMock()
+        cursor.__enter__.return_value.fetchall.return_value = []
+        return cursor
+
+
 @_finding(42, "指数先去重后 strip 代码，带空白的重复行去不掉")
 def test_index_duplicates_with_whitespace_collapsed(tmp_raw_root, monkeypatch):
     rows = [_index_row(), _index_row(ts_code="000300.SH ", close=3431.0)]
-    out = _index_importer_with(tmp_raw_root, monkeypatch, rows).build()
+    imp = _index_importer_with(tmp_raw_root, monkeypatch, rows)
+    imp.conn = _EmptyQueryConn()
+    out = imp.build()
 
     assert not out.duplicated(subset=["instrument_id", "dt"]).any()
 

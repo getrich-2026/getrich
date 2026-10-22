@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from gr_data.common import contracts
+from gr_data.common.parquet import read_parquet_strict
 from gr_data.ingest.base import BaseImporter, IngestGateError
 from gr_data.ingest.tushare.adapter import (
     ASSETS,
@@ -12,7 +13,7 @@ from gr_data.ingest.tushare.adapter import (
     CALENDAR_EXCHANGES,
     TushareAdapter,
 )
-from gr_data.ingest.tushare.symbols import split_ts_code
+from gr_data.ingest.tushare.symbols import split_ts_code, stock_alias_ids
 
 
 PROVIDER = "tushare"
@@ -150,7 +151,26 @@ class SymbolMapImporter(BaseImporter):
                 {"instrument_id": int(iid), "source": PROVIDER, "source_symbol": sym}
                 for sym, iid in cur.fetchall()
             ]
-        return pd.DataFrame(rows, columns=list(self.contract.columns))
+            cur.execute("SELECT symbol, instrument_id FROM meta.instruments WHERE asset = 'stock'")
+            stocks = dict(cur.fetchall())
+            aliases = stock_alias_ids(
+                stocks,
+                read_parquet_strict(
+                    self.paths.dataset_file(PROVIDER, "instruments", "bse_mapping")
+                ),
+            )
+            cur.execute(
+                "SELECT source_symbol, instrument_id FROM meta.symbol_map WHERE source=%s",
+                (PROVIDER,),
+            )
+            existing = dict(cur.fetchall())
+            for old, iid in aliases.items():
+                if old in existing and existing[old] != iid:
+                    raise ValueError(f"Stock alias conflicts with existing source mapping: {old}")
+                rows.append({"instrument_id": iid, "source": PROVIDER, "source_symbol": old})
+        return pd.DataFrame(rows, columns=list(self.contract.columns)).drop_duplicates(
+            subset=["source", "source_symbol"]
+        )
 
 
 class CalendarImporter(BaseImporter):

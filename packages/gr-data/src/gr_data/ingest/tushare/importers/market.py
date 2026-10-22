@@ -25,6 +25,7 @@ from gr_data.ingest.base import BaseImporter, IngestGateError
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.importers.reference import _require, parse_date
+from gr_data.ingest.tushare.symbols import collapse_alias_rows
 from gr_data.raw.tushare.suspension_store import read_coverage
 
 
@@ -154,6 +155,13 @@ class _SymbolResolvingImporter(BaseImporter):
                 f"{self.DATASET}: {int(unknown.sum())} rows ({len(codes)} symbols) are not in "
                 f"meta.symbol_map, samples {codes[:5]}; run instruments and symbol_map first"
             )
+        day = "trading_day" if "trading_day" in df else "dt"
+        if day in df and df.duplicated(["instrument_id", day]).any():
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT instrument_id, symbol FROM meta.instruments WHERE asset='stock'"
+                )
+                df = collapse_alias_rows(df.reset_index(drop=True), dict(cur.fetchall()))
         return df
 
 

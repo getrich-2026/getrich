@@ -59,6 +59,20 @@ uv run gr-data ingest tushare               # 归一化入库
 `daily`、`adj_factor`、`stk_limit`、`suspend_d`、`index_daily`、`daily_basic`、`fut_daily`。
 财报、宏观和 ETF／期权扩展不在这一批接口范围内。
 
+先应用迁移 046（允许同一来源的多个旧代码关联同一证券，保留来源代码唯一约束）。
+股票清单含北交所标的时，`instruments` 还采集 `bse_mapping`，原样保存至
+`instruments/bse_mapping.parquet`。`symbol_map` 将其中的旧代码关联到新代码的
+同一股票 ID；`300114.SZ → 302132.SZ` 另依
+[公司换码实施公告](https://static.cninfo.com.cn/finalpage/2025-02-15/1222544408.PDF)
+登记。原始行情和事件代码不改写，不另建旧代码标的；缺目标或已有映射冲突时拒绝导入。
+这是证券身份别名，不是历史代码有效期或历史可得性证明；历史名称与代码时点回放另行处理。
+北交所对照字段依据 [Tushare 官方文档](https://tushare.pro/document/2?doc_id=375)，
+不能按 `920` 前缀或末三位猜测对应关系。
+若同日同时返回新旧代码，映射后仅在全部数值一致时合并，优先保留 canonical
+代码观察；任何核心字段冲突均硬失败。唯一已核验例外是中航成飞的
+`daily_basic.limit_status`：旧代码历史值固定为 0，新代码与日线涨跌方向一致，
+按新代码保留并记录差异计数。原始两份观察仍完整留在 raw 中。
+
 | ingest 组别 | importer → 目标表 |
 |---|---|
 | `reference` | `instruments` → `meta.instruments`；`symbol_map` → `meta.symbol_map`；`calendar` → `meta.trading_calendar` |
