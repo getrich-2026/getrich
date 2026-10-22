@@ -34,6 +34,12 @@ PROVIDER = "tushare"
 # 超出该容差说明两者的价格基准不一致，此时涨跌停价不可信。
 PRE_CLOSE_TOLERANCE = 0.011
 
+# stk_limit 用哨兵值表示「当日不设涨跌幅」（如新股上市初期），不是价格。
+# 依据 2026-09 真实样本 63 行：北交所 99999.99/0.0，沪市 99999.999/0.01，深市 999999.999/0.01。
+# 两侧同时满足才认定；历史回补时须复核更早年份是否使用其他取值（D-024）。
+NO_LIMIT_UP_MIN = 99999.0
+NO_LIMIT_DOWN_MAX = 0.01
+
 
 def _to_numeric(df: pd.DataFrame, columns: list[str]) -> None:
     for c in columns:
@@ -249,6 +255,7 @@ class StockBars1dImporter(_BaseBarsImporter):
                 "trading_status": trading_status,
                 "adj_factor": market["adj_factor"],
                 "source": PROVIDER,
+                "price_limit_status": market["price_limit_status"],
             }
         )
         return out[list(self.contract.columns)].reset_index(drop=True)
@@ -276,48 +283,72 @@ class StockBars1dImporter(_BaseBarsImporter):
         return merged
 
     def _merge_limits(self, market: pd.DataFrame, adapter: TushareAdapter) -> pd.DataFrame:
-        """合并涨跌停价。
+        """合并涨跌停价并标 ``price_limit_status``（045，D-024）。
 
-        与复权因子不同，``limit_up`` / ``limit_down`` 在目标表可为 NULL，
-        因此缺失只记警告、留 NULL，不阻断整批入库。
-        pre_close 对不上的记录则**丢弃其涨跌停价**——价格基准不同，涨跌停不可信。
+        - 哨兵值（当日不设涨跌幅）：写 NULL，状态 ``NO_LIMIT``，不计软告警。
+        - 有效涨跌停价：``LIMITED``。
+        - 缺行、非法、pre_close 对不上（价格基准不同，涨跌停不可信）：``UNKNOWN``，记软告警；
+          首日上市无前收盘且无可用涨跌停价的行例外，只记 info，不按上市规则推断为 NO_LIMIT。
+
+        ``limit_up`` / ``limit_down`` 在目标表可为 NULL，以上情形都不阻断整批入库。
         """
+        dp = market["pre_close"].to_numpy(dtype=float)
+        # 首日上市无前收盘（_validate_prices 已记 info 与 data_quality_check）；
+        # 不计入软告警，否则常规全量导入几乎必然退出码 3。
+        first_day = ~np.isfinite(dp)
         limits = adapter.read_all_months("stk_limit")
         if limits.empty:
             # 分区存在（build 已校验）但为空：涨跌停整体缺失，留 NULL 并要求复核。
             self._soft(f"stk_limit partitions are empty; {len(market)} rows keep NULL limits")
             market["limit_up"] = None
             market["limit_down"] = None
+            market["price_limit_status"] = "UNKNOWN"
             return market
 
         _require(limits, {"ts_code", "trade_date", "up_limit", "down_limit"}, "stk_limit")
         lim = _daily_rows(limits, "stk_limit")
-        keep = ["ts_code", "trade_date", "up_limit", "down_limit"]
+        lim["has_limit_row"] = True
+        keep = ["ts_code", "trade_date", "up_limit", "down_limit", "has_limit_row"]
         if "pre_close" in lim.columns:
             lim = lim.rename(columns={"pre_close": "limit_pre_close"})
             keep.append("limit_pre_close")
         merged = market.merge(
             lim[keep], on=["ts_code", "trade_date"], how="left", validate="one_to_one"
         )
+        has_row = merged["has_limit_row"].eq(True).to_numpy()
 
         _to_numeric(merged, ["up_limit", "down_limit"])
-        bad = (
+        up = merged["up_limit"].to_numpy(dtype=float)
+        down = merged["down_limit"].to_numpy(dtype=float)
+        # 两侧同时满足才认定为哨兵；只有一边像哨兵时无法确认不设涨跌幅，按非法处理。
+        with np.errstate(invalid="ignore"):
+            no_limit = (
+                has_row
+                & np.isfinite(up)  # +Inf 是坏值，不是哨兵
+                & (up >= NO_LIMIT_UP_MIN)
+                & (down >= 0)
+                & (down <= NO_LIMIT_DOWN_MAX)
+            )
+        merged.loc[no_limit, ["up_limit", "down_limit"]] = np.nan
+
+        bad = ~no_limit & (
             np.isinf(merged[["up_limit", "down_limit"]].to_numpy(dtype=float)).any(axis=1)
-            | (merged["up_limit"] <= 0)
-            | (merged["down_limit"] <= 0)
-            | (merged["up_limit"] < merged["down_limit"])
+            | (merged["up_limit"] <= 0).to_numpy()
+            | (merged["down_limit"] <= 0).to_numpy()
+            | (merged["up_limit"] < merged["down_limit"]).to_numpy()
+            # 只有一边出现哨兵量级：既不能认定不设涨跌幅，也不是可信价格。
+            | (merged["up_limit"] >= NO_LIMIT_UP_MIN).to_numpy()
+            | (merged["down_limit"] <= NO_LIMIT_DOWN_MAX).to_numpy()
         )
         if bad.any():
             self._soft(f"invalid price limits set to NULL rows={int(bad.sum())}")
             merged.loc[bad, ["up_limit", "down_limit"]] = np.nan
 
-        dp = merged["pre_close"].to_numpy(dtype=float)
-        # 首日上市无前收盘（_validate_prices 已记 info 与 data_quality_check），
-        # 也没有涨跌幅限制；不计入软告警，否则常规全量导入几乎必然退出码 3。
-        first_day = ~np.isfinite(dp)
+        mismatch = np.zeros(len(merged), dtype=bool)
         if "limit_pre_close" in merged.columns:
             lp = pd.to_numeric(merged["limit_pre_close"], errors="coerce").to_numpy(dtype=float)
-            comparable = np.isfinite(lp) & np.isfinite(dp)
+            # 哨兵值不由前收盘推算，不参与比较。
+            comparable = ~no_limit & np.isfinite(lp) & np.isfinite(dp)
             mismatch = comparable & ~np.isclose(dp, lp, atol=PRE_CLOSE_TOLERANCE, rtol=0)
             if mismatch.any():
                 self._soft(
@@ -326,17 +357,46 @@ class StockBars1dImporter(_BaseBarsImporter):
                 )
                 merged.loc[mismatch, ["up_limit", "down_limit"]] = np.nan
 
-        no_limit = merged["up_limit"].isna().to_numpy()
-        missing = int((no_limit & ~first_day).sum())
+        both = merged["up_limit"].notna().to_numpy() & merged["down_limit"].notna().to_numpy()
+        status = np.where(no_limit, "NO_LIMIT", np.where(both, "LIMITED", "UNKNOWN"))
+        unknown = status == "UNKNOWN"
+        missing = int((unknown & ~first_day).sum())
         if missing:
             self._soft(f"{missing} rows have no usable price limit and keep NULL")
-        first_day_null = int((no_limit & first_day).sum())
-        if first_day_null:
-            self.log.info("First listing day rows keep NULL price limits rows=%d", first_day_null)
+        first_day_unknown = int((unknown & first_day).sum())
+        if first_day_unknown:
+            self.log.info(
+                "First listing day rows keep NULL price limits rows=%d", first_day_unknown
+            )
+        if no_limit.any():
+            self.log.info("Rows without price limit (vendor sentinel) rows=%d", int(no_limit.sum()))
+            self._record_no_limit(int(no_limit.sum()))
 
         merged["limit_up"] = merged["up_limit"]
         merged["limit_down"] = merged["down_limit"]
+        merged["price_limit_status"] = status
         return merged
+
+    def _record_no_limit(self, rows: int) -> None:
+        """留痕：哨兵值写 NULL 属正常语义，但需要能追溯本次识别了多少行。"""
+        if self.conn is None:  # 单测里不带连接
+            return
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO ops.data_quality_check (rule, severity, detail) VALUES (%s, %s, %s)",
+                (
+                    "tushare_stk_limit_no_limit_sentinel",
+                    "info",
+                    json.dumps(
+                        {
+                            "rows": rows,
+                            "reason": "供应商哨兵值表示当日不设涨跌幅，"
+                            "涨跌停价写 NULL，状态 NO_LIMIT",
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
 
     def _trading_status(self, market: pd.DataFrame, months: list[str]) -> pd.Series:
         """只为实际存在的 bar 派生状态，证据只取库内事件与覆盖表；库内缺覆盖为 UNKNOWN。

@@ -75,6 +75,9 @@ def bar_1d(asset: str) -> TableContract:
     if asset in ("future", "option"):
         # 衍生品无 adj_factor，但有持仓/结算列
         cols = tuple(c for c in _BAR_1D_BASE if c != "adj_factor") + _DERIV_EXTRA
+    elif asset == "stock":
+        # 045：区分「不设涨跌幅」与「涨跌停价未知」；其他资产表没有该列。
+        cols = _BAR_1D_BASE + ("price_limit_status",)
     return TableContract(
         schema="market",
         table=f"{asset}_bar_1d",

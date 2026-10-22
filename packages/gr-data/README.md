@@ -119,7 +119,24 @@ Tushare importer 严格校验，下列情况**硬失败**：本 importer 不写�
 
 **软告警**照常写库，运行记为 `partial`：个别代码缺涨跌停价、`pre_close` 不一致
 导致丢弃涨跌停价、非法涨跌停价、残留 `*.tmp-*` 文件（不读入）、指数或期货标的缺失。
-首日上市无前收盘、因而无涨跌停价的行不算软告警，只记 info 与 `ops.data_quality_check`。
+首日上市无前收盘、因而无涨跌停价的行不算软告警，只记 info 与 `ops.data_quality_check`；
+供应商哨兵值表示的「当日不设涨跌幅」也不算软告警（见下节）。
+
+### 涨跌停状态（045，D-024）
+
+`stock_bar_1d.price_limit_status` 区分「当日不设涨跌幅」与「涨跌停价未知」，组合回放据此
+判断开盘是否达到涨停价。先执行 `uv run gr-db migrate --target pg` 应用 045，再重导受影响月份。
+
+| 状态 | 判定（Tushare `stk_limit`） | `limit_up`／`limit_down` | 软告警 |
+|---|---|---|---|
+| `LIMITED` | 两侧涨跌停价有效；`stk_limit` 带 `pre_close` 时还须与日线一致（缺该值则不比较） | 原值 | 否 |
+| `NO_LIMIT` | 哨兵值：`up_limit ≥ 99999` **且** `0 ≤ down_limit ≤ 0.01` | NULL | 否（记 info 与 `ops.data_quality_check`） |
+| `UNKNOWN` | 缺行、非法值（含只有一边像哨兵、无穷值）、`pre_close` 不一致 | NULL，单边缺失时保留另一边 | 是；首日无前收盘且只是缺可用涨跌停价的行不计，非法值仍计 |
+| NULL | 未评估：045 之前写入，或其他供应商写入 | 不约束 | — |
+
+哨兵取值依据 2026-09 真实样本 63 行（北交所 `99999.99/0.0`，沪市 `99999.999/0.01`，
+深市 `999999.999/0.01`）；历史回补时须复核更早年份。首日无 `stk_limit` 行时记 `UNKNOWN`，
+不按上市规则推断为 `NO_LIMIT`。数据库约束保证 `LIMITED` 两侧有值、`NO_LIMIT` 两侧为 NULL。
 
 | 退出码 | 含义 |
 |---|---|

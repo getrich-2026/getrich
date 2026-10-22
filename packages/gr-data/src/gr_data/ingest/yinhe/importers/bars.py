@@ -156,6 +156,8 @@ class _BarsImporter(BaseImporter):
                 "limit_up": raw.get("limit_up"),
                 "limit_down": raw.get("limit_down"),
                 "trading_status": raw.get("trading_status"),
+                # 045：该供应商未评估涨跌停状态；仅股票契约选取此列
+                "price_limit_status": None,
                 "adj_factor": adj_factor,
                 "source": PROVIDER,
             }
