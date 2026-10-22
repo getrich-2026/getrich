@@ -207,7 +207,7 @@ Parquet 哈希及分区观察时间。缺凭据须重抓，哈希不符拒绝导
 DataYes 试用到期后的接替入口为 `rq_risk_model`，独立于 R1–R10 补充数据。
 支持米筐标准 `v1/v2/v2trd`、`sws_2021/citics_2019`，期限固定 `daily`，
 因子收益固定 `whole_market + implicit`。SDK 按日取暴露、因子收益、协方差、
-特异收益和特异波动率；不需要额外 SDK，也不修改现有 DDL。
+特异收益和特异波动率；不需要额外 SDK，写库前需应用迁移 047（见下）。
 
 先填写 `providers.ricequant.risk_model`：显式起止日期、沪深股票代码清单、
 模型／行业体系、确认的模块权限及四项源单位和核对依据，再设置 `selected: true`。
@@ -233,13 +233,30 @@ uv run gr-data --config /path/to/config.yaml ingest ricequant --only rq_risk_mod
 （默认剩余 10%）时暂停。观察位于
 `$RAW_PARQUET_ROOT/ricequant/rq_risk_model/v1/<variant>/<YYYY-MM-DD>/<observation_id>/`。
 Parquet 使用 zstd，五份全部通过轴、完整性、有限值、行业哑变量、协方差对称与
-半正定检查后才发布 manifest；读取时复核哈希。未完成日不会入库，已完成日可以先入库。
+严格正定检查后才发布 manifest；读取时复核哈希。R2 的相对非对称误差上限为
+`1e-8`，按实际入库的上三角镜像矩阵检查正对角、Cholesky、正特征值和条件数，
+不修补 raw 矩阵。条件数 `>1e6` 告警、`>=1e8` 拒收。未完成日不会入库。
+新 manifest 保留采集前后的账户配额计数和观察时刻；计费更新可能延迟，零增量
+不等于零流量，也不能将账户增量直接认作单次网络传输量。
 
 ingest 依赖已存在的 canonical 股票 `meta.instruments`，按 `.XSHG→.SH`、
 `.XSHE→.SZ` 严格关联并写入独立 `ricequant` 代码映射。五张数据表、模型元数据、
-映射和 ETL 流水在同一日事务内提交；映射缺失或写入失败则该日全部回滚。
+映射和成功 ETL 流水在同一日事务内提交；映射缺失或写入失败则该日全部回滚，
+失败流水另开事务记录。ETL 包含交易日、请求范围、模型／run／观察身份、质量报告
+和真实开始／结束时间；告警写入 warning_count，不因有业务行就隐去质量问题。
 单位统一到现有契约：协方差与特异方差为年化 `%²`（日频按 252 换算，σ 先平方），
 因子收益为日频小数，特异收益为日频百分比。源单位和依据保存在 `model_run.units`。
+R1 在归一化后检查总年化波动率：截面中位数须在 `[5%,150%]`，个股在
+`[1%,300%]` 外告警，超过 20% 个股越界则拒收。条件数和量级报告保存在 ETL request，
+不改变既有不可变 model_run 的元数据。该工程阈值不表示风险模型已经校准。
+
+历史批次还须在每月一个基准日用固定 30 股及全部因子的完整 120 交易日复核源单位：
+年化小数口径下，协方差对角／因子收益样本方差的中位数应在 `[80,800]`，
+特异标准差／特异收益样本标准差应在 `[5,50]`，任一组越界比例超过 20% 拒收。
+计算函数是 `common.ricequant_risk_quality.validate_source_units`；日期完整性、排序、
+股票与因子轴对齐由调用方先检查。**原生 raw／ingest CLI 不会自动下载这 120 日参考**；
+本次历史验证由逐月运行编排先调用该门禁，保存参考 Parquet、哈希和报告，再调用 CLI。
+缺历史不能默认通过。预测／过去实现波动率比值 `[0.5,2]` 外仅告警，不据此校准。
 米筐使用独立模型身份；每次日度观察生成不可变 run，重复导入同一观察幂等。
 `available_at` 使用实际采集时间，历史回填不会伪装为当时已可得；全区间校准前
 始终 `calibrated=false`，不代表已经通过真实市场五表自洽验收。
@@ -250,7 +267,9 @@ ingest 依赖已存在的 canonical 股票 `meta.instruments`，按 `.XSHG→.SH
 确定切换后逐表执行 `gr-data own set <table> ricequant ingest`，并停止 DataYes 写入任务。
 风险 importer 不接受 `--force-ownership`，也不自动转移或删除旧数据。
 旧 CNE6 历史保留其 model/run 身份，下游需显式选择米筐模型，不能拼接为同一条模型历史。
-本次开发仅用 Fake SDK 和隔离 PG 验证；真实账号权限、单位与数据覆盖还需验收。
+真实样本验收及历史链路验证的日期、范围与限制见 [NOTES](../../.agents/brain/NOTES.md)。
+固定名单不等于全市场历史；动态名单与覆盖设计见
+[待确认方案](../../docs/plans/ricequant-historical-universe.md)。
 
 ### 米筐特色指数补充（R1–R3，待真实样本准入）
 

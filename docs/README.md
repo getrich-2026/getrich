@@ -17,6 +17,7 @@
 | 数据库开发者 | [数据字典](guides/data-dictionary.md) | 生成字典与注释门禁，不手抄 schema |
 | 安排工作的人 | [待决问题](plans/backlog.md) | 缺口、证据、待定选择、验收条件 |
 | 数据接入实施评审者 | [gr-data可靠采集实施计划](plans/gr-data-reliability-implementation-plan.md) | 待审核；风险修补顺序、文件落点、验收与回滚，未开工 |
+| 米筐历史回补维护者 | [全市场历史名单与覆盖](plans/ricequant-historical-universe.md) | 方向已确认、修订待复核；动态名单、验证 run 隔离、降级日读取与配额估算 |
 | 追溯历史的维护者 | [数据字典旧计划](history/data-dictionary-plan.md)、[诊断旧审查](history/diagnosis-api-review.md) | 已完成快照，不作为当前指令或待办 |
 
 产品、商业与会议材料（商业计划书、内部判断备忘、会议记录、团队任务与支出）维护在团队飞书，不放公开仓库，原因见 [D-019](../.agents/brain/DECISIONS.md#d-019)。
