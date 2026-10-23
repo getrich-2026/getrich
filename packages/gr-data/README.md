@@ -269,7 +269,32 @@ R1 在归一化后检查总年化波动率：截面中位数须在 `[5%,150%]`�
 旧 CNE6 历史保留其 model/run 身份，下游需显式选择米筐模型，不能拼接为同一条模型历史。
 真实样本验收及历史链路验证的日期、范围与限制见 [NOTES](../../.agents/brain/NOTES.md)。
 固定名单不等于全市场历史；动态名单与覆盖设计见
-[待确认方案](../../docs/plans/ricequant-historical-universe.md)。
+[分阶段实施方案](../../docs/plans/ricequant-historical-universe.md)。
+
+新动态名单使用独立的 `universe_policy: listed_cn_a_v2`，不配置 `order_book_ids`，
+研究样本显式标记 `purpose: validation`；production 的 2a 前置见下节。日期下限为 2024-01-01。旧固定名单继续使用
+v1 raw 身份，动态名单使用 v2；每天的候选变化保存在带哈希的名单快照内，不改变
+variant。动态 raw 额外只读 PostgreSQL 的证券身份和别名，再与米筐参考边界核对；
+不按今天的 active、ST 或行业筛选历史股票。输入、SDK 解析后的请求及实际返回代码
+分别留证，未知身份或映射冲突不能按六位数字猜测。
+上市区间以 Tushare `list_date <= day < delist_date` 为准，停牌不提前结束上市区间。
+版本化代码规则目前仅含 300114.SZ → 302132.SZ（2025-02-17 生效），按交易日选择请求代码。
+规则版本与哈希进入新 variant，正文冻结在 raw；旧 `listed_cn_a_v1` 与旧 raw 保持原规则重放。
+
+动态 writer 还需要迁移 048 的 `factor.model_run_coverage`，归属同样为米筐。
+成功请求中的单股未返回或部分接口缺失可保存为降级日；三张个股表使用同一完整交集，
+覆盖表保留全部候选。数值异常、未知响应、全局接口失败及没有任何完整股票仍阻断。
+覆盖表、五件套和成功 ETL 同日提交；原始响应保持原样，读取时重新核对覆盖证据。
+`unmapped_symbol` 仅指身份已知但无请求代码；它与 `sdk_filtered`、
+`universe_boundary_unknown` 都要求请求码为 NULL、三项返回状态全为 false。
+数值异常、无法识别证券身份和范围外市场不写成覆盖表行。逐股 evidence 不重复保存
+整日名单或参考快照，共用证据摘要在 run／ETL 中保留。全市场采样后另报每行及
+evidence 的平均字节数；动态导入在同日事务中登记、检查覆盖表的 ricequant 归属。
+
+第一阶段仅开放验证采集。D-022 发布清单与可靠性 B1／B2、诊断隔离读取需另行评审；
+完成前不开放正式风险读取。`calibrated=false` 与验证用途是两个独立概念，不能用
+最大采集时间或同模型最新 run 代替正式发布清单。全市场回补与覆盖阈值须依据独立样本
+再次确认；当前没有自动批准全量回补。
 
 ### 米筐特色指数补充（R1–R3，待真实样本准入）
 
@@ -432,3 +457,41 @@ postgres = load_postgres(env)  # 只在需要 PG 的通路中调用
 API 由 `load_api_settings(env)` 组装，`create_app(config)` 将配置绑定到应用实例；请求依赖与后台任务使用该配置。原 `uvicorn gr_api.main:app` 命令保持可用，默认应用在访问 ASGI 入口时创建，单独导入工厂不加载配置。Celery 工厂接收 `WorkerSettings`，CLI 入口加载一次并绑定到 Celery 应用；exec 后在新进程配置日志。
 
 配置对象的 repr 隐藏凭证字段，旧全量 `to_dict()` 已删除；不要自行对环境快照或配置做全量序列化输出。
+
+
+### 风险导入收据与用途（2a，需迁移 049）
+
+动态风险导入需要 `ops.dataset_variant`、`ops.import_receipt`、
+`factor.model_run_binding` 及扩展后的 `ops.import_checkpoint`。
+`validation` 和 `production` 是不可变用途，production 只支持
+`universe_policy: listed_cn_a_v2`；改变用途生成新 variant，不能给旧样本改标签。
+五件套与覆盖表共用逻辑目标 `factor.risk_bundle`，不按物理表拆成六份独立收据。
+
+生产 raw 命令在初始化 SDK 前检查迁移并登记用途；已发布 raw 才记 capture 检查点。
+PG 失败时保留原观察与恢复计划，重试复用 raw。完整轮次的 init 回放可能重新查询
+交易日历，但不会重新请求风险五接口或参考名单。动态 ingest 也可从校验过的 raw
+重建 capture，再在同日事务中提交五件套、覆盖、receipt、binding、DB 检查点和 ETL。
+重放已有收据时核对绑定和检查点，不重复 UPSERT 业务行；重放 ETL 标记 replay。
+
+检查点按 `variant/day/observation` 隔离：只有 capture 时 DB 水位为空，成功提交后
+一次推进到收据；不使用 MAX 日期代表区间完整，不承担 B2 当前版本选择。
+`committed_at` 是事务内记录收据的时间，提交后才可见，不是服务器精确 commit 时刻。
+
+production 的试行发布资格按整数检查 `complete * 1000 >= candidate * 999`
+（candidate 必须为正），身份／上市边界未知为 0。覆盖不足但数值合法的整包可以
+保留收据和降级覆盖，随后停止本批并报告不可发布；不会把已提交的成功 ETL 伪记为
+failed。数值非法、身份冲突等原硬门禁仍回滚业务数据。研究 validation 的覆盖降级
+保留原行为。production 仅表示用途，不能代表已发布；2b 清单和统一读取入口完成并
+发布之前，正式风险读取继续关闭。
+
+`importer_version` 取最近影响 gr-data 源码或 gr-db DDL 的完整 Git 提交号；
+文档提交不改变版本。生产入口拒绝相关路径未提交的修改（含未跟踪源码），
+Git 不可用或同一进程内源码提交变化也拒绝，后者须重启进程。
+同一 raw 换 importer 版本不允许覆盖已有绑定 run，
+需另行设计重处理身份后再升级。重放响应丢失依赖成功收据确认，不能仅以客户端
+异常判断事务已回滚。
+
+风险提交后停止有独立 CLI 状态：退出码 4 表示合法数据已保存，但发布资格不满足；
+退出码 5 表示提交响应异常（消息区分收据已确认提交和提交结果未知）。这两种状态
+停止后续日期及 importer，不追加普通 failed ETL 来暗示业务回滚。结果未知时按同一
+raw 重放并查询收据；确认存在后不重复业务写入。普通确定性导入失败沿用原失败语义。
