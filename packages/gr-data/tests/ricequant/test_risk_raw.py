@@ -108,6 +108,12 @@ def test_raw_bundle_and_resume(risk_setup):
     assert len(bundles) == 2
     for manifest, frames in bundles:
         assert pd.Timestamp(manifest["observed_at"]).tz is not None
+        assert manifest["quota_observation"]["before"]["bytes_limit"] == 10000000
+        assert set(manifest["quota_observation"]["after"]) == {
+            "bytes_used",
+            "bytes_limit",
+            "observed_at",
+        }
         assert frames["exposure"].columns.tolist() == frames["covariance"].columns.tolist()
         assert list(frames["exposure"].index) == list(opts.order_book_ids)
         assert frames["specific_risk"].iloc[0, 0] == 0.01  # raw 不平方、不换算
@@ -138,8 +144,10 @@ def test_checksum_and_scope(risk_setup):
         list(read_bundles(ctx.paths, opts, months=("2024-02",)))
     target = next(ctx.paths.root.rglob("specific_risk.parquet"))
     target.write_bytes(b"corrupted")
-    with pytest.raises(RawIntegrityError):
+    with pytest.raises(RawIntegrityError) as failure:
         list(read_bundles(ctx.paths, opts))
+    assert str(failure.value.risk_day) == target.parent.parent.name
+    assert failure.value.risk_observation_id == target.parent.name
 
 
 @pytest.mark.parametrize(
@@ -274,8 +282,14 @@ def test_risk_fake_sdk_parquet_pg_pipeline(risk_config, pg_conn, monkeypatch):
     from gr_data.common.ownership import OwnershipError
     from gr_data.ingest import run_provider as ingest_provider
 
+    class AnnualRiskClient(FakeRiskClient):
+        def risk_piece(self, piece, *args, **kwargs):
+            frame = super().risk_piece(piece, *args, **kwargs)
+            # 入库 fixture 的年化 %² 协方差使总波动率约 6.9%，落在 R1 允许区间。
+            return frame * 4 if piece == "covariance" else frame
+
     monkeypatch.setattr(
-        "gr_data.raw.ricequant.client.RqdatacClient", lambda *a, **k: FakeRiskClient()
+        "gr_data.raw.ricequant.client.RqdatacClient", lambda *a, **k: AnnualRiskClient()
     )
     with pg_conn.cursor() as cur:
         cur.execute(
@@ -298,6 +312,17 @@ def test_risk_fake_sdk_parquet_pg_pipeline(risk_config, pg_conn, monkeypatch):
         assert order == sorted(STYLE_FACTORS["v1"] | {"comovement", "银行"})
         assert units["covariance"] == "pct2_annual"
         assert calibrated is False and source == "ricequant"
+        cur.execute(
+            "SELECT trading_day, start_date, end_date, request, started_at, finished_at "
+            "FROM ops.etl_job_run WHERE provider='ricequant' AND status='success'"
+        )
+        audit_rows = cur.fetchall()
+        assert len(audit_rows) == 4
+        for audit_day, start, end, request, started, finished in audit_rows:
+            assert audit_day == start == end
+            assert request["model_run_id"] and request["observation_id"]
+            assert request["quality"]["covariance"]["condition_number"] == pytest.approx(1)
+            assert started < finished
         cur.execute(
             "SELECT specific_var, available_at, trading_day FROM factor.specific_risk LIMIT 1"
         )
@@ -355,3 +380,88 @@ def test_market_and_industry_exposure_contract(risk_setup, defect):
     with pytest.raises(ContractViolationError, match="行业归属"):
         run_risk_raw(client, ctx, opts, shared, mode="init")
     assert not list(ctx.paths.root.rglob("manifest.json"))
+
+
+def test_production_config_only_accepts_new_dynamic_policy(risk_config):
+    data = dict(risk_config.section("providers", "ricequant")["risk_model"])
+    data["purpose"] = "production"
+    with pytest.raises(RqConfigurationError):
+        parse_risk_options(data)
+    data.pop("order_book_ids")
+    data["universe_policy"] = "listed_cn_a_v1"
+    with pytest.raises(RqConfigurationError):
+        parse_risk_options(data)
+    data["universe_policy"] = "listed_cn_a_v2"
+    production = parse_risk_options(data)
+    data["purpose"] = "validation"
+    validation = parse_risk_options(data)
+    assert production.purpose == "production"
+    assert production.variant_id != validation.variant_id
+    assert production.identity == {**validation.identity, "purpose": "production"}
+
+
+@pytest.mark.parametrize("preflight_fails", [True, False])
+def test_production_cli_preflights_before_sdk_and_wires_capture(
+    risk_config, monkeypatch, preflight_fails
+):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    data = risk_config.data["providers"]["ricequant"]["risk_model"]
+    data.pop("order_book_ids")
+    data.update(universe_policy="listed_cn_a_v2", purpose="production")
+    events = []
+    conn = object()
+
+    @contextmanager
+    def connection(_):
+        events.append("connect")
+        yield conn
+        events.append("close")
+
+    def prepare(actual_conn, options):
+        assert actual_conn is conn and options.purpose == "production"
+        events.append("prepare")
+        if preflight_fails:
+            raise RuntimeError("fixture migration missing")
+
+    def capture(actual_conn, options, manifest):
+        assert actual_conn is conn and options.purpose == "production"
+        assert manifest == {"observation_id": "fixture"}
+        events.append("capture")
+
+    def client(*args, **kwargs):
+        assert events == ["connect", "prepare"]
+        events.append("client")
+        return object()
+
+    def raw_run(client, ctx, options, shared, *, mode, universe_provider, capture_callback):
+        assert callable(universe_provider)  # 未使用名单时不能提前调用供应商参考 API。
+        events.append("raw")
+        capture_callback({"observation_id": "fixture"})
+        return 123
+
+    monkeypatch.setattr(
+        "gr_data.config.load_postgres",
+        lambda _: SimpleNamespace(
+            host="fixture", port=1, database="fixture", user="fixture", password="fixture"
+        ),
+    )
+    monkeypatch.setattr("gr_data.db.sync.connect", connection)
+    monkeypatch.setattr("gr_data.db.risk_receipts.prepare_capture", prepare)
+    monkeypatch.setattr("gr_data.db.risk_receipts.record_capture", capture)
+    monkeypatch.setattr("gr_data.raw.ricequant.client.RqdatacClient", client)
+    monkeypatch.setattr("gr_data.raw.ricequant.riskmodel.run_risk_raw", raw_run)
+    monkeypatch.setattr(
+        "gr_data.raw._risk_universe_provider",
+        lambda *args: pytest.fail("reference API must remain lazy"),
+    )
+    if preflight_fails:
+        with pytest.raises(RuntimeError, match="migration missing"):
+            run_provider("ricequant", risk_config, only=["rq_risk_model"])
+        assert events == ["connect", "prepare"]
+    else:
+        assert run_provider("ricequant", risk_config, only=["rq_risk_model"]) == {
+            "rq_risk_model": 123
+        }
+        assert events == ["connect", "prepare", "client", "raw", "capture", "close"]

@@ -16,6 +16,7 @@ import abc
 import logging
 import math
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import numpy as np
@@ -86,6 +87,33 @@ class IngestResult:
     @property
     def ok(self) -> bool:
         return not self.warnings
+
+
+class IngestStopError(Exception):
+    """提交后暂停或提交结果未知；停止后续任务，不能伪记 failed 或宣称回滚。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        result: IngestResult,
+        committed_days: tuple[date, ...],
+        stopped_day: date,
+        requested_end: date,
+        selected_months: tuple[str, ...] | None,
+        receipt_id: str,
+        reasons: tuple[str, ...],
+        outcome: str = "publication_ineligible",
+    ) -> None:
+        super().__init__(message)
+        self.result = result
+        self.committed_days = committed_days
+        self.stopped_day = stopped_day
+        self.requested_end = requested_end
+        self.selected_months = selected_months
+        self.receipt_id = receipt_id
+        self.reasons = reasons
+        self.outcome = outcome
 
 
 class BaseImporter(abc.ABC):

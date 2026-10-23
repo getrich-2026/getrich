@@ -103,9 +103,11 @@ def cmd_raw(args: argparse.Namespace, cfg: Config) -> int:
 
 
 #: ingest 退出码：0 全部成功；1 有 importer 硬失败；2 配置问题（见 main）；
-#: 3 完成但有软告警，需要人工复核。
+#: 3 完成但有软告警；4 已提交但发布资格不满足；5 提交响应异常，需核对收据。
 EXIT_INGEST_FAILED = 1
 EXIT_INGEST_WARNINGS = 3
+EXIT_INGEST_PUBLICATION_STOPPED = 4
+EXIT_INGEST_TRANSACTION_STOPPED = 5
 
 
 def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
@@ -125,6 +127,32 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
                 force_ownership=args.force_ownership,
                 months=_parse_months(args.months),
             )
+    except ingest.IngestRunStoppedError as exc:
+        done = ", ".join(f"{r.target}={r.rows_written}" for r in exc.completed)
+        stop = exc.stop
+        labels = {
+            "publication_ineligible": "数据已提交，发布资格不满足",
+            "commit_confirmed": "提交响应异常，收据已确认数据提交，暂停供检查",
+            "commit_outcome_unknown": "提交结果未知，请按收据核对后续跑",
+        }
+        print(f"ingest {args.provider} 已停止：{labels[stop.outcome]}", file=sys.stderr)
+        print(f"  已提交: {done}", file=sys.stderr)
+        print(
+            f"  已处理交易日: {', '.join(map(str, stop.committed_days)) or '无'}", file=sys.stderr
+        )
+        print(f"  停止日: {stop.stopped_day}；收据: {stop.receipt_id}", file=sys.stderr)
+        print(f"  停止原因: {', '.join(stop.reasons)}", file=sys.stderr)
+        print(
+            f"  后续所选日期未继续：停止日之后至 {stop.requested_end}；"
+            f"月份筛选={','.join(stop.selected_months) if stop.selected_months else '全部'}",
+            file=sys.stderr,
+        )
+        print(f"  未执行 importer: {', '.join(exc.skipped) or '无'}", file=sys.stderr)
+        return (
+            EXIT_INGEST_PUBLICATION_STOPPED
+            if stop.outcome == "publication_ineligible"
+            else EXIT_INGEST_TRANSACTION_STOPPED
+        )
     except ingest.IngestRunError as exc:
         done = ", ".join(f"{r.target}={r.rows_written}" for r in exc.completed) or "无"
         print(f"ingest {args.provider} 失败: {exc.importer}: {exc.error}", file=sys.stderr)

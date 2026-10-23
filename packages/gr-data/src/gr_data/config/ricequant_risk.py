@@ -10,9 +10,14 @@ from typing import Any
 from gr_data.common.ricequant_specs import RqConfigurationError, semantic_hash
 
 
+MAPPING_VERSION = "alias_v1"
+DYNAMIC_UNIVERSE_POLICY = "listed_cn_a_v1"
+TUSHARE_UNIVERSE_POLICY = "listed_cn_a_v2"
+
+
 @dataclass(frozen=True)
 class RiskOptions:
-    """日度五件套采集参数；股票范围必须显式给出，不使用当前全市场回填历史。"""
+    """日度五件套参数；固定名单或版本化历史在市策略，两者身份隔离。"""
 
     model: str
     industry_mapping: str
@@ -23,6 +28,32 @@ class RiskOptions:
     units_evidence: str
     batch_size: int = 200
     enable_bjse: bool = False
+    universe_policy: str = "fixed"
+    purpose: str = "validation"
+
+    @property
+    def mapping_version(self) -> str:
+        return "alias_v2" if self.universe_policy == TUSHARE_UNIVERSE_POLICY else MAPPING_VERSION
+
+    @property
+    def symbol_rules_version(self) -> str | None:
+        if self.universe_policy != TUSHARE_UNIVERSE_POLICY:
+            return None
+        from gr_data.common.ricequant_symbol_intervals import SYMBOL_RULES_VERSION
+
+        return SYMBOL_RULES_VERSION
+
+    @property
+    def symbol_rules_hash(self) -> str | None:
+        if self.universe_policy != TUSHARE_UNIVERSE_POLICY:
+            return None
+        from gr_data.common.ricequant_symbol_intervals import symbol_rule_hash
+
+        return symbol_rule_hash()
+
+    @property
+    def contract_version(self) -> str:
+        return "v1" if self.universe_policy == "fixed" else "v2"
 
     @property
     def variant_id(self) -> str:
@@ -31,7 +62,7 @@ class RiskOptions:
     @property
     def identity(self) -> dict[str, object]:
         """落盘和入库共用的身份，不含可扩展的日期范围。"""
-        return {
+        identity: dict[str, object] = {
             "contract": "rq_risk_model_v1",
             "model": self.model,
             "industry_mapping": self.industry_mapping,
@@ -42,6 +73,20 @@ class RiskOptions:
             "universe": "whole_market",
             "method": "implicit",
         }
+        if self.universe_policy != "fixed":
+            identity.pop("order_book_ids")
+            identity.update(
+                contract="rq_risk_model_v2",
+                universe_policy=self.universe_policy,
+                mapping_version=self.mapping_version,
+                purpose=self.purpose,
+            )
+        if self.universe_policy == TUSHARE_UNIVERSE_POLICY:
+            identity.update(
+                symbol_rules_version=self.symbol_rules_version,
+                symbol_rules_hash=self.symbol_rules_hash,
+            )
+        return identity
 
 
 def parse_risk_options(data: Any) -> RiskOptions:
@@ -57,6 +102,8 @@ def parse_risk_options(data: Any) -> RiskOptions:
         "units_evidence",
         "permission_confirmed",
         "batch_size",
+        "universe_policy",
+        "purpose",
     }
     if not isinstance(data, dict) or set(data) - keys:
         raise RqConfigurationError("risk_model 配置字段错误")
@@ -72,8 +119,20 @@ def parse_risk_options(data: Any) -> RiskOptions:
         raise RqConfigurationError("risk_model 必须填写 ISO 起止日期") from None
     if start > end or end >= date.today():
         raise RqConfigurationError("risk_model 日期倒置或包含尚未结束的日期")
-    codes = data.get("order_book_ids")
+    policy = data.get("universe_policy", "fixed")
+    purpose = data.get("purpose", "validation")
     if (
+        policy not in {"fixed", DYNAMIC_UNIVERSE_POLICY, TUSHARE_UNIVERSE_POLICY}
+        or purpose not in {"validation", "production"}
+        or (purpose == "production" and policy != TUSHARE_UNIVERSE_POLICY)
+    ):
+        raise RqConfigurationError(
+            "risk_model production 仅支持 listed_cn_a_v2；旧策略仅可用于 validation"
+        )
+    if policy != "fixed" and ("order_book_ids" in data or start < date(2024, 1, 1)):
+        raise RqConfigurationError("动态名单禁止固定代码且起点不得早于 2024-01-01")
+    codes = data.get("order_book_ids") if policy == "fixed" else []
+    if policy == "fixed" and (
         not isinstance(codes, list)
         or not codes
         or len(codes) > 10000
@@ -111,4 +170,6 @@ def parse_risk_options(data: Any) -> RiskOptions:
         dict(units),
         evidence,
         batch,
+        universe_policy=policy,
+        purpose=purpose,
     )

@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from typing import Any
 
 from gr_data.common.paths import RawPaths
@@ -152,33 +154,123 @@ def _run_ricequant(
     ctx = _build_context("ricequant", cfg)
     results: dict[str, int] = {}
     failures = []
-    # SDK 初始化为进程全局状态；先跑旧任务，再顺序初始化各补充数据的显式参数。
-    legacy_client = _build_client("ricequant", cfg) if any(n in registry for n in names) else None
-    for name in names:
-        if name in registry:
-            results[name] = registry[name](legacy_client, ctx).fetch(mode=mode)
-    client = (
-        RqdatacClient(
-            options.license_key,
-            connect_timeout=options.connect_timeout,
-            timeout=options.timeout,
-            enable_bjse=selected[0].enable_bjse,
+    with ExitStack() as stack:
+        # 整批预检早于 SDK 初始化与其他数据集请求，避免缺迁移时先消耗账户配额。
+        capture_callbacks = {
+            name: stack.enter_context(_risk_capture_callback(cfg, options.datasets[name]))
+            for name in names
+            if name == "rq_risk_model"
+        }
+        # SDK 初始化为进程全局状态；先跑旧任务，再顺序初始化各补充数据的显式参数。
+        legacy_client = (
+            _build_client("ricequant", cfg) if any(n in registry for n in names) else None
         )
-        if selected
-        else None
-    )
-    for name in names:
-        if name in registry:
-            continue
-        dataset = options.datasets[name]
-        try:
-            if name == "rq_risk_model":
-                results[name] = run_risk_raw(client, ctx, dataset, options, mode=mode)
-            else:
-                results[name] = run_supplement(client, ctx, dataset, options, mode=mode)
-        except ContractViolationError:
-            failures.append(name)
-            log.error("Ricequant dataset incomplete dataset=%s", name)
+        for name in names:
+            if name in registry:
+                results[name] = registry[name](legacy_client, ctx).fetch(mode=mode)
+        client = (
+            RqdatacClient(
+                options.license_key,
+                connect_timeout=options.connect_timeout,
+                timeout=options.timeout,
+                enable_bjse=selected[0].enable_bjse,
+            )
+            if selected
+            else None
+        )
+        for name in names:
+            if name in registry:
+                continue
+            dataset = options.datasets[name]
+            try:
+                if name == "rq_risk_model":
+                    extra = {"capture_callback": capture_callbacks[name]}
+                    if dataset.universe_policy != "fixed":
+                        extra["universe_provider"] = _lazy_risk_universe_provider(
+                            cfg, client, options.quota_reserve_fraction, dataset
+                        )
+                    results[name] = run_risk_raw(client, ctx, dataset, options, mode=mode, **extra)
+                else:
+                    results[name] = run_supplement(client, ctx, dataset, options, mode=mode)
+            except ContractViolationError:
+                failures.append(name)
+                log.error("Ricequant dataset incomplete dataset=%s", name)
     if failures:
         raise ContractViolationError(f"米筐补充任务未完成：{', '.join(failures)}；成功片已保留")
     return results
+
+
+@contextmanager
+def _risk_capture_callback(
+    cfg: Config, risk_options: Any
+) -> Iterator[Callable[[dict], None] | None]:
+    """生产 raw 预检迁移并登记 variant；每个捕获回执使用独立空闲连接事务。"""
+    if risk_options.purpose != "production":
+        yield None
+        return
+    from gr_tools.config import load_environment
+
+    from gr_data.config import load_postgres
+    from gr_data.db.risk_receipts import prepare_capture, record_capture
+    from gr_data.db.sync import PgConfig, connect
+
+    env = cfg.environment if cfg.environment is not None else load_environment()
+    pg = load_postgres(env)
+    with connect(PgConfig(pg.host, pg.port, pg.database, pg.user, pg.password)) as conn:
+        prepare_capture(conn, risk_options)
+
+        def callback(manifest: dict) -> None:
+            record_capture(conn, risk_options, manifest)
+
+        yield callback
+
+
+def _lazy_risk_universe_provider(
+    cfg: Config, client: Any, quota_reserve_fraction: float, risk_options: Any
+) -> Callable[[str], dict[str, Any]]:
+    """仅新抓取日才冻结参考；恢复已完成 raw 不初始化 SDK 或重新取名单。"""
+    provider: Callable[[str], dict[str, Any]] | None = None
+
+    def get_universe(day: str) -> dict[str, Any]:
+        nonlocal provider
+        if provider is None:
+            provider = _risk_universe_provider(cfg, client, quota_reserve_fraction, risk_options)
+        return provider(day)
+
+    return get_universe
+
+
+def _risk_universe_provider(
+    cfg: Config, client: Any, quota_reserve_fraction: float, risk_options: Any
+) -> Callable[[str], dict[str, Any]]:
+    """动态名单只读冻结元数据；固定名单 raw 不依赖数据库。"""
+    from gr_tools.config import load_environment
+
+    from gr_data.common.ricequant_universe import (
+        build_universe_provider,
+        load_metadata_snapshot,
+        reference_input_codes,
+    )
+    from gr_data.config import load_postgres
+    from gr_data.db.sync import PgConfig, connect
+    from gr_data.raw.ricequant.fetchers.supplements import _check_quota
+
+    env = cfg.environment if cfg.environment is not None else load_environment()
+    pg = load_postgres(env)
+    with (
+        connect(PgConfig(pg.host, pg.port, pg.database, pg.user, pg.password)) as conn,
+        conn.transaction(),
+    ):
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        snapshot = load_metadata_snapshot(conn)
+    reference = client.risk_reference(
+        reference_input_codes(snapshot),
+        quota_guard=lambda: _check_quota(client, quota_reserve_fraction),
+    )
+    _check_quota(client, quota_reserve_fraction)
+    return build_universe_provider(
+        snapshot,
+        reference,
+        universe_policy=risk_options.universe_policy,
+        mapping_version=risk_options.mapping_version,
+    )

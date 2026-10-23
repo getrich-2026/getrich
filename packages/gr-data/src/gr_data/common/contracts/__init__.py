@@ -24,6 +24,8 @@ from gr_data.common.contracts.factor import (
     FACTOR_RETURN,
     MODEL,
     MODEL_RUN,
+    MODEL_RUN_BINDING,
+    MODEL_RUN_COVERAGE,
     SPECIFIC_RETURN,
     SPECIFIC_RISK,
 )
@@ -52,6 +54,8 @@ __all__ = [
     "INSTRUMENT_INDUSTRY",
     "MODEL",
     "MODEL_RUN",
+    "MODEL_RUN_BINDING",
+    "MODEL_RUN_COVERAGE",
     "SCHEME",
     "SPECIFIC_RETURN",
     "SPECIFIC_RISK",

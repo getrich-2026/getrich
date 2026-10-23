@@ -11,7 +11,7 @@ from gr_data.common.ownership import OwnershipError
 from gr_data.common.parquet import CorruptRawError
 from gr_data.common.paths import RawPaths
 from gr_data.config.pipeline import Config
-from gr_data.ingest.base import IngestContext, IngestGateError, IngestResult
+from gr_data.ingest.base import IngestContext, IngestGateError, IngestResult, IngestStopError
 
 
 log = logging.getLogger(__name__)
@@ -59,6 +59,25 @@ class IngestRunError(Exception):  # 不继承 RuntimeError：cli.main 把后者�
         self.completed = completed
         self.skipped = skipped
         self.error = error
+
+
+class IngestRunStoppedError(Exception):
+    """保留已确认结果，传播发布阻塞或提交响应异常，终止其余 importer。"""
+
+    def __init__(
+        self,
+        provider: str,
+        importer: str,
+        completed: list[IngestResult],
+        skipped: list[str],
+        stop: IngestStopError,
+    ) -> None:
+        super().__init__(str(stop))
+        self.provider = provider
+        self.importer = importer
+        self.completed = [*completed, stop.result]
+        self.skipped = skipped
+        self.stop = stop
 
 
 def _expand(names: list[str], registry: dict[str, Any], groups: dict[str, list[str]]) -> list[str]:
@@ -155,6 +174,16 @@ def run_provider(
             importer = registry[name](conn, ctx, **kwargs)
             log.info("ingest 开始 provider=%s importer=%s", provider, name)
             results.append(importer.run())
+        except IngestStopError as exc:
+            log.warning(
+                "Ingest stopped provider=%s importer=%s day=%s receipt=%s outcome=%s",
+                provider,
+                name,
+                exc.stopped_day,
+                exc.receipt_id,
+                exc.outcome,
+            )
+            raise IngestRunStoppedError(provider, name, results, names[i + 1 :], exc) from exc
         except Exception as exc:
             # 后续 importer 依赖前面的结果（symbol_map、停复牌覆盖等），失败后不再继续。
             error = _error_summary(exc)

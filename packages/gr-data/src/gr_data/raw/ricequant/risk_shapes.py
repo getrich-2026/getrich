@@ -7,6 +7,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
+from gr_data.common.ricequant_risk_quality import validate_covariance
 from gr_data.common.ricequant_specs import ContractViolationError
 from gr_data.config.ricequant_risk import RiskOptions
 
@@ -115,7 +116,7 @@ def decode_piece(name: str, response: object, day: date, codes: tuple[str, ...])
 def validate_bundle(
     frames: dict[str, pd.DataFrame], options: RiskOptions, day: date
 ) -> dict[str, pd.DataFrame]:
-    """对齐到稳定因子顺序，核对完整性、非负 σ 与半正定协方差。"""
+    """对齐到稳定因子顺序，核对完整性、非负 σ 与严格正定协方差。"""
     if set(frames) != set(PIECES):
         raise ContractViolationError("风险五件套不完整")
     out = {k: _frame(v) for k, v in frames.items()}
@@ -150,13 +151,7 @@ def validate_bundle(
                 raise ContractViolationError("风险五件套股票集合不一致")
             out[key] = out[key].loc[:, codes]
     cov = out["covariance"].to_numpy()
-    tolerance = max(float(np.max(np.abs(cov))), 1e-15) * 1e-8
-    if (
-        not np.allclose(cov, cov.T, rtol=1e-8, atol=tolerance)
-        or np.diag(cov).min() < 0
-        or np.linalg.eigvalsh(cov).min() < -tolerance
-    ):
-        raise ContractViolationError("风险协方差不对称、负对角或非半正定")
+    validate_covariance(cov)
     if (out["specific_risk"].to_numpy() < 0).any():
         raise ContractViolationError("特异波动率不得为负")
     return out

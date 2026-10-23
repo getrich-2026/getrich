@@ -1,4 +1,4 @@
-"""`factor` schema 的表契约。DDL 真源：gr-db `ddl/postgres/037_factor.sql`。
+"""`factor` 表契约。DDL 真源：gr-db 的 037_factor.sql / 048_factor_model_run_coverage.sql。
 
 数组列与 JSONB 列必须声明 `column_types`：文本 COPY 下 psycopg 靠首行推断适配器，
 推断出的 `float8[]` 喂给 `real[]` 走隐式转换（能跑但脆），首行全 NULL 时还会退化。
@@ -59,6 +59,49 @@ MODEL_RUN = TableContract(
         ("code_version", "text"),
         ("param_hash", "text"),
         ("source", "text"),
+    ),
+)
+
+# 不可变绑定由收据 writer INSERT / 核对，不走通用更新式 UPSERT。
+MODEL_RUN_BINDING = TableContract(
+    schema="factor",
+    table="model_run_binding",
+    columns=("run_id", "receipt_id", "variant_id", "observation_id", "trading_day"),
+    conflict_keys=("run_id",),
+    column_types=(
+        ("run_id", "uuid"),
+        ("receipt_id", "uuid"),
+        ("variant_id", "text"),
+        ("observation_id", "text"),
+        ("trading_day", "date"),
+    ),
+)
+
+MODEL_RUN_COVERAGE = TableContract(
+    schema="factor",
+    table="model_run_coverage",
+    columns=(
+        "run_id",
+        "instrument_id",
+        "trading_day",
+        "input_codes",
+        "request_code",
+        "status",
+        "pieces",
+        "evidence",
+        "available_at",
+    ),
+    conflict_keys=("run_id", "instrument_id"),
+    column_types=(
+        ("run_id", "uuid"),
+        ("instrument_id", "int8"),
+        ("trading_day", "date"),
+        ("input_codes", "text[]"),
+        ("request_code", "text"),
+        ("status", "text"),
+        ("pieces", "jsonb"),
+        ("evidence", "jsonb"),
+        ("available_at", "timestamptz"),
     ),
 )
 

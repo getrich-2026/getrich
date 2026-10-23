@@ -686,14 +686,15 @@ def pg_conn(pg_dsn):
               market.stock_bar_1d, market.stock_suspend_event, market.stock_suspend_coverage,
               market.etf_bar_1d, market.index_bar_1d,
               market.future_bar_1d, market.stock_daily_basic, market.adj_factor_ts,
-              factor.model, factor.definition, factor.model_run,
+              factor.model, factor.definition, factor.model_run, factor.model_run_coverage,
               factor.exposure, factor.covariance, factor.factor_return,
               factor.specific_risk, factor.specific_return,
               fundamental.valuation_1d, fundamental.indicator_q,
               classify.instrument_industry, classify.industry_node,
               classify.instrument_category, classify.scheme,
               realtime.tick_buffer, ops.table_ownership, ops.etl_job_run,
-              ops.data_quality_check
+              ops.data_quality_check, ops.import_checkpoint, ops.import_receipt,
+              ops.dataset_variant, factor.model_run_binding
             RESTART IDENTITY CASCADE
             """
         )

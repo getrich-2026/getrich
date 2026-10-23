@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import math
 import os
 from collections.abc import Callable, Iterator
 from datetime import date, datetime, timezone
@@ -16,7 +17,7 @@ import pandas as pd
 
 from gr_data.common.paths import RawPaths
 from gr_data.common.retry import chunk_list, sleep_s
-from gr_data.common.ricequant_specs import RawIntegrityError, semantic_hash
+from gr_data.common.ricequant_specs import ContractViolationError, RawIntegrityError, semantic_hash
 from gr_data.config.ricequant import RicequantImportOptions
 from gr_data.config.ricequant_risk import RiskOptions
 from gr_data.raw.base import RawContext
@@ -79,7 +80,7 @@ def read_bundles(
     paths: RawPaths, options: RiskOptions, months: tuple[str, ...] | None = None
 ) -> Iterator[tuple[dict, dict[str, pd.DataFrame]]]:
     """只读取完整发布的观察；逐日有界内存，不以最新快照覆盖历史可用时间。"""
-    root = paths.ricequant_variant("rq_risk_model", "v1", options.variant_id)
+    root = paths.ricequant_variant("rq_risk_model", options.contract_version, options.variant_id)
     found = False
     for path in sorted(root.glob("????-??-??/*/manifest.json")):
         day = date.fromisoformat(path.parent.parent.name)
@@ -88,7 +89,18 @@ def read_bundles(
         ):
             continue
         found = True
-        yield _load(path, options)
+        try:
+            if options.contract_version == "v2":
+                from gr_data.raw.ricequant.risk_dynamic import load_dynamic
+
+                yield load_dynamic(path, options)
+            else:
+                yield _load(path, options)
+        except (RawIntegrityError, ContractViolationError) as exc:
+            # 从已筛选的路径补充失败日；不用损坏 manifest 的内容作审计身份。
+            exc.risk_day = day
+            exc.risk_observation_id = path.parent.name
+            raise
     if not found:
         raise RawIntegrityError("所选范围没有完整的米筐风险五件套，请先执行 raw")
 
@@ -100,19 +112,40 @@ def run_risk_raw(
     shared: RicequantImportOptions,
     *,
     mode: str,
+    universe_provider: Callable[[str], dict] | None = None,
+    capture_callback: Callable[[dict], None] | None = None,
 ) -> int:
     """交易日历来自 SDK；一天五份全部校验后发布，失败保留已完成日等待续跑。
 
     init 跳过已完整观察的日期；update 每轮重抓显式日期范围，失败后续跑同一轮。
     内存上界为显式股票范围的一日矩阵（最多 10000 只），SDK 分批至 batch_size。
+    capture_callback 在每个完整发布或复用的观察上执行；失败保留 raw 等待重放。
+    production 必须提供已完成数据库预检的 callback，命令入口负责迁移和 variant 登记。
     """
     if mode not in {"init", "update"}:
         raise ValueError("未知采集模式")
-    root = ctx.paths.ricequant_variant("rq_risk_model", "v1", options.variant_id)
+    if options.purpose == "production" and (
+        options.universe_policy != "listed_cn_a_v2" or capture_callback is None
+    ):
+        raise ValueError("生产风险采集必须使用 listed_cn_a_v2 并提供 capture callback")
+    if capture_callback is not None and not callable(capture_callback):
+        raise ValueError("capture callback 必须可调用")
+    if options.contract_version == "v2" and universe_provider is None:
+        raise ValueError("动态风险采集必须提供按日名单")
+    root = ctx.paths.ricequant_variant(
+        "rq_risk_model", options.contract_version, options.variant_id
+    )
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".lock").open("a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        return _run_locked(client, ctx, options, shared, root, mode)
+        if options.contract_version == "v2":
+            from gr_data.raw.ricequant.risk_dynamic import run_dynamic_locked
+
+            assert universe_provider is not None
+            return run_dynamic_locked(
+                client, ctx, options, shared, root, mode, universe_provider, capture_callback
+            )
+        return _run_locked(client, ctx, options, shared, root, mode, capture_callback)
 
 
 def _run_locked(
@@ -122,6 +155,7 @@ def _run_locked(
     shared: RicequantImportOptions,
     root: Path,
     mode: str,
+    capture_callback: Callable[[dict], None] | None = None,
 ) -> int:
     def call(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         for attempt in range(ctx.max_retries):
@@ -160,13 +194,18 @@ def _run_locked(
                 or any(c not in "0123456789abcdef" for c in observation)
             ):
                 raise RawIntegrityError("风险恢复观察标识非法")
-            _load(root / value / observation / "manifest.json", options)
+            manifest, _ = _load(root / value / observation / "manifest.json", options)
+            if capture_callback is not None:
+                capture_callback(manifest)
             continue
         previous = list((root / value).glob("*/manifest.json"))
         if mode == "init" and previous:
             for path in previous:
-                _load(path, options)
+                manifest, _ = _load(path, options)
+                if capture_callback is not None:
+                    capture_callback(manifest)
             continue
+        quota_before = _quota_snapshot(client)
         frames = {}
         for piece in ("factor_return", "covariance"):
             response = call(
@@ -196,6 +235,7 @@ def _run_locked(
                 raise RawIntegrityError("风险暴露批次间因子集合变化")
             frames[piece] = pd.concat(parts, axis=0 if piece == "exposure" else 1)
         frames = validate_bundle(frames, options, day)
+        quota_after = _quota_snapshot(client)
         observation = uuid4().hex
         folder = root / value / observation
         folder.mkdir(parents=True)
@@ -206,6 +246,8 @@ def _run_locked(
             "identity": options.identity,
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "files": {},
+            # 账户计费可能延迟更新；差值是观察值，不冒充精确的请求网络字节。
+            "quota_observation": {"before": quota_before, "after": quota_after},
         }
         for piece, frame in frames.items():
             path = folder / (piece + ".parquet")
@@ -216,6 +258,8 @@ def _run_locked(
         _json(folder / "manifest.json", manifest)
         plan["completed"][value] = observation
         _json(journal, plan)
+        if capture_callback is not None:
+            capture_callback(manifest)
         written += sum(len(frame) for frame in frames.values())
         log.info(
             "Ricequant risk bundle published dataset=rq_risk_model day=%s observation=%s rows=%d",
@@ -225,3 +269,15 @@ def _run_locked(
         )
     journal.unlink()
     return written
+
+
+def _quota_snapshot(client: RqdatacClient) -> dict[str, object]:
+    """仅留配额计数与观测时间，禁止保存完整账户响应。"""
+    quota = client.get_quota()
+    snapshot: dict[str, object] = {"observed_at": datetime.now(timezone.utc).isoformat()}
+    for key in ("bytes_used", "bytes_limit"):
+        value = quota.get(key) if isinstance(quota, dict) else None
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise RawIntegrityError("RiceQuant quota counters are invalid")
+        snapshot[key] = value
+    return snapshot

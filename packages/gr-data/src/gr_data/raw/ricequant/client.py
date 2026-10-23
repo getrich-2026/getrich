@@ -14,7 +14,11 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import date as calendar_date, datetime
+from io import StringIO
 from typing import Any, Protocol, TypeVar
 
 import pandas as pd
@@ -37,7 +41,9 @@ RQ_TYPE_MAP = {
 
 
 class RicequantClient(Protocol):
-    def all_instruments(self, type: str, market: str = "cn") -> pd.DataFrame: ...
+    def all_instruments(
+        self, type: str, market: str = "cn", *, date: str | None = None
+    ) -> pd.DataFrame: ...
 
     def get_trading_dates(
         self, start_date: str, end_date: str, market: str = "cn"
@@ -109,7 +115,7 @@ class RqdatacClient:
                 raise PermanentError("未安装 rqdatac SDK。") from e
             extra = {} if self._enable_bjse is None else {"enable_bjse": self._enable_bjse}
             if self._license:
-                self._call(
+                self._quiet_init(
                     rqdatac.init,
                     "license",
                     self._license,
@@ -118,7 +124,7 @@ class RqdatacClient:
                     **extra,
                 )
             elif self._username and self._password:
-                self._call(
+                self._quiet_init(
                     rqdatac.init,
                     self._username,
                     self._password,
@@ -139,8 +145,93 @@ class RqdatacClient:
             self._rq = rqdatac
         return self._rq
 
-    def all_instruments(self, type: str, market: str = "cn") -> pd.DataFrame:
-        return self._sdk().all_instruments(type=type, market=market)
+    def all_instruments(
+        self, type: str, market: str = "cn", *, date: str | None = None
+    ) -> pd.DataFrame:
+        """按日期筛选证券；SDK 返回的其他字段仍为最新快照。"""
+        extra = {} if date is None else {"date": date}
+        return self._call(self._sdk().all_instruments, type=type, market=market, **extra)
+
+    @classmethod
+    def _quiet_init(cls, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """SDK 初始化的账户横幅不进入日志或终端。"""
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            return cls._call(fn, *args, **kwargs)
+
+    def risk_reference(
+        self, input_codes: list[str], *, quota_guard: Callable[[], None] | None = None
+    ) -> dict[str, Any]:
+        """冻结含退市的 CS 元数据及实际 SDK 代码转换，不把客户端过滤当源缺失。
+
+        Args:
+            input_codes: canonical 与已验证身份别名转换后的米筐代码。
+            quota_guard: 每次参考网络请求前执行的共享额度检查。
+
+        Returns:
+            白名单字段的参考记录、逐输入 SDK 接受代码及 SDK 版本。
+
+        Raises:
+            PermanentError: SDK 失败、参考字段缺失或转换不唯一。
+        """
+        sdk = self._sdk()
+        from rqdatac.services.basic import _all_obid_to_type
+        from rqdatac.validators import ensure_order_book_ids
+
+        if quota_guard is not None:
+            quota_guard()
+        sdk_codes = self._call(_all_obid_to_type, "cn")
+        if quota_guard is not None:
+            quota_guard()
+        frame = self.all_instruments("CS", market="cn")
+        required = {"order_book_id", "listed_date", "de_listed_date"}
+        if not isinstance(frame, pd.DataFrame) or not required <= set(frame.columns):
+            raise PermanentError("RiceQuant stock reference schema is incomplete")
+        records = []
+        for code, listed, delisted in frame[
+            ["order_book_id", "listed_date", "de_listed_date"]
+        ].itertuples(index=False, name=None):
+            if not isinstance(code, str):
+                raise PermanentError("RiceQuant stock reference code is invalid")
+            records.append(
+                {
+                    "order_book_id": code,
+                    "listed_date": self._reference_date(listed),
+                    "de_listed_date": self._reference_date(delisted),
+                }
+            )
+        codes = sorted(set(input_codes) | {row["order_book_id"] for row in records})
+        mapping: dict[str, str | None] = {}
+
+        def accepted(code: str) -> str | None:
+            if code not in sdk_codes or sdk_codes[code][0] != "CS":
+                return None
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                result = ensure_order_book_ids([code], type="CS", market="cn")
+            if len(result) != 1:
+                raise ValueError("Nonunique SDK code mapping")
+            return result[0]
+
+        for code in codes:
+            mapping[code] = self._call(accepted, code)
+        return {
+            "instruments": records,
+            "sdk_mapping": mapping,
+            "sdk_version": str(getattr(sdk, "__version__", "unknown")),
+        }
+
+    @staticmethod
+    def _reference_date(value: Any) -> str | None:
+        """日历日期显式序列化；NaT 保留为未知，不变成未退市哨兵。"""
+        if value is None or pd.isna(value):
+            return None
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, calendar_date):
+            return value.isoformat()
+        if isinstance(value, str):
+            return value  # 包括供应商 0000-00-00；非法字符串由名单标为未知。
+        raise PermanentError("RiceQuant stock reference date type is invalid")
 
     def get_trading_dates(self, start_date: str, end_date: str, market: str = "cn") -> list[Any]:
         return list(self._call(self._sdk().get_trading_dates, start_date, end_date, market=market))
