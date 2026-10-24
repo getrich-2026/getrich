@@ -424,6 +424,7 @@ def _request(options: RiskOptions, ctx: IngestContext) -> dict[str, Any]:
         "industry_mapping": options.industry_mapping,
         "variant_id": options.variant_id,
         "selected_months": list(ctx.months) if ctx.months else None,
+        "selected_observation_id": ctx.observation_id,
         "observation_id": None,
         "model_run_id": None,
         "quality": None,
@@ -506,7 +507,9 @@ def _record_failure(
 def _audited_bundles(
     conn: psycopg.Connection, ctx: IngestContext, options: RiskOptions
 ) -> Iterator[tuple[dict[str, Any], dict[str, pd.DataFrame], datetime]]:
-    bundles = iter(read_bundles(ctx.paths, options, months=ctx.months))
+    bundles = iter(
+        read_bundles(ctx.paths, options, months=ctx.months, observation_id=ctx.observation_id)
+    )
     while True:
         started_at = datetime.now(timezone.utc)
         try:

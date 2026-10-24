@@ -75,6 +75,7 @@ class IngestContext:
     #: `ops.etl_job_run`（这反而让「哪个月入过库」可追溯）。
     #: 默认 None 时行为与以前完全一致。
     months: tuple[str, ...] | None = None
+    observation_id: str | None = None  # 仅米筐风险五件套允许显式选择不可变观察
 
 
 @dataclass

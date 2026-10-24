@@ -1523,3 +1523,33 @@ def test_deferred_database_rejection_is_rollback_not_unknown_commit(risk_case, m
     assert not case.conn.state.get("receipts")
     assert [row[3] for row in case.conn.state["etl"]] == ["failed"]
     assert next(iter(case.conn.state["checkpoints"].values()))[1] is None
+
+
+def test_explicit_observation_new_version_preserves_old_binding(risk_case, monkeypatch):
+    from gr_data.db import risk_receipts
+
+    case = dynamic_case(risk_case)
+    selected = []
+
+    def read_selected(*args, observation_id=None, **kwargs):
+        selected.append(observation_id)
+        return iter([(case.manifest, case.frames)])
+
+    monkeypatch.setattr(writer, "read_bundles", read_selected)
+    case.ctx.observation_id = case.manifest["observation_id"]
+    writer.run_risk_ingest(case.conn, case.ctx, case.options)
+    old_bindings = copy.deepcopy(case.conn.state["bindings"])
+    old_receipts = copy.deepcopy(case.conn.state["receipts"])
+    assert writer.run_risk_ingest(case.conn, case.ctx, case.options).rows_written == 0
+    monkeypatch.setattr(risk_receipts, "get_importer_version", lambda **kwargs: "2" * 40)
+    with pytest.raises(ContractViolationError, match="another importer version"):
+        writer.run_risk_ingest(case.conn, case.ctx, case.options)
+    assert case.conn.state["bindings"] == old_bindings
+    assert case.conn.state["receipts"] == old_receipts
+    case.manifest["observation_id"] = "3" * 32
+    case.ctx.observation_id = "3" * 32
+    assert writer.run_risk_ingest(case.conn, case.ctx, case.options).rows_written > 0
+    assert len(case.conn.state["bindings"]) == 2
+    assert all(case.conn.state["bindings"][key] == value for key, value in old_bindings.items())
+    assert all(case.conn.state["receipts"][key] == value for key, value in old_receipts.items())
+    assert selected == ["0" * 31 + "1"] * 3 + ["3" * 32]

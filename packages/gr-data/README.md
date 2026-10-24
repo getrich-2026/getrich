@@ -495,3 +495,14 @@ Git 不可用或同一进程内源码提交变化也拒绝，后者须重启进�
 退出码 5 表示提交响应异常（消息区分收据已确认提交和提交结果未知）。这两种状态
 停止后续日期及 importer，不追加普通 failed ETL 来暗示业务回滚。结果未知时按同一
 raw 重放并查询收据；确认存在后不重复业务写入。普通确定性导入失败沿用原失败语义。
+
+### 风险观察的显式选择与修复追溯
+
+`gr-data ingest ricequant --only rq_risk_model --months 2024-12 --observation-id <32位小写十六进制ID>`
+仅选择配置 variant、起止日期和月份范围内的一个已完整发布观察。不存在、跨范围、跨 variant
+或 ID 在多个日期重复均报错；不自动选择最新观察。不传参数时仍按原规则遍历范围内的观察。
+ETL request 保留 `selected_observation_id` 与实际 observation／run／收据关联。
+
+选择器不改变 raw 身份或不可变绑定。同一 observation、同一 importer 的成功收据重放不写业务行；
+同一 observation 换 importer 仍拒绝。修复已绑定数据须保留旧证据，另行批准新采集观察，
+由新 importer 生成独立 run 和收据；不能重新绑定旧 observation。

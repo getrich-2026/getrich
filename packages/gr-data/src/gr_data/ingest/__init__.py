@@ -140,6 +140,23 @@ def _record_failure(conn: psycopg.Connection, provider: str, dataset: str, error
             )
 
 
+def validate_observation_selection(
+    provider: str, only: list[str] | None, observation_id: str | None
+) -> None:
+    """验证精确观察选择；限制到单个风险 importer，禁止含糊地忽略筛选。"""
+    if observation_id is None:
+        return
+    if (
+        provider != "ricequant"
+        or only != ["rq_risk_model"]
+        or len(observation_id) != 32
+        or any(c not in "0123456789abcdef" for c in observation_id)
+    ):
+        raise UnknownImporterError(
+            "--observation-id requires ricequant --only rq_risk_model and 32 lowercase hex digits"
+        )
+
+
 def run_provider(
     provider: str,
     conn: psycopg.Connection,
@@ -148,17 +165,22 @@ def run_provider(
     only: list[str] | None = None,
     force_ownership: bool = False,
     months: tuple[str, ...] | None = None,
+    observation_id: str | None = None,
 ) -> list[IngestResult]:
     """运行某 provider 下启用的（或 only 指定的）importer。
 
     `months` 限定只处理哪些自然月，用于把大数据集分批入库（见
     `IngestContext.months` 里关于内存的说明）。None = 全部。
     """
+    validate_observation_selection(provider, only, observation_id)
     registry, _ = _registry_groups(provider)
     names = plan_importers(provider, cfg, only=only)
 
     ctx = IngestContext(
-        paths=RawPaths(cfg.raw_root), force_ownership=force_ownership, months=months
+        paths=RawPaths(cfg.raw_root),
+        force_ownership=force_ownership,
+        months=months,
+        observation_id=observation_id,
     )
     kwargs = _provider_kwargs(provider, cfg)
     results: list[IngestResult] = []

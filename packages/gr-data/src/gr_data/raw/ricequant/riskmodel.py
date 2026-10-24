@@ -77,12 +77,25 @@ def _load(path: Path, options: RiskOptions) -> tuple[dict, dict[str, pd.DataFram
 
 
 def read_bundles(
-    paths: RawPaths, options: RiskOptions, months: tuple[str, ...] | None = None
+    paths: RawPaths,
+    options: RiskOptions,
+    months: tuple[str, ...] | None = None,
+    observation_id: str | None = None,
 ) -> Iterator[tuple[dict, dict[str, pd.DataFrame]]]:
     """只读取完整发布的观察；逐日有界内存，不以最新快照覆盖历史可用时间。"""
     root = paths.ricequant_variant("rq_risk_model", options.contract_version, options.variant_id)
     found = False
-    for path in sorted(root.glob("????-??-??/*/manifest.json")):
+    candidates = sorted(root.glob("????-??-??/*/manifest.json"))
+    if observation_id is not None:
+        if len(observation_id) != 32 or any(c not in "0123456789abcdef" for c in observation_id):
+            raise RawIntegrityError("Invalid observation_id: expected 32 lowercase hex digits")
+        candidates = [path for path in candidates if path.parent.name == observation_id]
+        # 先确认唯一性再读取，避免跨日重复身份导致部分写入后才失败。
+        if len(candidates) != 1:
+            raise RawIntegrityError(
+                "Selected observation must exist exactly once in configured variant"
+            )
+    for path in candidates:
         day = date.fromisoformat(path.parent.parent.name)
         if not options.start_date <= day <= options.end_date or (
             months and day.strftime("%Y-%m") not in months

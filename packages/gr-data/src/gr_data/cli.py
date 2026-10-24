@@ -113,6 +113,8 @@ EXIT_INGEST_TRANSACTION_STOPPED = 5
 def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
     from gr_data import ingest
 
+    observation_id = getattr(args, "observation_id", None)
+    ingest.validate_observation_selection(args.provider, _split(args.only), observation_id)
     # 先解析 importer 名单：配置写错在连库之前就报错。
     if not ingest.plan_importers(args.provider, cfg, only=_split(args.only)):
         print(f"ingest {args.provider} 完成: 未选择任务")
@@ -126,6 +128,7 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
                 only=_split(args.only),
                 force_ownership=args.force_ownership,
                 months=_parse_months(args.months),
+                observation_id=observation_id,
             )
     except ingest.IngestRunStoppedError as exc:
         done = ", ".join(f"{r.target}={r.rows_written}" for r in exc.completed)
@@ -220,6 +223,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--months",
         help="只入库这些自然月，逗号分隔，支持 A..B 闭区间（如 2021-11..2026-08）。"
         "用于把大数据集分批入库，避免一次读全历史撑爆内存。",
+    )
+    ing.add_argument(
+        "--observation-id",
+        help="精确选择米筐风险观察（32 位小写十六进制）；须 --only rq_risk_model",
     )
     ing.set_defaults(func=cmd_ingest)
 
