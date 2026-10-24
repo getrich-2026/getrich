@@ -248,6 +248,69 @@ def records(case, table):
     return list(case.conn.state["tables"][f"factor.{table}"].values())
 
 
+def test_real_storage_rounds_binary_midpoint_without_mutating_calculation_values():
+    # 生产 002426.XSHE / investment_quality：十进制文本直转 REAL 会向另一侧舍入。
+    midpoint = 1.394935429096222
+    samples = np.array([[midpoint, -midpoint, 0.0, np.finfo(np.float32).smallest_subnormal]])
+    values = {
+        key: samples.copy()
+        for key in ("exposure", "factor_return", "specific_return", "specific_risk", "covariance")
+    }
+    stored = writer._storage_values(values)
+    for key in values:
+        assert np.array_equal(values[key], samples)
+        if key == "covariance":
+            assert stored[key] is values[key]
+        else:
+            assert np.array_equal(stored[key], samples.astype(np.float32))
+            assert stored[key].tolist()[0][0] == 1.3949353694915771
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf, 1e39, 1e-50, -1e-50])
+def test_real_storage_rejects_invalid_or_underflow_values(value):
+    with pytest.raises(ContractViolationError):
+        writer._storage_values({"exposure": np.array([[value]])})
+
+
+def test_pg_real_midpoint_roundtrip_all_four_pieces(risk_case, pg_conn, monkeypatch):
+    from gr_data.db.copy import upsert_rows
+
+    case = prepare_dynamic_pg(risk_case, pg_conn, monkeypatch)
+    midpoint = 1.394935429096222
+    case.options = replace(
+        case.options,
+        source_units={
+            **case.options.source_units,
+            "factor_return": "dec_daily",
+            "specific_return": "pct_daily",
+        },
+    )
+    case.manifest["variant_id"] = case.options.variant_id
+    case.manifest["identity"] = case.options.identity
+    case.frames["exposure"].iloc[0, 0] = midpoint
+    case.frames["factor_return"].iloc[0, 0] = midpoint
+    case.frames["specific_return"].iloc[0, 0] = midpoint
+    normalized = writer._normalize(case.frames, case.options)
+    # 风险量边界同样验证；这里只替换归一结果，以隔离平方换算与存储舍入。
+    normalized["specific_risk"][0, 0] = midpoint
+    monkeypatch.setattr(writer, "_normalize", lambda *args: normalized)
+    monkeypatch.setattr(writer, "upsert_rows", upsert_rows)
+    result = writer.run_risk_ingest(pg_conn, case.ctx, case.options)
+    assert result.ok
+    with pg_conn.cursor(binary=True) as cur:
+        for table, column in (
+            ("exposure", "exposure[1]"),
+            ("factor_return", "ret_vector[1]"),
+            ("specific_return", "specific_ret"),
+            ("specific_risk", "specific_var"),
+        ):
+            cur.execute(
+                f"SELECT {column} FROM factor.{table}"
+                + (" WHERE instrument_id=22" if table != "factor_return" else "")
+            )
+            assert cur.fetchone()[0] == float(np.float32(midpoint))
+
+
 def test_atomic_bundle_units_order_mapping_and_observed_time(risk_case):
     case = risk_case
     result = writer.run_risk_ingest(case.conn, case.ctx, case.options)

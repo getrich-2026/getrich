@@ -96,6 +96,28 @@ def _normalize(frames: dict[str, pd.DataFrame], options: RiskOptions) -> dict[st
     return {key: _checked(value, key, real=key != "covariance") for key, value in out.items()}
 
 
+def _storage_values(values: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """在写库边界量化 REAL；保留计算精度和 DOUBLE PRECISION 协方差。
+
+    float64 中点的十进制文本直转 REAL 可能落在相邻 float32 上。
+    先按二进制 float32 舍入，再由 tolist/float 提升为 Python float，
+    使文本 COPY 表达的是已确定的 REAL 值。非零值下溢为零时拒绝，
+    不因预量化绕过 PostgreSQL 原有的下溢拒绝语义。
+    """
+    stored = {}
+    for key, value in values.items():
+        _checked(value, key, real=key != "covariance")
+        if key == "covariance":
+            stored[key] = value
+            continue
+        with np.errstate(under="ignore"):
+            rounded = value.astype(np.float32)
+        if ((value != 0) & (rounded == 0)).any():
+            raise ContractViolationError(f"RiceQuant {key} underflows PostgreSQL REAL range")
+        stored[key] = rounded
+    return stored
+
+
 def _instrument_ids(
     conn: psycopg.Connection, symbols: list[str], *, allow_alias_duplicates: bool = False
 ) -> list[int]:
@@ -714,6 +736,7 @@ def run_risk_ingest(
                     f"{manifest['coverage_counts']['complete']}/{len(coverage)} candidates complete"
                 )
             request["stage"] = "write"
+            storage = _storage_values(values)
             symbols = list(frames["exposure"].index)
             with conn.transaction():
                 # 与显式归属修改互斥，避免先检查归属、后写入期间发生切换。
@@ -767,7 +790,7 @@ def run_risk_ingest(
                                 run_id,
                                 instrument_id,
                                 day,
-                                values["exposure"][i].tolist(),
+                                storage["exposure"][i].tolist(),
                                 count,
                                 observed_at,
                             )
@@ -777,20 +800,20 @@ def run_risk_ingest(
                             (
                                 run_id,
                                 day,
-                                values["covariance"][np.triu_indices(count)].tolist(),
+                                storage["covariance"][np.triu_indices(count)].tolist(),
                                 count,
                                 observed_at,
                             )
                         ],
                         contracts.FACTOR_RETURN: [
-                            (run_id, day, values["factor_return"][0].tolist(), count, observed_at)
+                            (run_id, day, storage["factor_return"][0].tolist(), count, observed_at)
                         ],
                         contracts.SPECIFIC_RISK: [
                             (
                                 run_id,
                                 instrument_id,
                                 day,
-                                float(values["specific_risk"][0, i]),
+                                float(storage["specific_risk"][0, i]),
                                 "ricequant",
                                 observed_at,
                             )
@@ -801,7 +824,7 @@ def run_risk_ingest(
                                 run_id,
                                 instrument_id,
                                 day,
-                                float(values["specific_return"][0, i]),
+                                float(storage["specific_return"][0, i]),
                                 observed_at,
                             )
                             for i, instrument_id in enumerate(ids)
