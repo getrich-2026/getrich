@@ -13,6 +13,7 @@ from datetime import date, datetime
 
 import pytest
 from gr_data.common.ownership import OwnershipError, OwnershipManager
+from gr_data.common.parquet import read_parquet_strict
 from gr_data.ingest.base import IngestContext
 from gr_data.raw.base import RawContext
 
@@ -142,12 +143,19 @@ def test_ricequant_and_insight_flow(pg_conn, tmp_raw_root, fake_ricequant, fake_
 
 def _run_tushare_raw(paths, fake_tushare):
     from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.context import TushareRawContext
 
-    ctx = _raw_ctx(paths)
-    ctx.start_date = 20240101
+    base = _raw_ctx(paths)
+    ctx = TushareRawContext(
+        paths=base.paths,
+        rate_limit=base.rate_limit,
+        start_date=20240101,
+        index_codes=("000300.SH",),
+    )
     for name in (
         "instruments",
         "calendar",
+        "future_calendar",
         "daily",
         "daily_basic",
         "adj_factor",
@@ -174,6 +182,7 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
             "providers": {
                 "tushare": {
                     "start_date": 20240101,
+                    "index_codes": ["000300.SH"],
                     "rate_limit": {
                         "sleep_between_requests_sec": 0,
                         "max_retries": 1,
@@ -197,6 +206,7 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
         "index_basic",
         "fut_basic",
         "trade_cal",
+        "fut_trade_cal",
         "daily",
         "adj_factor",
         "stk_limit",
@@ -209,7 +219,8 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     # 2 stock + 1 index + 1 future
     assert _count(pg_conn, "meta.instruments") == 4
     assert _count(pg_conn, "meta.symbol_map") == 4
-    assert _count(pg_conn, "meta.trading_calendar") == 6  # 3 cal_date x 2 exch
+    raw_calendar = read_parquet_strict(tmp_raw_root.dataset_file("tushare", "calendar", "SSE"))
+    assert _count(pg_conn, "meta.trading_calendar") == 2 * len(raw_calendar)
     assert _count(pg_conn, "market.stock_bar_1d") == 4  # 2 codes x 2 days
     assert _count(pg_conn, "market.index_bar_1d") == 2
     assert _count(pg_conn, "market.future_bar_1d") == 2

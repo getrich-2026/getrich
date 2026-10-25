@@ -202,7 +202,6 @@ def test_unknown_list_status_rejected(tmp_raw_root):
     assert _raised(lambda: imp._build_stock(raw), ValueError)
 
 
-@_finding(26, "期货合约一律写 active，早已到期的合约也是 active")
 def test_expired_future_not_active(tmp_raw_root):
     raw = pd.DataFrame(
         [
@@ -219,7 +218,6 @@ def test_expired_future_not_active(tmp_raw_root):
     assert out.iloc[0]["status"] != "active"
 
 
-@_finding(29, "is_open 非法值被转成 0，静默当成休市")
 def test_calendar_invalid_is_open_rejected(tmp_raw_root):
     from gr_data.ingest.base import IngestContext
     from gr_data.ingest.tushare.importers.reference import CalendarImporter
@@ -350,7 +348,6 @@ class _EmptyQueryConn:
         return cursor
 
 
-@_finding(42, "指数先去重后 strip 代码，带空白的重复行去不掉")
 def test_index_duplicates_with_whitespace_collapsed(tmp_raw_root, monkeypatch):
     rows = [_index_row(), _index_row(ts_code="000300.SH ", close=3431.0)]
     imp = _index_importer_with(tmp_raw_root, monkeypatch, rows)
@@ -360,7 +357,6 @@ def test_index_duplicates_with_whitespace_collapsed(tmp_raw_root, monkeypatch):
     assert not out.duplicated(subset=["instrument_id", "dt"]).any()
 
 
-@_finding(43, "丢弃无收盘价的指数行只记日志，不计软告警，退出码仍为 0")
 def test_index_dropped_rows_raise_soft_warning(tmp_raw_root, monkeypatch):
     rows = [_index_row(), _index_row(ts_code="H11001.CSI", close=None)]
     imp = _index_importer_with(tmp_raw_root, monkeypatch, rows)

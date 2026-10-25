@@ -6,6 +6,7 @@ import pandas as pd
 
 from gr_data.common import contracts
 from gr_data.common.parquet import read_parquet_strict
+from gr_data.common.retry import int_to_date, today_int
 from gr_data.ingest.base import BaseImporter, IngestGateError
 from gr_data.ingest.tushare.adapter import (
     ASSETS,
@@ -14,6 +15,7 @@ from gr_data.ingest.tushare.adapter import (
     TushareAdapter,
 )
 from gr_data.ingest.tushare.symbols import split_ts_code, stock_alias_ids
+from gr_data.raw.tushare.fetchers.reference import read_open_days
 
 
 PROVIDER = "tushare"
@@ -119,6 +121,8 @@ class InstrumentsImporter(BaseImporter):
     def _build_future(self, raw: pd.DataFrame) -> pd.DataFrame:
         _require(raw, {"ts_code", "name", "list_date", "delist_date"}, "fut_basic")
         r = _clean_codes(raw, "fut_basic")
+        expired = r["delist_date"].map(parse_date)
+        today = int_to_date(today_int())
         return pd.DataFrame(
             {
                 "symbol": r["ts_code"],
@@ -126,8 +130,10 @@ class InstrumentsImporter(BaseImporter):
                 "exchange": [split_ts_code(c)[1] for c in r["ts_code"]],
                 "name": r["name"].where(r["name"].notna(), None),
                 "list_date": r["list_date"].map(parse_date),
-                "delist_date": r["delist_date"].map(parse_date),
-                "status": "active",
+                "delist_date": expired,
+                "status": [
+                    "delisted" if d is not None and d < today else "active" for d in expired
+                ],
             }
         )[list(self.contract.columns)]
 
@@ -197,6 +203,8 @@ class CalendarImporter(BaseImporter):
 
     def _build_one(self, raw: pd.DataFrame, exchange: str) -> pd.DataFrame:
         _require(raw, {"cal_date", "is_open"}, "trade_cal")
+        # 源文件里的交易所码和 canonical 码不同，此处仅复用日期、开市标志校验。
+        read_open_days(raw.drop(columns=["exchange"], errors="ignore"), exchange)
         r = raw.drop_duplicates(subset=["cal_date"], keep="last").copy()
         r["trading_day"] = r["cal_date"].map(parse_date)
         if r["trading_day"].isna().any():

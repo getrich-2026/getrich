@@ -78,14 +78,21 @@ def test_insight_fetch_flow(tmp_raw_root, fake_insight):
 def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):
     """Tushare 按月分区抓取：只有有数据的月份落盘，空月份不产生文件。"""
     from gr_data.raw.tushare import REGISTRY
+    from gr_data.raw.tushare.context import TushareRawContext
 
-    ctx = _ctx(tmp_raw_root)
-    # start_date 收窄到 2024-01，避免测试遍历十余年的月份
-    ctx.start_date = 20240101
+    base = _ctx(tmp_raw_root)
+    # start_date 收窄到 2024-01，避免测试遍历十余年的月份；指数须显式白名单
+    ctx = TushareRawContext(
+        paths=base.paths,
+        rate_limit=base.rate_limit,
+        start_date=20240101,
+        index_codes=("000300.SH",),
+    )
 
     REGISTRY["instruments"](fake_tushare, ctx).fetch("init")
     # 逐日 fetcher 依赖 calendar 提供交易日列表，必须先抓
     REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    REGISTRY["future_calendar"](fake_tushare, ctx).fetch("init")
     for ds in (
         "daily",
         "daily_basic",
@@ -103,7 +110,9 @@ def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):
     assert fut is not None and "CU2401.SHF" in set(fut["ts_code"])
 
     cal = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "calendar", "SSE"))
-    assert cal is not None and len(cal) == 3
+    assert cal is not None
+    assert set(cal.loc[cal["is_open"].eq(1), "cal_date"]) == {"20240102", "20240103"}
+    assert cal.loc[cal["cal_date"].eq("20240101"), "is_open"].tolist() == [0]
 
     # 逐日数据集按 YYYY-MM 分区
     daily = read_parquet_if_exists(tmp_raw_root.dataset_file("tushare", "daily", "2024-01"))

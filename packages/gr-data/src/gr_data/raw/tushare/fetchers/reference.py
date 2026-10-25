@@ -9,12 +9,14 @@
 from __future__ import annotations
 
 import calendar
+from datetime import date
 
 import pandas as pd
 
 from gr_data.common.parquet import write_parquet
 from gr_data.common.retry import int_to_date, retry_call, sleep_s, today_int
-from gr_data.raw.base import BaseFetcher
+from gr_data.raw.base import BaseFetcher, RawContext
+from gr_data.raw.tushare.context import FUTURE_EXCHANGES, INDEX_MARKETS, as_tushare_context
 
 
 PROVIDER = "tushare"
@@ -23,8 +25,6 @@ CALENDAR_EXCHANGES = ("SSE", "SZSE")
 # stock_basic 默认只返回上市中(L)的股票；退市(D)与暂停上市(P)必须显式拉取，
 # 否则历史行情会因为找不到标的而整段丢失。
 STOCK_STATUSES = ("L", "D", "P")
-INDEX_MARKETS = ("SSE", "SZSE", "CSI", "SW", "MSCI", "CICC", "OTH")
-FUTURE_EXCHANGES = ("CFFEX", "DCE", "CZCE", "SHFE", "INE", "GFEX")
 # 1=普通合约, 2=主力与连续合约
 FUTURE_TYPES = ("1", "2")
 
@@ -34,6 +34,30 @@ FUT_BASIC_FIELDS = "ts_code,symbol,exchange,name,fut_code,multiplier,list_date,d
 TRADE_CAL_FIELDS = "exchange,cal_date,is_open,pretrade_date"
 
 CALENDAR_INIT_START = 20130101
+
+
+def read_open_days(frame: pd.DataFrame, exchange: str) -> list[date]:
+    """校验日历键及 0/1 标志，返回有序开市日；坏日历不能解释成休市。"""
+    if frame.empty or not {"cal_date", "is_open"} <= set(frame.columns):
+        raise ValueError(f"Invalid trading calendar: {exchange}")
+    if "exchange" in frame and not frame["exchange"].eq(exchange).all():
+        raise ValueError(f"Unexpected trading calendar exchange: {exchange}")
+    dates = pd.to_datetime(frame["cal_date"].astype(str), format="%Y%m%d", errors="raise")
+    flags = pd.to_numeric(frame["is_open"], errors="coerce")
+    if dates.isna().any() or dates.duplicated().any() or not flags.isin([0, 1]).all():
+        raise ValueError(f"Invalid trading calendar dates or is_open: {exchange}")
+    return sorted(dates.loc[flags.eq(1)].dt.date)
+
+
+def require_calendar_range(frame: pd.DataFrame, first: date, last: date, exchange: str) -> None:
+    """区间内每个自然日须有开闭市记录，缺日期不能被当作休市跳过。"""
+    dates = set(pd.to_datetime(frame["cal_date"].astype(str), format="%Y%m%d").dt.date)
+    expected = set(pd.date_range(first, last).date)
+    missing = sorted(expected - dates)
+    if missing:
+        raise ValueError(
+            f"Incomplete trading calendar exchange={exchange} missing_days={missing[:5]}"
+        )
 
 
 class InstrumentsFetcher(BaseFetcher):
@@ -114,6 +138,8 @@ class CalendarFetcher(BaseFetcher):
 
     PROVIDER = PROVIDER
     DATASET = "calendar"
+    API_NAME = "trade_cal"
+    EXCHANGES = CALENDAR_EXCHANGES
 
     def fetch(self, mode: str = "update") -> int:
         start = int_to_date(self.ctx.start_date or CALENDAR_INIT_START)
@@ -124,10 +150,10 @@ class CalendarFetcher(BaseFetcher):
             year=next_year, day=min(today.day, calendar.monthrange(next_year, today.month)[1])
         )
         n = 0
-        for exchange in CALENDAR_EXCHANGES:
+        for exchange in self._exchanges():
             df = retry_call(
                 self.client.query_all,
-                "trade_cal",
+                self.API_NAME,
                 max_retries=self.ctx.max_retries,
                 backoff_base=self.ctx.backoff_base,
                 logger=self.log,
@@ -137,12 +163,35 @@ class CalendarFetcher(BaseFetcher):
                 fields=TRADE_CAL_FIELDS,
             )
             if df is None or df.empty:
+                if self.DATASET == "future_calendar":
+                    raise ValueError(f"Missing future trading calendar: {exchange}")
                 self.log.warning("calendar[%s] 无数据，跳过写入", exchange)
                 sleep_s(self.ctx.sleep_between_requests)
                 continue
+            read_open_days(df, exchange)
             out = self.paths.dataset_file(self.PROVIDER, self.DATASET, exchange)
             write_parquet(df, out, append=False)
             self.log.info("calendar[%s] 写入 %d 行", exchange, len(df))
             n += 1
             sleep_s(self.ctx.sleep_between_requests)
         return n
+
+    def _exchanges(self) -> tuple[str, ...]:
+        return self.EXCHANGES
+
+
+class FutureCalendarFetcher(CalendarFetcher):
+    """期货交易日历独立落 raw，不用沪深日历代替各期货交易所。
+
+    只取 ``providers.tushare.future_exchanges`` 白名单内的交易所；默认六所全取。
+    """
+
+    DATASET = "future_calendar"
+    API_NAME = "fut_trade_cal"
+
+    def __init__(self, client: object, ctx: RawContext) -> None:
+        super().__init__(client, ctx)
+        self.ctx = as_tushare_context(ctx)
+
+    def _exchanges(self) -> tuple[str, ...]:
+        return self.ctx.future_exchanges

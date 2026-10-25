@@ -55,7 +55,7 @@ uv run gr-data ingest tushare               # 归一化入库
 
 ### Tushare 已实现范围与导入顺序
 
-当前覆盖 11 个接口：`stock_basic`、`index_basic`、`fut_basic`、`trade_cal`、
+当前覆盖 12 个接口：`stock_basic`、`index_basic`、`fut_basic`、`trade_cal`、`fut_trade_cal`、
 `daily`、`adj_factor`、`stk_limit`、`suspend_d`、`index_daily`、`daily_basic`、`fut_daily`。
 财报、宏观和 ETF／期权扩展不在这一批接口范围内。
 
@@ -82,7 +82,8 @@ uv run gr-data ingest tushare               # 归一化入库
 | `fundamental` | `valuation_1d` → `fundamental.valuation_1d` |
 | `classify` | `instrument_category` → `classify.instrument_category` |
 
-raw 先抓日历，再按 `trade_date` 逐日请求全市场，按自然月落盘。
+raw 先抓标的和日历。股票按 `trade_date` 逐日请求全市场；指数按白名单逐代码整段请求，
+期货按白名单交易所逐日请求，均按自然月落盘。
 每页请求（包含末尾空页探测与失败后的重试）都遵守
 `providers.tushare.rate_limit.sleep_between_requests_sec`；遇到 offset 硬上限直接失败，
 不把同一超大查询重试数遍。
@@ -99,9 +100,12 @@ raw 先抓日历，再按 `trade_date` 逐日请求全市场，按自然月落�
 重建；该月起点须为月初，且已到月末。非稀疏数据存在空响应时不以不完整结果
 重建损坏文件。月中起抓、尚未到月末或 `update` 仍需读出旧文件，读取失败时
 明确报错并保留原文件，以免丢掉未请求日期。
+按白名单采集的 `index_daily`／`fut_daily` 例外：整月 `init` 也要读出旧文件以保留范围外的行，
+旧文件损坏时同样报错；需要重建时先把损坏文件移出分区目录，并确认范围外数据可另行补回。
 
 ```bash
 uv run gr-data raw tushare --only instruments,calendar --mode update
+uv run gr-data raw tushare --only future_calendar --mode update  # 启用期货时必需
 uv run gr-data raw tushare --only daily,adj_factor,stk_limit,suspend_d,index_daily,daily_basic,fut_daily --mode update
 uv run gr-data own list
 uv run gr-data ingest tushare --only reference
@@ -114,6 +118,72 @@ uv run gr-data ingest tushare --only events,bars_1d,market_ext,fundamental,class
 未提升字段在 `raw_payload` 中保持供应商原单位。缺复权因子或股票 OHLC 会中断；
 个别代码缺涨跌停价保留 NULL 并记软告警。股票辅助表关联前统一 int8／字符串日期
 及代码首尾空格，再按键去重；期货成交量与持仓量保持「手」。
+
+### 指数与期货日线（2026-10-24，代码审核阶段）
+
+本轮只修代码并用模拟供应商及一次性 PostgreSQL 验证，**真实回补等待用户完成代码审核**。
+可审查配置见 [config.tushare-markets.example.yaml](config.tushare-markets.example.yaml)：
+起点为 2024-01-01，终点显式固定为 2026-10-23。`end_date` 只限定日线取数，
+参考日历仍多取一年缓冲；未配置时沿用当天上限，配置未来日期也不会请求未来日线。
+
+| 环节 | 修复前 | 修复后 |
+|---|---|---|
+| 普通指数请求 | 仅传交易日 | 按 `index_codes`／`index_markets` 白名单选代码，每个代码一次请求整段区间，再按月落盘 |
+| 期货分页 | 按 5000 行判断末页，可能截断 | 按官方 2000 行上限翻页，整页后继续探测 |
+| 期货交易日 | 使用沪市日历 | `future_exchanges` 白名单内各所的 `future_calendar/<exchange>.parquet`，逐所检查自然日覆盖后再取开市日 |
+| 入库业务键 | 去重后才清理代码 | 先统一代码空白和日期表示，再按代码与交易日保留最后一行 |
+| 丢弃不可用行情 | 仅运行日志 | 纳入软告警、ETL `partial` 与 CLI 退出码 3 |
+
+指数接口契约依据 [index_daily](https://tushare.pro/document/2?doc_id=95)。
+本机 2026-10-24 的 `index_basic` 落盘有 9,746 个非申万指数（CSI 9,053），逐代码逐月全量约 33 万次请求，
+因此 `index_daily` **必须**配置 `providers.tushare.index_codes` 或 `index_markets`（取并集），
+未配置即拒绝运行；未知代码、申万代码同样在请求前拒绝。请求次数等于代码数 × 连续月份段数，
+与月份数无关（`update` 补缺失旧月加重抓最新月时分段请求，不跨越中间已完整的月份）。
+**迁移提示**：已有机器配置若启用了 `index_daily` 却未配范围，升级后该数据集会直接报错，
+同一次 `gr-data raw tushare` 里排在其后的数据集也不会执行；先补 `index_codes`。
+该接口不覆盖申万，`.SI`／`market=SW` 明确排除；不调用申万或中信专用行情接口。
+指数 `list_date` 是发布日期，只限定完整性检查，不删除供应商提供的发布前回溯值；
+这类回溯值不是历史时点可得性证明。发布至终止区间内，任一代码过去开市日缺记录即拒绝本次全部落盘，
+报错汇总所有缺数据的代码（代码:缺失天数:首个缺失日），便于一次修正白名单；今天尚未发布可留待更新。
+`index_markets` 没有排除单个代码的办法：按市场选取时任一代码缺数据，整次运行都不落盘，
+且整段行情同时留在内存。CSI 这类大市场未经实测前不要用 `index_markets`，改为逐个列出 `index_codes`。
+账户权限、真实覆盖和跨市场指数的日历适用性仍须审核后小样本实取核验，
+不能用 mock 通过宣称供应商数据已验收。
+
+期货依据 [fut_daily](https://tushare.pro/document/2?doc_id=138) 与
+[fut_trade_cal](https://tushare.pro/document/2?doc_id=467)。仅采集基础合约清单中出现的交易所，
+每个开市日必须有该所响应；缺日历、日历日期缺口、非法开市标志、错交易所、错日期、重复响应键
+均拒绝写出该月。[fut_trade_cal 文档](https://tushare.pro/document/2?doc_id=467) 只列
+CFFEX／DCE／CZCE／SHFE／INE，GFEX 由 2026-10-24 的 live 用例实测确认（2024 全年日历逐日完整，日线只返回 `.GFE` 合约），因此 `providers.tushare.future_exchanges` 默认六所全取，可显式收窄；日历与日线都只取白名单，基础合约中白名单外的交易所记 WARNING 后整所跳过。复核命令：设置 `TUSHARE_TOKEN` 后运行
+`uv run pytest packages/gr-data/tests/live/test_tushare_live.py -k "future_calendar_exchange_supported or gfex"`。白名单内的交易所缺日历时明确失败，
+不回退使用沪市或其他交易所的日历。
+各所的检查起点取 `start_date` 与基础合约清单中该所最早 `list_date` 的较晚者（如 GFEX 20221222、INE 20180326），
+开业前不要求日历、不请求日线，也不因缺该所后缀把旧月份判为需重抓；日志 `Future exchange scope starts at first listing` 记录实际起点。
+清单里该所没有任何上市日时不放宽，仍按 `start_date` 严格检查。
+
+**扩大范围后的回补**：`update` 原本只补缺失月并重抓最新月。现在还会读取已有分区，
+某月缺少当前白名单里的指数代码（该代码在当月应有过去开市日）或交易所（如新加入的 GFEX）时，
+该月也会重抓并替换，不会静默留下历史缺口；日志 `Refetching partitions missing current scope` 列出这些月份。
+**收窄范围不删旧数据**：`update` 与整月 `init` 重抓某月时，都只替换当前白名单内代码（指数）或交易所（期货）在请求日期上的行；
+白名单外的旧行（包括升级前按交易日取得的全量指数）原样保留，日志 `Kept out-of-scope raw rows` 记录行数。
+期货还要求日期不早于该所有效起点：清单缺老合约导致起点推后时，起点前的旧行同样保留，不随同日其他所的重抓被删。
+
+日线 `dt/trading_day` 保留供应商交易日，
+不从夜盘自然日期推导，也不构造分钟时间戳。`future_calendar` 只用于 raw 调度，不把缺少夜盘信息的
+日历写成 `meta.trading_calendar.has_night=false`。
+
+指数成交量按手→股、成交额按千元→元；期货成交量／持仓量保持手、成交额按万元→元。
+金额以 `Decimal` 换算。已有的非数值、非有限或负成交量／成交额／持仓量拒绝；缺失仍保留 NULL，
+期货手数不允许小数。只发布收盘点位的指数、只有结算价的期货仍保留，不能补造 OHLC。
+各月逐份检查必需列，避免其他月份补齐列名掩盖缺列文件。
+
+**原油 TAS 价差（2026-10-25 实测）**：`SCTAS` 月合约及主力／连续序列的 `open/high/low/close/pre_close` 是结算价偏移量，`settle/pre_settle` 仍是绝对结算价。依据[能源中心通知](https://www.ine.com.cn/eng/circularnews/circular/202303/t20230329_822378.html)，2023-04-11 交易日起该偏移量可在 [-2, 2] 元/桶内，因此 -0.1 是合法价差。独立 raw 回补执行器调用 `raw/tushare/quote_rules.py`：只对代码与基础信息 `exchange=INE, fut_code=SCTAS` 均确认的 TAS 价差字段应用对应边界；普通合约、所有结算价、成交量／金额／持仓量仍非负，已有非数值或非有限值拒绝。源 NULL 和负价差原样保留，不补零、不取绝对值、不加结算价重造 OHLC。**普通 `future_bar_1d` 没有 TAS 价差语义：importer 按代码形态（`SCTAS????.INE`／`SCTASL.INE`／`SCTAS.INE`）整行排除 TAS 行，计软告警（ETL `partial`、CLI 退出码 3），raw 不变；单独的存储与消费语义定案前，这些合约不进入 `market.future_bar_1d`。**
+
+审核后的运行顺序为 `instruments → calendar/future_calendar → index_daily/fut_daily`，
+再导入 `instruments,symbol_map,calendar`，最后逐月导入 `index_bar_1d,future_bar_1d`。
+先核对工作库表归属、真实小样本、日期覆盖、单位和行数，再批准历史回补；不使用包含股票的
+`bars_1d`／`all` 组名，也不自动转移表归属。独立 worktree、独立虚拟环境和明确的配置路径
+应保留至本轮验收，不合并或修改米筐正在使用的工作目录。
 
 ### 导入门禁与退出码（Tushare）
 

@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 
 import pytest
+from gr_data.raw.tushare import context
 from gr_data.raw.tushare.client import TushareProClient
 from gr_data.raw.tushare.fetchers import market, reference
 
@@ -23,6 +25,7 @@ TOKEN = os.environ.get("TUSHARE_TOKEN", "")
 _needs_token = pytest.mark.skipif(not TOKEN, reason="未设置 TUSHARE_TOKEN，跳过真实接口用例")
 
 DAY = {"start_date": "20240102", "end_date": "20240102"}
+DAY_TRADE = {"trade_date": "20240102"}
 
 CONTRACTS = [
     (
@@ -120,3 +123,31 @@ def test_offset_pagination_is_lossless():
     big, small = page(6000), page(1000)
     assert big == small
     assert len(big) > 4000  # A 股全市场规模的下限保护
+
+
+@_needs_token
+@pytest.mark.parametrize("exchange", context.FUTURE_EXCHANGES)
+def test_future_calendar_exchange_supported(exchange):
+    """fut_trade_cal 每所须返回 2024 全年逐自然日开闭市记录。
+
+    GFEX 不在官方文档的 exchange 列表里；本用例通过才可把它加入 ``future_exchanges``。
+    """
+    df = TushareProClient(token=TOKEN).query_all(
+        "fut_trade_cal",
+        exchange=exchange,
+        start_date="20240101",
+        end_date="20241231",
+        fields=reference.TRADE_CAL_FIELDS,
+    )
+    reference.require_calendar_range(df, date(2024, 1, 1), date(2024, 12, 31), exchange)
+    assert len(reference.read_open_days(df, exchange)) > 200
+
+
+@_needs_token
+def test_gfex_daily_matches_exchange():
+    """GFEX 日线按 exchange 过滤后只返回 .GFE 合约，且非空。"""
+    df = TushareProClient(token=TOKEN).query_all(
+        "fut_daily", exchange="GFEX", fields=market.FUT_DAILY_FIELDS, **DAY_TRADE
+    )
+    assert not df.empty
+    assert df["ts_code"].astype(str).str.endswith(".GFE").all()

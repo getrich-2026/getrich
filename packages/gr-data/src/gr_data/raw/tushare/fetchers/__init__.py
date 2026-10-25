@@ -11,6 +11,7 @@ from gr_data.raw.tushare.fetchers.market import (
 )
 from gr_data.raw.tushare.fetchers.reference import (
     CalendarFetcher,
+    FutureCalendarFetcher,
     InstrumentsFetcher,
 )
 
@@ -18,6 +19,7 @@ from gr_data.raw.tushare.fetchers.reference import (
 REGISTRY = {
     "instruments": InstrumentsFetcher,
     "calendar": CalendarFetcher,
+    "future_calendar": FutureCalendarFetcher,
     "daily": Bars1dFetcher,
     "adj_factor": AdjFactorFetcher,
     "daily_basic": DailyBasicFetcher,

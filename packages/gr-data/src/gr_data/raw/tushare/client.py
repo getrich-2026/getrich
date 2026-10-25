@@ -51,7 +51,9 @@ PAGE_LIMITS: dict[str, int] = {
     "stk_limit": 5800,
     "suspend_d": 5000,
     "index_daily": 5000,
-    "fut_daily": 5000,
+    # 官方 doc_id=138：期货日线单次最多 2000 行，不能按 5000 判断末页。
+    "fut_daily": 2000,
+    "fut_trade_cal": 1000,
     "trade_cal": 5000,
     "stock_basic": 5000,
     "index_basic": 5000,

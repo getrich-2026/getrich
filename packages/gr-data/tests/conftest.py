@@ -257,28 +257,25 @@ class FakeTushareClient:
         )
 
     def _trade_cal(self, exchange="SSE", **params) -> pd.DataFrame:
+        dates = pd.date_range(
+            params.get("start_date", "20240101"), params.get("end_date", "20240106")
+        )
         return pd.DataFrame(
             [
                 {
                     "exchange": exchange,
-                    "cal_date": "20240102",
-                    "is_open": 1,
-                    "pretrade_date": "20231229",
-                },
-                {
-                    "exchange": exchange,
-                    "cal_date": "20240103",
-                    "is_open": 1,
-                    "pretrade_date": "20240102",
-                },
-                {
-                    "exchange": exchange,
-                    "cal_date": "20240106",
-                    "is_open": 0,
-                    "pretrade_date": "20240105",
-                },
+                    "cal_date": d.strftime("%Y%m%d"),
+                    "is_open": int(d.strftime("%Y%m%d") in self.DAYS),
+                    "pretrade_date": "20231229"
+                    if d.strftime("%Y%m%d") <= "20240102"
+                    else "20240102",
+                }
+                for d in dates
             ]
         )
+
+    def _fut_trade_cal(self, exchange="SHFE", **params) -> pd.DataFrame:
+        return self._trade_cal(exchange=exchange, **params)
 
     # ---- 逐日数据集 ----
     def _daily(self, **params) -> pd.DataFrame:
@@ -372,6 +369,8 @@ class FakeTushareClient:
         )
 
     def _index_daily(self, **params) -> pd.DataFrame:
+        if not params.get("ts_code"):
+            raise ValueError("index_daily requires ts_code")
         return pd.DataFrame(
             [
                 {
@@ -387,6 +386,7 @@ class FakeTushareClient:
                     "amount": 250000.0,
                 }
                 for c in self.INDEXES
+                if c == params["ts_code"]
                 for d in self._days_in(params)
             ]
         )
