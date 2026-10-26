@@ -480,14 +480,6 @@
         ],
         "./packages/gr-api/src/gr_api/services/pick_import.py": [
             {
-                "code": "reportCallIssue",
-                "range": {
-                    "startColumn": 70,
-                    "endColumn": 88,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportArgumentType",
                 "range": {
                     "startColumn": 79,
@@ -10206,56 +10198,12 @@
                 }
             }
         ],
-        "./packages/gr-tools/src/gr_tools/human.py": [
-            {
-                "code": "reportAttributeAccessIssue",
-                "range": {
-                    "startColumn": 22,
-                    "endColumn": 28,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportReturnType",
-                "range": {
-                    "startColumn": 19,
-                    "endColumn": 73,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportReturnType",
-                "range": {
-                    "startColumn": 19,
-                    "endColumn": 22,
-                    "lineCount": 1
-                }
-            }
-        ],
         "./packages/gr-tools/tests/test_config.py": [
             {
                 "code": "reportIndexIssue",
                 "range": {
                     "startColumn": 8,
                     "endColumn": 18,
-                    "lineCount": 1
-                }
-            }
-        ],
-        "./packages/gr-tools/tests/test_io.py": [
-            {
-                "code": "reportAttributeAccessIssue",
-                "range": {
-                    "startColumn": 24,
-                    "endColumn": 30,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportCallIssue",
-                "range": {
-                    "startColumn": 11,
-                    "endColumn": 49,
                     "lineCount": 1
                 }
             }

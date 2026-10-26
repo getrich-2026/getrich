@@ -1,247 +1,147 @@
-"""人性化格式化：给日志和 CLI 输出用。
+"""数量、字节数与时长的可读格式化，供日志和 CLI 展示。
 
-移植自 ``lntools.format.human``（2026-08-17），改动：
-* 去掉 pandas 依赖，日期归一走 stdlib；
-* ``datetime_str`` 不再依赖 lntools 的 timeutils，快捷格式在本模块内定义；
-* 进度条 ``track`` 在没装 tqdm 时退化成节流文本输出。
-
-这些函数只负责「给人看」，**不要**用它们的输出做解析或存库。
+输出经过舍入或截断，不应用于解析、计算或存库。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Iterable, Sequence, Sized
-from datetime import date, datetime, timedelta
-from pathlib import Path
-from typing import Any, TypeVar
+from math import isfinite
 
 
-T = TypeVar("T")
-
-Reporter = Callable[[str], None]
-
-#: ``datetime_str`` 的快捷格式名。
-SHORTCUTS = {
-    "wide": "%Y-%m-%d",
-    "standard": "%Y/%m/%d",
-    "compact": "%Y%m%d",
-    "datetime": "%Y-%m-%d %H:%M:%S",
-}
-
-
-def path(path_str: str | Path | None) -> str:
-    """路径能相对当前工作目录就显示相对路径，否则显示绝对路径。"""
-    if not path_str:
-        return ""
+def _finite_float(value: int | float) -> float:
+    """统一拒绝非有限值及超出 float 表示范围的整数。"""
     try:
-        resolved = Path(path_str).expanduser().resolve()
-        cwd = Path.cwd()
-        if resolved.is_relative_to(cwd):
-            return str(resolved.relative_to(cwd))
-        return str(resolved)
-    except (ValueError, OSError):
-        return str(path_str)
+        number = float(value)
+    except OverflowError:
+        raise ValueError("value must be finite and within float range") from None
+    if not isfinite(number):
+        raise ValueError("value must be finite and within float range")
+    return number
+
+
+def _trim_zeros(text: str) -> str:
+    """去掉小数部分的尾零，并把 ``-0`` 归一为 ``0``。"""
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
 
 
 def unit(n: int | float, unit_name: str, decimal: int = 0, auto_scale: bool = False) -> str:
-    """把数量和单位拼成可读文本。
+    """格式化数量；英文复数仅通过追加 s 处理，不处理不规则词形。
 
     Args:
-        n: 数量。
-        unit_name: 单位名（英文单数形式）。
-        decimal: 小数位数。
-        auto_scale: 是否自动换算成 K / M / B / T。
+        n: 有限数量，支持负数；未缩放的整数保留精确值。
+        unit_name: 英文单数单位名，已以 s 结尾时不重复追加。
+        decimal: 最多保留的小数位数，输出去掉小数部分的尾零。
+        auto_scale: 按 1000 进位至 K / M / B / T；缩放后 decimal 为 0
+            且有小数时保留一位，舍入达到进位阈值时继续进位。
 
     Returns:
         如 ``1 apple`` / ``10 apples`` / ``1.5K users``。
+        未缩放且显示值绝对值为 1 时使用单数。
 
     Raises:
-        ValueError: ``decimal`` 为负。
+        ValueError: decimal 为负，或 n 无法表示为有限 float。
     """
     if decimal < 0:
         raise ValueError("decimal places cannot be negative")
+    value = _finite_float(n)
+    prefixes = ("", "K", "M", "B", "T")
+    index = 0
+    if auto_scale:
+        while abs(value) >= 1000 and index < len(prefixes) - 1:
+            value /= 1000
+            index += 1
 
-    value = float(n)
-    prefix = ""
+    precision = 1 if index and decimal == 0 and value % 1 else decimal
+    text = str(int(n)) if index == 0 and isinstance(n, int) else f"{value:.{precision}f}"
+    if auto_scale and index < len(prefixes) - 1 and abs(float(text)) >= 1000:
+        value /= 1000
+        index += 1
+        precision = 1 if decimal == 0 and value % 1 else decimal
+        text = f"{value:.{precision}f}"
+    text = _trim_zeros(text)
 
-    if auto_scale and abs(value) >= 1000:
-        for candidate in ("", "K", "M", "B", "T"):
-            prefix = candidate
-            if abs(value) < 1000.0 or candidate == "T":
-                break
-            value /= 1000.0
-        if decimal == 0 and value % 1 != 0:
-            decimal = 1
-
-    text = f"{value:.{decimal}f}"
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-
-    plural = "s" if (value != 1.0 or prefix) and not unit_name.endswith("s") else ""
-    return f"{text}{prefix} {unit_name}{plural}"
+    singular = index == 0 and text in {"1", "-1"}
+    plural = "" if singular or unit_name.endswith("s") else "s"
+    return f"{text}{prefixes[index]} {unit_name}{plural}"
 
 
 def bytes_size(n: int | float, decimal: int = 1) -> str:
-    """字节数转 B / KB / MB / GB / TB / PB。"""
-    value = float(n)
-    for suffix in ("B", "KB", "MB", "GB", "TB", "PB"):
-        if abs(value) < 1024.0:
-            return f"{int(value)} {suffix}" if suffix == "B" else f"{value:.{decimal}f} {suffix}"
-        value /= 1024.0
-    return f"{value:.{decimal}f} EB"
+    """按 1024 进位显示字节数，沿用 B / KB / MB / GB / TB / PB / EB 命名。
+
+    Args:
+        n: 有限字节数，支持负数。
+        decimal: B 以上单位最多保留的小数位数，输出去掉小数部分的尾零；
+            B 截断到整数。
+
+    Returns:
+        如 ``512 B`` / ``1 KB`` / ``1.5 KB``；舍入达到 1024 时进位，最大单位为 EB。
+
+    Raises:
+        ValueError: decimal 为负，或 n 无法表示为有限 float。
+    """
+    if decimal < 0:
+        raise ValueError("decimal places cannot be negative")
+    value = _finite_float(n)
+    suffixes = ("B", "KB", "MB", "GB", "TB", "PB", "EB")
+    index = 0
+    while abs(value) >= 1024 and index < len(suffixes) - 1:
+        value /= 1024
+        index += 1
+    text = str(int(n)) if index == 0 else f"{value:.{decimal}f}"
+    if index < len(suffixes) - 1 and abs(float(text)) >= 1024:
+        value /= 1024
+        index += 1
+        text = f"{value:.{decimal}f}"
+    return f"{_trim_zeros(text)} {suffixes[index]}"
 
 
 def sec2str(s: float) -> str:
-    """秒数转可读时长，如 ``1.50s`` / ``2 mins 30s`` / ``1 hr 5 mins``。"""
-    if s < 0:
-        return f"-{sec2str(-s)}"
-    if s < 0.001:
-        return f"{s * 1e6:.0f}µs"
-    if s < 1:
-        return f"{s * 1e3:.0f}ms"
-    if s < 60:
-        return f"{s:.2f}s" if s < 10 else f"{s:.1f}s"
+    """将有限秒数格式化为时长，支持零与负数。
 
-    delta = timedelta(seconds=int(s))
-    hours, remainder = divmod(delta.seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-
-    parts: list[str] = []
-    if delta.days > 0:
-        parts.append(unit(delta.days, "day"))
-    if hours > 0:
-        parts.append(unit(hours, "hr"))
-    if minutes > 0:
-        parts.append(unit(minutes, "min"))
-    if delta.days == 0 and hours == 0 and secs > 0:
-        parts.append(f"{secs}s")
-    return " ".join(parts[:2])
-
-
-def lists(items: Sequence[Any] | None, n: int = 3, formatter: Callable[[Any], str] = str) -> str:
-    """列表截断预览，如 ``[1, 2, 3] (& 5 others)``。"""
-    if items is None:
-        return "None"
-    if hasattr(items, "tolist"):
-        items = items.tolist()
-    if not isinstance(items, list | tuple | str):
-        items = list(items) if isinstance(items, Iterable) else [items]
-
-    length = len(items)
-    if length == 0:
-        return "[]"
-    if length <= n:
-        return f"[{', '.join(formatter(x) for x in items)}]"
-    shown = ", ".join(formatter(x) for x in items[:n])
-    return f"[{shown}] (& {unit(length - n, 'other')})"
-
-
-def _to_date(value: Any) -> date:
-    """把 ``date`` / ``datetime`` / ``YYYY-MM-DD`` / ``YYYYMMDD`` 归一成 ``date``。"""
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, int):
-        text = str(value)
-        return date(int(text[:4]), int(text[4:6]), int(text[6:8]))
-    return date.fromisoformat(str(value).strip()[:10])
-
-
-def ranges(days: Sequence[Any], sort: bool = True) -> str:
-    """日期序列压缩成区间描述，如 ``2026-08-11 ~ 2026-08-14 (4 days, 4D)``。"""
-    if not days:
-        return "No dates"
-    try:
-        parsed = [_to_date(d) for d in days]
-    except (ValueError, TypeError):
-        return f"{len(days)} items (invalid dates)"
-
-    if len(parsed) == 1:
-        return f"{parsed[0]:%Y-%m-%d} (1 day)"
-    if sort:
-        parsed = sorted(parsed)
-
-    start, end = parsed[0], parsed[-1]
-    span_days = (end - start).days + 1
-
-    years, remainder = divmod(span_days, 365)
-    months = remainder // 30
-    if years == 0 and months < 2:
-        span_text = f"{span_days}D"
-    else:
-        span_text = (f"{years}Y" if years else "") + (f"{months}M" if months else "")
-    return f"{start:%Y-%m-%d} ~ {end:%Y-%m-%d} ({len(parsed)} days, {span_text})"
-
-
-def datetime_str(d: Any, method: str = "wide") -> str:
-    """按快捷格式名或 strftime 模板格式化日期。
+    一分钟以内使用 µs / ms / s；一分钟以上截断到整秒，
+    最多显示两个非零单位，达到一小时后不显示秒。
 
     Args:
-        d: ``date`` / ``datetime`` / ISO 字符串 / ``YYYYMMDD`` 整数。
-        method: :data:`SHORTCUTS` 里的名字，或任意 strftime 模板。
+        s: 有限秒数。
 
     Returns:
-        格式化结果；解析失败时原样 ``str()`` 返回，不抛异常。
+        如 ``1.50s`` / ``2 mins 30s`` / ``1 hr 5 mins``。
+
+    Raises:
+        ValueError: s 无法表示为有限 float。
     """
-    try:
-        parsed = _to_date(d)
-    except (ValueError, TypeError):
-        return str(d)
-    return parsed.strftime(SHORTCUTS.get(method, method))
+    value = _finite_float(s)
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    # 按舍入后的显示值选单位：round() 与格式化的取整规则一致，
+    # 如 0.9996 显示为 1.00s 而不是 1000ms
+    if round(value * 1e6) == 0:
+        return "0µs"
+    if round(value * 1e6) < 1000:
+        return f"{sign}{value * 1e6:.0f}µs"
+    if round(value * 1e3) < 1000:
+        return f"{sign}{value * 1e3:.0f}ms"
+    if round(value, 2) < 10:
+        return f"{sign}{value:.2f}s"
+    if round(value, 1) < 60:
+        return f"{sign}{value:.1f}s"
+
+    # 59.95～60 秒舍入后已达一分钟，不能截断回 59s
+    days, remainder = divmod(max(int(value), 60), 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(unit(days, "day"))
+    if hours:
+        parts.append(unit(hours, "hr"))
+    if minutes:
+        parts.append(unit(minutes, "min"))
+    if days == 0 and hours == 0 and secs:
+        parts.append(f"{secs}s")
+    return sign + " ".join(parts[:2])
 
 
-def _track_text(
-    items: Iterable[T],
-    msg: str,
-    total: int | None,
-    reporter: Reporter,
-    report_every: int,
-) -> Generator[T, None, None]:
-    last_pct = -1
-    for index, item in enumerate(items):
-        count = index + 1
-        if total:
-            pct = int(count * 100 / total)
-            if pct > last_pct or count == total:
-                reporter(f"{msg}: {count / total:.0%} ({count}/{total})")
-                last_pct = pct
-        elif count == 1 or (report_every > 0 and count % report_every == 0):
-            reporter(f"{msg}: {count} items")
-        yield item
-
-
-def track(
-    sequence: Iterable[T] | int,
-    msg: str = "Processing",
-    total: int | None = None,
-    reporter: Reporter = print,
-    report_every: int = 100,
-    **tqdm_kwargs: Any,
-) -> Generator[T, None, None]:
-    """带进度显示地遍历序列；没装 tqdm 时退化成节流文本输出。"""
-    items: Iterable[Any] = range(sequence) if isinstance(sequence, int) else sequence
-    if total is None and isinstance(items, Sized):
-        total = len(items)
-
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        yield from _track_text(items, msg, total, reporter, report_every)
-        return
-
-    with tqdm(items, desc=msg, total=total, leave=True, dynamic_ncols=True, **tqdm_kwargs) as bar:
-        yield from bar
-
-
-__all__ = [
-    "SHORTCUTS",
-    "bytes_size",
-    "datetime_str",
-    "lists",
-    "path",
-    "ranges",
-    "sec2str",
-    "track",
-    "unit",
-]
+__all__ = ["bytes_size", "sec2str", "unit"]

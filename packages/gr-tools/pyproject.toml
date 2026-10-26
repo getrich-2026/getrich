@@ -8,10 +8,9 @@ version = "0.1.2"
 description = "GetRich 通用工具：文件系统、多格式表格读取、人性化格式化。不依赖任何一方包"
 requires-python = ">=3.11"
 dependencies = [
-    "pandas>=2.0",
+    "fastexcel>=0.21.0",
     "polars",
-    "pyarrow>=14",
-    "tqdm",
+    "pyarrow>=14", # fastexcel 读 Excel 时需要（fastexcel 只把它列为可选组件）
     "python-dotenv>=1.2.2",
 ]
 
