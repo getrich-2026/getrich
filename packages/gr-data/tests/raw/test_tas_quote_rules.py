@@ -7,7 +7,8 @@ import pytest
 from gr_data.raw.tushare.quote_rules import tas_spread_mask, validate_future_quote_values
 
 
-def _raw(code="SCTAS2510.INE", **changes):
+def _raw(code: object = "SCTAS2510.INE", **changes: object):
+    # 反例会把任意列（含非法数值、非字符串）覆盖进源行，参数不限定为 str。
     row = {
         "ts_code": code,
         "trade_date": "20250903",

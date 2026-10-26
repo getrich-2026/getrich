@@ -220,6 +220,7 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     assert _count(pg_conn, "meta.instruments") == 4
     assert _count(pg_conn, "meta.symbol_map") == 4
     raw_calendar = read_parquet_strict(tmp_raw_root.dataset_file("tushare", "calendar", "SSE"))
+    assert raw_calendar is not None
     assert _count(pg_conn, "meta.trading_calendar") == 2 * len(raw_calendar)
     assert _count(pg_conn, "market.stock_bar_1d") == 4  # 2 codes x 2 days
     assert _count(pg_conn, "market.index_bar_1d") == 2

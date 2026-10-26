@@ -476,10 +476,12 @@ def test_scope_config_parsed():
         }
     )
     ctx = _build_context("tushare", cfg)
+    assert isinstance(ctx, TushareRawContext)
     assert ctx.index_codes == ("000300.SH", "399001.SZ")
     assert ctx.index_markets == ("SSE",)
     assert ctx.future_exchanges == ("SHFE", "GFEX")
     default = _build_context("tushare", Config({"providers": {"tushare": {}}}))
+    assert isinstance(default, TushareRawContext)
     assert default.index_codes == () and "GFEX" in default.future_exchanges
 
 

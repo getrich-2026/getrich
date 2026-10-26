@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import cast
 
 import pandas as pd
+import psycopg
 import pytest
 from gr_data.common.parquet import write_parquet
 from gr_data.ingest.base import IngestContext
@@ -34,7 +36,8 @@ def _importer(paths, future, rows, months=None):
     name = "fut_daily" if future else "index_daily"
     write_parquet(pd.DataFrame(rows), paths.dataset_file("tushare", name, "2024-01"), append=False)
     cls = FutureBars1dImporter if future else IndexBars1dImporter
-    importer = cls(None, IngestContext(paths=paths, months=months))
+    # 只测 build()，不连库；没有连接时 _record_missing_price 等写库路径会显式跳过。
+    importer = cls(cast(psycopg.Connection, None), IngestContext(paths=paths, months=months))
     importer._id_map = lambda: {"CU2401.SHF": 1, "000300.SH": 2}
     return importer
 

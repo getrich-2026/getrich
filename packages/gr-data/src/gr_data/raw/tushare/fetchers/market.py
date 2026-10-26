@@ -661,7 +661,8 @@ def _first_listing(instruments: pd.DataFrame, exchange: str) -> date | None:
     return min(listed) if listed else None
 
 
-def _optional_date(value: object) -> date | None:
+def _optional_date(value: str | float | None) -> date | None:
+    """解析源清单的 YYYYMMDD 日期标量；缺失、空串及 0 占位返回 None。"""
     if pd.isna(value) or str(value).strip() in ("", "0", "00000000"):
         return None
     # parquet 可能把 YYYYMMDD 存成浮点（如 20050104.0），先转整数再解析。
