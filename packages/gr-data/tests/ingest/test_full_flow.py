@@ -174,7 +174,7 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     from gr_data.ingest import run_provider as ingest_provider
     from gr_data.ingest.tushare import GROUPS, REGISTRY
     from gr_data.raw import run_provider as raw_provider
-    from gr_data.raw.tushare import REGISTRY as RAW_REGISTRY
+    from gr_data.raw.tushare.fetchers import DEFAULT_DATASETS
 
     cfg = Config(
         {
@@ -195,7 +195,8 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
         patch("gr_data.raw._build_client", return_value=fake_tushare),
         patch.dict("os.environ", {"RAW_PARQUET_ROOT": str(tmp_raw_root.root)}),
     ):
-        raw_provider("tushare", cfg, mode="init", only=list(reversed(RAW_REGISTRY)))
+        # 扩展端点需显式启用；本用例持续验证原默认链路与逆序选择的依赖排序。
+        raw_provider("tushare", cfg, mode="init", only=list(reversed(DEFAULT_DATASETS)))
         for _ in range(2):
             results = ingest_provider("tushare", pg_conn, cfg, only=list(reversed(GROUPS["all"])))
             assert [result.dataset for result in results] == GROUPS["all"]

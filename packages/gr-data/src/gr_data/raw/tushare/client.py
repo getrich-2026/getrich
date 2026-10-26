@@ -58,6 +58,12 @@ PAGE_LIMITS: dict[str, int] = {
     "stock_basic": 5000,
     "index_basic": 5000,
     "fut_basic": 5000,
+    "etf_basic": 5000,
+    "fund_daily": 5000,
+    "fund_adj": 2000,
+    # 官方未声明 opt_basic 上限；精确代码查询使用保守页长，不做全市场历史翻页。
+    "opt_basic": 1000,
+    "opt_daily": 15000,
 }
 
 
@@ -118,10 +124,20 @@ class TushareProClient:
         limit = PAGE_LIMITS.get(api_name, DEFAULT_PAGE_LIMIT)
         frames: list[pd.DataFrame] = []
         offset = 0
+        guarded = api_name in {"etf_basic", "fund_daily", "fund_adj", "opt_basic", "opt_daily"}
+        seen_keys: set[tuple] = set()
         while True:
             page = self.query(api_name, limit=limit, offset=offset, **params)
             if page.empty:
                 break
+            if guarded:
+                if len(page) > limit or "ts_code" not in page:
+                    raise PermanentError(f"Invalid pagination response endpoint={api_name}")
+                keys = ["ts_code", *(["trade_date"] if "trade_date" in page else [])]
+                page_keys = set(page[keys].astype(str).itertuples(index=False, name=None))
+                if seen_keys & page_keys:
+                    raise PermanentError(f"Repeated pagination keys endpoint={api_name}")
+                seen_keys.update(page_keys)
             frames.append(page)
             if len(page) < limit:
                 break

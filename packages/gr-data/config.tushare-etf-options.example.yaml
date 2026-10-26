@@ -1,0 +1,32 @@
+# ETF / 三类期权的显式样本配置，不会自动运行；机器路径与连接只放环境层。
+# 使用前设独立 RAW_PARQUET_ROOT，PG_* 只指向一次性验证库。
+# 本文件不授权真实采样或全量回补；实施审核通过后另行启动。
+providers:
+  tushare:
+    token_env: TUSHARE_TOKEN
+    start_date: 20240101
+    end_date: 20240131
+    # 八所是能力范围；历史回补应按各所期权正式上市范围收窄选择。
+    # 上市前的开市日空响应会失败；上市日期须有官方依据，不能凭记忆填写。
+    option_exchanges: [SSE, SZSE, CFFEX, DCE, CZCE, SHFE, INE, GFEX]
+    rate_limit:
+      sleep_between_requests_sec: 1.5
+      max_retries: 5
+      retry_backoff_base_sec: 3
+
+enabled:
+  raw:
+    tushare:
+      - calendar
+      - etf_instruments
+      - option_calendar
+      - fund_daily
+      - fund_adj
+      - opt_daily
+      - option_instruments
+  ingest:
+    # 四个期权 writer（含身份与 symbol_map）默认拒绝写库。
+    # 只有明确指向临时库并设置环境变量
+    # TUSHARE_OPTION_VALIDATION_ONLY=1 后才能验证；APP_ENV=prod 拒绝该开关。
+    # option_reference 的 underlying 需先有已核验的 ETF / 指数 / 期货身份及映射。
+    tushare: [etf_reference, option_reference, etf_bars_1d, option_bars_1d]

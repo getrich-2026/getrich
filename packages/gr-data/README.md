@@ -55,9 +55,10 @@ uv run gr-data ingest tushare               # 归一化入库
 
 ### Tushare 已实现范围与导入顺序
 
-当前覆盖 12 个接口：`stock_basic`、`index_basic`、`fut_basic`、`trade_cal`、`fut_trade_cal`、
+默认范围覆盖 12 个接口：`stock_basic`、`index_basic`、`fut_basic`、`trade_cal`、`fut_trade_cal`、
 `daily`、`adj_factor`、`stk_limit`、`suspend_d`、`index_daily`、`daily_basic`、`fut_daily`。
-财报、宏观和 ETF／期权扩展不在这一批接口范围内。
+财报、宏观不在这批接口范围内。ETF／期权新增接口须显式启用，见下节；
+未配置任务、旧 `all`／`reference`／`bars_1d` 均保持原范围。
 
 先应用迁移 046（允许同一来源的多个旧代码关联同一证券，保留来源代码唯一约束）。
 股票清单含北交所标的时，`instruments` 还采集 `bse_mapping`，原样保存至
@@ -118,6 +119,97 @@ uv run gr-data ingest tushare --only events,bars_1d,market_ext,fundamental,class
 未提升字段在 `raw_payload` 中保持供应商原单位。缺复权因子或股票 OHLC 会中断；
 个别代码缺涨跌停价保留 NULL 并记软告警。股票辅助表关联前统一 int8／字符串日期
 及代码首尾空格，再按键去重；期货成交量与持仓量保持「手」。
+
+### ETF 与三类期权（2026-10-26，代码与测试阶段）
+
+实现范围为沪深 ETF、ETF 期权、股指期权和商品期权日线；
+使用 [专用配置样例](config.tushare-etf-options.example.yaml) 显式选择。
+本节说明代码行为，不代表真实样本、历史完整性、正式发布或全量回补已经验收。
+设计依据见相邻设计仓 `data-platform/proposals/tushare-etf-options-ingestion.md`。
+
+| 阶段 | 显式任务／组 | 结果与依赖 |
+|---|---|---|
+| raw | `etf_instruments` | `etf_basic` 的沪深 L／D／P 清单 → `instruments/etf.parquet`；P 表示待上市 |
+| raw | `calendar`、`option_calendar` | 沪深日历，以及 `option_exchanges` 选中期货市场的逐所日历 |
+| raw | `fund_daily`、`fund_adj` | 逐日分页、月分区，源基金记录保留；因子页长 2000，日线 5000 |
+| raw | `opt_daily` | 八所逐所逐日取数，页长 15000 → `opt_daily/YYYY-MM.parquet` |
+| raw | `option_instruments` | 从所选日期、市场的 opt_daily 发现代码，按精确 ts_code 查 opt_basic；必须在日线之后运行 |
+| ingest | `etf_reference` | `etf_instruments` → `etf_symbol_map`，分别写 meta.instruments／symbol_map |
+| ingest | `etf_bars_1d` | 只导 ETF 清单内记录；源基金因子按代码、日期精确配对 → market.etf_bar_1d |
+| ingest | `option_reference` | `option_instruments` → `option_symbol_map` → `option_contracts`；标的身份和 source 映射须预先具备 |
+| ingest | `option_bars_1d` | 未复权源报价、结算价及手数 → market.option_bar_1d；默认有验证门禁 |
+
+ETF 期权标的必须是 ETF，股指期权标的是指数，商品期权标的是具体期货合约。
+现有标的参考信息可以复用，但必须先核对来源、哈希、映射和表归属；不会自动抓取所有标的的行情。
+`AP405C8000.ZCE` 这类郑商所期权代码原样保留，标的从显式 `opt_code` 解析；不扩写期权代码年份。
+元数据覆盖范围是“目标行情出现的代码”，不能据此声称已取得无行情合约在内的完整挂牌全集。
+`init` 按范围内去重代码全量查询；`update` 只重查新增、缺可靠观察日、
+缺最后交易日，或最近观察日不晚于最后交易日的合约。
+到期后已观察过的合约复用原记录；全跳过时返回 0，不发布新观察。
+观察日独立保存在观察目录的 `observation_dates.parquet`，哈希写入清单和收据；
+缺失、损坏或哈希不匹配时退回重查，不给源列添加内部日期。
+日志分别记录范围代码数、查询数及跳过数；真实请求预算仍待单独验收。
+
+| 字段 | ETF | 期权 |
+|---|---|---|
+| OHLC／前收 | 未复权源价格，不乘因子 | 保持报价尺度，不乘合约乘数变成现金金额 |
+| volume | 源 vol ×100，精确转为基金份额整数 | 保持手数，拒绝小数手数 |
+| amount | 千元 → 元，Decimal ×1000 | 万元 → 元，Decimal ×10000 |
+| 因子 | 同日 fund_adj，必须有限且 >0；缺失不填 1／不前后填充 | 不复权；不把 ETF 因子套到调整期权 |
+| 持仓量／结算 | 不适用 | oi → 既有列 open_interest，手数；合法 NULL 保留，零成交不等于缺失 |
+
+新增任务要求显式 `start_date`，按配置区间重核月份；`init`／`update` 都保护范围外日期和交易所。
+这与旧股票“只刷新最新月”的策略不同：只应配置当前需要处理的月，不要把长期区间用于高频 update。
+已过去的开市日空响应、错日期／市场、冲突键、非法值、目标精度溢出均失败；不会把负期权价当 SCTAS 价差放行。
+当天尚未发布的空响应按数据集／交易所记 WARNING 和 `scope.pending_days`，
+不算采集失败，也不删除旧文件里当天已有的行；pending 不代表当天数据已齐备。
+当天 ETF 日线已发布而因子未发布时，入库仍因缺因子失败，不填充因子。
+历史回补须根据各所期权正式上市范围收窄 `option_exchanges`；不能把上市前的
+开市日空响应当作合法数据，也不能凭记忆填写上市日期。
+
+新资产文件带同名 `.json` 收据，记录哈希、上海观察时间、范围及脱敏只读请求。
+`tushare/observations/<dataset>/<observation_id>/` 保存本轮数据、清单及被替换的旧文件／旧清单。
+消费端校验文件与收据哈希；缺收据或不匹配时拒绝入库。
+采集侧仅在当前文件能匹配本数据集的完整观察清单、数据副本及前版关联时，
+恢复“文件已替换、收据未替换”的中断发布，记 WARNING 后继续；校验先于创建新观察目录。
+首次发布崩溃而缺收据时，仅当文件与本数据集的首次观察清单和数据副本哈希一致，
+且该观察没有任何后继，才补写收据恢复；已有后继的旧观察不可借此回滚。
+其余缺收据，或文件与全部合法观察均不匹配时仍拒绝覆盖，不能靠手工改文件绕过门禁。
+源列与原单位留在 raw，机器根路径只取 `RAW_PARQUET_ROOT`，不新增共享默认数据目录。
+
+**期权正式写入仍关闭。** `opt_basic` 给出的调整后行权价和乘数没有历史生效区间，
+`meta.option_contracts` 只能承载当前观察。本轮不新增历史参数表，也不允许把该快照当作历史参数。
+默认在连接数据库前拒绝包含 `option_instruments`／`option_symbol_map`／
+`option_contracts`／`option_bar_1d` 任一期权 writer 的 CLI 计划；
+库调用 `.run()` 也在 claim／写入前检查。只有在隔离验证库上显式设置
+`TUSHARE_OPTION_VALIDATION_ONLY=1`（库调用 `validation_only=True`）才能验证，
+且 `APP_ENV=prod` 拒绝该开关。该开关不验证连接是否为临时库，执行者必须先核对 PG_*；
+验证写入明确记录软告警，CLI 返回 3，不可当作已发布成功。
+
+ETF／期权日线一次只导入一个月，防止隐式拼接全历史。未来样本审核获准后，
+确认独立 raw 根、临时 PG 环境及依赖齐备，再执行下面的样本命令；本文未执行这些真实采集命令：
+
+```bash
+uv run gr-data --config packages/gr-data/config.tushare-etf-options.example.yaml raw tushare --mode init
+uv run gr-data --config packages/gr-data/config.tushare-etf-options.example.yaml ingest tushare --only etf_reference,etf_bars_1d --months 2024-01
+# 只对临时验证库，并先准备所需的标的参考信息和映射；预期退出码 3，表示未发布：
+TUSHARE_OPTION_VALIDATION_ONLY=1 uv run gr-data --config packages/gr-data/config.tushare-etf-options.example.yaml ingest tushare --only option_reference,option_bars_1d --months 2024-01
+```
+
+ETF 分类暂时沿用旧规则：一律 `equity`／`cn_a`，已知不准确（缺口 G4），本轮恢复为基线行为。
+目标口径在后续独立任务中改为 Tushare `fund_basic.fund_type` 单一来源，
+显式维护映射，未映射或混合型保持未分类。存量错误分类以“删除后按上市日重写”更正，
+不用 `out_date` 关闭；真实采样、分类实现、数据删除和 DDL 注释迁移本轮均不执行。
+`meta.instruments.status` 新增 `pending` 表示待上市；本轮不改变下游过滤约定。
+单表单一 provider 保持不变，所有新 writer 仍校验 ownership，不自动 force 或切源。
+
+**真实回补前待验收（本轮未执行）**：另行授权后，在独立 raw 根只启用
+`calendar`、`option_calendar`、`opt_daily` 取得一个月；先不启用 `option_instruments`。
+按交易所统计全月去重代码数及最后交易日去重代码数，再结合配置请求间隔，
+估算首次全量、每日增量和全历史总请求预算；请求次数还须计入实际分页及重试。
+若成本不可接受，先查官方过滤参数及分页上限，再决定批量方案，不猜参数。
+后续 ETF 分类任务在本分支合入后从 dev 另开分支，依赖 ETF symbol_map；
+先验证 fund_basic.fund_type 枚举，存量更正前只读计数、备份，工作库删除另行授权。
 
 ### 指数与期货日线（2026-10-24，代码审核阶段）
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import psycopg
+from gr_tools.config import SettingsError, parse_bool
 
 from gr_data.common.ownership import OwnershipError
 from gr_data.common.parquet import CorruptRawError
@@ -16,11 +18,34 @@ from gr_data.ingest.base import IngestContext, IngestGateError, IngestResult, In
 
 log = logging.getLogger(__name__)
 
+TUSHARE_OPTION_WRITERS = frozenset(
+    {
+        "option_instruments",
+        "option_symbol_map",
+        "option_contracts",
+        "option_bar_1d",
+    }
+)
+
 _EXPECTED_FAILURES = (IngestGateError, CorruptRawError, OwnershipError)
 
 
 class UnknownImporterError(RuntimeError):
     """配置里有不存在的 importer 名；属配置问题，CLI 返回 2，且在连库之前报出。"""
+
+
+def _tushare_option_validation_only(cfg: Config) -> bool:
+    """运行开关来自入口环境快照，不能藏在结构化采集 YAML 中。"""
+    source = cfg.environment.values if cfg.environment is not None else os.environ
+    try:
+        enabled = parse_bool(
+            source.get("TUSHARE_OPTION_VALIDATION_ONLY"), name="TUSHARE_OPTION_VALIDATION_ONLY"
+        )
+    except SettingsError as exc:
+        raise UnknownImporterError(str(exc)) from exc
+    if enabled and source.get("APP_ENV", "").lower() == "prod":
+        raise UnknownImporterError("Option validation cannot run with APP_ENV=prod")
+    return enabled
 
 
 PROVIDERS = ("yinhe", "ricequant", "insight", "tushare", "datayes")
@@ -101,11 +126,22 @@ def plan_importers(provider: str, cfg: Config, only: list[str] | None = None) ->
     registry, groups = _registry_groups(provider)
     if provider == "ricequant":
         return preflight_ricequant(cfg, only=only)
-    enabled = only or cfg.get("enabled", "ingest", provider, default=list(registry.keys()))
+    defaults = list(registry)
+    if provider == "tushare":
+        from gr_data.ingest.tushare.importers import DEFAULT_DATASETS
+
+        defaults = list(DEFAULT_DATASETS)
+    enabled = only or cfg.get("enabled", "ingest", provider, default=defaults)
     names = _expand(enabled, registry, groups)
     if provider == "tushare":
         # --only 的排列不能颠倒 instruments → symbol_map → 其余数据的依赖。
         names.sort(key=list(registry).index)
+        option_writes = TUSHARE_OPTION_WRITERS.intersection(names)
+        if option_writes and not _tushare_option_validation_only(cfg):
+            raise UnknownImporterError(
+                "Option writes are validation-only; set TUSHARE_OPTION_VALIDATION_ONLY=1 "
+                "only for an isolated validation database"
+            )
     return names
 
 
@@ -186,6 +222,10 @@ def run_provider(
     results: list[IngestResult] = []
     for i, name in enumerate(names):
         try:
+            if provider == "tushare" and name in TUSHARE_OPTION_WRITERS:
+                kwargs = {"validation_only": _tushare_option_validation_only(cfg)}
+            elif provider == "tushare":
+                kwargs = {}
             if provider == "ricequant" and name == "rq_risk_model":
                 from gr_data.config.ricequant import parse_ricequant_options
                 from gr_data.ingest.ricequant.riskmodel import run_risk_ingest

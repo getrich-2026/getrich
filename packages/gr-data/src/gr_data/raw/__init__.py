@@ -110,7 +110,12 @@ def run_provider(
     registry = _registry(provider)
     if provider == "ricequant":
         return _run_ricequant(cfg, registry, mode=mode, only=only)
-    enabled = only or cfg.get("enabled", "raw", provider, default=list(registry.keys()))
+    defaults = list(registry)
+    if provider == "tushare":
+        from gr_data.raw.tushare.fetchers import DEFAULT_DATASETS
+
+        defaults = list(DEFAULT_DATASETS)
+    enabled = only or cfg.get("enabled", "raw", provider, default=defaults)
     if provider == "tushare":
         # 显式选择的集合不变，按注册顺序保证日历先于逐日抓取。
         order = {name: index for index, name in enumerate(registry)}
