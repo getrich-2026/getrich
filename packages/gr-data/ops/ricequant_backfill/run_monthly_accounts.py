@@ -195,13 +195,30 @@ def import_baseline(base: Path) -> dict:
 class Runtime:
     """真实执行边界；测试用 FakeRuntime 完全替换，不调用真实账户。"""
 
-    def __init__(self, base: Path, *, lock_fd: int | None = None, account_env: str = ACCOUNT_ENV):
+    def __init__(
+        self,
+        base: Path,
+        *,
+        lock_fd: int | None = None,
+        account_env: str = ACCOUNT_ENV,
+        use_full_quota_on: str | None = None,
+    ):
         require(bool(re.fullmatch(r"[A-Z][A-Z0-9_]*", account_env)), "invalid_account_env_name")
         self.account_env = account_env
         self._account_environment: Environment | None = None
         self.base = base
         self._quota_client = None
         self.pass_fds = () if lock_fd is None else (lock_fd,)
+        self.use_full_quota_on = use_full_quota_on
+        self.quota_reserve_fraction()
+
+    def quota_reserve_fraction(self) -> float:
+        """只有显式授权的上海日期可使用全部额度，过期即停止。"""
+        if self.use_full_quota_on is None:
+            return QUOTA_RESERVE
+        if self.use_full_quota_on != local_day():
+            raise StopRunError("quota_override_expired", quota=True)
+        return 0.0
 
     def prepare_account(self) -> Environment:
         """冻结显式所选账号环境；密钥只在内存，不改变 YAML 或 variant。"""
@@ -285,6 +302,16 @@ class Runtime:
     def command(
         self, phase: str, config: Path, month: str, log: Path, *, observation_id: str | None = None
     ) -> int:
+        timeout = 1800
+        if phase == "raw" and self.use_full_quota_on is not None:
+            reserve = self.quota_reserve_fraction()
+            # 只改变预算配置，原始配置和 variant 身份均保留。
+            data = yaml.safe_load(config.read_text())
+            data["providers"]["ricequant"].setdefault("supplements", {})[
+                "quota_reserve_fraction"
+            ] = reserve
+            config = config.with_name(f"{config.stem}-full-quota-{self.use_full_quota_on}.yaml")
+            atomic_text(config, yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
         args = [
             sys.executable,
             "-m",
@@ -301,13 +328,24 @@ class Runtime:
             args += ["--observation-id", observation_id]
         child_env = dict(self.prepare_account().values) if phase == "raw" else None
         with log.open("w") as output:
+            if phase == "raw" and self.use_full_quota_on is not None:
+                # 账号准备可能耗时；启动前重查，截止点固定为授权日次日午夜。
+                self.quota_reserve_fraction()
+                midnight = datetime.combine(
+                    date.fromisoformat(self.use_full_quota_on) + timedelta(days=1),
+                    datetime.min.time(),
+                    ZoneInfo("Asia/Shanghai"),
+                )
+                timeout = min(timeout, (midnight - datetime.now(midnight.tzinfo)).total_seconds())
+                if timeout <= 0:
+                    raise StopRunError("quota_override_expired", quota=True)
             # 超时/中断不自动重试；下次原生 init/receipt 重放确认最终状态。
             result = subprocess.run(
                 args,
                 cwd=REPO,
                 stdout=output,
                 stderr=subprocess.STDOUT,
-                timeout=1800,
+                timeout=timeout,
                 pass_fds=self.pass_fds,
                 env=child_env,
             )
@@ -383,7 +421,7 @@ class Runtime:
         return result.returncode, report
 
 
-def quota_exhausted(snapshot: dict) -> bool:
+def quota_exhausted(snapshot: dict, reserve_fraction: float = QUOTA_RESERVE) -> bool:
     import math
 
     used, limit = snapshot.get("bytes_used"), snapshot.get("bytes_limit")
@@ -396,7 +434,13 @@ def quota_exhausted(snapshot: dict) -> bool:
         and limit > 0,
         "invalid_quota_snapshot",
     )
-    return used >= limit * (1 - QUOTA_RESERVE)
+    require(
+        type(reserve_fraction) in (int, float)
+        and math.isfinite(reserve_fraction)
+        and 0 <= reserve_fraction < 1,
+        "invalid_quota_reserve",
+    )
+    return used >= limit * (1 - reserve_fraction)
 
 
 def known_ipos(manifest: dict) -> list[dict]:
@@ -836,8 +880,17 @@ class Runner:
                 self.runtime.check_version() == self.current_version, "importer_version_changed"
             )
             attempt["quota_before"] = {**self.runtime.quota(), "account_env": self.account_env}
+            reserve = (
+                self.runtime.quota_reserve_fraction()
+                if hasattr(self.runtime, "quota_reserve_fraction")
+                else QUOTA_RESERVE
+            )
+            attempt["quota_policy"] = {
+                "reserve_fraction": reserve,
+                "use_full_quota_on": getattr(self.runtime, "use_full_quota_on", None),
+            }
             self.save()
-            if quota_exhausted(attempt["quota_before"]):
+            if quota_exhausted(attempt["quota_before"], reserve):
                 raise StopRunError("quota_reserve_reached_before_job", quota=True)
             attempt.update(stage="raw", raw_started_at=now())
             self.save()
@@ -1110,6 +1163,11 @@ def main() -> int:
     parser.add_argument("--version-policy", type=Path, default=BASE / "version-policy.json")
     parser.add_argument("--through-month", help="Inclusive month, bounded by 2024-01 and 2026-10")
     parser.add_argument(
+        "--use-full-quota-on",
+        metavar="YYYY-MM-DD",
+        help="Explicitly authorized Shanghai date only; zero quota reserve expires at midnight",
+    )
+    parser.add_argument(
         "--resume-after-review",
         metavar="REASON",
         help="Manual reviewed recovery only; never set from automation; do not include credentials",
@@ -1128,7 +1186,12 @@ def main() -> int:
             except BlockingIOError:
                 raise StopRunError("runner_already_active") from None
             through = month_limit(args.through_month)
-            runtime = Runtime(BASE, lock_fd=lock.fileno(), account_env=args.account_env)
+            runtime = Runtime(
+                BASE,
+                lock_fd=lock.fileno(),
+                account_env=args.account_env,
+                use_full_quota_on=args.use_full_quota_on,
+            )
             policy = load_version_policy(
                 args.version_policy, json.loads((BASE / "ledger.json").read_text())
             )
