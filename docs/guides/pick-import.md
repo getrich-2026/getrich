@@ -50,7 +50,7 @@ uv run python packages/gr-api/tests/fixture_picks.py
 
 ## 3. 文件格式
 
-`.csv` 或 `.parquet`，表头**必须**是下面 7 列中的若干个，多余列忽略并告警，列名大小写与
+支持 `.csv`、`.parquet`、`.xlsx`、`.xls`，表头**必须**是下面 7 列中的若干个，多余列忽略并告警，列名大小写与
 前后空格会被归一化。**只有 `symbol` 是必需的**。
 
 | 列 | 必需 | 说明 |
@@ -63,9 +63,16 @@ uv run python packages/gr-api/tests/fixture_picks.py
 | `suggest_weight` | | 建议权重，**小数不是百分数**：0.25 表示 25%，写 25 会被拒 |
 | `reason_text` | | 入选理由，展示给订阅者 |
 
-**文件一律按全列字符串读**，否则 `000001.SZ` 会被类型推断成整数、丢掉前导零。这是
-`gr_tools.read_frame(all_string=True)` 保证的，自己写脚本生成文件时也要注意别让
-Excel 把代码列转成数字。
+CSV / Excel 通过 `gr_tools.read_frame(all_string=True)` 在读取时按字符串解析，
+防止纯数字代码（如 `000001`）丢掉前导零。Parquet 保留文件类型，筛选已知列后再统一
+转字符串；未知的 List / Struct 等嵌套列同样忽略并告警，已知列只接受标量。
+自己写脚本生成文件时也要注意别让 Excel 把代码列转成数字。
+
+Excel 工作簿必须恰好有一个工作表，第一行是表头。日期单元格可以直接使用，
+但不能带非零时间或时区；例如 `2026-10-26 00:00:00` 可用，`09:30` 会报错。
+日期序号（如 `46321`）不作为日期接受，请把单元格格式设为日期。
+代码列必须设为文本格式；已经存为数字而丢失的前导零不会自动补回。
+权重单元格可以设为百分比格式，底层值仍须是 `0.25`（显示为 `25%`）。
 
 入库时 `symbol` 会被拆开：`pick.item.symbol` 存**不带后缀**的裸代码（`600000`），
 交易所存进 `exchange` 列且用 `SSE`/`SZSE`/`BSE`（**不是** `meta.*` 的 `XSHG`/`XSHE`/`XBSE`）。
@@ -75,7 +82,7 @@ Excel 把代码列转成数字。
 ```bash
 uv run gr-picks import --strategy <UUID 或 strategy_code> \
                        --trading-day YYYY-MM-DD \
-                       --file <path.csv|path.parquet> \
+                       --file <path.csv|path.parquet|path.xlsx|path.xls> \
                        [--dry-run] [--overwrite] [--allow-empty] \
                        [--uploaded-by <user UUID>] [--note "本期备注"] [-v]
 ```
@@ -84,7 +91,7 @@ uv run gr-picks import --strategy <UUID 或 strategy_code> \
 |---|---|
 | `--strategy` | 策略 UUID 或 `strategy_code`。策略必须已存在，且 `strategy_kind='pick'` 才会出现在选股接口里 |
 | `--trading-day` | 池子归属的交易日 |
-| `--file` | `.csv` 或 `.parquet` |
+| `--file` | `.csv` / `.parquet` / `.xlsx` / `.xls`；Excel 只能有一个工作表 |
 | `--dry-run` | 只预检不写库。**每次正式导入前先跑一遍** |
 | `--overwrite` | 该交易日已有 active 批次时覆盖。不加就报 409——误选日期会不可逆地覆盖正确数据 |
 | `--allow-empty` | 接受 0 行的池子，表示**确认当日空仓**。空文件更常见的原因是导错了，所以要显式声明 |
@@ -144,7 +151,7 @@ from gr_api.services.pick_import import import_picks_sync
 result = import_picks_sync(
     strategy="STR_DEMO_STK_001",
     trading_day="2026-08-11",
-    source=frame,          # .csv/.parquet 路径，或 polars / pandas DataFrame
+    source=frame,          # .csv/.parquet/.xlsx/.xls 路径，或 polars / pandas DataFrame
     overwrite=False,
     allow_empty=False,
     dry_run=False,

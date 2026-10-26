@@ -6,14 +6,16 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import polars as pl
 import pytest
 from gr_api.errors import BadRequest, Conflict
+from gr_api.services import pick_import
 from gr_api.services.pick_import import CARRY_OVER_NOTE, import_picks
 
 
@@ -186,6 +188,186 @@ async def test_import_from_csv_file_keeps_leading_zeros(tmp_path: Any) -> None:
     assert db.inserted[0]["rank"] == 2
     assert db.inserted[0]["score"] == Decimal("82.1")
     assert db.inserted[0]["suggest_weight"] == Decimal("0.25")
+
+
+async def test_import_from_excel_dry_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    openpyxl = pytest.importorskip("openpyxl")
+    target = tmp_path / "picks.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["symbol", "entry_date", "rank", "suggest_weight"])
+    sheet.append(["600000.SH", datetime(2026, 10, 26), 1, 0.25])
+    sheet["A2"].number_format = "@"
+    sheet["D2"].number_format = "0%"
+    workbook.save(target)
+    captured: list[dict[str, Any]] = []
+    original = pick_import._derive_items
+
+    async def capture(db, strategy_id, trading_day, parsed):
+        captured.extend(parsed)
+        return await original(db, strategy_id, trading_day, parsed)
+
+    monkeypatch.setattr(pick_import, "_derive_items", capture)
+    db = _FakeDb()
+    result = await _run(db, target, trading_day=date(2026, 10, 26), dry_run=True)
+
+    assert result.status == "validated"
+    assert len(captured) == 1
+    assert captured[0]["symbol_full"] == "600000.SH"
+    assert captured[0]["entry_date"] == date(2026, 10, 26)
+    assert captured[0]["rank"] == 1
+    assert captured[0]["suggest_weight"] == Decimal("0.25")
+    assert not db.inserted and db.commits == 0
+
+
+@pytest.mark.parametrize("as_file", [False, True])
+async def test_import_ignores_unknown_nested_columns(tmp_path: Path, as_file: bool) -> None:
+    frame = pl.DataFrame(
+        {
+            "symbol": ["000001.SZ"],
+            "rank": [1],
+            "suggest_weight": [Decimal("0.25")],
+            " Extra_List ": [[1, 2]],
+            "extra_struct": [{"sector": "bank"}],
+        }
+    )
+    source: pl.DataFrame | Path = frame
+    if as_file:
+        source = tmp_path / "picks.parquet"
+        frame.write_parquet(source)
+    db = _FakeDb()
+
+    result = await _run(db, source)
+
+    assert result.status == "committed"
+    assert db.inserted[0]["symbol"] == "000001"
+    assert db.inserted[0]["rank"] == 1
+    assert db.inserted[0]["suggest_weight"] == Decimal("0.25")
+    assert any("extra_list, extra_struct" in warning for warning in result.warnings)
+
+
+async def test_import_pandas_ignores_unknown_nested_column() -> None:
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({"symbol": ["000001.SZ"], "extra": [[1, 2]]})
+    db = _FakeDb()
+
+    result = await _run(db, frame)
+
+    assert result.status == "committed"
+    assert db.inserted[0]["symbol"] == "000001"
+    assert any("extra" in warning for warning in result.warnings)
+
+
+@pytest.mark.parametrize("as_file", [False, True])
+@pytest.mark.parametrize("value", [[[1, 2]], [{"value": 1}]])
+async def test_import_rejects_known_nested_column(tmp_path: Path, as_file: bool, value) -> None:
+    frame = pl.DataFrame({"symbol": ["600000.SH"], "rank": value})
+    source: pl.DataFrame | Path = frame
+    if as_file:
+        source = tmp_path / "picks.parquet"
+        frame.write_parquet(source)
+
+    with pytest.raises(BadRequest, match="scalar values.*rank"):
+        await _run(_FakeDb(), source, dry_run=True)
+
+
+@pytest.mark.parametrize("value", [datetime(2026, 10, 26, 9, 30), 46321])
+async def test_import_excel_invalid_date_cell(tmp_path: Path, value: datetime | int) -> None:
+    openpyxl = pytest.importorskip("openpyxl")
+    target = tmp_path / "dates.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["symbol", "entry_date"])
+    workbook.active.append(["600000.SH", value])
+    workbook.save(target)
+
+    result = await _run(_FakeDb(), target, trading_day=date(2026, 10, 26), dry_run=True)
+
+    assert result.status == "blocked"
+    assert result.errors[0]["error_code"] == "invalid_date"
+    assert result.errors[0]["row_number"] == 2
+    message = (
+        "date must not contain a time or timezone"
+        if isinstance(value, datetime)
+        else "date stored as an Excel serial number; format the cell as a date"
+    )
+    assert message in result.errors[0]["message"]
+
+
+async def test_import_excel_multiple_sheets_rejected(tmp_path: Path) -> None:
+    openpyxl = pytest.importorskip("openpyxl")
+    target = tmp_path / "sheets.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Notes"
+    workbook.create_sheet("Picks").append(["symbol"])
+    workbook.save(target)
+
+    with pytest.raises(
+        BadRequest, match=r"workbook has 2 sheets: .*Notes.*Picks.*keep exactly one"
+    ):
+        await _run(_FakeDb(), target, dry_run=True)
+
+
+@pytest.mark.parametrize("suffix", [".feather", ".txt", ".json"])
+async def test_import_rejects_unsupported_file_before_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    def fail_if_read(*args, **kwargs):
+        pytest.fail("unsupported format must be rejected before reading")
+
+    monkeypatch.setattr(pick_import, "read_frame", fail_if_read)
+    with pytest.raises(BadRequest, match="unsupported file format"):
+        await _run(_FakeDb(), tmp_path / f"not-created{suffix}", dry_run=True)
+
+
+@pytest.mark.parametrize("suffix", [".csv", ".xlsx"])
+async def test_import_row_numbers_count_header_as_first_row(tmp_path: Path, suffix: str) -> None:
+    target = tmp_path / f"rows{suffix}"
+    if suffix == ".xlsx":
+        openpyxl = pytest.importorskip("openpyxl")
+        workbook = openpyxl.Workbook()
+        workbook.active.append(["symbol"])
+        workbook.active.append(["600000.SH"])
+        workbook.active.append(["invalid"])
+        workbook.save(target)
+    else:
+        target.write_text("symbol\n600000.SH\ninvalid\n", encoding="utf-8")
+
+    result = await _run(_FakeDb(), target, dry_run=True)
+
+    assert result.errors[0]["row_number"] == 3
+
+
+@pytest.mark.parametrize(
+    ("value", "expected", "message"),
+    [
+        ("2026-10-26", date(2026, 10, 26), None),
+        ("20261026", date(2026, 10, 26), None),
+        ("2026-10-26 00:00:00", date(2026, 10, 26), None),
+        ("2026-10-26T00:00:00.000000", date(2026, 10, 26), None),
+        ("2026-10-26 09:30:00", None, "date must not contain a time or timezone"),
+        ("2026-10-26T00:00:00.000001", None, "date must not contain a time or timezone"),
+        ("2026-10-26T00:00:00+08:00", None, "date must not contain a time or timezone"),
+        ("2026-10-26T00:00:00Z", None, "date must not contain a time or timezone"),
+        ("46321", None, "date stored as an Excel serial number; format the cell as a date"),
+        ("1", None, "date stored as an Excel serial number; format the cell as a date"),
+        ("99999", None, "date stored as an Excel serial number; format the cell as a date"),
+        ("100000", None, "invalid date, expected YYYY-MM-DD"),
+        ("46321.0", None, "invalid date, expected YYYY-MM-DD"),
+        ("20261332", None, "invalid date, expected YYYY-MM-DD"),
+    ],
+)
+def test_parse_date_cell(value: str, expected: date | None, message: str | None) -> None:
+    errors: list[dict[str, Any]] = []
+    parsed = pick_import._parse_date_cell(value, 2, "entry_date", {"entry_date": value}, errors)
+
+    assert parsed == expected
+    if message is None:
+        assert errors == []
+    else:
+        assert len(errors) == 1
+        assert errors[0]["error_code"] == "invalid_date"
+        assert errors[0]["row_number"] == 2
+        assert message in errors[0]["message"]
 
 
 async def test_import_rejects_unsupported_source_type() -> None:

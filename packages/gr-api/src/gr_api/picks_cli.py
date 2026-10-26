@@ -29,7 +29,9 @@ def _build_parser() -> argparse.ArgumentParser:
     imp = sub.add_parser("import", help="导入某个策略某一交易日的标的池")
     imp.add_argument("--strategy", required=True, help="策略 UUID 或 strategy_code")
     imp.add_argument("--trading-day", required=True, help="交易日 YYYY-MM-DD")
-    imp.add_argument("--file", required=True, type=Path, help=".csv 或 .parquet 文件路径")
+    imp.add_argument(
+        "--file", required=True, type=Path, help=".csv / .parquet / .xlsx / .xls 文件路径"
+    )
     imp.add_argument("--uploaded-by", default=None, help="操作者 user UUID，可不填")
     imp.add_argument("--note", default=None, help="本期备注，会展示给前端")
     imp.add_argument(
@@ -95,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         # 结构性问题（策略不存在、乱序上传、已有批次）：一条消息说清楚就够了。
         print(f"[failed] {exc.message}", file=sys.stderr)
         return 1
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         print(f"[failed] {exc}", file=sys.stderr)
         return 1
 

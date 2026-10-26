@@ -7,12 +7,15 @@ CLI 是薄壳，这里只验参数透传与退出码 —— 业务逻辑的用�
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
 from gr_api import picks_cli
 from gr_api.errors import Conflict
+from gr_api.services import pick_import
 from gr_api.services.pick_import import PickImportResult
+from gr_tools.config import Environment
 
 
 def _result(**overrides: Any) -> PickImportResult:
@@ -133,3 +136,35 @@ def test_cli_prints_warnings(
 
     assert code == 0
     assert "WARN" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("suffix", [".xlsx", ".csv"])
+def test_cli_reports_corrupt_files_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    suffix: str,
+) -> None:
+    target = tmp_path / f"broken{suffix}"
+    text = "not an Excel workbook" if suffix == ".xlsx" else "symbol,rank\n600000.SH,1,extra\n"
+    target.write_text(text, encoding="utf-8")
+
+    def read_source(**kwargs: Any) -> PickImportResult:
+        # 只隔离数据库入口；损坏文件走真实的选股读取与 IO 异常链。
+        pick_import._load_rows(kwargs["source"])
+        pytest.fail("corrupt file must fail to read")
+
+    monkeypatch.setattr(picks_cli, "import_picks_sync", read_source)
+    monkeypatch.setattr(picks_cli, "load_environment", lambda **_: Environment(tmp_path, {}))
+    monkeypatch.setattr(picks_cli, "load_postgres", lambda _: None)
+    monkeypatch.setattr(picks_cli, "setup_logging", lambda *args, **kwargs: None)
+
+    code = picks_cli.main(
+        ["import", "--strategy", "S", "--trading-day", "2026-10-26", "--file", str(target)]
+    )
+
+    assert code == 1
+    stderr = capsys.readouterr().err
+    assert "[failed]" in stderr
+    assert target.name in stderr
+    assert "Traceback" not in stderr

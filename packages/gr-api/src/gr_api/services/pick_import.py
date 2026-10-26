@@ -1,4 +1,4 @@
-"""选股标的池导入：CSV / Parquet / DataFrame → ``pick.batch`` + ``pick.item``。
+"""选股标的池导入：CSV / Parquet / Excel / DataFrame → ``pick.batch`` + ``pick.item``。
 
 P0 阶段基金经理在本地产出信号后导入，系统只做接收与展示，**不校验选股逻辑**。
 本模块提供函数接口（:func:`import_picks` / :func:`import_picks_sync`），
@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -34,6 +34,7 @@ from gr_api.services.resolver import resolve_strategy_ref
 from gr_data.config import PostgresConfig, load_postgres
 from gr_tools import cast_all_utf8, read_frame
 from gr_tools.config import load_environment
+from gr_tools.io import excel_sheet_names
 
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: CSV / Parquet 里认识的列，多余列忽略并告警。
+#: CSV / Parquet / Excel 或 DataFrame 中认识的列，多余列忽略并告警。
 KNOWN_COLUMNS = (
     "symbol",
     "symbol_name",
@@ -107,9 +108,11 @@ async def import_picks(
         db: PostgreSQL 异步连接。
         strategy: 策略 UUID 或 ``strategy_code``。
         trading_day: 池子归属的交易日（``date`` 或 ``YYYY-MM-DD``）。
-        source: ``.csv`` / ``.parquet`` 文件路径，或直接给 polars / pandas
-            DataFrame。**文件一律按全列字符串读**，否则 ``000001`` 会被
-            类型推断成整数、丢掉前导零。
+        source: ``.csv`` / ``.parquet`` / ``.xlsx`` / ``.xls`` 文件路径，或 polars / pandas
+            DataFrame。CSV / Excel 在读取阶段按字符串解析，防止 ``000001``
+            被推断为整数而丢掉前导零；Parquet 保留文件类型，筛列后转字符串。
+            未知列忽略并告警，已知列只接受标量。Excel 必须恰有一个工作表，第一行为表头；
+            日期单元格只接受无时区的午夜值，代码列须存为文本，不自动补零。
         uploaded_by: 操作者 user UUID，可空。
         note: 基金经理对本期的备注。
         overwrite: 该交易日已有 active 批次时是否覆盖。默认 False，
@@ -123,7 +126,7 @@ async def import_picks(
         这样一次能把整份文件的问题都告诉用户。
 
     Raises:
-        BadRequest: 结构性问题（缺 ``symbol`` 列、空文件、乱序上传）。
+        BadRequest: 结构性问题（不支持的格式、多工作表、缺 ``symbol`` 列、空文件、乱序上传）。
         Conflict: 该交易日已有 active 批次且 ``overwrite=False``。
         NotFound: 策略不存在。
 
@@ -249,16 +252,27 @@ def _load_rows(source: Any) -> tuple[list[dict[str, str | None]], list[str]]:
     warnings: list[str] = []
 
     if isinstance(source, pl.DataFrame):
-        frame = cast_all_utf8(source)
+        frame = source
     elif isinstance(source, str | Path):
-        frame = read_frame(Path(source), all_string=True)
+        target = Path(source)
+        suffix = target.suffix.lower()
+        if suffix not in {".csv", ".parquet", ".xlsx", ".xls"}:
+            raise BadRequest(
+                f"unsupported file format: {suffix or '(none)'}; expected .csv/.parquet/.xlsx/.xls"
+            )
+        if suffix in {".xlsx", ".xls"}:
+            names = excel_sheet_names(target)
+            if len(names) != 1:
+                raise BadRequest(f"workbook has {len(names)} sheets: {names}; keep exactly one")
+        # Parquet 自带类型；先筛列，再转换，未知嵌套列不应阻断导入。
+        frame = read_frame(target, all_string=suffix != ".parquet")
     elif hasattr(source, "to_dict") and hasattr(source, "columns"):
         # pandas.DataFrame：不硬依赖 pandas 的类型，鸭子类型判断即可。
-        frame = cast_all_utf8(pl.from_pandas(source))
+        frame = pl.from_pandas(source)
     else:
         raise BadRequest(
             f"unsupported source type: {type(source).__name__}; "
-            "expected a .csv/.parquet path, a polars DataFrame or a pandas DataFrame"
+            "expected a .csv/.parquet/.xlsx/.xls path, a polars DataFrame or a pandas DataFrame"
         )
 
     frame = frame.rename({name: name.strip().lower() for name in frame.columns})
@@ -270,8 +284,13 @@ def _load_rows(source: Any) -> tuple[list[dict[str, str | None]], list[str]]:
         warnings.append(f"ignored unknown column(s): {', '.join(unknown)}")
 
     keep = [name for name in KNOWN_COLUMNS if name in frame.columns]
+    frame = frame.select(keep)
+    nested = [name for name, dtype in frame.schema.items() if dtype.is_nested()]
+    if nested:
+        raise BadRequest(f"known columns must contain scalar values, not nested data: {nested}")
+    frame = cast_all_utf8(frame)
     return [
-        {key: _clean(value) for key, value in row.items()} for row in frame.select(keep).to_dicts()
+        {key: _clean(value) for key, value in row.items()} for row in frame.to_dicts()
     ], warnings
 
 
@@ -281,7 +300,8 @@ def _validate_rows(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """逐行校验并解析。返回 ``(有效行, 错误明细)``。
 
-    行号从 2 起算，对齐 CSV 里的物理行号（第 1 行是表头）。
+    行号从 2 起算，CSV / Excel 均按第 1 行为表头计算数据记录行号。
+    多行 CSV 字段不按文本换行数累计。
     """
     valid: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -762,15 +782,26 @@ def _parse_date_cell(
     raw_row: dict[str, Any],
     errors: list[dict[str, Any]],
 ) -> date | None:
+    """解析交易日；接受纯日期或无时区的午夜值，不丢弃非零时间。"""
     if not value:
         return None
     try:
         return date.fromisoformat(value)
     except ValueError:
-        errors.append(
-            _err(row_number, column, "invalid_date", "invalid date, expected YYYY-MM-DD", raw_row)
-        )
-        return None
+        pass
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        if 1 <= len(value) <= 5 and value.isdigit():
+            message = "date stored as an Excel serial number; format the cell as a date"
+        else:
+            message = "invalid date, expected YYYY-MM-DD"
+    else:
+        if parsed.tzinfo is None and parsed.time() == time(0):
+            return parsed.date()
+        message = "date must not contain a time or timezone"
+    errors.append(_err(row_number, column, "invalid_date", message, raw_row))
+    return None
 
 
 def _parse_int_cell(
