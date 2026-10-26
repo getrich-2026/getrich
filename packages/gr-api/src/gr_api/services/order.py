@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 async def list_orders(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
     status: str | None,

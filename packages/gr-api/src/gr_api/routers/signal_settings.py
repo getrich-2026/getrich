@@ -15,7 +15,7 @@ from gr_api.services import signal_settings as svc
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(tags=["signal-settings"])
@@ -27,7 +27,7 @@ router = APIRouter(tags=["signal-settings"])
 @router.get("/user/signal-settings")
 async def get_user_settings(
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await svc.get_global_settings(db, user_id=user_id)
@@ -38,7 +38,7 @@ async def get_user_settings(
 async def update_user_settings(
     body: GlobalSettingsIn,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await svc.update_global_settings(db, user_id=user_id, body=body)
@@ -52,7 +52,7 @@ async def update_user_settings(
 async def get_strategy_signal_settings(
     strategy_code: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await svc.get_strategy_settings(
@@ -68,7 +68,7 @@ async def update_strategy_signal_settings(
     strategy_code: str,
     body: StrategySettingsPatch,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await svc.update_strategy_settings(

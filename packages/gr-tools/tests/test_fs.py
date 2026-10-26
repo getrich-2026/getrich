@@ -8,77 +8,53 @@ import pytest
 from gr_tools import fs
 
 
-def test_handle_path_creates_parent_dirs(tmp_path: Path) -> None:
-    target = tmp_path / "a" / "b" / "c.txt"
-    resolved = fs.handle_path(target)
-
-    assert resolved.parent.is_dir()
-    assert resolved.is_absolute()
-
-
 def test_list_paths_is_sorted_and_filterable(tmp_path: Path) -> None:
     (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "nested").mkdir()
     (tmp_path / "sub" / "b.txt").write_text("b", encoding="utf-8")
     (tmp_path / "a.txt").write_text("a", encoding="utf-8")
 
+    paths = fs.list_paths(tmp_path)
     files = fs.get_files(tmp_path)
-    dirs = fs.get_dirs(tmp_path)
+    dirs = fs.list_paths(tmp_path, dirs_only=True)
 
-    assert [p.name for p in files] == ["a.txt", "b.txt"]
-    assert [p.name for p in dirs] == ["sub"]
-    # 排序是刻意的：不排序时 rglob 的顺序随文件系统变化，结果不可复现。
-    assert files == sorted(files)
+    # 排序是刻意的：不排序时 rglob 的返回顺序依赖文件系统。
+    assert files == [tmp_path / "a.txt", tmp_path / "sub" / "b.txt"]
+    assert dirs == [tmp_path / "sub", tmp_path / "sub" / "nested"]
+    assert paths == sorted([*files, *dirs])
+
+
+@pytest.mark.parametrize("files_only,dirs_only", [(False, False), (True, False), (False, True)])
+def test_list_paths_empty_directory(tmp_path: Path, files_only: bool, dirs_only: bool) -> None:
+    assert fs.list_paths(tmp_path, files_only=files_only, dirs_only=dirs_only) == []
 
 
 def test_list_paths_missing_root_raises(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError, match="directory does not exist"):
         fs.list_paths(tmp_path / "nope")
 
 
-def test_move_copy_keeps_source(tmp_path: Path) -> None:
-    src = tmp_path / "src.txt"
-    src.write_text("x", encoding="utf-8")
-    dst = tmp_path / "out" / "dst.txt"
+def test_list_paths_rejects_file_root(tmp_path: Path) -> None:
+    target = tmp_path / "data.txt"
+    target.write_text("data", encoding="utf-8")
 
-    fs.move(src, dst)
-
-    assert src.exists()
-    assert dst.read_text(encoding="utf-8") == "x"
+    with pytest.raises(NotADirectoryError, match="path is not a directory"):
+        fs.list_paths(target)
 
 
-def test_move_without_exist_ok_raises(tmp_path: Path) -> None:
-    src = tmp_path / "src.txt"
-    src.write_text("x", encoding="utf-8")
-    dst = tmp_path / "dst.txt"
-    dst.write_text("old", encoding="utf-8")
-
-    with pytest.raises(FileExistsError):
-        fs.move(src, dst)
-    assert dst.read_text(encoding="utf-8") == "old"
+def test_list_paths_rejects_conflicting_filters(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="cannot both be True"):
+        fs.list_paths(tmp_path, files_only=True, dirs_only=True)
 
 
-def test_move_rename_and_remove(tmp_path: Path) -> None:
-    src = tmp_path / "src.txt"
-    src.write_text("x", encoding="utf-8")
+def test_list_paths_normalizes_relative_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "data"
+    root.mkdir()
+    (root / "item.txt").write_text("data", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
-    renamed = fs.rename(src, tmp_path / "renamed.txt")
-    assert renamed.exists() and not src.exists()
-
-    fs.remove(renamed)
-    assert not renamed.exists()
-
-
-def test_remove_missing_path_is_noop(tmp_path: Path) -> None:
-    # 清理临时文件失败不该中断主流程。
-    fs.remove(tmp_path / "not-there")
-
-
-def test_file_time_rejects_bad_method(tmp_path: Path) -> None:
-    target = tmp_path / "a.txt"
-    target.write_text("a", encoding="utf-8")
-
-    assert fs.file_time(target, "m").year >= 1970
-    with pytest.raises(ValueError, match="method must be"):
-        fs.file_time(target, "z")
-    with pytest.raises(FileNotFoundError):
-        fs.file_time(tmp_path / "missing.txt")
+    expected = [(root / "item.txt").resolve()]
+    assert fs.list_paths("data") == expected
+    assert fs.get_files(Path("data")) == expected

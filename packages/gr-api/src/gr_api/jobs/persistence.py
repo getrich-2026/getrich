@@ -17,7 +17,7 @@ from gr_data.db.pool import PgConnectionPool, pg_pool
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _JOB_STATUS_VALUES = frozenset({"queued", "running", "completed", "failed", "cancelled"})
@@ -51,7 +51,7 @@ class PgBacktestJobStore:
         retry_base_seconds: float | None = None,
         retry_cap_seconds: float | None = None,
         retry_jitter_pct: float | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> str:
         """Insert a new ``queued`` job and return its generated ``job_id``."""
         if job_type not in _JOB_TYPE_VALUES:
@@ -95,7 +95,7 @@ class PgBacktestJobStore:
         payload.pop("_user_id", None)
         request_payload = _json_dumps(payload)
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _INSERT_JOB_SQL,
@@ -130,7 +130,7 @@ class PgBacktestJobStore:
         self,
         job_type: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
         stale_seconds: int = 300,
     ) -> dict[str, Any] | None:
         """Atomically claim the next runnable job of *job_type* and mark it running.
@@ -158,7 +158,7 @@ class PgBacktestJobStore:
         if stale_seconds < 0:
             raise ValueError("stale_seconds must be non-negative")
 
-        async def op(db: AsyncConnection) -> dict[str, Any] | None:
+        async def op(db: DictConnection) -> dict[str, Any] | None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _CLAIM_NEXT_JOB_SQL,
@@ -198,11 +198,11 @@ class PgBacktestJobStore:
         self,
         job_id: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> bool:
         """Transition ``queued`` → ``running``. Returns ``True`` on success."""
 
-        async def op(db: AsyncConnection) -> bool:
+        async def op(db: DictConnection) -> bool:
             async with db.cursor() as cur:
                 await cur.execute(
                     _MARK_RUNNING_SQL,
@@ -226,13 +226,13 @@ class PgBacktestJobStore:
         job_id: str,
         progress: int,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> bool:
         """Update progress (clamped 0-100) for an active job."""
 
         clamped = max(0, min(100, int(progress)))
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _UPDATE_PROGRESS_SQL,
@@ -256,11 +256,11 @@ class PgBacktestJobStore:
         self,
         job_id: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> bool:
         """Transition ``running`` → ``completed``. Returns ``True`` on success."""
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _MARK_COMPLETED_SQL,
@@ -283,11 +283,11 @@ class PgBacktestJobStore:
         job_id: str,
         error_message: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> bool:
         """Transition to ``failed`` from any non-terminal state."""
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _MARK_FAILED_SQL,
@@ -311,7 +311,7 @@ class PgBacktestJobStore:
         *,
         error_message: str,
         next_retry_at: datetime,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> bool:
         """Re-queue a job that failed transiently.
 
@@ -322,7 +322,7 @@ class PgBacktestJobStore:
         so a future claim behaves like a fresh run.
         """
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _MARK_RETRY_SQL,
@@ -350,7 +350,7 @@ class PgBacktestJobStore:
         *,
         key: str,
         user_id: str | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> dict[str, Any] | None:
         """Look up a job by ``request_json._idempotency_key``.
 
@@ -361,7 +361,7 @@ class PgBacktestJobStore:
         owner scoping.
         """
 
-        async def op(db: AsyncConnection) -> dict[str, Any] | None:
+        async def op(db: DictConnection) -> dict[str, Any] | None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _SELECT_BY_IDEMPOTENCY_KEY_SQL,
@@ -381,7 +381,7 @@ class PgBacktestJobStore:
         job_id: str,
         *,
         user_id: str | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> bool:
         """Transition ``queued`` or ``running`` → ``cancelled``.
 
@@ -391,7 +391,7 @@ class PgBacktestJobStore:
         matching row was updated; idempotent on already-cancelled jobs.
         """
 
-        async def op(db: AsyncConnection) -> bool:
+        async def op(db: DictConnection) -> bool:
             async with db.cursor() as cur:
                 await cur.execute(
                     _MARK_CANCELLED_SQL,
@@ -418,7 +418,7 @@ class PgBacktestJobStore:
         job_id: str,
         *,
         user_id: str | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> dict[str, Any] | None:
         """Return one job row, or ``None`` if missing or not owned by ``user_id``.
 
@@ -429,7 +429,7 @@ class PgBacktestJobStore:
         Pass an actual user id to enforce owner scoping.
         """
 
-        async def op(db: AsyncConnection) -> dict[str, Any] | None:
+        async def op(db: DictConnection) -> dict[str, Any] | None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _SELECT_JOB_SQL,
@@ -449,7 +449,7 @@ class PgBacktestJobStore:
         ref_id: str,
         *,
         user_id: str | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> dict[str, Any] | None:
         """Return the most recent job row whose ``ref_id`` matches.
 
@@ -468,7 +468,7 @@ class PgBacktestJobStore:
         ``/backtest-jobs/{job_id}/events`` SSE stream).
         """
 
-        async def op(db: AsyncConnection) -> dict[str, Any] | None:
+        async def op(db: DictConnection) -> dict[str, Any] | None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _SELECT_JOB_BY_REF_ID_SQL,
@@ -491,7 +491,7 @@ class PgBacktestJobStore:
         user_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List jobs with optional filters; returns ``(rows, total)``.
 
@@ -530,7 +530,7 @@ class PgBacktestJobStore:
             LIMIT %(limit)s OFFSET %(offset)s
         """
 
-        async def op(db: AsyncConnection) -> tuple[list[dict[str, Any]], int]:
+        async def op(db: DictConnection) -> tuple[list[dict[str, Any]], int]:
             async with db.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
@@ -548,9 +548,9 @@ class PgBacktestJobStore:
 
     async def _run(
         self,
-        op: Callable[[AsyncConnection], Awaitable[Any]],
+        op: Callable[[DictConnection], Awaitable[Any]],
         *,
-        conn: AsyncConnection | None,
+        conn: DictConnection | None,
         commit: bool = True,
     ) -> Any:
         if conn is not None:

@@ -25,7 +25,7 @@ from gr_api.services import resolver, signal as signal_svc
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(prefix="/signals", tags=["signals"])
@@ -47,7 +47,7 @@ async def list_signals(
     end_date: date | None = None,
     page: PageParams = Depends(page_dep),
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total, unread = await signal_svc.list_signals(
@@ -80,7 +80,7 @@ async def list_signals(
 @router.get("/unread-summary")
 async def unread_summary(
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await signal_svc.unread_summary(db, user_id=user_id)
@@ -94,7 +94,7 @@ async def unread_summary(
 async def get_signal_detail(
     signal_code: str,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.signal_code_to_id(db, signal_code)
@@ -114,7 +114,7 @@ async def get_signal_detail(
 async def mark_read(
     signal_code: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.signal_code_to_id(db, signal_code)
@@ -135,7 +135,7 @@ async def record_execute(
     signal_code: str,
     body: ExecuteSignalIn,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.signal_code_to_id(db, signal_code)

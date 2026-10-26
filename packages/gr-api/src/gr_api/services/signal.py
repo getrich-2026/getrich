@@ -16,7 +16,7 @@ from gr_signal.trade_reconciler import reconcile_trades
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
     from gr_api.schemas.signal import ExecuteSignalIn
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _TZ_SH = ZoneInfo("Asia/Shanghai")
@@ -26,7 +26,7 @@ _TZ_SH = ZoneInfo("Asia/Shanghai")
 
 
 async def list_signals(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str | None,
     strategy_id: str | None,  # 可以是 strategy_code
@@ -172,7 +172,7 @@ async def list_signals(
 
 
 async def unread_summary(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str | None,
 ) -> dict[str, Any]:
@@ -257,7 +257,7 @@ async def unread_summary(
 
 
 async def get_signal_detail(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     signal_id: str,
     signal_code: str,
@@ -435,7 +435,7 @@ def _empty_market_snapshot(symbol: str) -> dict[str, Any]:
 
 
 async def mark_read(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
     signal_id: str,
@@ -481,7 +481,7 @@ async def mark_read(
 
 
 async def record_execute(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
     signal_id: str,

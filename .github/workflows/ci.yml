@@ -9,6 +9,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
+      - ".basedpyright/**"
       - ".github/workflows/ci.yml"
   push:
     branches: [dev, main]
@@ -18,6 +19,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
+      - ".basedpyright/**"
       - ".github/workflows/ci.yml"
   workflow_dispatch:
     inputs:
@@ -72,6 +74,11 @@ jobs:
 
       - name: Ruff format
         run: uv run --frozen ruff format --check packages scripts
+
+      # 存量类型错误记在 .basedpyright/baseline.json，这里只拦新增的错误。
+      # 修掉存量错误后在本地跑 `uv run basedpyright --writebaseline` 收紧 baseline。
+      - name: Type check (basedpyright)
+        run: uv run --frozen basedpyright
 
       - name: Migration topology lint
         run: uv run --frozen python scripts/lint_migrations.py --db all

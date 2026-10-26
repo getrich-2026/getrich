@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
     from gr_api.pagination import PageParams
     from gr_api.services.job_listener import BacktestJobListener
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _STORE = PgSweepResultStore()
@@ -60,7 +60,7 @@ _LISTENER: BacktestJobListener | None = None
 
 
 async def list_sweeps(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     status: str | None,
     page: PageParams,
@@ -78,7 +78,7 @@ async def list_sweeps(
 
 
 async def get_sweep(
-    db: AsyncConnection,
+    db: DictConnection,
     sweep_id: str,
     *,
     user_id: str,
@@ -269,7 +269,7 @@ async def stream_sweep_events(
 
 
 async def list_sweep_trials(
-    db: AsyncConnection,
+    db: DictConnection,
     sweep_id: str,
     *,
     status: str | None,

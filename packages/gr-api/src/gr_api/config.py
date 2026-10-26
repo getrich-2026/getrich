@@ -118,7 +118,9 @@ class WebConfig:
             jwt_expire_minutes=jwt_expire_minutes,
             jwt_refresh_expire_hours=jwt_refresh_expire_hours,
             csp_policy=csp_policy,
-            allow_mock_auth=parse_bool(source.get("GETRICH_ALLOW_MOCK_AUTH")),
+            allow_mock_auth=parse_bool(
+                source.get("GETRICH_ALLOW_MOCK_AUTH"), name="GETRICH_ALLOW_MOCK_AUTH"
+            ),
         )
 
 

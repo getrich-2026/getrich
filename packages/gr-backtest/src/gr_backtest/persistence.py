@@ -20,7 +20,7 @@ from gr_backtest.time import get_shanghai_tz, require_shanghai_aware
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _STATUS_VALUES = frozenset({"running", "completed", "failed"})
@@ -80,7 +80,7 @@ class PgBacktestResultStore:
         strategy_id: str | None = None,
         artifacts: Sequence[BacktestArtifact] = (),
         status: str = "completed",
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> None:
         """Persist a completed backtest result.
 
@@ -89,7 +89,7 @@ class PgBacktestResultStore:
         """
         _validate_status(status)
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(_UPSERT_RUN_SQL, _run_params(result, strategy_id, status))
                 await self._delete_children(cur, result.run_id)
@@ -123,11 +123,11 @@ class PgBacktestResultStore:
         config: RunConfig,
         *,
         strategy_id: str | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> None:
         """Upsert a running backtest run row from a ``RunConfig``."""
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _UPSERT_RUNNING_SQL,
@@ -149,11 +149,11 @@ class PgBacktestResultStore:
         error_message: str,
         *,
         strategy_id: str | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> None:
         """Upsert a failed backtest run row from a ``RunConfig``."""
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             params = _config_run_params(config, strategy_id, "failed")
             params["error_message"] = error_message
             async with db.cursor() as cur:
@@ -172,11 +172,11 @@ class PgBacktestResultStore:
         self,
         run_id: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> dict[str, Any] | None:
         """Return one persisted backtest run row, or ``None`` if missing."""
 
-        async def op(db: AsyncConnection) -> dict[str, Any] | None:
+        async def op(db: DictConnection) -> dict[str, Any] | None:
             async with db.cursor() as cur:
                 await cur.execute(
                     """
@@ -202,7 +202,7 @@ class PgBacktestResultStore:
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List persisted backtest runs with optional filters and total count."""
         if status is not None:
@@ -230,7 +230,7 @@ class PgBacktestResultStore:
             LIMIT %(limit)s OFFSET %(offset)s
         """
 
-        async def op(db: AsyncConnection) -> tuple[list[dict[str, Any]], int]:
+        async def op(db: DictConnection) -> tuple[list[dict[str, Any]], int]:
             async with db.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
@@ -251,7 +251,7 @@ class PgBacktestResultStore:
         run_id: str,
         *,
         strategy_name: str | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> list[dict[str, Any]]:
         """Return persisted equity points for a run."""
         conds = ["run_id = %(run_id)s"]
@@ -261,7 +261,7 @@ class PgBacktestResultStore:
             params["strategy_name"] = strategy_name
         where = " AND ".join(conds)
 
-        async def op(db: AsyncConnection) -> list[dict[str, Any]]:
+        async def op(db: DictConnection) -> list[dict[str, Any]]:
             async with db.cursor() as cur:
                 await cur.execute(
                     f"""
@@ -294,9 +294,9 @@ class PgBacktestResultStore:
 
     async def _run(
         self,
-        op: Callable[[AsyncConnection], Awaitable[Any]],
+        op: Callable[[DictConnection], Awaitable[Any]],
         *,
-        conn: AsyncConnection | None,
+        conn: DictConnection | None,
         commit: bool = True,
     ) -> Any:
         if conn is not None:

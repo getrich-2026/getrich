@@ -28,7 +28,7 @@ from gr_api.services.resolver import resolve_strategy_ref
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ _LATEST_BATCH_JOIN = """
 
 
 async def list_pick_strategies(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str | None,
     category_id: str | None,
@@ -187,7 +187,7 @@ async def list_pick_strategies(
 
 
 async def get_pick_strategy(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_ref: str,
     user_id: str | None,
@@ -254,7 +254,7 @@ async def get_pick_strategy(
 
 
 async def list_strategy_picks(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_ref: str,
     trading_day: date | None,
@@ -305,7 +305,7 @@ async def list_strategy_picks(
 
 
 async def list_pick_trading_days(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_ref: str,
     start_date: date | None,
@@ -355,7 +355,7 @@ async def list_pick_trading_days(
 
 
 async def list_latest_picks(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str | None,
     category_id: str | None,
@@ -444,7 +444,7 @@ async def list_latest_picks(
 
 
 async def list_picks_by_symbol(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     symbol_full: str,
     start_date: date | None,
@@ -561,7 +561,7 @@ async def list_picks_by_symbol(
 
 
 async def list_pick_batches(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_ref: str | None,
     start_date: date | None,
@@ -653,7 +653,7 @@ def _subscription_fragments(user_id: str | None, params: dict[str, Any]) -> tupl
 
 
 async def _batch_of_day(
-    db: AsyncConnection,
+    db: DictConnection,
     strategy_id: Any,
     trading_day: date | None,
 ) -> dict[str, Any] | None:
@@ -677,7 +677,7 @@ async def _batch_of_day(
 
 
 async def _preview_items(
-    db: AsyncConnection,
+    db: DictConnection,
     batch_ids: list[int],
     preview_size: int,
 ) -> dict[int, list[dict[str, Any]]]:

@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import os
 
-from gr_data.config.settings import ClickHouseConfig, make_pg_dsn
+import pytest
+from gr_data.config.settings import (
+    ClickHouseConfig,
+    HdbConfig,
+    InsightConfig,
+    RiceQuantConfig,
+    make_pg_dsn,
+)
+from gr_tools.config import SettingsError
 
 
 def test_make_pg_dsn_with_password() -> None:
@@ -57,3 +65,21 @@ def test_clickhouse_default_host_is_localhost(monkeypatch: object) -> None:
     assert cfg.port == 8123
     assert cfg.user == "default"
     assert cfg.protocol == "http"
+
+
+def test_invalid_ricequant_enabled_rejects_configuration() -> None:
+    with pytest.raises(SettingsError, match="RICEQUANT_ENABLED") as error:
+        RiceQuantConfig.from_env(strict=False, environ={"RICEQUANT_ENABLED": "tru"})
+    assert "tru" not in str(error.value)
+
+
+def test_invalid_hdb_enabled_rejects_configuration() -> None:
+    with pytest.raises(SettingsError, match="ENABLE_HDB") as error:
+        HdbConfig.from_env(environ={"ENABLE_HDB": "tru"})
+    assert "tru" not in str(error.value)
+
+
+def test_invalid_insight_enabled_rejects_configuration() -> None:
+    with pytest.raises(SettingsError, match="ENABLE_INSIGHT") as error:
+        InsightConfig.from_env(strict=False, environ={"ENABLE_INSIGHT": "tru"})
+    assert "tru" not in str(error.value)

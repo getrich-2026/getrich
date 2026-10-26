@@ -28,7 +28,7 @@ from gr_tools.config import load_environment
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 pytestmark = [
@@ -52,7 +52,7 @@ def _dsn() -> str:
     return f"postgresql://{cfg.user}:{cfg.password}@{cfg.host}:{cfg.port}/{cfg.database}"
 
 
-async def _connect(*, autocommit: bool = False) -> AsyncConnection:
+async def _connect(*, autocommit: bool = False) -> DictConnection:
     """连接测试库；失败时不让 pytest traceback 打印含密码的 DSN。"""
     import psycopg
     from psycopg.rows import dict_row
@@ -73,7 +73,7 @@ async def _connect(*, autocommit: bool = False) -> AsyncConnection:
 @pytest.fixture
 async def diagnosis_db(
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncIterator[tuple[AsyncConnection, UUID, UUID]]:
+) -> AsyncIterator[tuple[DictConnection, UUID, UUID]]:
     """准备两名用户、两只标的、交易日和独立数据版本。"""
 
     class FrozenDateTime(datetime):
@@ -136,7 +136,7 @@ async def diagnosis_db(
         await conn.close()
 
 
-async def _cleanup(conn: AsyncConnection) -> None:
+async def _cleanup(conn: DictConnection) -> None:
     """只删除本文件创建的数据。"""
     async with conn.cursor() as cur:
         await cur.execute(
@@ -183,7 +183,7 @@ def _request(
 
 
 async def test_sql_end_to_end_cache_reuse_and_request_isolation(
-    diagnosis_db: tuple[AsyncConnection, UUID, UUID],
+    diagnosis_db: tuple[DictConnection, UUID, UUID],
 ) -> None:
     db, user_a, user_b = diagnosis_db
     request_a = _request(
@@ -241,7 +241,7 @@ async def test_sql_end_to_end_cache_reuse_and_request_isolation(
 
 
 async def test_equal_weight_baseline_metrics_on_real_sql(
-    diagnosis_db: tuple[AsyncConnection, UUID, UUID],
+    diagnosis_db: tuple[DictConnection, UUID, UUID],
 ) -> None:
     db, user_a, _user_b = diagnosis_db
     request = _request(
@@ -261,7 +261,7 @@ async def test_equal_weight_baseline_metrics_on_real_sql(
 
 
 async def test_concurrent_authenticated_requests_are_idempotent(
-    diagnosis_db: tuple[AsyncConnection, UUID, UUID],
+    diagnosis_db: tuple[DictConnection, UUID, UUID],
 ) -> None:
     _db, user_a, _user_b = diagnosis_db
     request = _request("concurrent", [HoldingItem(symbol=_SYMBOL_A)])

@@ -78,12 +78,15 @@ def test_load_data_rejects_unknown_engine(tmp_path: Path) -> None:
 
 
 def test_read_directory_concatenates_all_files(tmp_path: Path) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    _write_csv(nested / "2026-08-12.csv", "symbol\n000001.SZ\n")
     _write_csv(tmp_path / "2026-08-11.csv", "symbol\n600000.SH\n")
-    _write_csv(tmp_path / "2026-08-12.csv", "symbol\n000001.SZ\n")
 
     df = io.read_directory(tmp_path, all_string=True)
 
-    assert sorted(df["symbol"].to_list()) == ["000001.SZ", "600000.SH"]
+    # 递归读取的拼接顺序沿用 get_files 的路径排序，不受创建顺序影响。
+    assert df["symbol"].to_list() == ["600000.SH", "000001.SZ"]
 
 
 def test_read_directory_by_date_pattern_skips_missing(tmp_path: Path) -> None:

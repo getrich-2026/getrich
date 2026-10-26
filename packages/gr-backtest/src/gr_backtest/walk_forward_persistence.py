@@ -18,7 +18,7 @@ from gr_backtest.walk_forward import WalkForwardResult, WalkForwardWindowResult
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _WALK_FORWARD_STATUS_VALUES = frozenset({"running", "completed", "failed"})
@@ -44,7 +44,7 @@ class PgWalkForwardResultStore:
         search_type: str = "grid",
         search_spec: Mapping[str, object] | None = None,
         save_child_results: bool = True,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> None:
         """Persist a walk-forward result and its per-window summaries.
 
@@ -58,7 +58,7 @@ class PgWalkForwardResultStore:
         if not search_type.strip():
             raise ValueError("search_type must be non-empty")
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _UPSERT_WALK_FORWARD_SQL,
@@ -105,11 +105,11 @@ class PgWalkForwardResultStore:
         self,
         walk_forward_id: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> dict[str, Any] | None:
         """Return one persisted walk-forward parent row, or ``None`` if missing."""
 
-        async def op(db: AsyncConnection) -> dict[str, Any] | None:
+        async def op(db: DictConnection) -> dict[str, Any] | None:
             async with db.cursor() as cur:
                 await cur.execute(
                     """
@@ -136,7 +136,7 @@ class PgWalkForwardResultStore:
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List persisted walk-forward studies with optional status filtering."""
         if status is not None:
@@ -157,7 +157,7 @@ class PgWalkForwardResultStore:
             LIMIT %(limit)s OFFSET %(offset)s
         """
 
-        async def op(db: AsyncConnection) -> tuple[list[dict[str, Any]], int]:
+        async def op(db: DictConnection) -> tuple[list[dict[str, Any]], int]:
             async with db.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
@@ -180,7 +180,7 @@ class PgWalkForwardResultStore:
         status: str | None = None,
         limit: int = 500,
         offset: int = 0,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List persisted window rows for one walk-forward study."""
         if not walk_forward_id.strip():
@@ -207,7 +207,7 @@ class PgWalkForwardResultStore:
             LIMIT %(limit)s OFFSET %(offset)s
         """
 
-        async def op(db: AsyncConnection) -> tuple[list[dict[str, Any]], int]:
+        async def op(db: DictConnection) -> tuple[list[dict[str, Any]], int]:
             async with db.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
@@ -232,7 +232,7 @@ class PgWalkForwardResultStore:
         status: str | None = None,
         limit: int = 10_000,
         offset: int = 0,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> pl.DataFrame:
         """Return persisted window rows as an analysis-friendly Polars frame."""
         rows, _total = await self.list_windows(
@@ -248,13 +248,13 @@ class PgWalkForwardResultStore:
         self,
         walk_forward_id: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> pl.DataFrame:
         """Return persisted OOS equity points tagged with walk-forward window metadata."""
         if not walk_forward_id.strip():
             raise ValueError("walk_forward_id must be non-empty")
 
-        async def op(db: AsyncConnection) -> pl.DataFrame:
+        async def op(db: DictConnection) -> pl.DataFrame:
             async with db.cursor() as cur:
                 await cur.execute(
                     """
@@ -295,9 +295,9 @@ class PgWalkForwardResultStore:
 
     async def _run(
         self,
-        op: Callable[[AsyncConnection], Awaitable[Any]],
+        op: Callable[[DictConnection], Awaitable[Any]],
         *,
-        conn: AsyncConnection | None,
+        conn: DictConnection | None,
         commit: bool = True,
     ) -> Any:
         if conn is not None:

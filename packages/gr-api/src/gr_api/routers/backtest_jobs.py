@@ -19,7 +19,7 @@ from gr_api.services import backtest_job as job_svc
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(prefix="/backtest-jobs", tags=["backtest"])
@@ -31,7 +31,7 @@ async def list_jobs(
     status: str | None = Query(None, pattern=r"^(queued|running|completed|failed|cancelled)$"),
     page: PageParams = Depends(page_dep),
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await job_svc.list_jobs(
@@ -48,7 +48,7 @@ async def list_jobs(
 async def get_job(
     job_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await job_svc.get_job(db, job_id, user_id=user_id)
@@ -60,7 +60,7 @@ async def stream_job_events(
     job_id: str,
     request: Request,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     """Stream lifecycle events for one backtest job (Server-Sent Events).
@@ -108,7 +108,7 @@ async def stream_job_events(
 async def cancel_job(
     job_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await job_svc.cancel_job(db, job_id, user_id=user_id)
@@ -155,7 +155,7 @@ async def run_backtest(
     background: BackgroundTasks,
     request: Request,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     rid: str = Depends(request_id),
 ):
@@ -175,7 +175,7 @@ async def run_sweep(
     background: BackgroundTasks,
     request: Request,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     rid: str = Depends(request_id),
 ):
@@ -195,7 +195,7 @@ async def run_walk_forward(
     background: BackgroundTasks,
     request: Request,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     rid: str = Depends(request_id),
 ):

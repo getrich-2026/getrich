@@ -24,7 +24,7 @@ from gr_api.services import pick as pick_svc
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 strategies_router = APIRouter(prefix="/pick-strategies", tags=["策略模块 - 选股展示"])
@@ -45,7 +45,7 @@ async def list_pick_strategies(
     status: str = Query("active", pattern=r"^(active|all)$"),
     page: PageParams = Depends(page_dep),
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await pick_svc.list_pick_strategies(
@@ -76,7 +76,7 @@ async def list_pick_strategies(
 async def get_pick_strategy(
     strategy_id: str,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await pick_svc.get_pick_strategy(db, strategy_ref=strategy_id, user_id=user_id)
@@ -94,7 +94,7 @@ async def list_strategy_picks(
     page: int = Query(1, ge=1),
     # 标的池通常 20–50 只，前端一般一次取全，所以这里的上限比全局的 100 更宽。
     page_size: int = Query(100, ge=1, le=200),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     page_params = make_page_params(page=page, page_size=page_size, max_page_size=200)
@@ -115,7 +115,7 @@ async def list_pick_trading_days(
     start_date: date | None = None,
     end_date: date | None = None,
     limit: int = Query(90, ge=1, le=500),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await pick_svc.list_pick_trading_days(
@@ -138,7 +138,7 @@ async def list_latest_picks(
     preview_size: int = Query(5, ge=1, le=20),
     page: PageParams = Depends(page_dep),
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await pick_svc.list_latest_picks(
@@ -159,7 +159,7 @@ async def list_picks_by_symbol(
     end_date: date | None = None,
     in_pool_only: bool = False,
     page: PageParams = Depends(page_dep),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await pick_svc.list_picks_by_symbol(
@@ -185,7 +185,7 @@ async def list_pick_batches(
     status: str = Query("active", pattern=r"^(active|superseded|all)$"),
     page: PageParams = Depends(page_dep),
     _admin: str = Depends(require_admin),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await pick_svc.list_pick_batches(

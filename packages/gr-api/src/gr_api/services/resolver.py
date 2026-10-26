@@ -12,10 +12,10 @@ from gr_api.errors import NotFound
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
-async def strategy_code_to_id(db: AsyncConnection, strategy_code: str) -> str:
+async def strategy_code_to_id(db: DictConnection, strategy_code: str) -> str:
     """根据 strategy_code 查 strategies.id (UUID 字符串)。"""
     async with db.cursor() as cur:
         await cur.execute(
@@ -28,7 +28,7 @@ async def strategy_code_to_id(db: AsyncConnection, strategy_code: str) -> str:
     return str(row["id"])
 
 
-async def resolve_strategy_ref(db: AsyncConnection, ref: str) -> dict[str, Any]:
+async def resolve_strategy_ref(db: DictConnection, ref: str) -> dict[str, Any]:
     """按 UUID 或 ``strategy_code`` 解析策略，返回基础信息。
 
     选股模块的接口契约（``选股展示模块.openapi.json`` 的 ``StrategyId`` 参数）
@@ -62,7 +62,7 @@ async def resolve_strategy_ref(db: AsyncConnection, ref: str) -> dict[str, Any]:
     return row
 
 
-async def signal_code_to_id(db: AsyncConnection, signal_code: str) -> str:
+async def signal_code_to_id(db: DictConnection, signal_code: str) -> str:
     """根据 signal_code 查 signals.id (UUID 字符串)。"""
     async with db.cursor() as cur:
         await cur.execute(

@@ -14,7 +14,7 @@ from gr_api.services import backtest_sweep as sweep_svc
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(prefix="/backtest-sweeps", tags=["backtest"])
@@ -25,7 +25,7 @@ async def list_sweeps(
     status: str | None = Query(None, pattern=r"^(running|completed|failed)$"),
     page: PageParams = Depends(page_dep),
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await sweep_svc.list_sweeps(
@@ -41,7 +41,7 @@ async def list_sweeps(
 async def get_sweep(
     sweep_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await sweep_svc.get_sweep(db, sweep_id, user_id=user_id)
@@ -53,7 +53,7 @@ async def stream_sweep_events(
     sweep_id: str,
     request: Request,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     """Stream lifecycle events for one parameter sweep (Server-Sent Events).
@@ -100,7 +100,7 @@ async def list_sweep_trials(
     status: str | None = Query(None, pattern=r"^(completed|failed)$"),
     page: PageParams = Depends(page_dep),
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await sweep_svc.list_sweep_trials(

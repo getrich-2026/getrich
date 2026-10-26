@@ -27,10 +27,10 @@ from gr_api.errors import BadRequest, NotFound
 if TYPE_CHECKING:
     from gr_api.config import BacktestStorageConfig
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
-async def _assert_run_owner(db: AsyncConnection, run_id: str, user_id: str) -> None:
+async def _assert_run_owner(db: DictConnection, run_id: str, user_id: str) -> None:
     """Raise ``NotFound`` if ``run_id`` is missing or not owned by ``user_id``."""
     async with db.cursor() as cur:
         await cur.execute(
@@ -43,7 +43,7 @@ async def _assert_run_owner(db: AsyncConnection, run_id: str, user_id: str) -> N
 
 
 async def list_runs(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str | None,
     status: str | None,
@@ -99,7 +99,7 @@ async def list_runs(
 
 
 async def get_run(
-    db: AsyncConnection,
+    db: DictConnection,
     run_id: str,
     *,
     user_id: str,
@@ -140,7 +140,7 @@ async def get_run(
 
 
 async def get_equity_curve(
-    db: AsyncConnection,
+    db: DictConnection,
     run_id: str,
     *,
     user_id: str,
@@ -179,7 +179,7 @@ async def get_equity_curve(
 
 
 async def get_metrics(
-    db: AsyncConnection,
+    db: DictConnection,
     run_id: str,
     *,
     user_id: str,
@@ -220,7 +220,7 @@ async def get_metrics(
 
 
 async def get_positions(
-    db: AsyncConnection,
+    db: DictConnection,
     run_id: str,
     *,
     user_id: str,
@@ -245,7 +245,7 @@ async def get_positions(
 
 
 async def get_artifacts(
-    db: AsyncConnection,
+    db: DictConnection,
     run_id: str,
     *,
     user_id: str,
@@ -272,7 +272,7 @@ async def get_artifacts(
 
 
 async def get_artifact(
-    db: AsyncConnection,
+    db: DictConnection,
     run_id: str,
     artifact_id: str,
     *,
@@ -405,7 +405,7 @@ def _resolve_local_path(uri: str, *, artifact_root: Path) -> Path:
 
 
 async def stream_artifact_file(
-    db: AsyncConnection,
+    db: DictConnection,
     run_id: str,
     artifact_id: str,
     *,

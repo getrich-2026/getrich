@@ -14,7 +14,7 @@ from gr_signal.errors import SignalWriteError
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _TABLE = "strategy_trades"
@@ -134,7 +134,7 @@ class BacktestTradeWriter:
         fills: tuple[Fill, ...],
         strategy_id: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> int:
         """Persist backtest fills to ``strategy_trades`` in a single transaction.
 
@@ -149,7 +149,7 @@ class BacktestTradeWriter:
             Chronologically ordered fills from a backtest run.
         strategy_id : str
             Internal UUID of the strategy (from ``strategies.id``).
-        conn : AsyncConnection | None
+        conn : DictConnection | None
             Optional existing connection for transaction grouping.
 
         Returns
@@ -162,7 +162,7 @@ class BacktestTradeWriter:
 
         params_list = self._build_params(fills, strategy_id)
 
-        async def _do(c: AsyncConnection) -> int:
+        async def _do(c: DictConnection) -> int:
             try:
                 count = 0
                 async with c.cursor() as cur:

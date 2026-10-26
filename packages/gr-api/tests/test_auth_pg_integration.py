@@ -28,7 +28,7 @@ from gr_tools.config import load_environment
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 pytestmark = [
@@ -49,7 +49,7 @@ def _dsn() -> str:
     return f"postgresql://{cfg.user}:{cfg.password}@{cfg.host}:{cfg.port}/{cfg.database}"
 
 
-async def _connect() -> AsyncConnection:
+async def _connect() -> DictConnection:
     """按连接池的 search_path 连接测试库；失败时不打印含密码的 DSN。"""
     import psycopg
     from psycopg.rows import dict_row
@@ -64,7 +64,7 @@ async def _connect() -> AsyncConnection:
         pytest.fail("unable to connect to PostgreSQL for auth integration tests", pytrace=False)
 
 
-async def _cleanup(conn: AsyncConnection) -> None:
+async def _cleanup(conn: DictConnection) -> None:
     """只删除本文件创建的用户及其凭证、刷新令牌。"""
     pattern = f"{_EMAIL_PREFIX}%"
     async with conn.cursor() as cur:
@@ -79,7 +79,7 @@ async def _cleanup(conn: AsyncConnection) -> None:
 
 
 @pytest.fixture
-async def auth_db() -> AsyncIterator[tuple[AsyncConnection, str]]:
+async def auth_db() -> AsyncIterator[tuple[DictConnection, str]]:
     """准备一名经 user_auth 邮箱登录的用户，display_name 留空。"""
     conn = await _connect()
     user_id = uuid4()
@@ -107,7 +107,7 @@ async def auth_db() -> AsyncIterator[tuple[AsyncConnection, str]]:
 
 
 async def test_login_and_refresh_fall_back_to_name(
-    auth_db: tuple[AsyncConnection, str],
+    auth_db: tuple[DictConnection, str],
 ) -> None:
     conn, email = auth_db
     settings = load_api_settings()
@@ -127,7 +127,7 @@ async def test_login_and_refresh_fall_back_to_name(
 
 
 async def test_login_and_refresh_prefer_display_name(
-    auth_db: tuple[AsyncConnection, str],
+    auth_db: tuple[DictConnection, str],
 ) -> None:
     conn, email = auth_db
     settings = load_api_settings()

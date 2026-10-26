@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/strategies", tags=["strategies"])
 
 @router.get("/categories")
 async def list_categories(
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     rows = await strategy_svc.list_categories(db)
@@ -51,7 +51,7 @@ async def list_strategies(
     sort_order: str = Query("desc", pattern=r"^(asc|desc)$"),
     page: PageParams = Depends(page_dep),
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await strategy_svc.list_strategies(
@@ -83,7 +83,7 @@ async def list_strategies(
 async def get_strategy_detail(
     strategy_code: str,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)
@@ -102,7 +102,7 @@ async def get_equity_curve(
     end_date: date | None = None,
     include_benchmark: bool = True,
     include_drawdown: bool = True,
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)
@@ -125,7 +125,7 @@ async def get_equity_curve(
 @router.get("/{strategy_code}/monthly-returns")
 async def get_monthly_returns(
     strategy_code: str,
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)
@@ -143,7 +143,7 @@ async def get_monthly_returns(
 @router.get("/{strategy_code}/backtest-report")
 async def get_backtest_report(
     strategy_code: str,
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)
@@ -166,7 +166,7 @@ async def list_trades(
     action: str | None = Query(None, pattern=r"^(all|buy|sell)$"),
     result: str | None = Query(None, pattern=r"^(all|win|loss)$"),
     page: PageParams = Depends(page_dep),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)
@@ -196,7 +196,7 @@ async def list_signals_of_strategy(
     action: str | None = Query(None, pattern=r"^(buy|sell|hold|close|all)$"),
     status: str | None = Query(None, pattern=r"^(active|expired|cancelled|all)$"),
     page: PageParams = Depends(page_dep),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)
@@ -246,7 +246,7 @@ async def update_strategy(
     strategy_code: str,
     body: UpdateStrategyRequest,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     sid = await resolver.strategy_code_to_id(db, strategy_code)

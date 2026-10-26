@@ -17,7 +17,7 @@ from gr_api.errors import BadRequest, NotFound
 
 if TYPE_CHECKING:
     from gr_api.schemas.subscription import SubscribeIn, UnsubscribeIn
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _TZ_SH = ZoneInfo("Asia/Shanghai")
@@ -28,7 +28,7 @@ _PAYMENT_QR_TTL_MIN = 30  # 支付二维码 / 支付链接的过期时间
 
 
 async def subscribe(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
     strategy_code: str,
@@ -154,7 +154,7 @@ async def subscribe(
 
 
 async def unsubscribe(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
     strategy_code: str,
@@ -210,7 +210,7 @@ async def unsubscribe(
 
 
 async def get_subscription_status(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str | None,
     strategy_code: str,

@@ -11,23 +11,26 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TypeAlias
 
-from psycopg.rows import dict_row
+from psycopg import AsyncConnection
+from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from gr_data.config import PostgresConfig
 
 
-if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+# 连接池里的连接都用 dict_row，查询结果按列名返回 dict。
+# 业务代码标注连接时用这个别名，不要写裸 ``AsyncConnection``：
+# 裸写会被类型检查器当成默认的元组行，``row["id"]`` 全部报错。
+DictConnection: TypeAlias = AsyncConnection[DictRow]
 
 
 class PgConnectionPool:
     """PostgreSQL 异步连接池封装。"""
 
     def __init__(self) -> None:
-        self._pool: AsyncConnectionPool | None = None
+        self._pool: AsyncConnectionPool[DictConnection] | None = None
 
     async def init(self, cfg: PostgresConfig) -> None:
         """初始化连接池并预热连接。重复调用会被忽略。"""
@@ -40,6 +43,7 @@ class PgConnectionPool:
         )
         self._pool = AsyncConnectionPool(
             conninfo=dsn,
+            connection_class=DictConnection,
             min_size=cfg.min_size,
             max_size=cfg.max_size,
             kwargs={
@@ -54,7 +58,7 @@ class PgConnectionPool:
         await self._pool.open(wait=True)
 
     @asynccontextmanager
-    async def connection(self) -> AsyncIterator[AsyncConnection]:
+    async def connection(self) -> AsyncIterator[DictConnection]:
         """获取一个异步连接（用完自动归还）。"""
         if self._pool is None:
             raise RuntimeError("PgConnectionPool.init() has not been called")

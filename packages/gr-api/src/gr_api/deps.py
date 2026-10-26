@@ -18,7 +18,7 @@ from gr_data.db import pg_pool
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 def get_settings(request: Request) -> ApiSettings:
@@ -26,7 +26,7 @@ def get_settings(request: Request) -> ApiSettings:
     return request.app.state.settings
 
 
-async def get_db() -> AsyncIterator[AsyncConnection]:
+async def get_db() -> AsyncIterator[DictConnection]:
     """提供一个数据库连接（请求级别），用完自动归还连接池。"""
     async with pg_pool.connection() as conn:
         yield conn

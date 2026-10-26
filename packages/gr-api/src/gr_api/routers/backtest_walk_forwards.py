@@ -14,7 +14,7 @@ from gr_api.services import backtest_walk_forward as walk_forward_svc
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(prefix="/backtest-walk-forwards", tags=["backtest"])
@@ -25,7 +25,7 @@ async def list_walk_forwards(
     status: str | None = Query(None, pattern=r"^(running|completed|failed)$"),
     page: PageParams = Depends(page_dep),
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await walk_forward_svc.list_walk_forwards(
@@ -41,7 +41,7 @@ async def list_walk_forwards(
 async def get_walk_forward(
     walk_forward_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await walk_forward_svc.get_walk_forward(db, walk_forward_id, user_id=user_id)
@@ -53,7 +53,7 @@ async def stream_walk_forward_events(
     walk_forward_id: str,
     request: Request,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     """Stream lifecycle events for one walk-forward study (SSE).
@@ -100,7 +100,7 @@ async def list_windows(
     status: str | None = Query(None, pattern=r"^(completed|failed)$"),
     page: PageParams = Depends(page_dep),
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await walk_forward_svc.list_windows(
@@ -117,7 +117,7 @@ async def list_windows(
 async def get_oos_equity_curve(
     walk_forward_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     points = await walk_forward_svc.get_oos_equity_curve(

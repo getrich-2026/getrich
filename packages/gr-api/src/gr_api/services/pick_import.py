@@ -37,7 +37,7 @@ from gr_tools.config import load_environment
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ class PickImportResult:
 
 
 async def import_picks(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy: str,
     trading_day: date | str,
@@ -374,7 +374,7 @@ def _validate_rows(
 
 
 async def _derive_items(
-    db: AsyncConnection,
+    db: DictConnection,
     strategy_id: str,
     trading_day: date,
     parsed: list[dict[str, Any]],
@@ -469,7 +469,7 @@ def _compose_note(note: str | None, derive_warnings: list[str]) -> str | None:
 # ---------------------------------------------------------------- 数据库读写
 
 
-async def _max_trading_day(db: AsyncConnection, strategy_id: str) -> date | None:
+async def _max_trading_day(db: DictConnection, strategy_id: str) -> date | None:
     async with db.cursor() as cur:
         await cur.execute(
             """
@@ -484,7 +484,7 @@ async def _max_trading_day(db: AsyncConnection, strategy_id: str) -> date | None
 
 
 async def _active_batch(
-    db: AsyncConnection,
+    db: DictConnection,
     strategy_id: str,
     trading_day: date,
 ) -> dict[str, Any] | None:
@@ -500,7 +500,7 @@ async def _active_batch(
         return await cur.fetchone()
 
 
-async def _prev_trading_day(db: AsyncConnection, trading_day: date) -> date | None:
+async def _prev_trading_day(db: DictConnection, trading_day: date) -> date | None:
     """取上一交易日。日历里没有这一天时退回「日历中小于它的最大开市日」。"""
     async with db.cursor() as cur:
         await cur.execute(
@@ -528,7 +528,7 @@ async def _prev_trading_day(db: AsyncConnection, trading_day: date) -> date | No
 
 
 async def _items_on_day(
-    db: AsyncConnection,
+    db: DictConnection,
     strategy_id: str,
     trading_day: date,
 ) -> tuple[dict[tuple[Any, ...], dict[str, Any]], dict[tuple[Any, ...], dict[str, Any]]]:
@@ -555,7 +555,7 @@ async def _items_on_day(
 
 
 async def _last_items(
-    db: AsyncConnection,
+    db: DictConnection,
     strategy_id: str,
     trading_day: date,
     *,
@@ -595,7 +595,7 @@ async def _last_items(
 
 
 async def _load_instruments(
-    db: AsyncConnection,
+    db: DictConnection,
     parsed: list[dict[str, Any]],
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """按带后缀全码 + canonical 交易所码查 ``meta.instruments``。
@@ -629,7 +629,7 @@ async def _load_instruments(
 
 
 async def _write_batch(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str,
     trading_day: date,

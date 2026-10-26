@@ -21,7 +21,7 @@ from psycopg.types.json import Jsonb
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _TZ_SH = ZoneInfo("Asia/Shanghai")
@@ -36,7 +36,7 @@ _SIGNAL_STATUSES = {"active", "expired", "cancelled"}
 
 
 async def upsert_strategy(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     body: StrategyUpsertIn,
     admin_user_id: str,
@@ -132,7 +132,7 @@ async def upsert_strategy(
 
 
 async def preview_import(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     body: ImportPreviewIn,
     admin_user_id: str,
@@ -250,7 +250,7 @@ async def preview_import(
 
 
 async def commit_import(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     job_code: str,
     admin_user_id: str,
@@ -308,7 +308,7 @@ async def commit_import(
     return {"job_id": job_code, "status": "committed", "affected_rows": affected}
 
 
-async def list_import_history(db: AsyncConnection) -> dict[str, Any]:
+async def list_import_history(db: DictConnection) -> dict[str, Any]:
     """查询最近导入作业。
 
     Time Complexity:
@@ -330,7 +330,7 @@ async def list_import_history(db: AsyncConnection) -> dict[str, Any]:
     return {"list": [_format_job_row(row) for row in rows]}
 
 
-async def get_import_job(db: AsyncConnection, *, job_code: str) -> dict[str, Any]:
+async def get_import_job(db: DictConnection, *, job_code: str) -> dict[str, Any]:
     """查询单个导入作业详情。
 
     Time Complexity:
@@ -342,7 +342,7 @@ async def get_import_job(db: AsyncConnection, *, job_code: str) -> dict[str, Any
     return _format_job_row(job)
 
 
-async def list_import_errors(db: AsyncConnection, *, job_code: str) -> dict[str, Any]:
+async def list_import_errors(db: DictConnection, *, job_code: str) -> dict[str, Any]:
     """查询导入作业错误明细。
 
     Time Complexity:
@@ -395,7 +395,7 @@ def _parse_csv_rows(csv_text: str) -> list[dict[str, str]]:
 
 
 async def _validate_daily_return_rows(
-    db: AsyncConnection,
+    db: DictConnection,
     rows: list[dict[str, str]],
     strategy_code: str | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -464,7 +464,7 @@ async def _validate_daily_return_rows(
 
 
 async def _validate_signal_rows(
-    db: AsyncConnection,
+    db: DictConnection,
     rows: list[dict[str, str]],
     strategy_code: str | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -689,7 +689,7 @@ def _derive_daily_return_payload(
 
 
 async def _commit_daily_returns(
-    db: AsyncConnection,
+    db: DictConnection,
     rows: list[dict[str, Any]],
     *,
     method: str,
@@ -783,7 +783,7 @@ async def _commit_daily_returns(
     return affected
 
 
-async def _commit_signals(db: AsyncConnection, rows: list[dict[str, Any]], *, mode: str) -> int:
+async def _commit_signals(db: DictConnection, rows: list[dict[str, Any]], *, mode: str) -> int:
     affected = 0
     async with db.cursor() as cur:
         for row in rows:
@@ -848,7 +848,7 @@ async def _commit_signals(db: AsyncConnection, rows: list[dict[str, Any]], *, mo
 
 
 async def _load_strategy_map(
-    db: AsyncConnection,
+    db: DictConnection,
     strategy_codes: set[str],
 ) -> dict[str, dict[str, str]]:
     if not strategy_codes:
@@ -863,7 +863,7 @@ async def _load_strategy_map(
 
 
 async def _count_existing_keys(
-    db: AsyncConnection,
+    db: DictConnection,
     import_type: str,
     rows: list[dict[str, Any]],
 ) -> int:
@@ -893,7 +893,7 @@ async def _count_existing_keys(
         return int((await cur.fetchone())["cnt"])
 
 
-async def _fetch_job(db: AsyncConnection, job_code: str) -> dict[str, Any]:
+async def _fetch_job(db: DictConnection, job_code: str) -> dict[str, Any]:
     async with db.cursor() as cur:
         await cur.execute(
             """

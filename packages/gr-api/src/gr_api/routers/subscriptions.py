@@ -15,7 +15,7 @@ from gr_api.services import subscription as svc
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(tags=["subscriptions"])
@@ -26,7 +26,7 @@ async def subscribe(
     strategy_code: str,
     body: SubscribeIn,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await svc.subscribe(
@@ -43,7 +43,7 @@ async def unsubscribe(
     strategy_code: str,
     body: UnsubscribeIn | None = None,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await svc.unsubscribe(
@@ -59,7 +59,7 @@ async def unsubscribe(
 async def get_subscription(
     strategy_code: str,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await svc.get_subscription_status(

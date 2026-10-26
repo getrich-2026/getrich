@@ -100,7 +100,7 @@ class RiceQuantConfig:
     @classmethod
     def from_env(cls, strict: bool, environ: Mapping[str, str] | None = None) -> RiceQuantConfig:
         source = os.environ if environ is None else environ
-        enabled = parse_bool(source.get("RICEQUANT_ENABLED", "false"))
+        enabled = parse_bool(source.get("RICEQUANT_ENABLED"), name="RICEQUANT_ENABLED")
         api_key = source.get("RICEQUANT_API_KEY", "")
         if enabled and not api_key:
             warn_config("RiceQuant API key is not set", strict)
@@ -117,7 +117,7 @@ class HdbConfig:
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> HdbConfig:
         source = os.environ if environ is None else environ
-        enabled = parse_bool(source.get("ENABLE_HDB", "false"))
+        enabled = parse_bool(source.get("ENABLE_HDB"), name="ENABLE_HDB")
         return cls(enabled=enabled)
 
 
@@ -132,7 +132,7 @@ class InsightConfig:
     @classmethod
     def from_env(cls, strict: bool, environ: Mapping[str, str] | None = None) -> InsightConfig:
         source = os.environ if environ is None else environ
-        enabled = parse_bool(source.get("ENABLE_INSIGHT", "false"))
+        enabled = parse_bool(source.get("ENABLE_INSIGHT"), name="ENABLE_INSIGHT")
         user = source.get("INSIGHT_USER", "")
         password = source.get("INSIGHT_PASSWORD", "")
 

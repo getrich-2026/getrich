@@ -162,6 +162,7 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 ## 4. 后端编码规范
 
 - **不引入 heavy ORM**：用 `psycopg3` 的 `AsyncConnectionPool` 手写原生 SQL。
+- 池连接一律标注为 `gr_data.db.DictConnection`，不写裸 `AsyncConnection`：池用 `dict_row`，裸写会被类型检查器当成元组行，`row["id"]` 全部报错。自建 LISTEN 连接未设 `dict_row` 的除外。
 - 大批量写入优先 COPY 协议或 multi-values UPSERT（`ON CONFLICT DO UPDATE`）。
 - **绝对禁止**在没有 `try-except` 隔离的情况下在主线程中发起外部 API 调用或网络请求。
 
@@ -258,7 +259,7 @@ uv run pytest packages/gr-backtest/tests -v
 uv run ruff check packages/ scripts/
 uv run ruff format --check packages/ scripts/
 uv run python scripts/lint_migrations.py   # DDL 安全模式检查
-uv run basedpyright packages/gr-backtest/src   # 若已安装
+uv run basedpyright                        # 类型检查，配置见根 pyproject.toml
 
 # 依赖
 uv lock --check

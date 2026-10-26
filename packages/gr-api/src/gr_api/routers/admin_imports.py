@@ -12,7 +12,7 @@ from gr_api.services import admin_import as admin_import_svc
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(prefix="/admin/imports", tags=["admin-imports"])
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/admin/imports", tags=["admin-imports"])
 async def upsert_strategy(
     body: StrategyUpsertIn,
     admin_user_id: str = Depends(require_admin),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await admin_import_svc.upsert_strategy(db, body=body, admin_user_id=admin_user_id)
@@ -33,7 +33,7 @@ async def upsert_strategy(
 async def preview_import(
     body: ImportPreviewIn,
     admin_user_id: str = Depends(require_admin),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await admin_import_svc.preview_import(db, body=body, admin_user_id=admin_user_id)
@@ -44,7 +44,7 @@ async def preview_import(
 async def commit_import(
     job_code: str,
     admin_user_id: str = Depends(require_admin),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await admin_import_svc.commit_import(
@@ -58,7 +58,7 @@ async def commit_import(
 @router.get("/history")
 async def list_import_history(
     admin_user_id: str = Depends(require_admin),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     _ = admin_user_id
@@ -70,7 +70,7 @@ async def list_import_history(
 async def get_import_job(
     job_code: str,
     admin_user_id: str = Depends(require_admin),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     _ = admin_user_id
@@ -82,7 +82,7 @@ async def get_import_job(
 async def list_import_errors(
     job_code: str,
     admin_user_id: str = Depends(require_admin),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     _ = admin_user_id

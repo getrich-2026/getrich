@@ -17,7 +17,7 @@ from gr_api.services import payment as svc
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(tags=["payments"])
@@ -27,7 +27,7 @@ router = APIRouter(tags=["payments"])
 async def payment_webhook(
     request: Request,
     x_webhook_signature: str | None = Header(default=None, alias="X-Webhook-Signature"),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
     settings: ApiSettings = Depends(get_settings),
 ):

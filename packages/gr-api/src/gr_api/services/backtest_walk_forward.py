@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
     from gr_api.pagination import PageParams
     from gr_api.services.job_listener import BacktestJobListener
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _JOB_STORE = PgBacktestJobStore()
@@ -57,7 +57,7 @@ _LISTENER: BacktestJobListener | None = None
 
 
 async def _assert_walk_forward_owner(
-    db: AsyncConnection,
+    db: DictConnection,
     walk_forward_id: str,
     user_id: str,
 ) -> None:
@@ -74,7 +74,7 @@ async def _assert_walk_forward_owner(
 
 
 async def list_walk_forwards(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     status: str | None,
     page: PageParams,
@@ -126,7 +126,7 @@ async def list_walk_forwards(
 
 
 async def get_walk_forward(
-    db: AsyncConnection,
+    db: DictConnection,
     walk_forward_id: str,
     *,
     user_id: str,
@@ -341,8 +341,10 @@ async def _fetch_walk_forward(
     # duplicating the small SQL keeps the two code paths independent
     # and avoids a tight coupling between the stream generator and
     # the (sync-shaped) read function.
-    from gr_data.db import pg_pool
-    from psycopg import AsyncConnection  # noqa: F401  (typing only)
+    from gr_data.db import (
+        DictConnection,  # noqa: F401  (typing only)
+        pg_pool,
+    )
 
     async with pg_pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(sql, {"walk_forward_id": walk_forward_id})
@@ -383,7 +385,7 @@ def _empty_wf_row(
 
 
 async def list_windows(
-    db: AsyncConnection,
+    db: DictConnection,
     walk_forward_id: str,
     *,
     status: str | None,
@@ -439,7 +441,7 @@ async def list_windows(
 
 
 async def get_oos_equity_curve(
-    db: AsyncConnection,
+    db: DictConnection,
     walk_forward_id: str,
     *,
     user_id: str,

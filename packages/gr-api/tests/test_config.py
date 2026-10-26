@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 
+import pytest
 from gr_api.config import WorkerConfig
 
 
@@ -49,6 +50,16 @@ def test_from_env_backend_case_insensitive(monkeypatch: object) -> None:
     monkeypatch.setattr(os, "environ", {"GETRICH_WORKER_BACKEND": "CELERY"})  # type: ignore[attr-defined]
     cfg = WorkerConfig.from_env(strict=False)
     assert cfg.backend == "celery"
+
+
+def test_invalid_mock_auth_flag_rejects_application_startup(tmp_path) -> None:
+    from gr_api.config import load_api_settings
+    from gr_tools.config import Environment, SettingsError
+
+    environment = Environment(tmp_path, {"GETRICH_ALLOW_MOCK_AUTH": "tru"})
+    with pytest.raises(SettingsError, match="GETRICH_ALLOW_MOCK_AUTH") as error:
+        load_api_settings(environment)
+    assert "tru" not in str(error.value)
 
 
 def test_model_imports_do_not_load_dotenv_or_create_files(tmp_path):

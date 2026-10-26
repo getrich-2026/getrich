@@ -13,7 +13,7 @@ if TYPE_CHECKING:
         GlobalSettingsIn,
         StrategySettingsPatch,
     )
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _DEFAULT_CHANNELS = {
@@ -31,7 +31,7 @@ _DEFAULT_URGENCY = ["normal", "high", "critical"]
 
 
 async def get_global_settings(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
 ) -> dict[str, Any]:
@@ -102,7 +102,7 @@ async def get_global_settings(
 
 
 async def update_global_settings(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
     body: GlobalSettingsIn,
@@ -171,7 +171,7 @@ async def update_global_settings(
 
 
 async def get_strategy_settings(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
     strategy_code: str,
@@ -241,7 +241,7 @@ async def get_strategy_settings(
 
 
 async def update_strategy_settings(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str,
     strategy_code: str,

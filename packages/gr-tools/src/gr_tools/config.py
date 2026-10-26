@@ -4,13 +4,26 @@ from __future__ import annotations
 
 import logging
 import os
+import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
+
+from gr_tools.logging import DEFAULT_LOG_FORMAT as DEFAULT_LOG_FORMAT, configure_logging
 
 
-DEFAULT_LOG_FORMAT = "[%(asctime)s][%(name)s][%(levelname)s][%(request_id)s] %(message)s"
+_BOOLEAN_VALUES = {
+    "true": True,
+    "1": True,
+    "yes": True,
+    "on": True,
+    "false": False,
+    "0": False,
+    "no": False,
+    "off": False,
+}
 
 
 @dataclass(frozen=True)
@@ -29,20 +42,18 @@ class LoggingConfig:
         """读取 LOG_*；相对输出路径以调用方提供的根目录解析。"""
         source = os.environ if environ is None else environ
         level = source.get("LOG_LEVEL", "INFO").upper()
-        if not isinstance(logging.getLevelName(level), int):
-            raise ValueError("LOG_LEVEL must be a standard logging level")
-        raw_json = source.get("LOG_JSON", "false").lower()
-        if raw_json not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
-            raise ValueError("LOG_JSON must be a boolean")
+        if level not in logging.getLevelNamesMapping():
+            raise SettingsError("LOG_LEVEL must be a standard logging level")
+        json_format = parse_bool(source.get("LOG_JSON"), name="LOG_JSON")
         raw_path = source.get("LOG_FILE", "")
-        path = Path(raw_path) if raw_path else None
+        path = Path(raw_path).expanduser() if raw_path else None
         if path is not None and not path.is_absolute():
             path = project_root / path
         return cls(
             level=level,
             format=source.get("LOG_FMT", DEFAULT_LOG_FORMAT),
             file_path=path,
-            json_format=raw_json in {"true", "1", "yes", "on"},
+            json_format=json_format,
         )
 
 
@@ -50,9 +61,17 @@ class SettingsError(ValueError):
     """配置无效；错误消息不得包含配置原值。"""
 
 
-def parse_bool(value: str | None) -> bool:
-    """沿用环境布尔值的既有解释。"""
-    return bool(value and value.lower() in {"true", "1", "yes", "on"})
+def parse_bool(value: str | None, *, name: str) -> bool:
+    """按大小写不敏感的合法值解析；空值为 False，未知值抛 SettingsError。
+
+    name 为配置键名，用于生成不包含配置原值的错误消息。
+    """
+    if not value:
+        return False
+    parsed = _BOOLEAN_VALUES.get(value.lower())
+    if parsed is None:
+        raise SettingsError(f"{name} must be a boolean")
+    return parsed
 
 
 def warn_config(message: str, strict: bool) -> None:
@@ -65,7 +84,7 @@ def warn_config(message: str, strict: bool) -> None:
 def find_project_root(
     start_path: Path | None = None, *, environ: Mapping[str, str] | None = None
 ) -> Path:
-    """按显式根、workspace、Git 根依次定位；支持从成员目录启动。"""
+    """按显式根、workspace、Git 根依次定位；跳过不可读或无效的项目文件。"""
     source = os.environ if environ is None else environ
     override = source.get("GETRICH_ROOT")
     if override:
@@ -76,7 +95,17 @@ def find_project_root(
     candidates = [start, *start.parents]
     for candidate in candidates:
         project = candidate / "pyproject.toml"
-        if project.is_file() and "[tool.uv.workspace]" in project.read_text(encoding="utf-8"):
+        try:
+            with project.open("rb") as stream:
+                metadata: dict[str, object] = tomllib.load(stream)
+        except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
+            continue
+        tool = metadata.get("tool")
+        if not isinstance(tool, dict):
+            continue
+        # TOML 表的键均为字符串；显式保留 isinstance 缩窄后丢失的泛型类型。
+        uv = cast(dict[str, object], tool).get("uv")
+        if isinstance(uv, dict) and isinstance(cast(dict[str, object], uv).get("workspace"), dict):
             return candidate
     for candidate in candidates:
         if (candidate / ".git").exists():
@@ -97,7 +126,10 @@ class Environment:
 
     @property
     def strict(self) -> bool:
-        return parse_bool(self.values.get("STRICT_MODE")) or self.values.get("APP_ENV") == "prod"
+        return (
+            parse_bool(self.values.get("STRICT_MODE"), name="STRICT_MODE")
+            or self.values.get("APP_ENV", "").lower() == "prod"
+        )
 
 
 def load_environment(
@@ -115,18 +147,7 @@ def load_environment(
     from dotenv import dotenv_values
 
     source = dict(os.environ if environ is None else environ)
-    project_root = (
-        (
-            root
-            or (
-                Path(source["GETRICH_ROOT"])
-                if source.get("GETRICH_ROOT")
-                else find_project_root(environ=source)
-            )
-        )
-        .expanduser()
-        .resolve()
-    )
+    project_root = (root or find_project_root(environ=source)).expanduser().resolve()
     target = Path(env_file).expanduser() if env_file is not None else None
     if target is not None and not target.is_file():
         raise SettingsError("Explicit environment file does not exist")
@@ -153,7 +174,7 @@ def load_environment(
     values.update(source)
     if install:
         for key, value in values.items():
-            os.environ.setdefault(key, value)
+            _ = os.environ.setdefault(key, value)
     return Environment(project_root, values, target)
 
 
@@ -165,8 +186,6 @@ def setup_logging(
     filters: Sequence[logging.Filter] = (),
 ) -> None:
     """由程序入口将日志模型适配到公共输出设施。"""
-    from gr_tools.logging import configure_logging
-
     configure_logging(
         config.level if level is None else level,
         file_path=config.file_path if file_path is None else file_path,

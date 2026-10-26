@@ -15,7 +15,7 @@ from gr_api.services.sanitize import normalize_detail_html
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 # 排序字段白名单 → snapshot 列名（None 代表 strategies 表自身字段）
@@ -31,7 +31,7 @@ _SORT_FIELD_MAP: dict[str, tuple[str, str]] = {
 # ---------------------------------------------------------------- categories
 
 
-async def list_categories(db: AsyncConnection) -> list[dict[str, Any]]:
+async def list_categories(db: DictConnection) -> list[dict[str, Any]]:
     """GET /strategies/categories"""
     sql = """
         SELECT
@@ -55,7 +55,7 @@ async def list_categories(db: AsyncConnection) -> list[dict[str, Any]]:
 
 
 async def list_strategies(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str | None,
     category_id: str | None,
@@ -191,7 +191,7 @@ async def list_strategies(
 
 
 async def get_strategy_detail(
-    db: AsyncConnection,
+    db: DictConnection,
     strategy_id: str,
     user_id: str | None = None,
 ) -> dict[str, Any]:
@@ -352,7 +352,7 @@ async def get_strategy_detail(
 
 
 async def assert_strategy_owner(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str,
     user_id: str,
@@ -385,7 +385,7 @@ async def assert_strategy_owner(
 
 
 async def update_strategy(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str,
     user_id: str,
@@ -471,7 +471,7 @@ _PERIOD_DAYS: dict[str, int | None] = {
 
 
 async def get_equity_curve(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str,
     strategy_code: str,
@@ -558,7 +558,7 @@ async def get_equity_curve(
 
 
 async def get_monthly_returns(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str,
     strategy_code: str,
@@ -603,7 +603,7 @@ async def get_monthly_returns(
 
 
 async def get_backtest_report(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str,
     strategy_code: str,
@@ -714,7 +714,7 @@ async def get_backtest_report(
 
 
 async def list_trades(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str,
     strategy_code: str,
@@ -789,7 +789,7 @@ async def list_trades(
 
 
 async def list_signals_of_strategy(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     strategy_id: str,
     type_: str | None,

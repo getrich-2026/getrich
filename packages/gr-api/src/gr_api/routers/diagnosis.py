@@ -42,7 +42,7 @@ from gr_data.db import pg_pool
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 class DiagnosisRoute(APIRoute):
@@ -132,7 +132,7 @@ async def create_snapshot(
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     """提交持仓 + 意图。
@@ -178,7 +178,7 @@ async def get_result(
     snapshot_id: UUID,
     response: Response,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     """一次性取全量结果。
@@ -202,7 +202,7 @@ async def get_report(
     response: Response,
     user_level: str | None = Query(default=None, pattern=r"^(retail|pro)$"),
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     """取渲染后报告，按**访问时**的 ``user_level`` 裁剪。
@@ -223,7 +223,7 @@ async def get_data_quality(
     snapshot_id: UUID,
     response: Response,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     """单独取降级清单与强制声明。"""
@@ -302,7 +302,7 @@ async def stream_snapshot(
 
 @router.get("/spec-versions", response_model=ApiResponse[SpecVersionList])
 async def list_spec_versions(
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     """口径版本列表。"""
@@ -314,7 +314,7 @@ async def list_spec_versions(
 
 @router.get("/spec-versions/current", response_model=ApiResponse[SpecVersionInfo])
 async def get_current_spec_version(
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     """当前生效口径、阈值与协方差方法配置。
@@ -337,7 +337,7 @@ async def get_current_spec_version(
 async def create_share(
     snapshot_id: UUID,
     user_id: str | None = Depends(get_current_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     """创建分享 token。"""
@@ -348,7 +348,7 @@ async def create_share(
 @router.get("/share/{token}/report", response_model=ApiResponse[SharedReportResponse])
 async def get_shared_report(
     token: str,
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     """分享链接专用：只暴露渲染后报告，**不暴露 /result 全量数据**。"""

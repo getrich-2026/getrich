@@ -17,7 +17,7 @@ from gr_backtest.time import get_shanghai_tz
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _SWEEP_STATUS_VALUES = frozenset({"running", "completed", "failed"})
@@ -48,7 +48,7 @@ class PgSweepResultStore:
         strategy_id: str | None = None,
         user_id: str | None = None,
         save_backtest_results: bool = True,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> None:
         """Persist a completed sweep and its per-trial summaries.
 
@@ -61,7 +61,7 @@ class PgSweepResultStore:
         if not search_type.strip():
             raise ValueError("search_type must be non-empty")
 
-        async def op(db: AsyncConnection) -> None:
+        async def op(db: DictConnection) -> None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _UPSERT_SWEEP_SQL,
@@ -98,7 +98,7 @@ class PgSweepResultStore:
         sweep_id: str,
         *,
         user_id: str | None = None,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> dict[str, Any] | None:
         """Return one persisted sweep row, or ``None`` if missing.
 
@@ -107,7 +107,7 @@ class PgSweepResultStore:
         system caller, which passes the system sentinel ``"*"``).
         """
 
-        async def op(db: AsyncConnection) -> dict[str, Any] | None:
+        async def op(db: DictConnection) -> dict[str, Any] | None:
             async with db.cursor() as cur:
                 await cur.execute(
                     _SELECT_SWEEP_SQL,
@@ -129,7 +129,7 @@ class PgSweepResultStore:
         user_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List persisted sweeps with optional status filtering and owner scoping."""
         if status is not None:
@@ -153,7 +153,7 @@ class PgSweepResultStore:
             LIMIT %(limit)s OFFSET %(offset)s
         """
 
-        async def op(db: AsyncConnection) -> tuple[list[dict[str, Any]], int]:
+        async def op(db: DictConnection) -> tuple[list[dict[str, Any]], int]:
             async with db.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
@@ -177,7 +177,7 @@ class PgSweepResultStore:
         user_id: str | None = None,
         limit: int = 500,
         offset: int = 0,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List persisted trial rows for one sweep owned by ``user_id``."""
         if not sweep_id.strip():
@@ -202,7 +202,7 @@ class PgSweepResultStore:
             LIMIT %(limit)s OFFSET %(offset)s
         """
 
-        async def op(db: AsyncConnection) -> tuple[list[dict[str, Any]], int]:
+        async def op(db: DictConnection) -> tuple[list[dict[str, Any]], int]:
             async with db.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
@@ -223,7 +223,7 @@ class PgSweepResultStore:
         sweep_id: str,
         user_id: str,
         *,
-        conn: AsyncConnection | None,
+        conn: DictConnection | None,
     ) -> None:
         """Raise ``SweepPersistenceError`` if the sweep is not owned by ``user_id``."""
         if user_id == _SYSTEM_USER:
@@ -239,7 +239,7 @@ class PgSweepResultStore:
         status: str | None = None,
         limit: int = 10_000,
         offset: int = 0,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> pl.DataFrame:
         """Return persisted sweep trials as an analysis-friendly Polars frame."""
         rows, _total = await self.list_sweep_trials(
@@ -253,9 +253,9 @@ class PgSweepResultStore:
 
     async def _run(
         self,
-        op: Callable[[AsyncConnection], Awaitable[Any]],
+        op: Callable[[DictConnection], Awaitable[Any]],
         *,
-        conn: AsyncConnection | None,
+        conn: DictConnection | None,
         commit: bool = True,
     ) -> Any:
         if conn is not None:

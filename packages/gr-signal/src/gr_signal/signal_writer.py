@@ -13,7 +13,7 @@ from gr_signal.metrics import LIVE_SIGNALS_PERSISTED_TOTAL
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _TABLE = "signals"
@@ -107,7 +107,7 @@ class PgSignalWriter:
         signal: Signal,
         strategy_id: str,
         *,
-        conn: AsyncConnection | None = None,
+        conn: DictConnection | None = None,
     ) -> str | None:
         """Write a single signal to the ``signals`` table.
 
@@ -121,7 +121,7 @@ class PgSignalWriter:
             The signal to persist.  ``trigger_time`` must not be ``None``.
         strategy_id : str
             Internal UUID of the strategy (from ``strategies.id``).
-        conn : AsyncConnection | None
+        conn : DictConnection | None
             Optional existing connection for transaction grouping.
             When *None*, acquires a connection from the pool.
 
@@ -141,7 +141,7 @@ class PgSignalWriter:
         signal_code = _make_signal_code()
         params = _to_params(signal, strategy_id, signal_id, signal_code)
 
-        async def _do(c: AsyncConnection) -> str | None:
+        async def _do(c: DictConnection) -> str | None:
             try:
                 async with c.cursor() as cur:
                     await cur.execute(_INSERT_SQL, params)

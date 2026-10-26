@@ -43,7 +43,7 @@ if TYPE_CHECKING:
         WalkForwardRunRequest,
     )
     from gr_api.services.job_listener import BacktestJobListener
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ _LISTENER: BacktestJobListener | None = None
 
 
 async def list_jobs(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     job_type: str | None,
     status: str | None,
@@ -96,7 +96,7 @@ async def list_jobs(
 
 
 async def get_job(
-    db: AsyncConnection,
+    db: DictConnection,
     job_id: str,
     *,
     user_id: str,
@@ -112,7 +112,7 @@ async def get_job(
     return _job_detail(row)
 
 
-async def cancel_job(db: AsyncConnection, job_id: str, *, user_id: str) -> dict[str, Any]:
+async def cancel_job(db: DictConnection, job_id: str, *, user_id: str) -> dict[str, Any]:
     """Cancel a job that is still queued or running.
 
     Raises ``NotFound`` when the job is missing **or** the caller is not
@@ -187,7 +187,7 @@ def _body_fingerprint(body: Any) -> str:
 
 
 async def _create_job(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     job_type: str,
     body: Any,
@@ -227,7 +227,7 @@ async def _create_job(
 
 
 async def _resolve_idempotent(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     user_id: str | None,
     idempotency_key: str | None,
@@ -263,7 +263,7 @@ async def _resolve_idempotent(
 
 
 async def create_backtest_job(
-    db: AsyncConnection,
+    db: DictConnection,
     body: BacktestRunRequest,
     *,
     user_id: str | None = None,
@@ -290,7 +290,7 @@ async def create_backtest_job(
 
 
 async def create_sweep_job(
-    db: AsyncConnection,
+    db: DictConnection,
     body: SweepRunRequest,
     *,
     user_id: str | None = None,
@@ -323,7 +323,7 @@ async def create_sweep_job(
 
 
 async def create_walk_forward_job(
-    db: AsyncConnection,
+    db: DictConnection,
     body: WalkForwardRunRequest,
     *,
     user_id: str | None = None,

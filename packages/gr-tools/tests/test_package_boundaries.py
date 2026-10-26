@@ -50,3 +50,16 @@ def test_gr_tools_never_imports_first_party_packages() -> None:
     assert not offenders, "gr-tools 依赖了一方包（它必须是无一方依赖的叶子）：\n  " + "\n  ".join(
         offenders
     )
+
+
+def test_logging_never_imports_config() -> None:
+    """日志设施不能反向依赖配置模型，包含函数内和相对导入。"""
+    source = _SRC_ROOT / "logging.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert all(alias.name != "gr_tools.config" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.module not in {"gr_tools.config", "config"}
+            if node.module in {"gr_tools", None}:
+                assert all(alias.name != "config" for alias in node.names)

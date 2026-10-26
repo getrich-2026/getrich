@@ -13,7 +13,7 @@ from gr_api.services import order as svc
 
 if TYPE_CHECKING:
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(prefix="/user", tags=["user"])
@@ -24,7 +24,7 @@ async def list_orders(
     status: str | None = Query(None, pattern=r"^(pending|paid|cancelled|refunded|failed|all)$"),
     page: PageParams = Depends(page_dep),
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await svc.list_orders(db, user_id=user_id, status=status, page=page)

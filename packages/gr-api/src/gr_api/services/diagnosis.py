@@ -28,7 +28,7 @@ from gr_api.services.pick_symbols import parse_symbol
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ def _calculation_hash(
 # ===========================================================================
 
 
-async def get_active_spec_version(db: AsyncConnection, spec_version: str | None = None) -> dict:
+async def get_active_spec_version(db: DictConnection, spec_version: str | None = None) -> dict:
     """取指定口径版本；``spec_version`` 为空时取当前生效版本。"""
     async with db.cursor() as cur:
         if spec_version:
@@ -196,7 +196,7 @@ async def get_active_spec_version(db: AsyncConnection, spec_version: str | None 
     return row
 
 
-async def list_spec_versions(db: AsyncConnection) -> list[dict]:
+async def list_spec_versions(db: DictConnection) -> list[dict]:
     async with db.cursor() as cur:
         await cur.execute(
             """
@@ -209,7 +209,7 @@ async def list_spec_versions(db: AsyncConnection) -> list[dict]:
         return list(await cur.fetchall())
 
 
-async def get_data_version(db: AsyncConnection) -> dict:
+async def get_data_version(db: DictConnection) -> dict:
     """取最新的数据快照版本，其 id 即 ``data_fingerprint``。
 
     .. warning::
@@ -228,7 +228,7 @@ async def get_data_version(db: AsyncConnection) -> dict:
     return row
 
 
-async def _resolve_as_of_date(db: AsyncConnection, requested: date | None) -> date:
+async def _resolve_as_of_date(db: DictConnection, requested: date | None) -> date:
     """把请求的日期解析成具体交易日；缺省取最近一个已开市的交易日。"""
     target = requested or datetime.now(PLATFORM_TZ).date()
     async with db.cursor() as cur:
@@ -253,7 +253,7 @@ async def _resolve_as_of_date(db: AsyncConnection, requested: date | None) -> da
 # ===========================================================================
 
 
-async def _resolve_symbols(db: AsyncConnection, symbols: list[str]) -> dict[str, dict]:
+async def _resolve_symbols(db: DictConnection, symbols: list[str]) -> dict[str, dict]:
     """``600000.SH`` → ``meta.instruments`` 行。解析不出来的不进返回值。
 
     交易所码两套的坑：``meta.*`` 用 canonical 码（``XSHG``/``XSHE``/``XBSE``），
@@ -423,7 +423,7 @@ def _request_exposure_fields(input_weight: Decimal, resolved_weight: Decimal) ->
 
 
 async def _fetch_industry(
-    db: AsyncConnection,
+    db: DictConnection,
     instrument_ids: list[int],
     *,
     scheme_code: str,
@@ -460,7 +460,7 @@ async def _fetch_industry(
 
 
 async def _fetch_category(
-    db: AsyncConnection,
+    db: DictConnection,
     instrument_ids: list[int],
     *,
     as_of: date,
@@ -484,7 +484,7 @@ async def _fetch_category(
 
 
 async def _fetch_valuation(
-    db: AsyncConnection,
+    db: DictConnection,
     instrument_ids: list[int],
     *,
     as_of: date,
@@ -782,7 +782,7 @@ def _report_mode(intent: str) -> str:
 
 
 async def create_snapshot(
-    db: AsyncConnection,
+    db: DictConnection,
     req: SnapshotRequest,
     *,
     user_id: str | None,
@@ -825,7 +825,7 @@ async def create_snapshot(
 
 
 async def _create_snapshot(
-    db: AsyncConnection,
+    db: DictConnection,
     req: SnapshotRequest,
     *,
     user_id: str | None,
@@ -1072,7 +1072,7 @@ async def _create_snapshot(
 
 
 async def _ensure_run(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     snapshot_id: UUID,
     item: dict,
@@ -1163,7 +1163,7 @@ async def _ensure_run(
 
 
 async def _compute_plan(
-    db: AsyncConnection,
+    db: DictConnection,
     *,
     item: dict,
     params: dict,
@@ -1362,7 +1362,7 @@ def _build_blindspots(section_a: dict, params: dict) -> list[dict]:
 # ===========================================================================
 
 
-async def _load_snapshot(db: AsyncConnection, snapshot_id: UUID, *, user_id: str | None) -> dict:
+async def _load_snapshot(db: DictConnection, snapshot_id: UUID, *, user_id: str | None) -> dict:
     """取 snapshot 并做归属校验（§7.7）。"""
     async with db.cursor() as cur:
         await cur.execute(
@@ -1456,7 +1456,7 @@ def _aggregate_run_status(rows: list[dict]) -> str:
 
 
 async def get_result(
-    db: AsyncConnection,
+    db: DictConnection,
     snapshot_id: UUID,
     *,
     user_id: str | None,
@@ -1523,7 +1523,7 @@ def _merge_data_quality(items: list[dict]) -> dict:
 
 
 async def get_data_quality(
-    db: AsyncConnection,
+    db: DictConnection,
     snapshot_id: UUID,
     *,
     user_id: str | None,
@@ -1542,7 +1542,7 @@ async def get_data_quality(
 
 
 async def get_report(
-    db: AsyncConnection,
+    db: DictConnection,
     snapshot_id: UUID,
     *,
     user_id: str | None,
@@ -1559,7 +1559,7 @@ async def get_report(
 
 
 async def create_share_token(
-    db: AsyncConnection,
+    db: DictConnection,
     snapshot_id: UUID,
     *,
     user_id: str | None,
@@ -1581,7 +1581,7 @@ async def create_share_token(
     return {"token": row["token"], "expires_at": row["expires_at"].isoformat()}
 
 
-async def get_shared_report(db: AsyncConnection, token: str) -> dict:
+async def get_shared_report(db: DictConnection, token: str) -> dict:
     """``GET /share/{token}/report``：token 只换报告，不暴露 /result 全量指标。"""
     async with db.cursor() as cur:
         await cur.execute(

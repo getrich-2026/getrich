@@ -208,41 +208,41 @@ directory = "htmlcov"
 output = "coverage.xml"
 
 [tool.basedpyright]
-typeCheckingMode = "all"
-# 允许导入没有类型存根 (.pyi) 的第三方库 (如 tushare, CTP 接口)
-# 如果不加这行，导入这些库时 import 语句会报错
-reportMissingTypeStubs = false
-
-# 忽略因为库定义缺失导致的 "Unknown" 类型
-# 解决 Pandas/Polars/Numpy 链式调用产生大量 Unknown 的问题
-# reportUnknownArgumentType = false
-# reportUnknownVariableType = false
-# reportUnknownParameterType = false
-# reportUnknownMemberType = false
-# reportUnknownLambdaType = false
-reportUnusedImport = "warning"         # 让 Ruff 负责删除，但这里显示警告
-reportUnusedVariable = "warning"
-reportDuplicateImport = "error"
+# 全仓唯一的类型检查器；各子包不单独配置，在仓库根运行 `uv run basedpyright`。
+# Ruff 管风格与 lint，basedpyright 只管类型，两者规则不重叠。
 pythonVersion = "3.11"
-
-# 允许我写 "多余" 的 isinstance 检查
-# 在实盘中，我不信任上游数据，即使 Type Hint 说它是 int，我也要 check 它是 int
-reportUnnecessaryIsInstance = false
-
-# 排除目录
+# 固定平台，本地 macOS 与 CI（Linux）的分析结果和 baseline 一致
+pythonPlatform = "Linux"
+# 范围与 CI 的 `ruff check packages scripts` 对齐
+include = ["packages", "scripts"]
+# gr-data/reference/ 与 Ruff 的 exclude 保持一致：厂商资料与历史脚本，不是可运行源码。
 exclude = [
-    "**/node_modules",
+    "packages/gr-data/reference",
     "**/__pycache__",
-    "**/.git",
-    "**/.github",
-    "**/.vscode",
+    "**/.*",
 ]
+
+# "standard" 只报确定的类型错误（参数／返回值不匹配、Optional 未判空、可能未绑定）。
+# "all"／"recommended" 会对 pandas／polars／psycopg 链式调用报数千条 reportAny／
+# reportUnknown*，信号被噪声淹没（2026-10-25 基线：all 7247 条，standard 1066 条）。
+typeCheckingMode = "standard"
+
+# 允许导入没有类型存根 (.pyi) 的第三方库 (如 tushare、rqdatac、CTP 接口)
+reportMissingTypeStubs = false
+# 未使用的导入／变量由 Ruff 的 F401／F841 负责，这里不重复报
+reportUnusedImport = "none"
+reportUnusedVariable = "none"
+# 允许写 "多余" 的 isinstance 检查：实盘不信任上游数据，
+# 即使 Type Hint 说它是 int，也要 check 它是 int
+reportUnnecessaryIsInstance = false
+# 调用已弃用 API 时提示，便于跟进 pandas／polars 升级
+reportDeprecated = "warning"
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.40.2",
     "flower>=2.0",
     "httpx>=0.28.1",
-    "mypy",
     "pandas-stubs",
     "pytest",
     "pytest-cov>=6.0.0",

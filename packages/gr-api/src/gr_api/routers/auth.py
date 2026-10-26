@@ -13,7 +13,7 @@ from gr_api.config import ApiSettings, WebConfig
 from gr_api.deps import get_db, get_settings, request_id
 from gr_api.errors import BadRequest, Unauthorized
 from gr_api.response import success
-from psycopg import AsyncConnection
+from gr_data.db import DictConnection
 from pydantic import BaseModel, Field
 
 
@@ -50,7 +50,7 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-async def create_refresh_token(user_id: str, db: AsyncConnection, web: WebConfig) -> str:
+async def create_refresh_token(user_id: str, db: DictConnection, web: WebConfig) -> str:
     """Generate a random refresh token, store its hash, return the raw token."""
     raw = secrets.token_hex(32)  # 64-char hex string
     token_hash = _hash_token(raw)
@@ -71,7 +71,7 @@ async def create_refresh_token(user_id: str, db: AsyncConnection, web: WebConfig
     return raw
 
 
-async def revoke_refresh_tokens(user_id: str, db: AsyncConnection) -> None:
+async def revoke_refresh_tokens(user_id: str, db: DictConnection) -> None:
     """Delete all refresh tokens for a user (used on logout / rotation / revoke)."""
     async with db.cursor() as cur:
         await cur.execute(
@@ -86,7 +86,7 @@ async def revoke_refresh_tokens(user_id: str, db: AsyncConnection) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _authenticate_via_user_auth(db: AsyncConnection, email: str) -> dict | None:
+async def _authenticate_via_user_auth(db: DictConnection, email: str) -> dict | None:
     """Query ``user_auth`` for email+password login.
 
     Returns a dict with keys ``user_id``, ``credential``, ``name`` when a row
@@ -109,7 +109,7 @@ async def _authenticate_via_user_auth(db: AsyncConnection, email: str) -> dict |
         return await cur.fetchone()
 
 
-async def _authenticate_via_users_fallback(db: AsyncConnection, email: str) -> dict | None:
+async def _authenticate_via_users_fallback(db: DictConnection, email: str) -> dict | None:
     """Fallback: query ``users.email`` for dev accounts (legacy)."""
     async with db.cursor() as cur:
         await cur.execute(
@@ -129,7 +129,7 @@ async def _authenticate_via_users_fallback(db: AsyncConnection, email: str) -> d
 @router.post("/login")
 async def login(
     body: LoginRequest,
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
     settings: ApiSettings = Depends(get_settings),
 ):
@@ -214,7 +214,7 @@ async def login(
 @router.post("/register")
 async def register(
     body: RegisterRequest,
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
     settings: ApiSettings = Depends(get_settings),
 ):
@@ -305,7 +305,7 @@ async def register(
 @router.post("/refresh")
 async def refresh(
     body: RefreshRequest,
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
     settings: ApiSettings = Depends(get_settings),
 ):

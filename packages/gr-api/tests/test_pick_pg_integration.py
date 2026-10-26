@@ -31,7 +31,7 @@ from .fixture_picks import PICK_COLUMNS, day_slice, load_frame, trading_days
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 pytestmark = [
@@ -57,7 +57,7 @@ def _dsn() -> str:
 
 
 @pytest.fixture
-async def db() -> AsyncIterator[AsyncConnection]:
+async def db() -> AsyncIterator[DictConnection]:
     """一条自带 search_path 的连接，跑完把模拟数据删干净。"""
     import psycopg
     from psycopg.rows import dict_row
@@ -75,7 +75,7 @@ async def db() -> AsyncIterator[AsyncConnection]:
         await conn.close()
 
 
-async def _seed(conn: AsyncConnection) -> None:
+async def _seed(conn: DictConnection) -> None:
     """建策略 / 作者 / 分类 / 交易日历 / 少量合约。"""
     await _cleanup(conn)
     author_id = uuid4()
@@ -139,7 +139,7 @@ async def _seed(conn: AsyncConnection) -> None:
     await conn.commit()
 
 
-async def _cleanup(conn: AsyncConnection) -> None:
+async def _cleanup(conn: DictConnection) -> None:
     async with conn.cursor() as cur:
         await cur.execute(
             """
@@ -164,7 +164,7 @@ async def _cleanup(conn: AsyncConnection) -> None:
     await conn.commit()
 
 
-async def _import_all(conn: AsyncConnection) -> None:
+async def _import_all(conn: DictConnection) -> None:
     """导入 30 天：跳过第 10 天，第 20 天报空仓。"""
     frame = load_frame()
     for day in _DAYS:
@@ -201,7 +201,7 @@ async def test_fixture_matches_import_contract() -> None:
     assert any(sym.startswith("0000") for sym in frame["symbol"].to_list())
 
 
-async def test_import_thirty_days_and_read_back(db: AsyncConnection) -> None:
+async def test_import_thirty_days_and_read_back(db: DictConnection) -> None:
     await _import_all(db)
 
     async with db.cursor() as cur:
@@ -225,7 +225,7 @@ async def test_import_thirty_days_and_read_back(db: AsyncConnection) -> None:
     assert row["last_day"] == _DAYS[-1]
 
 
-async def test_reimport_supersedes_previous_batch(db: AsyncConnection) -> None:
+async def test_reimport_supersedes_previous_batch(db: DictConnection) -> None:
     frame = load_frame()
     day = _DAYS[0]
 
@@ -262,7 +262,7 @@ async def test_reimport_supersedes_previous_batch(db: AsyncConnection) -> None:
     assert rows[1]["rows"] == 5
 
 
-async def test_entry_date_carries_over_across_missing_day(db: AsyncConnection) -> None:
+async def test_entry_date_carries_over_across_missing_day(db: DictConnection) -> None:
     """漏传日的次日：老标的沿用入池日，只有当天新入池的才取当天。"""
     await _import_all(db)
 
@@ -291,7 +291,7 @@ async def test_entry_date_carries_over_across_missing_day(db: AsyncConnection) -
     assert all(row["product_entry_date"] <= row["entry_date"] for row in after_gap.values())
 
 
-async def test_provided_entry_date_survives_thirty_days(db: AsyncConnection) -> None:
+async def test_provided_entry_date_survives_thirty_days(db: DictConnection) -> None:
     await _import_all(db)
 
     async with db.cursor() as cur:
@@ -311,7 +311,7 @@ async def test_provided_entry_date_survives_thirty_days(db: AsyncConnection) -> 
     assert rows[0]["entry_date"] < _DAYS[0]
 
 
-async def test_instrument_mapping_and_name_backfill(db: AsyncConnection) -> None:
+async def test_instrument_mapping_and_name_backfill(db: DictConnection) -> None:
     frame = load_frame()
     day = _DAYS[0]
     await pick_import.import_picks(
@@ -344,7 +344,7 @@ async def test_instrument_mapping_and_name_backfill(db: AsyncConnection) -> None
 # ---------------------------------------------------------------------------
 
 
-async def test_read_endpoints_against_real_sql(db: AsyncConnection) -> None:
+async def test_read_endpoints_against_real_sql(db: DictConnection) -> None:
     await _import_all(db)
     page = make_page_params(page=1, page_size=50)
 
@@ -418,7 +418,7 @@ async def test_read_endpoints_against_real_sql(db: AsyncConnection) -> None:
     assert batches[0]["file_name"] is None
 
 
-async def test_three_empty_states_on_real_data(db: AsyncConnection) -> None:
+async def test_three_empty_states_on_real_data(db: DictConnection) -> None:
     await _import_all(db)
     page = make_page_params()
 

@@ -20,7 +20,7 @@ from gr_data.db.pool import PgConnectionPool, pg_pool
 
 
 if TYPE_CHECKING:
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 _DECIMAL_ZERO = Decimal("0")
@@ -74,7 +74,7 @@ _BACKFILL_BAR_DT_FROM_EXECUTED_AT_SQL = """
 async def reconcile_trades(
     strategy_id: str,
     *,
-    conn: AsyncConnection | None = None,
+    conn: DictConnection | None = None,
     pool: PgConnectionPool | None = None,
 ) -> int:
     """Recompute AVCO-based PnL for all trades of a strategy.
@@ -87,7 +87,7 @@ async def reconcile_trades(
     ----------
     strategy_id : str
         Internal UUID of the strategy.
-    conn : AsyncConnection | None
+    conn : DictConnection | None
         Optional existing connection for transaction grouping.
     pool : PgConnectionPool | None
         Connection pool (default: global ``pg_pool``).
@@ -99,7 +99,7 @@ async def reconcile_trades(
     """
     p = pool or pg_pool
 
-    async def _do(c: AsyncConnection) -> int:
+    async def _do(c: DictConnection) -> int:
         # 1. Load all trades, ordered for AVCO
         async with c.cursor() as cur:
             await cur.execute(_SELECT_SQL, {"sid": strategy_id})
@@ -207,7 +207,7 @@ async def reconcile_trades(
 
 async def backfill_trade_gaps(
     *,
-    conn: AsyncConnection | None = None,
+    conn: DictConnection | None = None,
     pool: PgConnectionPool | None = None,
 ) -> int:
     """Backfill live trade gaps and reconcile affected strategies.
@@ -219,7 +219,7 @@ async def backfill_trade_gaps(
     """
     p = pool or pg_pool
 
-    async def _do(c: AsyncConnection) -> int:
+    async def _do(c: DictConnection) -> int:
         async with c.cursor() as cur:
             await cur.execute(_AFFECTED_STRATEGIES_SQL)
             rows = await cur.fetchall()

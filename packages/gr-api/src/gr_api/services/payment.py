@@ -11,7 +11,7 @@ from gr_api.errors import BadRequest, NotFound, Unauthorized
 
 if TYPE_CHECKING:
     from gr_api.schemas.subscription import PaymentWebhookIn
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 def verify_signature(raw_body: bytes, signature: str | None, *, secret: str | None = None) -> None:
@@ -33,7 +33,7 @@ def verify_signature(raw_body: bytes, signature: str | None, *, secret: str | No
 
 
 async def handle_webhook(
-    db: AsyncConnection,
+    db: DictConnection,
     body: PaymentWebhookIn,
 ) -> dict[str, Any]:
     """POST /webhooks/payment

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from gr_api.pagination import PageParams
-    from psycopg import AsyncConnection
+    from gr_data.db import DictConnection
 
 
 router = APIRouter(prefix="/backtest-runs", tags=["backtest"])
@@ -55,7 +55,7 @@ async def list_runs(
     status: str | None = Query(None, pattern=r"^(running|completed|failed)$"),
     page: PageParams = Depends(page_dep),
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     items, total = await backtest_run_svc.list_runs(
@@ -72,7 +72,7 @@ async def list_runs(
 async def get_run(
     run_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await backtest_run_svc.get_run(db, run_id, user_id=user_id)
@@ -84,7 +84,7 @@ async def get_equity_curve(
     run_id: str,
     strategy_name: str | None = None,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     points = await backtest_run_svc.get_equity_curve(
@@ -100,7 +100,7 @@ async def get_equity_curve(
 async def get_metrics(
     run_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     data = await backtest_run_svc.get_metrics(db, run_id, user_id=user_id)
@@ -111,7 +111,7 @@ async def get_metrics(
 async def get_positions(
     run_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     positions = await backtest_run_svc.get_positions(db, run_id, user_id=user_id)
@@ -122,7 +122,7 @@ async def get_positions(
 async def get_artifacts(
     run_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     rid: str = Depends(request_id),
 ):
     artifacts = await backtest_run_svc.get_artifacts(db, run_id, user_id=user_id)
@@ -134,7 +134,7 @@ async def get_artifact_content(
     run_id: str,
     artifact_id: str,
     user_id: str = Depends(require_user),
-    db: AsyncConnection = Depends(get_db),
+    db: DictConnection = Depends(get_db),
     storage: BacktestStorageConfig = Depends(backtest_storage_dep),
     rid: str = Depends(request_id),
 ):

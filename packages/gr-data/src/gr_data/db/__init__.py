@@ -7,11 +7,12 @@
 """
 
 from gr_data.db.copy import upsert_rows
-from gr_data.db.pool import PgConnectionPool, pg_pool
+from gr_data.db.pool import DictConnection, PgConnectionPool, pg_pool
 from gr_data.db.sync import PgConfig, PgPool, connect
 
 
 __all__ = [
+    "DictConnection",
     "PgConfig",
     "PgConnectionPool",
     "PgPool",

@@ -8,9 +8,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from gr_tools.config import DEFAULT_LOG_FORMAT
 
-
+DEFAULT_LOG_FORMAT = "[%(asctime)s][%(name)s][%(levelname)s][%(request_id)s] %(message)s"
 _HANDLER_NAME = "getrich.output"
 _RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
 
