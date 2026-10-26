@@ -39,7 +39,12 @@ from gr_data.common.contracts.market import (
     bar_1d,
     bar_1m,
 )
-from gr_data.common.contracts.meta import INSTRUMENTS, SYMBOL_MAP, TRADING_CALENDAR
+from gr_data.common.contracts.meta import (
+    INSTRUMENTS,
+    OPTION_CONTRACTS,
+    SYMBOL_MAP,
+    TRADING_CALENDAR,
+)
 
 
 __all__ = [
@@ -56,6 +61,7 @@ __all__ = [
     "MODEL_RUN",
     "MODEL_RUN_BINDING",
     "MODEL_RUN_COVERAGE",
+    "OPTION_CONTRACTS",
     "SCHEME",
     "SPECIFIC_RETURN",
     "SPECIFIC_RISK",

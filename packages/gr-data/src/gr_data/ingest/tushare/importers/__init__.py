@@ -1,5 +1,14 @@
 """Tushare ingest importer 注册表。"""
 
+from gr_data.ingest.tushare.importers.asset_markets import (
+    EtfBars1dImporter,
+    EtfInstrumentsImporter,
+    EtfSymbolMapImporter,
+    OptionBars1dImporter,
+    OptionContractsImporter,
+    OptionInstrumentsImporter,
+    OptionSymbolMapImporter,
+)
 from gr_data.ingest.tushare.importers.classify import InstrumentCategoryImporter
 from gr_data.ingest.tushare.importers.market import (
     AdjFactorTsImporter,
@@ -31,6 +40,19 @@ REGISTRY = {
     "instrument_category": InstrumentCategoryImporter,
 }
 
+DEFAULT_DATASETS = tuple(REGISTRY)
+REGISTRY.update(
+    {
+        "etf_instruments": EtfInstrumentsImporter,
+        "etf_symbol_map": EtfSymbolMapImporter,
+        "option_instruments": OptionInstrumentsImporter,
+        "option_symbol_map": OptionSymbolMapImporter,
+        "option_contracts": OptionContractsImporter,
+        "etf_bar_1d": EtfBars1dImporter,
+        "option_bar_1d": OptionBars1dImporter,
+    }
+)
+
 # 组别快捷方式。注意 instruments → symbol_map → bars 有严格先后依赖：
 # bars 需要 symbol_map 解析 instrument_id。
 GROUPS = {
@@ -56,6 +78,10 @@ GROUPS = {
         "valuation_1d",
         "instrument_category",
     ],
+    "etf_reference": ["etf_instruments", "etf_symbol_map"],
+    "etf_bars_1d": ["etf_bar_1d"],
+    "option_reference": ["option_instruments", "option_symbol_map", "option_contracts"],
+    "option_bars_1d": ["option_bar_1d"],
 }
 
 __all__ = ["REGISTRY", "GROUPS"]

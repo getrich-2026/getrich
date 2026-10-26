@@ -33,3 +33,20 @@ SYMBOL_MAP = TableContract(
     columns=("instrument_id", "source", "source_symbol"),
     conflict_keys=("source", "source_symbol"),
 )
+
+OPTION_CONTRACTS = TableContract(
+    schema="meta",
+    table="option_contracts",
+    columns=(
+        "instrument_id",
+        "underlying_id",
+        "option_type",
+        "exercise_style",
+        "strike",
+        "multiplier",
+        "list_date",
+        "last_trade_date",
+        "exercise_date",
+    ),
+    conflict_keys=("instrument_id",),
+)

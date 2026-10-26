@@ -14,6 +14,7 @@ FUTURE_EXCHANGES = ("CFFEX", "DCE", "CZCE", "SHFE", "INE", "GFEX")
 # 官方 fut_trade_cal（doc_id=467）只列前五所；2026-10-24 live 用例实测 GFEX 2024 全年日历
 # 逐日完整、日线只返回 .GFE 合约，故默认含 GFEX。白名单仍可显式收窄。
 DEFAULT_FUTURE_EXCHANGES = FUTURE_EXCHANGES
+OPTION_EXCHANGES = ("SSE", "SZSE", *FUTURE_EXCHANGES)
 INDEX_MARKETS = ("SSE", "SZSE", "CSI", "SW", "MSCI", "CICC", "OTH")
 # 申万走独立接口（doc_id=327），不进入 index_daily 采集范围。
 INDEX_DAILY_MARKETS = tuple(m for m in INDEX_MARKETS if m != "SW")
@@ -30,6 +31,7 @@ class TushareRawContext(RawContext):
     index_codes: tuple[str, ...] = ()
     index_markets: tuple[str, ...] = ()
     future_exchanges: tuple[str, ...] = DEFAULT_FUTURE_EXCHANGES
+    option_exchanges: tuple[str, ...] = OPTION_EXCHANGES
 
 
 def _names(
@@ -69,6 +71,9 @@ def build_context(cfg: Config) -> TushareRawContext:
     future_exchanges = _names(section, "future_exchanges", FUTURE_EXCHANGES)
     if future_exchanges == ():
         raise ValueError("providers.tushare.future_exchanges must not be empty")
+    option_exchanges = _names(section, "option_exchanges", OPTION_EXCHANGES)
+    if option_exchanges == ():
+        raise ValueError("providers.tushare.option_exchanges must not be empty")
     return TushareRawContext(
         paths=RawPaths(cfg.raw_root),
         rate_limit=section.get("rate_limit", {})
@@ -79,6 +84,7 @@ def build_context(cfg: Config) -> TushareRawContext:
         index_codes=index_codes,
         index_markets=_names(section, "index_markets", INDEX_DAILY_MARKETS) or (),
         future_exchanges=future_exchanges or DEFAULT_FUTURE_EXCHANGES,
+        option_exchanges=option_exchanges or OPTION_EXCHANGES,
     )
 
 
