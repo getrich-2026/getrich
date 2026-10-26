@@ -1,0 +1,34 @@
+# 指数／期货日线审核样例；不含凭证，不会自动运行。
+# 用户审核代码后再复制为机器配置，显式设置 RAW_PARQUET_ROOT 与连接环境。
+# 不修改正在运行的米筐配置、代码版本、账本或数据目录。
+providers:
+  tushare:
+    token_env: TUSHARE_TOKEN
+    start_date: 20240101
+    end_date: 20261023  # 本次审核的固定终点；回补前另核对数据是否已发布
+    # 指数必须显式限定范围：普通指数近万个，逐代码请求不能默认全量。
+    # 两项取并集；代码须存在于 instruments/index.parquet，申万（.SI／SW）不接受。
+    index_codes:
+      - 000001.SH   # 上证指数
+      - 000016.SH   # 上证50
+      - 000300.SH   # 沪深300
+      - 000905.SH   # 中证500
+      - 000852.SH   # 中证1000
+      - 000688.SH   # 科创50
+      - 399001.SZ   # 深证成指
+      - 399006.SZ   # 创业板指
+    index_markets: []   # 可选 SSE/SZSE/CSI/MSCI/CICC/OTH；CSI 约 9000 个，慎用
+    # 期货交易所白名单。官方 fut_trade_cal 文档未列 GFEX，2026-10-24 由
+    # `test_future_calendar_exchange_supported[GFEX]` 与 `test_gfex_daily_matches_exchange`
+    # 实测通过后加入。
+    future_exchanges: [CFFEX, DCE, CZCE, SHFE, INE, GFEX]
+    rate_limit:
+      sleep_between_requests_sec: 1.5
+      max_retries: 5
+      retry_backoff_base_sec: 3.0
+
+enabled:
+  raw:
+    tushare: [instruments, calendar, future_calendar, index_daily, fut_daily]
+  ingest:
+    tushare: [instruments, symbol_map, calendar, index_bar_1d, future_bar_1d]

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import numpy as np
 import pandas as pd
@@ -26,6 +27,7 @@ from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.importers.reference import _require, parse_date
 from gr_data.ingest.tushare.symbols import collapse_alias_rows
+from gr_data.raw.tushare.quote_rules import tas_code_mask
 from gr_data.raw.tushare.suspension_store import read_coverage
 
 
@@ -96,6 +98,20 @@ def _daily_rows(raw: pd.DataFrame, source: str) -> pd.DataFrame:
         raise ValueError(f"{source} 含空 ts_code")
     out["trade_date"] = _parse_trade_date(out, source)
     return out.drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+
+
+def _validate_activity(raw: pd.DataFrame, columns: list[str], source: str) -> None:
+    """允许缺失；已有值必须是有限非负数，不能静默写成 NULL。"""
+    for column in columns:
+        numeric = pd.to_numeric(raw[column], errors="coerce")
+        invalid = raw[column].notna() & (numeric.isna() | ~np.isfinite(numeric) | numeric.lt(0))
+        if invalid.any():
+            raise ValueError(f"{source} invalid activity column={column} rows={int(invalid.sum())}")
+
+
+def _amount_in_yuan(series: pd.Series, multiplier: int) -> pd.Series:
+    """使用十进制换算源金额单位；缺失保留 NULL，不累计二进制浮点误差。"""
+    return series.map(lambda v: None if pd.isna(v) else Decimal(str(v)) * multiplier)
 
 
 class _SymbolResolvingImporter(BaseImporter):
@@ -512,7 +528,18 @@ class IndexBars1dImporter(_BaseBarsImporter):
     CONTRACT = contracts.bar_1d("index")
 
     def build(self) -> pd.DataFrame:
-        raw = self._read_selected("index_daily")
+        required = {
+            "ts_code",
+            "trade_date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "pre_close",
+            "vol",
+            "amount",
+        }
+        raw = self._read_selected("index_daily", frozenset(required))
         if raw.empty:
             self.log.warning("index_daily 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
@@ -522,14 +549,16 @@ class IndexBars1dImporter(_BaseBarsImporter):
             {"ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "vol", "amount"},
             "index_daily",
         )
-        m = raw.drop_duplicates(subset=["ts_code", "trade_date"], keep="last").copy()
-        m["ts_code"] = m["ts_code"].astype(str).str.strip()
+        m = _daily_rows(raw, "index_daily")
+        _validate_activity(m, ["vol", "amount"], "index_daily")
+        amounts = _amount_in_yuan(m["amount"], 1000)
         _to_numeric(m, ["open", "high", "low", "close", "pre_close", "vol", "amount"])
         _null_out_invalid(m, list(self.PRICE_COLUMNS))
 
         usable = m["close"].notna()
         dropped = int((~usable).sum())
         if dropped:
+            self._soft(f"index_daily skipped rows with invalid close: {dropped}")
             self.log.warning("index_daily 有 %d 行收盘价无效或缺失，已跳过", dropped)
         partial = int((usable & m["open"].isna()).sum())
         if partial:
@@ -555,7 +584,7 @@ class IndexBars1dImporter(_BaseBarsImporter):
                 "close": m["close"],
                 "pre_close": m["pre_close"],
                 "volume": _to_bigint(m["vol"] * 100.0),  # 手 → 股
-                "amount": m["amount"] * 1000.0,  # 千元 → 元
+                "amount": amounts.loc[m.index],  # 千元 → 元
                 "limit_up": None,
                 "limit_down": None,
                 "trading_status": "NORMAL",
@@ -574,13 +603,31 @@ class FutureBars1dImporter(_BaseBarsImporter):
     当日无成交的合约不返回 OHLC，但**仍会发布结算价与持仓量**（实测某交易日
     940 条里 154 条如此，且全部带有效 settle）。因此价格缺失写 NULL、保留该行；
     只有 close 与 settle 都无效的记录才丢弃。成交量 / 持仓量为 0 是真实取值，原样保留。
+
+    原油 TAS（SCTAS）的 OHLC／前收是相对结算价的价差，settle 却是绝对价（D-025）。
+    目标表没有价差语义，混写会让同一行出现两种价格尺度；在单独映射定案前整行排除，
+    计软告警并保留 raw，不把负价差改成 NULL、也不把正价差当绝对价入库。
     """
 
     DATASET = "future_bar_1d"
     CONTRACT = contracts.bar_1d("future")
 
     def build(self) -> pd.DataFrame:
-        raw = self._read_selected("fut_daily")
+        required = {
+            "ts_code",
+            "trade_date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "pre_close",
+            "pre_settle",
+            "settle",
+            "vol",
+            "amount",
+            "oi",
+        }
+        raw = self._read_selected("fut_daily", frozenset(required))
         if raw.empty:
             self.log.warning("fut_daily 无 raw 数据")
             return pd.DataFrame(columns=list(self.contract.columns))
@@ -603,8 +650,29 @@ class FutureBars1dImporter(_BaseBarsImporter):
             },
             "fut_daily",
         )
-        m = raw.drop_duplicates(subset=["ts_code", "trade_date"], keep="last").copy()
-        m["ts_code"] = m["ts_code"].astype(str).str.strip()
+        m = _daily_rows(raw, "fut_daily")
+        tas = tas_code_mask(m["ts_code"])
+        if tas.any():
+            excluded = int(tas.sum())
+            codes = sorted(set(m.loc[tas, "ts_code"]))
+            self._soft(
+                f"fut_daily excluded TAS spread rows pending separate mapping (D-025): {excluded}"
+            )
+            self.log.warning(
+                "fut_daily excluded TAS spread rows rows=%d symbols=%d samples=%s",
+                excluded,
+                len(codes),
+                codes[:5],
+            )
+            m = m.loc[~tas]
+            if m.empty:
+                return pd.DataFrame(columns=list(self.contract.columns))
+        _validate_activity(m, ["vol", "amount", "oi"], "fut_daily")
+        amounts = _amount_in_yuan(m["amount"], 10000)
+        for column in ("vol", "oi"):
+            values = pd.to_numeric(m[column], errors="coerce")
+            if (values.dropna() % 1 != 0).any():
+                raise ValueError(f"fut_daily noninteger contracts column={column}")
         _to_numeric(
             m,
             [
@@ -625,6 +693,7 @@ class FutureBars1dImporter(_BaseBarsImporter):
         usable = m["close"].notna() | m["settle"].notna()
         dropped = int((~usable).sum())
         if dropped:
+            self._soft(f"fut_daily skipped rows with invalid close and settle: {dropped}")
             self.log.warning("fut_daily 有 %d 行收盘价与结算价均无效或缺失，已跳过", dropped)
         settle_only = int((usable & m["close"].isna()).sum())
         if settle_only:
@@ -652,7 +721,7 @@ class FutureBars1dImporter(_BaseBarsImporter):
                 "close": m["close"],
                 "pre_close": m["pre_close"],
                 "volume": _to_bigint(m["vol"]),  # 手（保持原单位）
-                "amount": m["amount"] * 10000.0,  # 万元 → 元
+                "amount": amounts.loc[m.index],  # 万元 → 元
                 "open_interest": _to_bigint(m["oi"]),  # 手（保持原单位）
                 "settle": m["settle"],
                 "pre_settle": m["pre_settle"],

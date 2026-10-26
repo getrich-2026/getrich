@@ -87,6 +87,10 @@ def _build_client(provider: str, cfg: Config) -> Any:
 
 
 def _build_context(provider: str, cfg: Config) -> RawContext:
+    if provider == "tushare":
+        from gr_data.raw.tushare.context import build_context
+
+        return build_context(cfg)
     pconf = cfg.section("providers", provider)
     return RawContext(
         paths=RawPaths(cfg.raw_root),
