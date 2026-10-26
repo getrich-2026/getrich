@@ -428,13 +428,15 @@ uv run gr-data own release market.stock_bar_1d           # 解除
 
 `load_environment()` 显式读取一个环境快照，默认不修改 `os.environ`。真实环境变量优先于文件；显式传 `env_file` 时只使用该文件，否则依次选择 workspace `.env`、`~/.config/getrich/.env`。自动候选都不存在时仅使用进程环境；显式文件不存在则报错，不自动创建文件。首次运行仍执行 `cp .env.example .env`。
 
+布尔配置 `STRICT_MODE`、`RICEQUANT_ENABLED`、`ENABLE_HDB`、`ENABLE_INSIGHT`、`GETRICH_ALLOW_MOCK_AUTH` 和 `LOG_JSON` 统一接受 `true/1/yes/on` 与 `false/0/no/off`，不区分大小写；未设置或空串为 False，其他值抛出 `SettingsError`，错误消息不包含原值。`APP_ENV=prod` 启用严格模式的判断同样不区分大小写。
+
 YAML 不复制数据库与日志配置；`load_config(environment=env)` 的占位符、`*_env` 凭证字段、raw 路径与连接配置共用同一快照。数据／信号 CLI 在启动时显式安装环境，兼容直接读进程环境的 SDK；模型和库导入不做此操作。
 
 只加载当前命令需要的模型：raw 抓取不强制 PG，`gr-db status` 不校验连接，PG 命令不校验 CH／Web。默认使用 PostgreSQL 和 inproc 作业路径，
 Redis 仅在 Celery 模式需要，ClickHouse 仅在使用因子输出相关能力时需要。
 
 CLI／API／worker 启动入口统一配置日志，库模块导入不创建 handler 或日志文件。
-LOG_FILE 使用完整文件名，相对路径以 workspace 根解析；LOG_JSON=true 输出单行 JSON，
+LOG_FILE 使用完整文件名，先展开 `~`，相对路径以 workspace 根解析；LOG_JSON=true 输出单行 JSON，
 否则使用 LOG_FMT。结构化字段使用 `extra` 或 `extra={"context": {...}}`，不得记录凭证或完整请求／供应商 payload。
 CLI 的 `--verbose` 优先于 LOG_LEVEL，Celery 显式 `--loglevel`／`--logfile` 优先于环境选项。
 重配只关闭本项目管理的 handler，保留测试／宿主框架的 handler；框架自身的访问日志配置仍由框架管理。
@@ -442,6 +444,8 @@ CLI 的 `--verbose` 优先于 LOG_LEVEL，Celery 显式 `--loglevel`／`--logfil
 ### Python 调用迁移
 
 旧 `gr_data.config.Settings`、全量 `load_settings()`／`settings` 单例和 `gr_data.config.setup_logging` 已移除。数据模型与 `find_project_root` 仍可从 gr-data 配置入口导入；WebConfig、WorkerConfig、BacktestStorageConfig 改从 `gr_api.config` 导入。数据库连接池改为 `await pg_pool.init(postgres_config)`，ClickHouse 构造器可传 `config=clickhouse_config`。
+
+直接调用公共布尔解析函数时，必须传配置键名：`parse_bool(value, name="FEATURE_FLAG")`。未知值会报错，不再静默解释为 False。
 
 ```python
 from gr_data.config import load_postgres
