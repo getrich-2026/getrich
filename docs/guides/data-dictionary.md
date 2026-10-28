@@ -13,6 +13,27 @@ uv run gr-db docs --target ch --format json --out - --fail-on-drift
 uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/dev
 ```
 
+## PostgreSQL schema 一览
+
+按职责查新表该放哪里；表和字段以 DDL 与生成的字典为准，本表只到 schema 一级。2026-10-28 对照 DDL 核对，新增 schema 时同步本表。
+
+| schema | 内容 | 写入方 | 建立迁移 |
+|---|---|---|---|
+| `meta` | 证券、期货／期权合约、代码映射、交易日历 | gr-data | 001 |
+| `market` | 行情主存 `<asset>_bar_<freq>`、复权因子、估值、停复牌事件 | gr-data | 001 |
+| `fundamental` | 估值与财务快照 | gr-data（gr-api 读） | 038 |
+| `classify` | 行业体系、行业归属、资产类别 | gr-data（gr-api 读） | 039 |
+| `factor` | 风险模型：定义、run、暴露、协方差、收益、覆盖 | gr-data（gr-api 读） | 037 |
+| `realtime` | 实时 tick 缓冲 | gr-data | 001 |
+| `staging` | 入库中转 | gr-data | 007 |
+| `ops` | ETL 作业、数据质量、表归属、导入收据、迁移记账 | gr-data／gr-db | 001 |
+| `app` | 业务主库：用户、策略、信号、订单、订阅 | gr-api | 001 |
+| `backtest` | 回测产物：run、指标、权益、参数扫描、walk-forward、作业 | gr-backtest／gr-api | 001 |
+| `pick` | 选股：上传批次 `batch` 与每日标的池快照 `item` | gr-api | 034 |
+| `diag` | 持仓诊断：快照、方案、计算运行、口径版本、分享凭证 | gr-api（数据版本按 D-022 由 gr-data 发布） | 040 |
+
+连接池 `search_path` 只有 `app,market,meta,public`，其余 schema 不在其中；SQL 一律写 schema 全限定名。
+
 ## 如何理解结果
 
 - PostgreSQL 字典从活库 catalog 反射，只覆盖 gr-db 明确管理的业务 schema，包含 `diag`，排除 TimescaleDB 内部 schema。

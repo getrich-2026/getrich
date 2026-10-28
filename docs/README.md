@@ -16,8 +16,10 @@
 | 诊断页面接入者 | [诊断 API](guides/diagnosis-api.md) | 调用流程与状态，模型真源在代码／OpenAPI |
 | 数据库开发者 | [数据字典](guides/data-dictionary.md) | 生成字典与注释门禁，不手抄 schema |
 | 安排工作的人 | [待决问题](plans/backlog.md) | 缺口、证据、待定选择、验收条件 |
+| 采集主端迁移维护者 | [iMac 迁移盘点与验收](plans/imac-collector-migration.md) | 2026-10-27 Air 实查清单；iMac 唯一采集、Air 远程开发；迁移及切换尚未执行 |
 | 数据接入实施评审者 | [gr-data可靠采集实施计划](plans/gr-data-reliability-implementation-plan.md) | 待审核；风险修补顺序、文件落点、验收与回滚，未开工 |
 | 米筐历史回补维护者 | [全市场历史名单与覆盖](plans/ricequant-historical-universe.md) | 方向已确认、修订待复核；动态名单、验证 run 隔离、降级日读取与配额估算 |
+| 米筐验证追溯者 | [米筐验证记录](history/2026-10-23-rq-risk-validation.md) | 验证 variant、源单位依据、production 首 20 日验收与容量估算；units_evidence 引用的锚点在此 |
 | 米筐数值修复验收者 | [REAL 修复验收](history/2026-10-24-rq-real-recovery.md) | 历史全量等价依据、旧 run 禁止发布、新观察替代与版本追溯 |
 | 追溯历史的维护者 | [数据字典旧计划](history/data-dictionary-plan.md)、[诊断旧审查](history/diagnosis-api-review.md) | 已完成快照，不作为当前指令或待办 |
 
@@ -47,8 +49,8 @@
 | `packages/gr-data/reference/design/` | 接入维护者：供应商资料；按 provider 查，不默认全读 |
 | 相邻仓库 `getrich-design/` | 产品／架构设计者：需求与供应商接口设计；落地前核对本仓代码和 DDL。持仓诊断一期口径见其 `governance/scope.md`，一期所需数据见 `data-platform/portfolio-diagnosis-phase1-datasets.md` |
 
-`CLAUDE.md` 与 `.agents/rules/project.md` 只负责工具入口，不另存编码规则。
-`archive/` 和 `packages/gr-db/archive/` 的代码归档保持原位；删除需单独授权。
+Codex 与 Claude Code 直接读取根目录 `AGENTS.md`，仓库不放 `CLAUDE.md`；`.agents/rules/project.md` 只是 Antigravity 的入口，不另存编码规则。
+`packages/gr-db/archive/` 的旧 SQL 归档保持原位；删除需单独授权（根目录 `archive/` 已于 `d8f0316` 清理）。
 
 ## 新增与更新文档
 
