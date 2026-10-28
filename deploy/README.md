@@ -89,7 +89,7 @@ PostgreSQL 18 镜像的数据目录是 `/var/lib/postgresql/18/docker`，named v
 
 容器停止宽限期为 2 分钟，避免大 `shared_buffers` 的关机 checkpoint 被 SIGKILL 打断。
 
-Linux 宿主机上的 PostgreSQL 日志目录必须允许容器内 `postgres` 用户写入。当前 TimescaleDB 镜像中的 UID 为 `70`，目录属主错误会导致数据库启动失败。
+Linux 宿主机上 bind 的日志目录必须允许容器内的服务用户写入，属主错误会导致服务启动失败：PostgreSQL（TimescaleDB 镜像）为 UID `70`，ClickHouse 为 UID `101`，Redis 为 UID `999`。Redis 入口会自动修正 `/data` 卷内 AOF／RDB 的属主，但不处理 bind 的日志目录。macOS Docker Desktop 不受影响。
 
 ### ClickHouse
 
@@ -97,7 +97,7 @@ Linux 宿主机上的 PostgreSQL 日志目录必须允许容器内 `postgres` �
 
 ### Redis
 
-`config/redis/redis.conf` 使用 AOF、关闭 RDB，并采用 `noeviction`。内存达到 `REDIS_MAXMEMORY` 后写入会明确失败，不会静默淘汰分布式锁或限流计数器。缓存 key 必须自行设置 TTL。
+Redis 以镜像内的 `redis` 用户运行：compose 的 `command` 必须以 `redis-server` 开头，镜像入口才会降权；包一层 `/bin/sh -c` 会让 Redis 以 root 运行。`config/redis/redis.conf` 使用 AOF、关闭 RDB，并采用 `noeviction`。内存达到 `REDIS_MAXMEMORY` 后写入会明确失败，不会静默淘汰分布式锁或限流计数器。缓存 key 必须自行设置 TTL。
 
 ## macOS Docker Desktop 注意事项
 
