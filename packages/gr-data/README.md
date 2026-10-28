@@ -133,7 +133,7 @@ uv run gr-data ingest tushare --only events,bars_1d,market_ext,fundamental,class
 | raw | `calendar`、`option_calendar` | 沪深日历，以及 `option_exchanges` 选中期货市场的逐所日历 |
 | raw | `fund_daily`、`fund_adj` | 逐日分页、月分区，源基金记录保留；因子页长 2000，日线 5000 |
 | raw | `opt_daily` | 八所逐所逐日取数，页长 15000 → `opt_daily/YYYY-MM.parquet` |
-| raw | `option_instruments` | 从所选日期、市场的 opt_daily 发现代码，按精确 ts_code 查 opt_basic；必须在日线之后运行 |
+| raw | `option_instruments` | 从所选日期、市场的 opt_daily 发现代码，按 opt_code 分页查 opt_basic；未知标的先精确引导，缺失代码精确回退；必须在日线之后运行 |
 | ingest | `etf_reference` | `etf_instruments` → `etf_symbol_map`，分别写 meta.instruments／symbol_map |
 | ingest | `etf_bars_1d` | 只导 ETF 清单内记录；源基金因子按代码、日期精确配对 → market.etf_bar_1d |
 | ingest | `option_reference` | `option_instruments` → `option_symbol_map` → `option_contracts`；标的身份和 source 映射须预先具备 |
@@ -143,12 +143,21 @@ ETF 期权标的必须是 ETF，股指期权标的是指数，商品期权标的
 现有标的参考信息可以复用，但必须先核对来源、哈希、映射和表归属；不会自动抓取所有标的的行情。
 `AP405C8000.ZCE` 这类郑商所期权代码原样保留，标的从显式 `opt_code` 解析；不扩写期权代码年份。
 元数据覆盖范围是“目标行情出现的代码”，不能据此声称已取得无行情合约在内的完整挂牌全集。
-`init` 按范围内去重代码全量查询；`update` 只重查新增、缺可靠观察日、
+`init` 重新观察范围内全部目标代码；`update` 只重查新增、缺可靠观察日、
 缺最后交易日，或最近观察日不晚于最后交易日的合约。
 到期后已观察过的合约复用原记录；全跳过时返回 0，不发布新观察。
 观察日独立保存在观察目录的 `observation_dates.parquet`，哈希写入清单和收据；
 缺失、损坏或哈希不匹配时退回重查，不给源列添加内部日期。
-日志分别记录范围代码数、查询数及跳过数；真实请求预算仍待单独验收。
+查询优先复用已有元数据的显式 `opt_code`。冷启动时从尚未覆盖的代码中选一个精确查询，
+获得其 `opt_code` 后按标的批量补齐，不从期权代码猜标的或年份。
+通常每标的一次引导即可覆盖同组代码；若批量漏码，尚未建立映射的代码仍可能需要额外精确引导。
+标的响应全量校验 `opt_code`、市场、代码后缀与分页键，不能先过滤再掩盖错市场／错标的。
+批量缺失的目标代码回退到精确查询，记 WARNING 和条数；引导响应可复用，不重复请求同一代码。
+若标的下所有目标代码都已在到期后观察过，则不请求该标的；同一标的响应中的已跳过合约也不覆盖原记录。
+兼容元数据文件只更新本轮需要的代码，完整的批量／精确源响应另存观察目录的 `responses/`，
+清单记录各文件行数、哈希，保留超出目标范围的源行。响应分批暂存，内存按单标的响应加目标行控制，
+仍受客户端 offset 上限和重复页守卫保护。日志／收据分别记录 `underlying_queries`、
+`bootstrap_queries`、`fallback_queries`、`fallback_rows`；查询计数为逻辑查询，分页的实际请求数另测。
 
 | 字段 | ETF | 期权 |
 |---|---|---|
@@ -157,6 +166,25 @@ ETF 期权标的必须是 ETF，股指期权标的是指数，商品期权标的
 | amount | 千元 → 元，Decimal ×1000 | 万元 → 元，Decimal ×10000 |
 | 因子 | 同日 fund_adj，必须有限且 >0；缺失不填 1／不前后填充 | 不复权；不把 ETF 因子套到调整期权 |
 | 持仓量／结算 | 不适用 | oi → 既有列 open_interest，手数；合法 NULL 保留，零成交不等于缺失 |
+
+期权额外接受精确的缺失占位模式：`open=high=low=0` 且 `close>0`，不按交易所或成交量限制。
+raw 源值不变，收据 `scope.ohl_zero_placeholder_rows` 按交易所记录条数、非零成交量条数，
+以及各最多 5 个键样本。ingest 仅把这些行的 OHL 显式映射为 NULL，
+保留 close／settle／成交量／成交额／OI，并按交易所记软告警和同样的计数／样本。
+只有部分 OHL 为零、OHL 全零而 close 不大于零、high<low 或正常价格中的 close 越界仍失败；
+ETF 的价格包络校验不变。此口径不代表期权正式写入已开放。
+
+`fund_daily`／`fund_adj` 的源代码统一只要求非空、无首尾空白的字符串；
+七位代码或带 `!` 的非标准代码保留在 raw，不改码、不删行。
+收据 `scope.nonstandard_code_rows` 记录条数和最多 5 个代码样本；
+fund_daily 的 closed-market 检查只作用于六位 `.SH/.SZ` 代码。
+ETF 入库仍只选严格 ETF 名单内的代码，日志另记被排除记录中的非标准代码数。
+
+ETF 的 L／D 名单仍要求六位交易代码、市场一致及有效上市日。
+P 名单允许非交易代码（如 `.OF`）、空上市日和空简称；raw 保留全部记录，
+收据 `scope.pending_rows` 记录 P 总数、非标准代码数和缺上市日数。
+**本实现选择全部跳过 P 的身份及 symbol_map 写入**，包括字段完整的 P 行，并记条数和最多 5 个样本的软告警。
+后续变为 L 时再登记，不自动把 `.OF` 改为 `.SH`，不因待上市元数据不完整阻断已有 L／D 记录。
 
 新增任务要求显式 `start_date`，按配置区间重核月份；`init`／`update` 都保护范围外日期和交易所。
 这与旧股票“只刷新最新月”的策略不同：只应配置当前需要处理的月，不要把长期区间用于高频 update。
@@ -200,14 +228,18 @@ ETF 分类暂时沿用旧规则：一律 `equity`／`cn_a`，已知不准确（�
 目标口径在后续独立任务中改为 Tushare `fund_basic.fund_type` 单一来源，
 显式维护映射，未映射或混合型保持未分类。存量错误分类以“删除后按上市日重写”更正，
 不用 `out_date` 关闭；真实采样、分类实现、数据删除和 DDL 注释迁移本轮均不执行。
-`meta.instruments.status` 新增 `pending` 表示待上市；本轮不改变下游过滤约定。
+`meta.instruments.status=pending` 仍可表示其他来源的待上市身份；本实现不登记 Tushare ETF 的 P 行。
 单表单一 provider 保持不变，所有新 writer 仍校验 ownership，不自动 force 或切源。
 
 **真实回补前待验收（本轮未执行）**：另行授权后，在独立 raw 根只启用
 `calendar`、`option_calendar`、`opt_daily` 取得一个月；先不启用 `option_instruments`。
-按交易所统计全月去重代码数及最后交易日去重代码数，再结合配置请求间隔，
-估算首次全量、每日增量和全历史总请求预算；请求次数还须计入实际分页及重试。
-若成本不可接受，先查官方过滤参数及分页上限，再决定批量方案，不猜参数。
+预算按需要重查的 `(exchange, opt_code)` 去重数估算，温缓存、每标的一页且无回退时，
+请求数约等于标的数；冷启动另加未知标的引导数，实际总数为各标的页数之和＋引导页数＋回退页数＋重试。
+乘以配置间隔估算限流等待量，另计网络耗时；不能只用标的数宣称实际请求数。
+每日增量先排除到期后已观察的合约；全历史按去重标的／代码集合及分页规模测量，不能把月度去重数相加当精确预算。
+2026-10-26 修复前真实 1 月样本为 19,236 个代码，逐代码约 8 小时；此为旧方案历史证据，
+新方案未重新实取，不给出未经测量的标的数或耗时。本轮仅执行 A1–A5 离线修复；B 部分真实复验等待用户确认，
+不调用真实 Tushare、不连接任何 PG，也不启动全量回补。
 后续 ETF 分类任务在本分支合入后从 dev 另开分支，依赖 ETF symbol_map；
 先验证 fund_basic.fund_type 枚举，存量更正前只读计数、备份，工作库删除另行授权。
 

@@ -8,6 +8,7 @@ import os
 import uuid
 from datetime import date, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -20,10 +21,14 @@ from gr_data.raw.tushare.asset_rules import (
     BAR_COLUMNS,
     OPTION_BAR_COLUMNS,
     OPTION_SUFFIXES,
+    nonstandard_code_counts,
+    ohl_zero_placeholder_counts,
+    option_underlying,
     read_asset_observation,
     require_columns,
     source_codes,
     source_dates,
+    standard_fund_codes,
     unique_rows,
     validate_bars,
 )
@@ -64,7 +69,7 @@ class _AssetFetcher(BaseFetcher):
             logger=self.log,
         )
         # 只保存允许的只读参数，凭据始终留在 client 内。
-        allowed = {"fields", "exchange", "list_status", "ts_code", "trade_date"}
+        allowed = {"fields", "exchange", "list_status", "ts_code", "trade_date", "opt_code"}
         self._requests.append(
             {
                 "api": api,
@@ -181,6 +186,7 @@ class _AssetFetcher(BaseFetcher):
         scope: dict[str, object],
         *,
         observed_dates: dict[str, int] | None = None,
+        source_responses: list[Path] | None = None,
     ) -> None:
         """先保存不可变观察与旧文件，再发布兼容文件；不覆盖历史证据。"""
         previous, previous_receipt = self._previous_observation(out)
@@ -218,6 +224,22 @@ class _AssetFetcher(BaseFetcher):
             manifest["observation_dates_sha256"] = hashlib.sha256(
                 dates_file.read_bytes()
             ).hexdigest()
+        if source_responses is not None:
+            responses = []
+            for index, response in enumerate(source_responses):
+                path = root / "responses" / f"{index:04d}.parquet"
+                source = read_parquet_strict(response)
+                if source is None:
+                    raise ValueError("Missing option source response")
+                write_parquet(source, path)
+                responses.append(
+                    {
+                        "file": str(path.relative_to(root)),
+                        "rows": len(source),
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                )
+            manifest["source_responses"] = responses
         (root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         write_parquet(frame, out)
         # 水位始终引用已发布文件的哈希；崩溃后哈希不匹配即拒绝把旧水位当成功。
@@ -246,22 +268,37 @@ class EtfInstrumentsFetcher(_AssetFetcher):
                     continue
                 require_columns(
                     frame,
-                    ("ts_code", "exchange", "list_status", "list_date", "extname"),
+                    ("ts_code", "exchange", "list_status")
+                    if status == "P"
+                    else ("ts_code", "exchange", "list_status", "list_date", "extname"),
                     "etf_basic",
                 )
                 codes = source_codes(frame)
                 if (
                     not frame["exchange"].eq(exchange).all()
                     or not frame["list_status"].eq(status).all()
-                    or not codes.str.fullmatch(rf"\d{{6}}\.{exchange}").all()
+                    or (status != "P" and not codes.str.fullmatch(rf"\d{{6}}\.{exchange}").all())
                 ):
                     raise ValueError("Unexpected ETF metadata scope")
+                if status != "P":
+                    source_dates(frame["list_date"])
                 frames.append(frame)
         combined = unique_rows(pd.concat(frames, ignore_index=True), ("ts_code",))
+        pending = combined.loc[combined["list_status"].eq("P")]
         self._publish(
             combined,
             self.paths.dataset_file(self.PROVIDER, "instruments", "etf"),
-            {"statuses": ["L", "D", "P"]},
+            {
+                "statuses": ["L", "D", "P"],
+                "pending_rows": {
+                    "rows": len(pending),
+                    "nonstandard_code_rows": nonstandard_code_counts(pending)["rows"],
+                    "missing_list_date_rows": int(
+                        (pending["list_date"].isna() | pending["list_date"].eq("")).sum()
+                    ),
+                    "samples": pending["ts_code"].head(5).tolist(),
+                },
+            },
         )
         return 1
 
@@ -358,7 +395,11 @@ class AssetDailyFetcher(_AssetFetcher):
                             expected_market = (
                                 frame["ts_code"].str[-2:].map({"SH": "SSE", "SZ": "SZSE"})
                             )
-                            if not expected_market.isin(markets).all():
+                            if (
+                                not expected_market.loc[standard_fund_codes(frame["ts_code"])]
+                                .isin(markets)
+                                .all()
+                            ):
                                 raise ValueError("Fund response contains closed-market rows")
                     frames.append(frame)
                     published_days.setdefault(params.get("exchange", "fund"), set()).add(day)
@@ -394,6 +435,11 @@ class AssetDailyFetcher(_AssetFetcher):
                     "end": end.isoformat(),
                     "exchanges": list(calendars),
                     "pending_days": pending_days,
+                    **(
+                        {"ohl_zero_placeholder_rows": ohl_zero_placeholder_counts(incoming)}
+                        if self.OPTION
+                        else {"nonstandard_code_rows": nonstandard_code_counts(incoming)}
+                    ),
                 },
             )
             written += 1
@@ -419,12 +465,130 @@ class OptionDailyFetcher(AssetDailyFetcher):
 class OptionInstrumentsFetcher(_AssetFetcher):
     """先覆盖目标行情实际出现的代码；不冒充完整挂牌全集。
 
-    按精确 ts_code 查询避开全历史 offset 上限，代价是首次元数据请求数较多。
+    复用已观察 opt_code；未知标的按一个精确代码引导，再按标的分页补齐。
     update 仅重查缺观察或上次观察时尚未到期的合约；init 强制重观察。
     当前快照及观察日不证明历史调整参数的业务生效区间。
     """
 
     DATASET = "option_instruments"
+
+    @staticmethod
+    def _metadata_scope(
+        frame: pd.DataFrame,
+        exchange: str,
+        *,
+        code: str | None = None,
+        underlying: str | None = None,
+    ) -> pd.DataFrame:
+        """校验精确查询或标的查询的完整响应，禁止借过滤掩盖错市场／错标的。"""
+        require_columns(
+            frame,
+            ("ts_code", "exchange", "opt_code", "call_put", "list_date", "delist_date"),
+            "opt_basic",
+        )
+        codes = source_codes(frame)
+        if (
+            not frame["exchange"].eq(exchange).all()
+            or not codes.str.endswith(f".{OPTION_SUFFIXES[exchange]}").all()
+            or (code is not None and not codes.eq(code).all())
+            or (underlying is not None and not frame["opt_code"].eq(underlying).all())
+        ):
+            if code is not None:
+                raise PermanentError(f"Unresolved option metadata code={code}")
+            raise ValueError("Option metadata response scope mismatch")
+        for value in frame["opt_code"]:
+            option_underlying(value)
+        return unique_rows(frame, ("ts_code",))
+
+    def _batches(
+        self, codes: list[str], existing: pd.DataFrame, folder: Path
+    ) -> tuple[pd.DataFrame, dict[str, int], list[Path]]:
+        """按显式标的覆盖目标代码；完整响应分批落临时文件，峰值为单标的响应加目标行。
+
+        不解析期权字符串推测标的。未知代码先精确查询，已覆盖代码不再引导；
+        标的整页响应保留至观察归档，兼容文件只更新本轮目标代码。
+        """
+        pending = set(codes)
+        frames = []
+        responses: list[Path] = []
+        queried: set[tuple[str, str]] = set()
+        stats = {
+            "underlying_queries": 0,
+            "bootstrap_queries": 0,
+            "fallback_queries": 0,
+            "fallback_rows": 0,
+        }
+
+        def query(exchange: str, **params: str) -> pd.DataFrame:
+            frame = self._query("opt_basic", exchange=exchange, fields=OPTION_FIELDS, **params)
+            path = folder / f"{len(responses):04d}.parquet"
+            write_parquet(frame, path)
+            responses.append(path)
+            return frame
+
+        def exact(code: str, exchange: str, underlying: str | None = None) -> pd.DataFrame:
+            frame = query(exchange, ts_code=code)
+            if frame.empty:
+                raise PermanentError(f"Unresolved option metadata code={code}")
+            return self._metadata_scope(frame, exchange, code=code, underlying=underlying)
+
+        while pending:
+            code = min(pending)
+            exchange = next(
+                (e for e, suffix in OPTION_SUFFIXES.items() if code.endswith(f".{suffix}")), None
+            )
+            if exchange is None:
+                raise ValueError("Unknown option code suffix")
+            seed = None
+            if code in existing.index:
+                raw_underlying = existing.at[code, "opt_code"]
+            else:
+                seed = exact(code, exchange)
+                raw_underlying = seed["opt_code"].iloc[0]
+                stats["bootstrap_queries"] += 1
+            if not isinstance(raw_underlying, str):
+                raise ValueError("Invalid option opt_code")
+            option_underlying(raw_underlying)
+            underlying = raw_underlying
+            required = {code}
+            if not existing.empty:
+                required.update(
+                    existing.index[
+                        existing["exchange"].eq(exchange) & existing["opt_code"].eq(underlying)
+                    ].intersection(list(pending))
+                )
+            key = (exchange, underlying)
+            batch = pd.DataFrame(columns=OPTION_FIELDS.split(","))
+            if key not in queried:
+                batch = query(exchange, opt_code=underlying)
+                queried.add(key)
+                stats["underlying_queries"] += 1
+                if not batch.empty:
+                    batch = self._metadata_scope(batch, exchange, underlying=underlying)
+                else:
+                    batch = pd.DataFrame(columns=OPTION_FIELDS.split(","))
+            available = set(batch["ts_code"]) & pending
+            if available:
+                frames.append(batch.loc[batch["ts_code"].isin(available)])
+            missing = required - available
+            if missing:
+                stats["fallback_rows"] += len(missing)
+                self.log.warning(
+                    "Option metadata batch fallback exchange=%s opt_code=%s rows=%d samples=%s",
+                    exchange,
+                    underlying,
+                    len(missing),
+                    sorted(missing)[:5],
+                )
+            for absent in sorted(missing):
+                if absent == code and seed is not None:
+                    frame = seed  # 已有精确引导响应，无需重复消耗同一代码请求。
+                else:
+                    frame = exact(absent, exchange, underlying)
+                    stats["fallback_queries"] += 1
+                frames.append(frame)
+            pending.difference_update(available | missing)
+        return unique_rows(pd.concat(frames, ignore_index=True), ("ts_code",)), stats, responses
 
     def _observation_dates(self, receipt: dict[str, Any]) -> dict[str, int]:
         """读取独立、带哈希的观察日文件；缺失或损坏只意味着必须重查。"""
@@ -510,41 +674,34 @@ class OptionInstrumentsFetcher(_AssetFetcher):
         if not to_query:
             self.log.info("Option metadata unchanged; no observation published")
             return 0
-        frames = []
         today = today_int()
-        for code in to_query:
-            exchange = next(
-                (e for e, suffix in OPTION_SUFFIXES.items() if code.endswith(f".{suffix}")), None
+        staging = self.paths.dataset_dir(self.PROVIDER, "metadata_requests")
+        staging.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=staging) as folder:
+            combined, stats, responses = self._batches(to_query, existing, Path(folder))
+            observed_dates.update({code: today for code in to_query})
+            if old is not None:
+                combined = pd.concat(
+                    [old.loc[~old["ts_code"].isin(to_query)], combined], ignore_index=True
+                )
+            self._publish(
+                unique_rows(combined, ("ts_code",)),
+                out,
+                {
+                    "coverage": "observed_daily_codes",
+                    "start": first.isoformat(),
+                    "end": last.isoformat(),
+                    **stats,
+                },
+                observed_dates=observed_dates,
+                source_responses=responses,
             )
-            if exchange is None:
-                raise ValueError("Unknown option code suffix")
-            frame = self._query("opt_basic", ts_code=code, exchange=exchange, fields=OPTION_FIELDS)
-            require_columns(
-                frame,
-                ("ts_code", "exchange", "opt_code", "call_put", "list_date", "delist_date"),
-                "opt_basic",
-            )
-            if (
-                frame.empty
-                or not source_codes(frame).eq(code).all()
-                or not frame["exchange"].eq(exchange).all()
-            ):
-                raise PermanentError(f"Unresolved option metadata code={code}")
-            frames.append(unique_rows(frame, ("ts_code",)))
-            observed_dates[code] = today
-        combined = pd.concat(frames, ignore_index=True)
-        if old is not None:
-            combined = pd.concat(
-                [old.loc[~old["ts_code"].isin(to_query)], combined], ignore_index=True
-            )
-        self._publish(
-            unique_rows(combined, ("ts_code",)),
-            out,
-            {
-                "coverage": "observed_daily_codes",
-                "start": first.isoformat(),
-                "end": last.isoformat(),
-            },
-            observed_dates=observed_dates,
+        self.log.info(
+            "Option metadata batches underlying_queries=%d bootstrap_queries=%d "
+            "fallback_queries=%d fallback_rows=%d",
+            stats["underlying_queries"],
+            stats["bootstrap_queries"],
+            stats["fallback_queries"],
+            stats["fallback_rows"],
         )
         return 1

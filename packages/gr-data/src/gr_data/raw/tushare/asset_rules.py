@@ -29,6 +29,38 @@ BAR_COLUMNS = ("ts_code", "trade_date", *PRICE_COLUMNS, "vol", "amount")
 OPTION_BAR_COLUMNS = (*BAR_COLUMNS, "exchange", "settle", "pre_settle", "oi")
 
 
+def standard_fund_codes(codes: pd.Series) -> pd.Series:
+    """识别可用于沪深市场检查的六位交易代码；不改写或过滤源代码。"""
+    return codes.str.fullmatch(r"\d{6}\.(SH|SZ)")
+
+
+def ohl_zero_placeholder_mask(frame: pd.DataFrame) -> pd.Series:
+    """精确识别 OHL 全零、close>0 的源占位，不依据交易所或成交量猜测。"""
+    prices = {c: numeric_values(frame[c], c) for c in ("open", "high", "low", "close")}
+    return prices["open"].eq(0) & prices["high"].eq(0) & prices["low"].eq(0) & prices["close"].gt(0)
+
+
+def ohl_zero_placeholder_counts(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """按市场记录占位行、非零成交量行及各至多五个源键样本。"""
+    selected = frame.loc[ohl_zero_placeholder_mask(frame)]
+    result = {}
+    for exchange, rows in selected.groupby("exchange", sort=True):
+        nonzero = rows.loc[numeric_values(rows["vol"], "vol").gt(0)]
+        result[str(exchange)] = {
+            "rows": len(rows),
+            "nonzero_volume_rows": len(nonzero),
+            "samples": rows[["ts_code", "trade_date"]].head(5).to_dict("records"),
+            "nonzero_volume_samples": nonzero[["ts_code", "trade_date"]].head(5).to_dict("records"),
+        }
+    return result
+
+
+def nonstandard_code_counts(frame: pd.DataFrame) -> dict[str, Any]:
+    """统计保留在 raw 的非标准基金代码，样本不超过五个。"""
+    codes = frame.loc[~standard_fund_codes(frame["ts_code"]), "ts_code"]
+    return {"rows": len(codes), "samples": codes.drop_duplicates().head(5).tolist()}
+
+
 def require_columns(frame: pd.DataFrame, columns: tuple[str, ...], source: str) -> None:
     """逐响应 / 分区检查必需列，拒绝 concat 后掩盖源缺列。"""
     missing = set(columns) - set(frame.columns)
@@ -140,8 +172,6 @@ def validate_bars(frame: pd.DataFrame, *, option: bool = False) -> pd.DataFrame:
     out = frame.copy()
     out["trade_date"] = pd.to_datetime(dates).dt.strftime("%Y%m%d")
     out = unique_rows(out, ("ts_code", "trade_date"))
-    if not option and not out["ts_code"].str.fullmatch(r"\d{6}\.(SH|SZ)").all():
-        raise ValueError("Unexpected fund daily code")
     if option:
         expected = out["exchange"].map(OPTION_SUFFIXES)
         if (
@@ -158,13 +188,19 @@ def validate_bars(frame: pd.DataFrame, *, option: bool = False) -> pd.DataFrame:
     if not usable.all():
         raise ValueError("No usable close or settle")
     high, low = normalized["high"], normalized["low"]
+    placeholder = pd.Series(False, index=out.index)
+    if option:
+        zero_ohl = normalized["open"].eq(0) & high.eq(0) & low.eq(0)
+        placeholder = zero_ohl & close.gt(0)
+        if (zero_ohl & ~placeholder).any():
+            raise ValueError("Invalid OHLC zero placeholder without positive close")
     both = high.notna() & low.notna()
     if high.loc[both].lt(low.loc[both]).any():
         raise ValueError("Invalid OHLC high < low")
     for col in ("open", "close"):
         value = normalized[col]
-        above = value.notna() & high.notna()
-        below = value.notna() & low.notna()
+        above = value.notna() & high.notna() & ~placeholder
+        below = value.notna() & low.notna() & ~placeholder
         if value.loc[above].gt(high.loc[above]).any() or value.loc[below].lt(low.loc[below]).any():
             raise ValueError(f"Invalid OHLC bounds column={col}")
     numeric_values(out["vol"], "vol", integer=option, precision=30, scale=8)

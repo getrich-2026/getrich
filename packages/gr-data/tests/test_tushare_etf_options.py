@@ -168,7 +168,10 @@ class AssetClient:
             )
         if api_name == "opt_basic":
             meta = option_meta(params["exchange"])
-            assert meta["ts_code"] == params["ts_code"]
+            if "ts_code" in params:
+                assert meta["ts_code"] == params["ts_code"]
+            else:
+                assert meta["opt_code"] == params["opt_code"]
             return pd.DataFrame([meta])
         raise AssertionError(f"Unexpected endpoint {api_name}")
 
@@ -376,7 +379,7 @@ def test_etf_transform_uses_authoritative_subset_factors_and_units(asset_setup):
     reference = importer(EtfInstrumentsImporter, paths).build().set_index("symbol")
     assert reference.loc["510999.SH", "status"] == "delisted"
     assert pd.isna(reference.loc["510999.SH", "delist_date"])
-    assert reference.loc["159999.SZ", "status"] == "pending"
+    assert "159999.SZ" not in reference.index
 
 
 def test_option_transform_preserves_hands_and_contract_metadata(asset_setup):
@@ -523,12 +526,43 @@ def test_symbol_map_conflict_is_not_overwritten(asset_setup):
             ("510300.SH", 1, "XSHG"),
             ("159919.SZ", 2, "XSHE"),
             ("510999.SH", 3, "XSHG"),
-            ("159999.SZ", 4, "XSHE"),
         ],
         [("510300.SH", 999)],
     ]
     with pytest.raises(IngestGateError, match="Conflicting existing"):
         EtfSymbolMapImporter(conn, IngestContext(paths=paths)).build()
+
+
+@pytest.mark.parametrize(
+    ("cls", "expected_rows"),
+    [(EtfInstrumentsImporter, 3), (EtfSymbolMapImporter, 3), (EtfBars1dImporter, 2)],
+)
+def test_pending_etf_warning_reaches_ingest_result(asset_setup, monkeypatch, cls, expected_rows):
+    """待上市排除告警必须进入运行结果和记账，离线验证不依赖 PG 可用性。"""
+    paths = prepare_assets(asset_setup)
+    obj = importer(cls, paths)
+    obj.conn = MagicMock()
+    obj.conn.cursor.return_value.__enter__.return_value.fetchall.side_effect = [
+        [
+            ("510300.SH", 1, "XSHG"),
+            ("159919.SZ", 2, "XSHE"),
+            ("510999.SH", 3, "XSHG"),
+        ],
+        [],
+    ]
+    record_run = MagicMock()
+    monkeypatch.setattr(obj, "_record_run", record_run)
+    with (
+        patch("gr_data.ingest.base.OwnershipManager"),
+        patch(
+            "gr_data.ingest.base.upsert_rows", side_effect=lambda _conn, _contract, rows: len(rows)
+        ),
+    ):
+        result = obj.run()
+    assert result.rows_written == expected_rows
+    assert result.warnings == ["Skipped pending ETF rows=1 samples=['159999.SZ']"]
+    assert not result.ok
+    record_run.assert_called_once_with(expected_rows, result.warnings)
 
 
 @pytest.mark.integration
@@ -567,8 +601,14 @@ def test_etf_options_pg_roundtrip_and_replay(pg_conn, asset_setup):
             only=["etf_reference", "option_reference", "etf_bars_1d", "option_bars_1d"],
             months=("2024-01",),
         )
-        assert [r.rows_written for r in results] == [4, 4, 8, 8, 8, 2, 8]
-        assert [r.dataset for r in results if r.warnings] == ["option_contracts", "option_bar_1d"]
+        assert [r.rows_written for r in results] == [3, 3, 8, 8, 8, 2, 8]
+        assert [r.dataset for r in results if r.warnings] == [
+            "etf_instruments",
+            "etf_symbol_map",
+            "option_contracts",
+            "etf_bar_1d",
+            "option_bar_1d",
+        ]
         with pg_conn.cursor() as cur:
             cur.execute("SELECT volume,amount,adj_factor,close FROM market.etf_bar_1d")
             assert (
@@ -845,7 +885,11 @@ def test_tampered_raw_is_still_not_overwritten(asset_setup):
 
 
 def _opt_basic_calls(client):
-    return [params["ts_code"] for api, params in client.calls if api == "opt_basic"]
+    return [
+        params.get("ts_code", params.get("opt_code"))
+        for api, params in client.calls
+        if api == "opt_basic"
+    ]
 
 
 def _prepare_option_daily(asset_setup):
@@ -859,7 +903,7 @@ def test_update_skips_contracts_observed_after_expiry(asset_setup):
     paths, ctx, client = _prepare_option_daily(asset_setup)
     OptionInstrumentsFetcher(client, ctx).fetch("init")  # 真实今天远晚于夹具到期日 20240228
     first = len(_opt_basic_calls(client))
-    assert first == 8
+    assert first == 16  # 首次每个未知标的一次引导、一次批量查询。
     OptionInstrumentsFetcher(client, ctx).fetch("update")
     assert len(_opt_basic_calls(client)) == first  # 增量后不再发起请求
     frame, _ = read_asset_observation(paths.dataset_file("tushare", "instruments", "option"))
@@ -872,7 +916,7 @@ def test_update_requeries_contracts_still_listed(asset_setup, monkeypatch):
     monkeypatch.setattr(raw_asset_markets, "today_int", lambda: 20240110)
     OptionInstrumentsFetcher(client, ctx).fetch("init")
     OptionInstrumentsFetcher(client, ctx).fetch("update")
-    assert len(_opt_basic_calls(client)) == 16
+    assert len(_opt_basic_calls(client)) == 24
 
 
 def test_init_forces_full_reobservation(asset_setup):
@@ -880,7 +924,7 @@ def test_init_forces_full_reobservation(asset_setup):
     paths, ctx, client = _prepare_option_daily(asset_setup)
     OptionInstrumentsFetcher(client, ctx).fetch("init")
     OptionInstrumentsFetcher(client, ctx).fetch("init")
-    assert len(_opt_basic_calls(client)) == 16
+    assert len(_opt_basic_calls(client)) == 24
 
 
 @pytest.mark.parametrize("cls", [FundDailyFetcher, FundAdjFetcher, OptionDailyFetcher])
@@ -967,7 +1011,7 @@ def test_unverified_observation_dates_force_requery(asset_setup, damage):
         receipt["observation_dates_sha256"] = hashlib.sha256(dates_file.read_bytes()).hexdigest()
     out.with_suffix(".json").write_text(json.dumps(receipt))
     assert OptionInstrumentsFetcher(client, ctx).fetch("update") == 1
-    assert len(_opt_basic_calls(client)) == 16
+    assert len(_opt_basic_calls(client)) == 24
 
 
 def test_expired_update_no_query_means_no_new_observation(asset_setup):
@@ -989,6 +1033,377 @@ def _crash_on_receipt(real_replace):
         return real_replace(src, dst)
 
     return replace
+
+
+@pytest.mark.parametrize("volume", [0, 1])
+def test_sample_fix_ohl_placeholder_preserved_raw_mapped_ingest(asset_setup, volume):
+    paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == "opt_daily":
+            frame.loc[:, ["open", "high", "low"]] = 0
+            frame["vol"] = volume
+        return frame
+
+    client.query_all = source
+    prepare_assets(asset_setup)
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", "opt_daily", "2024-01"))
+    assert raw is not None and raw[["open", "high", "low"]].eq(0).all().all()
+    for exchange in OPTION_EXCHANGES:
+        counts = receipt["scope"]["ohl_zero_placeholder_rows"][exchange]
+        assert counts["rows"] == 1 and counts["nonzero_volume_rows"] == int(volume > 0)
+        assert counts["samples"] == [{"ts_code": OPTIONS[exchange][0], "trade_date": "20240102"}]
+    obj = importer(OptionBars1dImporter, paths)
+    result = obj.build()
+    assert result[["open", "high", "low"]].isna().all().all()
+    assert result.close.tolist() == [Decimal("1.25")] * 8
+    assert result.settle.tolist() == [Decimal("1.22")] * 8
+    assert result.volume.tolist() == [volume] * 8
+    assert result.amount.tolist() == [Decimal("1234")] * 8
+    assert any(
+        "OHL zero placeholders" in message and f"nonzero_volume_rows={int(volume > 0)}" in message
+        for message in obj.soft_warnings
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"open": 0},
+        {"open": 0, "high": 0, "low": 0, "close": 0},
+        {"close": 1.4},
+        {"high": 1.0},
+    ],
+)
+def test_sample_fix_rejects_other_option_bounds(overrides):
+    row = bar(
+        OPTIONS["DCE"][0], exchange="DCE", vol=1, oi=0, settle=1.22, pre_settle=1.2, **overrides
+    )
+    with pytest.raises(ValueError, match="OHLC"):
+        validate_bars(pd.DataFrame([row]), option=True)
+
+
+def test_sample_fix_fund_zero_ohl_still_rejected():
+    with pytest.raises(ValueError, match="OHLC"):
+        validate_bars(pd.DataFrame([bar(open=0, high=0, low=0)]))
+
+
+@pytest.mark.parametrize("cls", [FundDailyFetcher, FundAdjFetcher])
+def test_sample_fix_nonstandard_fund_codes_retained_and_counted(asset_setup, cls):
+    paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == cls.API_NAME:
+            frame.loc[frame.ts_code.eq("160641.SZ"), "ts_code"] = "161022!1.SZ"
+        return frame
+
+    client.query_all = source
+    cls(client, ctx).fetch("init")
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", cls.DATASET, "2024-01"))
+    assert raw is not None and "161022!1.SZ" in set(raw.ts_code)
+    assert receipt["scope"]["nonstandard_code_rows"] == {"rows": 1, "samples": ["161022!1.SZ"]}
+
+
+def test_sample_fix_nonstandard_codes_excluded_only_at_etf_ingest(asset_setup, caplog):
+    paths = prepare_assets(asset_setup)
+    for dataset in ("fund_daily", "fund_adj"):
+        path = paths.dataset_file("tushare", dataset, "2024-01")
+        frame = pd.read_parquet(path)
+        frame.loc[frame.ts_code.eq("160641.SZ"), "ts_code"] = "1610221.SZ"
+        replace_fixture(path, frame)
+    with caplog.at_level("INFO"):
+        assert len(importer(EtfBars1dImporter, paths).build()) == 2
+    assert "nonstandard_code_rows=1" in caplog.text
+
+
+def test_sample_fix_invalid_listed_etf_still_rejected(asset_setup):
+    paths = prepare_assets(asset_setup)
+    path = paths.dataset_file("tushare", "instruments", "etf")
+    frame = pd.read_parquet(path)
+    frame.loc[frame.ts_code.eq("510300.SH"), "ts_code"] = "515470.OF"
+    replace_fixture(path, frame)
+    with pytest.raises(IngestGateError, match="ETF exchange"):
+        importer(EtfInstrumentsImporter, paths).build()
+
+
+def test_sample_fix_pending_etf_incomplete_raw_kept_ingest_skipped(asset_setup):
+    paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        if api == "etf_basic" and params["exchange"] == "SH" and params["list_status"] == "P":
+            return pd.DataFrame(
+                [dict(etf_meta("515470.OF", "P"), exchange="SH", list_date=None, extname=None)]
+            )
+        return original(api, **params)
+
+    client.query_all = source
+    EtfInstrumentsFetcher(client, ctx).fetch("init")
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", "instruments", "etf"))
+    assert raw is not None and "515470.OF" in set(raw.ts_code)
+    assert receipt["scope"]["pending_rows"]["nonstandard_code_rows"] == 1
+    assert receipt["scope"]["pending_rows"]["missing_list_date_rows"] == 1
+    reference = importer(EtfInstrumentsImporter, paths)
+    built = reference.build()
+    assert set(built.symbol) == {"510300.SH", "510999.SH", "159919.SZ"}
+    assert any("Skipped pending ETF rows=2" in message for message in reference.soft_warnings)
+    obj = EtfSymbolMapImporter(MagicMock(), IngestContext(paths=paths))
+    assert set(obj._metadata().ts_code) == set(built.symbol)
+    assert any("Skipped pending ETF rows=2" in message for message in obj.soft_warnings)
+
+
+def test_sample_fix_listed_etf_requires_list_date(asset_setup):
+    _, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == "etf_basic" and params["list_status"] == "L":
+            frame["list_date"] = None
+        return frame
+
+    client.query_all = source
+    with pytest.raises(ValueError, match="date"):
+        EtfInstrumentsFetcher(client, ctx).fetch("init")
+
+
+def _sample_fix_warm_option_group(asset_setup):
+    paths, ctx, client = _prepare_option_daily(asset_setup)
+    first = option_meta("DCE")
+    second = dict(first, ts_code="M2405-P-3000.DCE", call_put="P")
+    path = paths.dataset_file("tushare", "opt_daily", "2024-01")
+    daily = pd.read_parquet(path)
+    daily = pd.concat(
+        [
+            daily,
+            pd.DataFrame(
+                [dict(daily[daily.exchange.eq("DCE")].iloc[0], ts_code=second["ts_code"])]
+            ),
+        ],
+        ignore_index=True,
+    )
+    replace_fixture(path, daily)
+    ctx.option_exchanges = ("DCE",)
+    lookup = {first["ts_code"]: first, second["ts_code"]: second}
+    client.override["opt_basic"] = lambda p: (
+        pd.DataFrame([lookup[p["ts_code"]]])
+        if "ts_code" in p
+        else pd.DataFrame(list(lookup.values()))
+    )
+    OptionInstrumentsFetcher(client, ctx).fetch("init")
+    client.calls.clear()
+    return paths, ctx, client, first, second
+
+
+def test_sample_fix_option_metadata_one_request_per_known_underlying(asset_setup):
+    paths, ctx, client, first, second = _sample_fix_warm_option_group(asset_setup)
+    assert OptionInstrumentsFetcher(client, ctx).fetch("init") == 1
+    calls = [p for api, p in client.calls if api == "opt_basic"]
+    assert len(calls) == 1 and calls[0]["opt_code"] == first["opt_code"]
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", "instruments", "option"))
+    assert raw is not None and set(raw.ts_code) == {first["ts_code"], second["ts_code"]}
+    assert receipt["scope"]["underlying_queries"] == 1
+
+
+def test_sample_fix_option_batch_missing_code_falls_back(asset_setup, caplog):
+    paths, ctx, client, first, second = _sample_fix_warm_option_group(asset_setup)
+    client.override["opt_basic"] = lambda p: pd.DataFrame(
+        [second if p.get("ts_code") == second["ts_code"] else first]
+    )
+    with caplog.at_level("WARNING"):
+        OptionInstrumentsFetcher(client, ctx).fetch("init")
+    calls = [p for api, p in client.calls if api == "opt_basic"]
+    assert (
+        len(calls) == 2
+        and calls[0]["opt_code"] == first["opt_code"]
+        and calls[1]["ts_code"] == second["ts_code"]
+    )
+    assert "fallback" in caplog.text and second["ts_code"] in caplog.text
+
+
+@pytest.mark.parametrize("damage", ["underlying", "exchange"])
+def test_sample_fix_option_batch_scope_mismatch_refused(asset_setup, damage):
+    paths, ctx, client, first, _ = _sample_fix_warm_option_group(asset_setup)
+    before = paths.dataset_file("tushare", "instruments", "option").read_bytes()
+    wrong = dict(
+        first, **({"opt_code": "OPM2409.DCE"} if damage == "underlying" else {"exchange": "GFEX"})
+    )
+    client.override["opt_basic"] = lambda _p: pd.DataFrame([wrong])
+    with pytest.raises(ValueError, match="scope"):
+        OptionInstrumentsFetcher(client, ctx).fetch("init")
+    assert paths.dataset_file("tushare", "instruments", "option").read_bytes() == before
+
+
+@pytest.mark.parametrize("repeat", [False, True])
+def test_sample_fix_option_batch_pagination_guard(asset_setup, monkeypatch, repeat):
+    paths, ctx, _, first, second = _sample_fix_warm_option_group(asset_setup)
+    pages = []
+
+    class PagedClient(TushareProClient):
+        def query(self, api_name, **params):
+            pages.append(params)
+            assert api_name == "opt_basic" and params["opt_code"] == first["opt_code"]
+            frame = pd.DataFrame([first, second])
+            offset = 0 if repeat else params["offset"]
+            return frame.iloc[offset : offset + params["limit"]]
+
+    monkeypatch.setitem(PAGE_LIMITS, "opt_basic", 1)
+    if repeat:
+        with pytest.raises(RuntimeError, match="Repeated pagination"):
+            OptionInstrumentsFetcher(PagedClient(), ctx).fetch("init")
+    else:
+        OptionInstrumentsFetcher(PagedClient(), ctx).fetch("init")
+        assert [p["offset"] for p in pages] == [0, 1, 2]
+
+
+def test_sample_fix_placeholder_receipt_samples_bounded(asset_setup):
+    paths, ctx, client = asset_setup
+    ctx.option_exchanges = ("DCE",)
+    client.override["opt_daily"] = lambda _p: pd.DataFrame(
+        [
+            bar(
+                f"M2405-C-{3000 + i}.DCE",
+                exchange="DCE",
+                open=0,
+                high=0,
+                low=0,
+                settle=1.22,
+                pre_settle=1.2,
+                vol=int(i > 0),
+                oi=0,
+            )
+            for i in range(8)
+        ]
+    )
+    OptionDailyFetcher(client, ctx).fetch("init")
+    _, receipt = read_asset_observation(paths.dataset_file("tushare", "opt_daily", "2024-01"))
+    counts = receipt["scope"]["ohl_zero_placeholder_rows"]["DCE"]
+    assert counts["rows"] == 8 and counts["nonzero_volume_rows"] == 7
+    assert len(counts["samples"]) == len(counts["nonzero_volume_samples"]) == 5
+
+
+@pytest.mark.parametrize("cls", [FundDailyFetcher, FundAdjFetcher])
+@pytest.mark.parametrize("bad_code", [None, "", " 1610221.SZ"])
+def test_sample_fix_source_codes_remain_strict(asset_setup, cls, bad_code):
+    _, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == cls.API_NAME:
+            frame.loc[0, "ts_code"] = bad_code
+        return frame
+
+    client.query_all = source
+    with pytest.raises(ValueError, match="source ts_code"):
+        cls(client, ctx).fetch("init")
+
+
+def test_sample_fix_fund_closed_market_only_checks_standard_codes(asset_setup):
+    paths, ctx, client = asset_setup
+    path = paths.dataset_file("tushare", "calendar", "SZSE")
+    calendar = pd.read_parquet(path)
+    calendar["is_open"] = 0
+    write_parquet(calendar, path)
+    client.override["fund_daily"] = lambda _p: pd.DataFrame([bar(), bar("1610221.SZ")])
+    assert FundDailyFetcher(client, ctx).fetch("init") == 1
+    client.override["fund_daily"] = lambda _p: pd.DataFrame([bar(), bar("159919.SZ")])
+    with pytest.raises(ValueError, match="closed-market"):
+        FundDailyFetcher(client, ctx).fetch("update")
+
+
+def test_sample_fix_cold_start_seeds_underlying_once(asset_setup):
+    paths, _, _, _, _ = _sample_fix_warm_option_group(asset_setup)
+    _, receipt = read_asset_observation(paths.dataset_file("tushare", "instruments", "option"))
+    assert receipt["scope"]["bootstrap_queries"] == 1
+    assert receipt["scope"]["underlying_queries"] == 1
+    assert len(receipt["requests"]) == 2
+
+
+def test_sample_fix_empty_batch_falls_back_for_all_required_codes(asset_setup):
+    paths, ctx, client, first, second = _sample_fix_warm_option_group(asset_setup)
+    lookup = {r["ts_code"]: r for r in (first, second)}
+    client.override["opt_basic"] = lambda p: (
+        pd.DataFrame([lookup[p["ts_code"]]]) if "ts_code" in p else pd.DataFrame()
+    )
+    OptionInstrumentsFetcher(client, ctx).fetch("init")
+    _, receipt = read_asset_observation(paths.dataset_file("tushare", "instruments", "option"))
+    assert len(client.calls) == 3 and receipt["scope"]["fallback_queries"] == 2
+
+
+def test_sample_fix_full_batch_response_kept_beyond_target_scope(asset_setup):
+    paths, ctx, client, first, second = _sample_fix_warm_option_group(asset_setup)
+    extra = dict(first, ts_code="M2405-C-4000.DCE")
+    client.override["opt_basic"] = lambda _p: pd.DataFrame([first, second, extra])
+    OptionInstrumentsFetcher(client, ctx).fetch("init")
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", "instruments", "option"))
+    assert raw is not None and set(raw.ts_code) == {first["ts_code"], second["ts_code"]}
+    root = (
+        paths.dataset_dir("tushare", "observations")
+        / "option_instruments"
+        / receipt["observation_id"]
+    )
+    source = receipt["source_responses"][0]
+    assert hashlib.sha256((root / source["file"]).read_bytes()).hexdigest() == source["sha256"]
+    assert extra["ts_code"] in set(pd.read_parquet(root / source["file"]).ts_code)
+
+
+def test_sample_fix_expired_row_not_refreshed_with_active_sibling(asset_setup):
+    paths, ctx, client, first, second = _sample_fix_warm_option_group(asset_setup)
+    path = paths.dataset_file("tushare", "instruments", "option")
+    second["delist_date"] = "20261231"
+    OptionInstrumentsFetcher(client, ctx)._publish(
+        pd.DataFrame([first, second]),
+        path,
+        {"coverage": "observed_daily_codes"},
+        observed_dates={cast(str, r["ts_code"]): 20250101 for r in (first, second)},
+    )
+    client.override["opt_basic"] = lambda _p: pd.DataFrame(
+        [
+            dict(first, exercise_price=9999),
+            dict(second, exercise_price=4000),
+        ]
+    )
+    OptionInstrumentsFetcher(client, ctx).fetch("update")
+    raw, receipt = read_asset_observation(path)
+    assert raw is not None
+    prices = raw.set_index("ts_code").exercise_price
+    assert prices[first["ts_code"]] == first["exercise_price"]
+    assert prices[second["ts_code"]] == 4000
+    assert len(client.calls) == 1 and receipt["scope"]["bootstrap_queries"] == 0
+
+
+def test_sample_fix_all_pending_etf_symbol_map_is_typed_empty(asset_setup):
+    paths, ctx, client = asset_setup
+    EtfInstrumentsFetcher(client, ctx).fetch("init")
+    path = paths.dataset_file("tushare", "instruments", "etf")
+    frame = pd.read_parquet(path)
+    replace_fixture(path, frame.loc[frame.list_status.eq("P")])
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+    result = EtfSymbolMapImporter(conn, IngestContext(paths=paths)).build()
+    assert result.empty and list(result.columns) == ["instrument_id", "source", "source_symbol"]
+
+
+def test_sample_fix_pending_response_need_not_have_listing_columns(asset_setup):
+    paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == "etf_basic" and not frame.empty and params["list_status"] == "P":
+            return frame.drop(columns=["list_date", "extname"])
+        return frame
+
+    client.query_all = source
+    EtfInstrumentsFetcher(client, ctx).fetch("init")
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", "instruments", "etf"))
+    assert raw is not None and raw.loc[raw.list_status.eq("P"), "list_date"].isna().all()
+    assert receipt["scope"]["pending_rows"]["missing_list_date_rows"] == 1
 
 
 def test_first_publish_crash_before_receipt_is_recoverable(asset_setup):

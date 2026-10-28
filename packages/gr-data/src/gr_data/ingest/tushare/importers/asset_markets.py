@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pandas as pd
 import psycopg
 
@@ -15,18 +17,29 @@ from gr_data.ingest.tushare.symbols import split_ts_code
 from gr_data.raw.tushare.asset_rules import (
     OPTION_SUFFIXES,
     numeric_values,
+    ohl_zero_placeholder_counts,
+    ohl_zero_placeholder_mask,
     option_underlying,
     read_asset_observation,
     require_columns,
     source_codes,
     source_dates,
+    standard_fund_codes,
     unique_rows,
     validate_bars,
 )
 
 
-def asset_metadata(paths: RawPaths, asset: str) -> pd.DataFrame:
-    """读取独立参考清单；源代码、市场、生命周期异常均拒绝。"""
+def asset_metadata(
+    paths: RawPaths, asset: str, *, notice: Callable[[str], None] | None = None
+) -> pd.DataFrame:
+    """读取独立参考清单，待上市 ETF 留在 raw，交易身份仍严格校验。
+
+    Args:
+        paths: 仓库外的原始数据路径。
+        asset: etf 或 option。
+        notice: 接收被跳过的待上市 ETF 条数及样本的软告警。
+    """
     frame, _ = read_asset_observation(paths.dataset_file("tushare", "instruments", asset))
     if frame is None or frame.empty:
         raise IngestGateError(f"Missing {asset} instruments raw")
@@ -38,6 +51,15 @@ def asset_metadata(paths: RawPaths, asset: str) -> pd.DataFrame:
         require_columns(frame, ("list_status", "extname"), asset)
         if not frame["list_status"].isin(["L", "D", "P"]).all():
             raise IngestGateError("Unknown ETF list_status")
+        pending = frame.loc[frame["list_status"].eq("P")]
+        if not pending.empty and notice is not None:
+            notice(
+                f"Skipped pending ETF rows={len(pending)} "
+                f"samples={pending['ts_code'].head(5).tolist()}"
+            )
+        # 所有 P 记录保留在 raw，上市后由后续 L 快照正式登记身份。
+        frame = frame.loc[~frame["list_status"].eq("P")].copy()
+        codes = frame["ts_code"]
         if (
             not codes.str.fullmatch(r"\d{6}\.(SH|SZ)").all()
             or not frame["ts_code"].str[-2:].eq(frame["exchange"]).all()
@@ -85,7 +107,7 @@ class _AssetImporter(BaseImporter):
     ASSET = ""
 
     def _metadata(self) -> pd.DataFrame:
-        return asset_metadata(self.paths, self.ASSET)
+        return asset_metadata(self.paths, self.ASSET, notice=self._soft)
 
     def _ids(self, codes: list[str], asset: str) -> dict[str, int]:
         codes = list(dict.fromkeys(codes))
@@ -218,7 +240,8 @@ class _AssetSymbolMapImporter(_AssetImporter):
             [
                 {"instrument_id": int(ids[code]), "source": self.PROVIDER, "source_symbol": code}
                 for code in codes
-            ]
+            ],
+            columns=list(self.contract.columns),
         )
 
 
@@ -340,7 +363,10 @@ class _AssetBarsImporter(_AssetImporter):
             excluded = int((~selected).sum())
             if excluded:
                 self.log.info(
-                    "Excluded non-ETF fund rows dataset=%s rows=%d", self.RAW_DATASET, excluded
+                    "Excluded non-ETF fund rows dataset=%s rows=%d nonstandard_code_rows=%d",
+                    self.RAW_DATASET,
+                    excluded,
+                    int((~standard_fund_codes(raw.loc[~selected, "ts_code"])).sum()),
                 )
             raw = raw.loc[selected].reset_index(drop=True)
             if raw.empty:
@@ -374,6 +400,16 @@ class _AssetBarsImporter(_AssetImporter):
             *(("settle", "pre_settle") if self.ASSET == "option" else ()),
         ):
             out[column] = numeric_values(raw[column], column)
+        if self.ASSET == "option":
+            placeholders = ohl_zero_placeholder_mask(raw)
+            out.loc[placeholders, ["open", "high", "low"]] = None
+            for exchange, counts in ohl_zero_placeholder_counts(raw).items():
+                self._soft(
+                    f"Mapped OHL zero placeholders exchange={exchange} rows={counts['rows']} "
+                    f"nonzero_volume_rows={counts['nonzero_volume_rows']} "
+                    f"samples={counts['samples']} "
+                    f"nonzero_volume_samples={counts['nonzero_volume_samples']}"
+                )
         out["volume"] = numeric_values(
             raw["vol"], "vol", multiplier=100 if self.ASSET == "etf" else 1, integer=True
         )

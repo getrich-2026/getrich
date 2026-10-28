@@ -1,7 +1,7 @@
 # GetRich 当前状态
 
 读者：接续任务的 Codex／Antigravity；维护者也可用它快速定位工作。
-最后整理：2026-10-26（Tushare ETF／三类期权合入 dev，米筐回补完成）；2026-10-23（米筐动态名单第一阶段）；2026-10-22（Tushare 导入门禁）；2026-10-21（测试基线与 mock 认证）；2026-10-20（持仓诊断与供应商方向）；其余条目 2026-09-18。仅保留当前方向、阻塞与验证边界；不追加施工流水账。
+最后整理：2026-10-28（ETF／期权样本修复验收）；2026-10-26（Tushare ETF／三类期权合入 dev，米筐回补完成）；2026-10-23（米筐动态名单第一阶段）；2026-10-22（Tushare 导入门禁）；2026-10-21（测试基线与 mock 认证）；2026-10-20（持仓诊断与供应商方向）；其余条目 2026-09-18。仅保留当前方向、阻塞与验证边界；不追加施工流水账。
 
 ## 开始任务
 
@@ -10,6 +10,9 @@
 3. 使用说明从 [文档目录](../../docs/README.md) 定位；历史材料不作为现行指令。
 
 ## 当前方向与阻塞
+
+- 2026-10-28（ETF／期权样本修复验收）：完成 A1–A5 离线修复：期权 OHL 全零且 close>0 的精确占位在 raw 保留源值、ingest 映射 OHL 为 NULL；基金非标准代码保留 raw；ETF 待上市 P 只留 raw、身份与 symbol_map 跳过并软告警；opt_basic 按显式标的分页，未知标的精确引导、漏码精确回退，完整源响应归档且不覆盖已跳过的到期合约。修正 PG 往返测试的告警数据集预期，新增三个离线用例覆盖 ETF 告警进入运行结果和记账。
+  本机隔离外部网络与 PG、排除 live_sdk，`uv run --frozen --no-sync python -B` 调用 pytest 全仓 **3468 passed／147 skipped／28 deselected／4 既有 xfailed**，46 条 warning 保留；三个新增用例 **3 passed**。全仓 Ruff、495 文件格式检查、basedpyright **0 errors／0 warnings／0 notes**、迁移 lint（1 CH／50 PG）、`uv lock --check --offline`、`git diff --check` 均通过。主目录已有 MIME 修复另验 **28 passed**。Docker daemon 未运行，PG 用例跳过，未声称 PG 往返通过；真实样本 B 复验和全量回补仍待单独授权，期权正式 writer 门禁与 ETF 分类任务不变。用户已授权本批提交并合入 dev，主目录其他修改保留未提交；未推送。完整输出在 `/tmp/getrich-sample-merge-6ebv4vqt/feature-pytest.log`，临时日志不作为长期证据。
 
 - 2026-10-26（用户授权合并，ETF／三类期权已合入 dev，未推送）：将 `codex/tushare-etf-options` 的 `537592d` 无冲突合入 dev `9dd0af1`，保留其工具库／选股 Excel 导入两笔更新；先 `--no-commit` 验证组合版本，检查通过后生成合并提交。`uv sync --frozen --all-packages` 已同步环境；未改锁文件、依赖声明、DDL 或类型 baseline。组合版本 `uv run --frozen pytest -q -m 'not live_sdk'` 为 **3557 passed／22 skipped／28 deselected／4 既有 xfailed，0 failed**；44 条 API／异步测试等 warning 保留。全仓 Ruff 通过，格式 **495 files already formatted**，basedpyright **0 errors／0 warnings／0 notes**，迁移 lint **1 CH／50 PG**，`uv lock --check`、暂存差异检查通过；实际输出在 `/tmp/tushare-etf-options-merge-check-*.log` 和 `tushare-etf-options-merge-validation.json`。测试去除供应商 token 和 GETRICH_TEST_PG，仅使用隔离临时库，未启动真实采集、工作库写入或回补。后续顺序：先另行安排 option_instruments 请求预算测量和真实样本验收，再决定正式回填；ETF 分类改用 fund_basic.fund_type 及存量更正在本次合并后从 dev 独立开分支实施，数据更正仍需明确授权。功能默认范围和四个期权 writer 的验证门禁保持不变；未改米筐已完成批次或版本策略。下方各轮“未提交／待审核”是合并前历史记录。
 
