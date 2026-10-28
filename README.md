@@ -4,10 +4,12 @@
 > 数据接入 · 向量化回测 · 实盘信号 · 持仓诊断 · React 19 现代化界面
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?logo=fastapi&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![TimescaleDB](https://img.shields.io/badge/TimescaleDB-PostgreSQL-FDB515?logo=postgresql&logoColor=black)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
+
+项目主页：<https://getrich-2026.github.io/getrich/>
 
 读者：首次运行项目的开发者。功能操作说明和待办按下方导航查阅。
 
@@ -27,11 +29,19 @@ uv workspace，七个有源码的 Python 包、一个占位包与两个前端。
 | `packages/gr-signal` | `gr_signal` | 实盘信号生产与交易执行 |
 | `packages/gr-api` | `gr_api` | FastAPI 应用 + 回测作业队列 + Celery worker |
 | `packages/gr-factor` | `gr_factor` | 期权定价与因子分析 |
-| `packages/gr-tools` | `gr_tools` | 文件与表格工具，叶子包 |
+| `packages/gr-tools` | `gr_tools` | 环境加载、配置、日志、文件系统、表格读取与可读格式化，叶子包 |
 | `packages/gr-agent` | — | 占位包，尚无源码 |
 
-依赖方向单向：`gr-data ← gr-db`，`gr-data ← gr-backtest ← gr-signal ← gr-api`。
-`gr-tools` 不依赖其他一方包；包边界由测试约束。
+依赖方向单向（箭头指向被依赖方），包边界由测试约束：
+
+```
+gr-tools（叶子，不依赖任何一方包）
+   ↑
+gr-data  ←──  gr-db
+   ↑
+   └──  gr-backtest  ←──  gr-signal  ←──  gr-api
+gr-factor（独立）
+```
 
 前端：`apps/web`（主前端）、`apps/backtest-web`（回测前端，暂停维护）。
 
@@ -53,7 +63,11 @@ cp .env.example .env
 # 3. 建 PostgreSQL 表（若也配置了 ClickHouse，再执行 --target ch）
 uv run gr-db migrate --target pg
 
-# 4. 跑一个回测（先按下文数据手册导入标的与该区间日线；空库无法运行此示例）
+# 4. 灌数据：示例回测需要标的与该区间日线（只需在 .env 填 TUSHARE_TOKEN）
+uv run gr-data raw tushare --mode update
+uv run gr-data ingest tushare
+
+# 5. 跑一个回测
 uv run python - <<'PY'
 from datetime import datetime
 from decimal import Decimal
@@ -67,29 +81,35 @@ from gr_tools.config import load_environment
 
 TZ = ZoneInfo("Asia/Shanghai")
 cfg = load_postgres(load_environment())
-conn = psycopg.connect(
-    f"host={cfg.host} port={cfg.port} dbname={cfg.database} "
-    f"user={cfg.user} password={cfg.password}"
-)
 
-bt = Backtest(
-    strategy=MACross(fast=5, slow=20),
-    bar_loader=PgBarLoader(conn=conn),
-    symbols=["000001.SZ"],
-    start=datetime(2024, 1, 1, tzinfo=TZ),
-    end=datetime(2024, 10, 1, tzinfo=TZ),
-    initial_cash=Decimal("1000000"),
-    freq="1d",
-    run_id="demo",
-)
-result = bt.run()
+# 关键字参数传连接信息，密码含空格或特殊字符也能正确连接
+with psycopg.connect(
+    host=cfg.host, port=cfg.port, dbname=cfg.database,
+    user=cfg.user, password=cfg.password,
+) as conn:
+    bt = Backtest(
+        strategy=MACross(fast=5, slow=20),
+        bar_loader=PgBarLoader(conn=conn),
+        symbols=["000001.SZ"],
+        start=datetime(2024, 1, 1, tzinfo=TZ),
+        end=datetime(2024, 10, 1, tzinfo=TZ),
+        initial_cash=Decimal("1000000"),
+        freq="1d",
+        run_id="demo",
+    )
+    result = bt.run()
+
 metrics = compute_metrics(result)
 print("总收益:", metrics.total_return, " 最大回撤:", metrics.max_drawdown)
 
-# 出 HTML 报告
-open("tearsheet.html", "w").write(TearSheet(result=result, metrics=metrics).to_html())
+# 出 HTML 报告（含中文，显式 UTF-8）
+with open("tearsheet.html", "w", encoding="utf-8") as f:
+    f.write(TearSheet(result=result, metrics=metrics).to_html())
 PY
 ```
+
+数据抓取的范围、月份筛选与其他供应商见 [`packages/gr-data/README.md`](packages/gr-data/README.md)。
+`tushare` 与米筐 `rqdatac` 已列入主依赖；银河 AmazingData、华泰 INSIGHT（已停用，代码保留）的 SDK 需按需手动安装。
 
 回测结果入库用 `gr_backtest.persistence.PgBacktestResultStore.save_result()`，
 写进 `backtest` schema。
@@ -105,16 +125,7 @@ cd apps/web && cp .env.example .env.local && npm ci && npm run dev
 ```
 
 后端示例端口 8001 与 `apps/web/vite.config.ts` 的代理目标一致；改变端口时同步代理。
-
-### 灌数据
-
-行情数据靠 `gr-data` 从供应商抓取，见 [`packages/gr-data/README.md`](packages/gr-data/README.md)。
-Tushare 在 PyPI 上开箱可用，只需 `TUSHARE_TOKEN`；银河／米筐／华泰的 SDK 需手动安装。
-
-```bash
-uv run gr-data raw tushare --mode update
-uv run gr-data ingest tushare
-```
+前端需要 Node `^20.19.0 || >=22.12.0`（Vite 8 的下限），CI 与本地都用 24。
 
 ---
 
@@ -124,6 +135,7 @@ uv run gr-data ingest tushare
 uv run pytest -v                              # 全量测试
 uv run ruff check packages/ scripts/          # 静态检查
 uv run ruff format --check packages/ scripts/
+uv run basedpyright                           # 类型检查（CI 只拦新增错误）
 uv run python scripts/lint_migrations.py      # DDL 安全模式检查
 uv lock --check && uv sync --frozen --all-packages
 ```
