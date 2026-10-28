@@ -1,7 +1,7 @@
 """PostgreSQL 连接（psycopg3）。
 
 提供同步连接工厂与可选连接池。入库走原生 SQL + executemany/COPY，不用重 ORM
-（见 CLAUDE.md 铁律）。同步实现足够覆盖批量入库；实时层另用独立写入器。
+（见 AGENTS.md 铁律）。同步实现足够覆盖批量入库；实时层另用独立写入器。
 """
 
 from __future__ import annotations

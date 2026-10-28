@@ -2,7 +2,7 @@
 """Reject unsafe SQL patterns in GetRich migration files.
 
 This is a small repository guard, not a SQL validator. It removes comments and
-quoted strings before checking the operations forbidden by ``CLAUDE.md``.
+quoted strings before checking the operations forbidden by ``AGENTS.md``.
 """
 
 from __future__ import annotations

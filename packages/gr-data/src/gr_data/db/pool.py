@@ -3,7 +3,7 @@
 设计目标对齐 ``libs/clickhouse/pool.py``：
 - 单例使用，应用启动时 ``init()``，关闭时 ``close()``
 - 通过 ``connection()`` 获取异步连接（async context manager）
-- 连接级强制 timezone='Asia/Shanghai'，与项目 CLAUDE.md 时区规则一致
+- 连接级强制 timezone='Asia/Shanghai'，与项目 AGENTS.md 时区规则一致
 - row_factory=dict_row：所有查询结果默认按列名返回 dict
 """
 

@@ -27,7 +27,7 @@ LIST_STATUS_MAP = {"L": "active", "D": "delisted", "P": "suspended"}
 def parse_date(value: object) -> object:
     """解析 Tushare 的 ``YYYYMMDD`` 日期。空值返回 None，非法值抛错。
 
-    非法日期**不静默丢弃**——那会让缺失伪装成正常空值（见 CLAUDE.md 数据完整性铁律）。
+    非法日期**不静默丢弃**——那会让缺失伪装成正常空值（见 AGENTS.md 数据完整性铁律）。
     """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None

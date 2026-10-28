@@ -4,7 +4,7 @@
 - ``${VAR}`` 形式的字符串值 → 替换为环境变量 VAR 的值。
 - ``xxx_env: VARNAME`` 字段 → 额外提供 ``xxx`` 解析后的明文（仅在内存中）。
 
-凭证只以「环境变量名」存于配置文件，明文不落盘（见 CLAUDE.md 铁律）。
+凭证只以「环境变量名」存于配置文件，明文不落盘（见 AGENTS.md 铁律）。
 """
 
 from __future__ import annotations

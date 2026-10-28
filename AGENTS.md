@@ -1,14 +1,14 @@
 # GetRich — AI 开发指令集
 
-本文件是 GetRich 项目约束的**唯一真源**。项目以 **Codex 为主，Antigravity（Gemini）为辅**，Claude Code 保留兼容入口。文件名固定为 `AGENTS.md`，不另建 `AGENT.md` 或复制规则正文。
+本文件是 GetRich 项目约束的**唯一真源**。项目以 **Codex 为主，Claude Code 为辅**，Antigravity（Gemini）保留兼容入口。文件名固定为 `AGENTS.md`，不另建 `AGENT.md`、`CLAUDE.md` 或复制规则正文。
 
 各工具的全局约定定义个人默认行为；本文件定义项目约束，更具体的目录级 `AGENTS.md` 定义局部约束。遵守当前用户授权与工具的系统指令、权限限制。
 
-- **Codex**：直接读取根目录 `AGENTS.md`；修改子目录前检查沿途是否有更具体的指令。
-- **Antigravity IDE**：`.agents/rules/project.md` 是 Always On 入口，引用本文件；共用编码规则与状态文档。
-- **Claude Code**：`CLAUDE.md` 导入本文件；`.claude/settings.json` 只配置 Claude 权限，不作为 Codex 或 Gemini 的规则来源。
-- `.agents/brain/` 是本项目约定的状态目录，按第 7 节主动读取；它不是自动发现的规则或技能目录。修改规则只改本文件，兼容入口保持简短。
-- 默认由主 Agent 完成工作，不设置固定多 Agent 流水线；子 Agent 的使用遵循当前工具与用户的授权。
+- **Codex**：直接读取本文件；修改子目录前检查沿途是否有更具体的 `AGENTS.md`。
+- **Claude Code**（v2.1.277+）：同样直接读取本文件。仓库及上级目录不得出现 `CLAUDE.md`、`.claude/CLAUDE.md` 或 `CLAUDE.local.md`，否则它会改读这些文件、**不再读本文件**；个人指令写 `~/.claude/CLAUDE.md`。`.claude/settings.json`（共享）与 `.claude/settings.local.json`（个人，gitignore）只管 Claude 权限。
+- **Antigravity**：Always On 入口 `.agents/rules/project.md` 引用本文件。
+- `.agents/brain/` 是状态目录，按第 7 节主动读取，工具不会自动发现。规则只改本文件，各入口保持简短。
+- 默认由主 Agent 完成工作，不设固定多 Agent 流水线。
 
 ---
 
@@ -16,7 +16,7 @@
 
 ```
 apps/web              主前端（Vite 8 + React 19 + TypeScript 6 + Tailwind 4）
-apps/backtest-web     回测前端（暂停维护，待 API 稳定后重做）
+apps/backtest-web     回测前端（状态见 NOTES）
 packages/gr-data      数据配置、数据库连接、外部数据接入（raw → ingest → PG）
 packages/gr-db        全部 DDL 与迁移，数据库结构的唯一真源
 packages/gr-backtest  回测引擎（纯库，不含 Web / 实盘 / 调度）
@@ -28,13 +28,11 @@ packages/gr-agent     空占位包（只有 pyproject.toml，尚无源码）
 deploy/               数据库基础设施部署模板，不在仓库内实例化
 scripts/              仅存 lint_migrations.py
 docs/                 人类阅读入口：指南、待决问题、历史材料（见 docs/README.md）
-archive/              历史脚手架，删除前必须得到明确确认
+packages/gr-db/archive/  旧 SQL 归档，不是现行迁移；删除前必须得到明确确认
 .agents/brain/        跨会话开发进度（见第 7 节）
 ```
 
-**命名规则：发行名 = 目录名 = `gr-x`，import 名 = `gr_x`**，连字符与下划线一一对应，
-看目录就知道 import 什么。**不要再用 `getrich.*` 命名空间包** —— 它曾导致两个包往同一
-目录装文件、单个包装不起来（见 `DECISIONS.md` D-001）。
+**命名规则：发行名 = 目录名 = `gr-x`，import 名 = `gr_x`**；**不要再用 `getrich.*` 命名空间包**（D-001）。
 
 依赖方向单向，不得出现反向 import：
 
@@ -47,55 +45,36 @@ gr-data  ←──  gr-db
 gr-factor（独立）
 ```
 
-`packages/gr-backtest/tests/gr_backtest/test_package_boundaries.py` 与
-`packages/gr-tools/tests/test_package_boundaries.py` 会用静态扫描守住这条边界，
-新增跨包 import 前先确认方向。gr-tools 里出现任何一方包的 import 都会让依赖成环
-（gr-data 想用它的读文件能力时会互相 import），后一个测试专门挡这个。
+gr-backtest 与 gr-tools 各有一份 `test_package_boundaries.py` 静态守卫依赖方向；新增跨包 import 前先确认方向。
 
 - Python 3.11+，首行 `from __future__ import annotations`；依赖统一用 `uv` 管理，不用 pip。
 - 数据处理优先 Polars / DuckDB；pandas 只留给小数据和兼容场景。
 - 后端服务用 FastAPI。
-- **数据库单独部署，不随应用一起构建**：`deploy/docker-compose.yml` + `deploy/config/` 只定义 PostgreSQL、ClickHouse、Redis 三个基础设施服务，是可复现的部署模板；GetRich 仓库内不创建 Docker 实例。真实 `.env`、数据卷、日志和运维脚本全部放在仓库外的部署目录，不进 git。仓库内不维护应用的 Dockerfile 或 systemd unit。
-- 不要在 GetRich 仓库内执行 `docker compose up`、`down` 或 `restart`。改动 `deploy/` 后，需将其中的文件同步到仓库外的部署目录根，不保留外层 `deploy/`，再从部署目录校验和重启容器。
-- **三个数据库的数据目录只能用 named volume，绝不 bind mount 宿主机目录。** bind mount 走虚拟机的文件共享层（VirtioFS），在 macOS 上会丢 POSIX 语义 —— PostgreSQL 曾因此在 autovacuum 里报 `could not open file`，整库不可用（见 `DECISIONS.md` D-004）。代价是数据不能从宿主机翻目录看，**备份必须走 `pg_dump` / `clickhouse-client` / `BGSAVE` 这类逻辑导出，不要拷贝数据目录文件**。日志目录可以继续 bind。
+- **数据库单独部署，不随应用一起构建**：`deploy/` 只是 PostgreSQL、ClickHouse、Redis 的可复现部署模板；真实 `.env`、数据卷、日志和运维脚本放在仓库外的部署目录，不进 git。仓库内不维护应用的 Dockerfile 或 systemd unit。
+- 不要在仓库内执行 `docker compose up`、`down` 或 `restart`。改动 `deploy/` 后，把其中的文件同步到仓库外部署目录的根（不保留外层 `deploy/`），再在那里校验和重启。
+- **三个数据库的数据目录只能用 named volume，绝不 bind mount 宿主机目录**（D-004）；**备份走 `pg_dump` / `clickhouse-client` / `BGSAVE` 等逻辑导出，不拷贝数据目录**。日志目录可以 bind。
 
 ## 2. 数据库职责划分（铁律）
 
 | 数据库 | 存储实体 | 约束 |
 |---|---|---|
-| **PostgreSQL / TimescaleDB**（`getrich` 库） | **行情主存**（OHLCV、复权因子、估值）+ 业务主库（策略、信号、用户、订单、订阅）+ 回测产物 | 唯一权威存储。行情用 TimescaleDB 超表；需要事务、主外键约束或 `ON CONFLICT` UPSERT 的数据只能写这里 |
+| **PostgreSQL / TimescaleDB**（`getrich` 库） | **行情主存**（OHLCV、复权因子、估值）+ 因子风险模型 + 业务主库（策略、信号、用户、订单、订阅）+ 选股、诊断与回测产物 | 唯一权威存储。行情用 TimescaleDB 超表；需要事务、主外键约束或 `ON CONFLICT` UPSERT 的数据只能写这里 |
 | **ClickHouse** | **仅因子时序输出**（`factors_long`） | 只做大批量写入和按 factor／symbol／时间范围的分析查询。持久化表必须用 `MergeTree` 系列，强制配置 `PARTITION BY`、`ORDER BY`、`TTL` |
 | **DuckDB** | ad-hoc 一次性分析、回测中间数据、本地 Parquet 报表 | 只作内存临时计算层，不做任何业务的终态存储 |
 | **Redis** | 消息分发、tick 缓存、跨进程状态、分布式锁、限流 | 永不作为最终存储，关键数据必须周期性落 PG；历史数据和关系数据都不进 Redis |
 
-**行情是 PostgreSQL 不是 ClickHouse。** 早期版本把 K 线放在 ClickHouse
-（`md_bars_1m`／`md_bars_1d`），与数据接入层的 `market.*_bar_*` 并存且互相冲突；
-现已统一到 PostgreSQL/TimescaleDB，CH 的行情表已删除（见 `DECISIONS.md` D-003）。
-
-### PostgreSQL schema 划分
-
-| schema | 内容 | 归属包 |
-|---|---|---|
-| `meta` | 合约、代码映射、交易日历 | gr-data |
-| `market` | 行情主存：`<asset>_bar_<freq>`、复权因子、估值 | gr-data |
-| `realtime` | 实时 tick 缓冲 | gr-data |
-| `staging` | 入库中转 | gr-data |
-| `ops` | ETL 作业、数据质量、表归属、迁移记账 | gr-data / gr-db |
-| `app` | 业务主库：用户、策略、信号、订单、订阅 | gr-api |
-| `backtest` | 回测产物：run / metrics / equity / sweep / walk-forward / jobs | gr-backtest / gr-api |
-| `pick` | 选股信号：上传批次 `batch` + 每日标的池快照 `item` | gr-api |
+**行情在 PostgreSQL，不在 ClickHouse**（D-003）。
 
 - **全部 DDL 的唯一真源是 `packages/gr-db/src/gr_db/ddl/`**，不要在别处建表。
-  DDL 必须**幂等**（`CREATE ... IF NOT EXISTS`）且**schema 全限定**（写 `app.users`，
-  不要依赖 `search_path`）。迁移按 `file_name + checksum` 记账在 `ops.schema_migrations`。
-- 连接池 `search_path = app,market,meta,public`；`backtest` 与 `pick` **不在** search_path 里，
-  相关 SQL 一律显式写 `backtest.` / `pick.` 前缀。
+  DDL 必须**幂等**（`CREATE ... IF NOT EXISTS`）；迁移按 `file_name + checksum` 记账在 `ops.schema_migrations`。
+  各 schema 的职责与写入方见[数据字典指南](docs/guides/data-dictionary.md#postgresql-schema-一览)。
+- **DDL 与查询 SQL 一律 schema 全限定**（写 `app.users`）：连接池 `search_path` 只有 `app,market,meta,public`，
+  `backtest`、`pick`、`factor`、`diag` 等其余 schema 都不在其中。
 - **两套交易所码不要混用**：`pick.item.exchange` 存 `SSE/SZSE/BSE`（前端接口契约定死的取值），
   `meta.*` 用 canonical 码 `XSHG/XSHE/XBSE`。查 `meta.instruments` / `meta.trading_calendar`
   前必须经 `gr_api/services/pick_symbols.py` 转换 —— 写错不报错，只会让
   `instrument_id` 整批为 NULL、交易日历一条都查不到。
-- 引用其它表的 id 列，类型必须与被引用主键一致。曾因 `strategies.id` 是 VARCHAR 而
-  引用方是 UUID，导致整个策略／信号接口在全新库上恒 500（`DECISIONS.md` D-006）。
+- 引用其它表的 id 列，类型必须与被引用主键一致（D-006）。
 
 **绝对禁止**在 ClickHouse 中执行事务更新或行级频繁删除。
 
@@ -135,22 +114,18 @@ gr-factor（独立）
 **代码归一化**：`meta.instruments.symbol` 存带交易所后缀的完整代码（`600000.SH`），
 `exchange` 用 canonical 码（`XSHG`/`XSHE`）。跨源对齐通过 `meta.symbol_map`
 （`(source, source_symbol) → instrument_id`）。映射规则显式写在
-`ingest/<provider>/symbols.py`，不静默改写代码格式。注意 tushare 的
-`BJ→XBSE`，以及期货后缀与通行简称不同（`SHF→SHFE`、`ZCE→CZCE`、`CFX→CFFEX`、`GFE→GFEX`）。
+`ingest/<provider>/symbols.py`，不静默改写代码格式；供应商后缀常与通行简称不同（如 tushare 期货 `SHF`／`ZCE`），以该文件为准，不凭记忆写。
 
 **单表单一来源（铁律）**：数据库内同一张目标表只能由一个 provider 写入，登记在
-`ops.table_ownership`，ingest／stream 写库前校验。转移归属必须显式走
-`gr-data own release/set` —— 不同源的单位口径与复权规则可能不同，混写会让同一张表
-出现两套口径且事后无法分辨。
-唯一现有例外是 `meta.symbol_map`：按 `(source, source_symbol)` 隔离写入，见 D-012；不得据此放宽其他表的归属。
+`ops.table_ownership`，ingest／stream 写库前校验；转移归属必须显式走 `gr-data own release/set`。
+唯一例外是按 `(source, source_symbol)` 隔离写入的 `meta.symbol_map`，不得据此放宽其他表（D-012）。
 
 **parquet 落地**：根目录 `$RAW_PARQUET_ROOT`（仓库外）。布局
 `<root>/<provider>/<dataset>/...`，路径解析统一走 `common/paths.py::RawPaths`，
 禁止散落硬编码。一律 zstd 压缩；**原子写**（先写 `*.tmp-<uuid>`，再 `os.replace()`）；
 追加按时间索引去重（新数据胜出）。
 
-**日志**：模块使用 `logging.getLogger(__name__)`，provider／dataset 的动态 logger 名保留 `gr_data.` 前缀；**禁止 `print()` 做运行日志**。
-日志须能还原「处理了哪个 provider / dataset / 范围 / 目标」；**不记录密钥或完整 payload**。
+**日志**（通用规则见 §4.3）：provider／dataset 的动态 logger 名保留 `gr_data.` 前缀；日志须能还原「处理了哪个 provider / dataset / 范围 / 目标」。
 
 **命名**：行情表 `<asset>_bar_<freq>`（asset ∈ stock/etf/index/future/option，
 freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `common/contracts`，
@@ -164,7 +139,6 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 - **不引入 heavy ORM**：用 `psycopg3` 的 `AsyncConnectionPool` 手写原生 SQL。
 - 池连接一律标注为 `gr_data.db.DictConnection`，不写裸 `AsyncConnection`：池用 `dict_row`，裸写会被类型检查器当成元组行，`row["id"]` 全部报错。自建 LISTEN 连接未设 `dict_row` 的除外。
 - 大批量写入优先 COPY 协议或 multi-values UPSERT（`ON CONFLICT DO UPDATE`）。
-- **绝对禁止**在没有 `try-except` 隔离的情况下在主线程中发起外部 API 调用或网络请求。
 
 ### 4.1 类型与说明
 
@@ -178,15 +152,15 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 - 标的代码保持字符串，保留前导零；数值 dtype 遵循 canonical contracts 与 DDL，不统一强转 `float64`，金额仍按第 3.2 节使用 `Decimal`。
 - 滚动、滞后、时序 join 前验证分组内时间排序与业务键重复情况；按明确规则排序／去重，不能把多标的时间序列当成一条全局序列。
 - 优先 Polars 表达式、DuckDB SQL 或 NumPy 向量化，避免大表 `.iterrows()`、逐行 Python 回调和可向量化的 `apply`；有状态的回测执行循环允许保留，正确性优先。
-- 大批量任务评估峰值内存并按可独立处理的分区分批；跨分区的 rolling／区间压缩必须保留必要上下文（见 D-016）。
+- 大批量任务评估峰值内存并按可独立处理的分区分批；跨分区的 rolling／区间压缩必须保留必要上下文（见 D-011）。
 - 热路径优化用同一输入通过 `time.perf_counter()` 对比耗时，并检查结果一致性。只有测量证明必要时才考虑 JIT；新增 numba 等依赖先说明并取得授权。
 
 ### 4.3 日志与异常
 
-- 各模块用标准库 logger 记录事件，不隐式配置 handler 或创建日志文件。通用格式化与输出配置在 `gr_tools.logging`，公共配置模型在 `gr_tools.config`；各包提供业务上下文，不各起一套日志配置。CLI 正常结果输出可以使用 `print()`。
-- 启动入口通过 `gr_tools.config.setup_logging(logging_config)` 配置输出；API 在 lifespan、Celery 在日志启动信号中初始化。业务 filter 放输出 handler，才能处理子 logger 传播来的记录。旧 `gr_data.logging` 仅作无隐式初始化的兼容入口。
+- 模块只用 `logging.getLogger(__name__)` 记录事件，不配置 handler、不创建日志文件，**禁止 `print()` 做运行日志**（CLI 正常结果输出除外）。各包不各起一套日志配置。
+- 输出只在启动入口用 `gr_tools.config.setup_logging(logging_config)` 配置（API 在 lifespan、Celery 在日志启动信号中）；业务 filter 挂在输出 handler 上，才能处理子 logger 传播来的记录。
 - 日志消息英文，带可定位任务的字段；`DEBUG` 诊断、`INFO` 进度、`WARNING` 可恢复异常、`ERROR` 操作失败。记录异常时同样不得泄漏凭证或完整 payload。
-- 外部调用在请求／任务边界落实 `try-except` 隔离，明确超时、恢复或失败返回；底层仅在能够恢复或补充上下文时捕获，保留异常链向上传播。
+- **绝对禁止**在没有 `try-except` 隔离的情况下发起外部 API 调用或网络请求：在请求／任务边界隔离，明确超时、恢复或失败返回；底层仅在能够恢复或补充上下文时捕获，保留异常链向上传播。
 - 禁止裸 `except:`、`except Exception: pass` 或只记日志后伪装成功。批处理隔离独立任务的失败并汇总报告；具有原子性要求的任务整体回滚。
 
 ### 4.4 测试与依赖
@@ -199,12 +173,10 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 
 ### 4.5 配置归属与环境来源
 
-- 公共配置模型／工具归 `gr-tools`，不得反向依赖领域包；不在仓库根新增不可独立安装的 Python config 模块。
-- 数据连接／供应商模型归 `gr_data.config`，API／worker 的应用组合归 `gr_api.config`；其他 CLI 在入口按需组装。旧全量 Settings／settings／load_settings 已移除，不恢复全局配置单例或让数据包反向依赖 API。
-- 环境变量优先于 `.env`；入口显式调用 `load_environment()` 得到快照。文件选择顺序为显式文件、workspace `.env`、用户配置目录 `.env`；显式缺失报错，自动候选缺失不创建文件。连接、凭证、机器路径、开关、日志选项在环境层，Python config 做类型与校验，YAML 只存结构化采集参数并复用同一快照。
-- 配置模型导入不读写 dotenv；库设施接收窄配置，API 配置绑定应用实例，Celery 配置绑定队列应用。只校验启用的能力，PG-only 命令不依赖 CH／Redis／Web。凭证字段不进入 repr，不全量序列化配置用于日志。
-- 当前默认只依赖 PostgreSQL，`GETRICH_WORKER_BACKEND=inproc`；仅启用 Celery 时才需要 Redis，CH 只在调用相关能力时需要。配置了连接地址不代表启动了服务。
-- CI 默认仅启动 PG；手动 workflow_dispatch 的 `extra_services` 可恢复 CH／Redis 服务与 CH 迁移／字典冒烟。CH 离线 DDL 与 mock 用例仍保留。
+- 公共配置模型／工具归 `gr-tools`；数据连接／供应商模型归 `gr_data.config`；API／worker 组合归 `gr_api.config`；其他 CLI 在入口按需组装。不恢复全局配置单例，不在仓库根新增不可独立安装的 config 模块（D-002）。
+- 环境变量优先于 `.env`；入口显式调用 `load_environment()` 得到快照，文件顺序为显式文件、workspace `.env`、用户配置目录 `.env`，显式缺失报错，自动候选缺失不创建文件。连接、凭证、机器路径、开关、日志选项在环境层，Python config 做类型与校验，YAML 只存结构化采集参数。
+- 配置模型导入不读写 dotenv；库设施接收窄配置，只校验启用的能力，PG-only 命令不依赖 CH／Redis／Web。凭证字段不进入 repr，不全量序列化配置用于日志。
+- 默认只依赖 PostgreSQL（`GETRICH_WORKER_BACKEND=inproc`）；仅启用 Celery 时需要 Redis，CH 只在调用相关能力时需要。配置了连接地址不代表启动了服务。
 
 ## 5. 前端编码规范（React 19 + TypeScript 6 + Vite 8 + Tailwind 4）
 
@@ -219,9 +191,6 @@ freq ∈ 1d/1m）；来源列统一 `source`。canonical 列定义集中在 `com
 ## 6. 常用命令
 
 ```bash
-# 应用配置：只填写已有数据库服务的连接信息
-cp .env.example .env
-
 # 基础设施模板：只做静态校验，不在仓库内启动容器
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet
 
@@ -235,11 +204,10 @@ uv run gr-data raw tushare --mode update   # 抓取落 parquet
 uv run gr-data ingest tushare              # 归一化入库
 uv run gr-data own list                    # 表归属
 
-# 选股标的池导入（CSV / Parquet；函数接口见 gr_api.services.pick_import.import_picks）
+# 选股标的池导入（CSV / Parquet / XLSX / XLS；函数接口见 gr_api.services.pick_import.import_picks）
+# 正式写库与 --overwrite／--allow-empty 见 docs/guides/pick-import.md
 uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-12 \
     --file picks.csv --dry-run             # 预检不写库
-uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-12 \
-    --file picks.csv [--overwrite] [--allow-empty]
 
 # 后端：示例端口与 apps/web/vite.config.ts 的代理一致
 # find_project_root() 识别 workspace 根 .env；uvicorn --port 仍须显式指定（D-002）
@@ -251,9 +219,6 @@ uv run pytest -v
 # 打真库的集成用例（默认跳过）。选股模块用 30 天模拟数据跑「导入 → 读接口」全链路，
 # 模拟数据见 packages/gr-api/tests/fixture_picks.py，跑完自己清理。
 GETRICH_TEST_PG=1 uv run pytest packages/gr-api/tests/test_pick_pg_integration.py -v
-
-# 单包测试
-uv run pytest packages/gr-backtest/tests -v
 
 # 静态检查与格式化
 uv run ruff check packages/ scripts/
@@ -273,32 +238,28 @@ npm ci           # 按 lock 装，CI 用的就是它；日常加依赖才用 npm
 npm run dev      # Vite 开发服务（3000，/v1 代理到 gr-api:8001）
 npm run build    # tsc -b && vite build
 npm run lint     # ESLint
-npm run preview  # 预览生产构建产物
 ```
 
-前端**没有测试框架**，`lint` + `build` 就是 CI 的全部门禁（`.github/workflows/web.yml`），
-修改前后按任务验证，结果以实际运行及 CI 为准，不把历史通过当作当前基线。
+前端**没有测试框架**，`lint` + `build` 就是 CI 的全部门禁（`.github/workflows/web.yml`）。
+CI 默认只启动 PG；手动 workflow_dispatch 勾选 `extra_services` 可启用 CH／Redis 及 CH 迁移冒烟。
 
 ## 7. 文档与跨会话状态
 
-文档按读者与用途组织，导航与新增规则见 [`docs/README.md`](docs/README.md)。
+| 文件 | 维护内容 |
+|---|---|
+| `AGENTS.md` | 现行项目规则；工具入口只引用此文件 |
+| `.agents/brain/NOTES.md` | 简短当前状态、阻塞、验证边界；可整体更新 |
+| `.agents/brain/DECISIONS.md` | 按主题索引的有效决策、取舍原因与防错说明 |
 
-| 文件／目录 | 主要读者 | 维护内容 |
-|---|---|---|
-| `AGENTS.md` | 执行任务的 Agent | 现行项目规则；工具入口只引用此文件 |
-| `.agents/brain/NOTES.md` | 接续任务的 Agent | 简短当前状态、阻塞、验证边界；可整体更新 |
-| `.agents/brain/DECISIONS.md` | Agent 与维护者 | 按主题索引的有效决策、取舍原因与防错说明 |
-| `docs/guides/` | 使用功能的开发者 | 操作与排障指南，不复制 DDL／响应字段目录 |
-| `docs/plans/` | 决定范围的维护者、执行已选任务的 Agent | 未决问题、证据、待定选择与验收条件 |
-| `docs/history/` | 追溯历史的维护者 | 已完成计划／审查快照，不能当作当前任务指令 |
+`docs/` 下的指南、待决问题与历史材料按读者组织，导航与新增规则见 [`docs/README.md`](docs/README.md)；`docs/history/` 是已完成快照，不能当作当前任务指令。
 
 - **会话开始**：先读 NOTES，再按任务查 DECISIONS 的主题索引及相关指南；不默认加载所有历史材料。
 - **会话结束**：实质性代码、schema 或技术方案变化后更新 NOTES；完成项从状态／待办中移除，长期原因写入 DECISIONS。
 - **新增文档**：先明确读者、用途、状态；优先更新已有文件。只有独立用途或用户要求时才新建，不为每次修复创建总结。
-- **决策维护**：只记录业务口径、数据可信度、架构边界等关键取舍；实现技巧与单次排错留在代码／测试／指南。日常以追加和明确取代为主；用户授权清理时可删除、合并并按要求重编号，同时同步索引、锚点及现行引用。已记账 SQL 的历史编号另注明映射，不改 checksum。
+- **决策维护**：只记录业务口径、数据可信度、架构边界等关键取舍；实现技巧与单次排错留在代码／测试／指南。日常以追加和明确取代为主；用户授权清理时可删除、合并并按要求重编号，同步索引、锚点及现行引用。
 - **自改进**：AI 误判或测试暴露的问题，优先补回归测试或相邻注释；只有需要维护者理解、会影响业务结果或架构边界的取舍才记入决策。
 - **证据时效**：测试数字、数据库行数、机器路径与服务健康带日期和验证范围；未重查时标为历史，不写成实时状态。
-- **移动文档**：更新入口与相对链接；已记账 SQL 不为文档搬迁改 checksum，历史引用通过决策说明。
+- **移动文档或改编号**：更新入口与相对链接；已记账 SQL 的注释不为此修改（会改变 checksum），旧引用在 DECISIONS「历史引用边界」注明映射。
 
 ## 8. 改动边界与禁止事项
 

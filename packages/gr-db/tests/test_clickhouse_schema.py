@@ -7,8 +7,8 @@ needing a live CH:
 
   - 文件存在且可发现（文件名模式）。
   - Each file's SQL uses the MergeTree engine family.
-  - PARTITION BY / ORDER BY / TTL clauses are present (CLAUDE.md §2).
-  - The ``dt`` column is ``DateTime64(3, 'Asia/Shanghai')`` (CLAUDE.md
+  - PARTITION BY / ORDER BY / TTL clauses are present (AGENTS.md §2).
+  - The ``dt`` column is ``DateTime64(3, 'Asia/Shanghai')`` (AGENTS.md
     §3.1 — the only correct timezone-aware choice for night-session
     data).
   - No PostgreSQL-only syntax (e.g. ``COMMENT ON TABLE``, ``SERIAL``)
@@ -39,7 +39,7 @@ def _read(name: str) -> str:
 def test_migrations_dir_has_files() -> None:
     files = sorted(p.name for p in _ch_migrations_dir().iterdir() if p.suffix == ".sql")
     assert files, "no CH migrations found"
-    # Prefixes must be 3+ digits and continuous (CLAUDE.md §6).
+    # Prefixes must be 3+ digits and continuous (see AGENTS.md).
     prefixes = [int(f.split("_", 1)[0]) for f in files]
     assert all(p >= 1 for p in prefixes), f"non-positive prefix in {prefixes}"
 
@@ -76,7 +76,7 @@ def test_no_serial_or_pg_syntax() -> None:
 
 def test_all_files_have_datetime64() -> None:
     """Every CH migration must declare its time column as
-    ``DateTime64(3, 'Asia/Shanghai')`` (CLAUDE.md §3.1). This is a
+    ``DateTime64(3, 'Asia/Shanghai')`` (AGENTS.md §3.1). This is a
     single-line guard against future contributors adding a new
     CH table with ``DateTime`` (no tz) or ``Date`` (date-only,
     which breaks night sessions).
