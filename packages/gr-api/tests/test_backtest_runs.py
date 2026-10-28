@@ -7,6 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -578,11 +579,27 @@ def test_stream_artifact_file_accepts_file_uri_scheme(tmp_path: Path) -> None:
     assert result.size == target.stat().st_size
 
 
-def test_stream_artifact_file_returns_correct_content_metadata(tmp_path: Path) -> None:
-    """Bare absolute path resolves and exposes filename / mime / size."""
+@pytest.mark.parametrize(
+    ("detected_type", "expected_type"),
+    [
+        pytest.param(
+            "application/vnd.apache.parquet", "application/vnd.apache.parquet", id="recognized"
+        ),
+        pytest.param(None, "application/octet-stream", id="fallback"),
+    ],
+)
+def test_stream_artifact_file_returns_correct_content_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    detected_type: str | None,
+    expected_type: str,
+) -> None:
+    """显式覆盖 MIME 识别与回退，避免依赖宿主机的 MIME 数据库。"""
     target = tmp_path / "equity.parquet"
     payload = b"PAR1\x00\x00fake-parquet-bytes"
     target.write_bytes(payload)
+    guess_type = Mock(return_value=(detected_type, None))
+    monkeypatch.setattr(backtest_run.mimetypes, "guess_type", guess_type)
 
     cursor = _FakeCursor(
         fetchone_seq=[
@@ -600,5 +617,6 @@ def test_stream_artifact_file_returns_correct_content_metadata(tmp_path: Path) -
 
     assert result.path == target.resolve()
     assert result.filename == "equity.parquet"
-    assert result.content_type == "application/octet-stream"  # parquet has no built-in mime
+    assert result.content_type == expected_type
     assert result.size == len(payload)
+    guess_type.assert_called_once_with(str(target))
