@@ -44,4 +44,3 @@ uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/de
 
 实现：`packages/gr-db/src/gr_db/docs/`；CI：`.github/workflows/ci.yml`。
 设计理由见 [决策记录](../../.agents/brain/DECISIONS.md) D-006。
-实施过程仅在需要追溯时查 [历史计划](../history/data-dictionary-plan.md)。

@@ -1,261 +1,206 @@
 # 选股标的池导入指南
 
-读者：导入每日标的池的策略维护者与数据开发者；Agent 修改导入逻辑时参考。
-命令从仓库根目录执行。
+面向每日标的池的策略维护者与数据开发者。本文说明当前 `gr-picks` CLI 与函数接口；所有命令从仓库根目录执行。
 
-本文讲怎么把基金经理在本地产出的**每日标的池**导进数据库。P0 阶段系统只做接收与展示，
-**不校验选股逻辑本身**——池子对不对是策略的事，导入只负责「不让明显错的数据静默落库」。
+代码核对：2026-10-28，已核对源码、DDL 与测试并离线验证样例，未连接数据库。系统接收每日全量快照，不校验选股逻辑；写入 `pick.batch`／`pick.item`，与择时买卖信号 `app.signals` 分开。
 
-设计依据：`getrich-design/strategy-signal/个股推荐_数据库设计_P0.md`。
+## 1. 导入前准备
 
-> **术语澄清**：这里说的「信号」指选股策略产出的**每日标的池**（`pick.batch` / `pick.item`）。
-> 择时策略的买卖信号（`app.signals`）目前**没有**导入 CLI，只能由 `gr-signal` 实时生产
-> 或直接写 SQL。别把两者混为一谈。
+- 安装 workspace 依赖：`uv sync --frozen --all-packages`；根 `.env` 配好 `PG_*`，环境变量优先于文件。
+- 确认目标库已执行 `uv run gr-db migrate --target pg`，策略已存在；示例中的 `STR_STK_001` 须替换为实际策略 UUID 或 `strategy_code`。
+- 策略进入选股列表需 `strategy_kind='pick'`、`pub_status='published'`；默认列表还筛选 `run_status` 为 `paper`、`live` 或 NULL。导入器本身只检查策略存在，不强制这些展示条件。
+- `meta.trading_calendar` 应覆盖对应区间，使用 `exchange='XSHG'`；缺日历会影响入池日推算，见第 4 节。
+- `meta.instruments` 应登记完整代码与 canonical 交易所码；映射失败仅告警，`instrument_id` 留 NULL，不阻断导入。历史别名解析与关联回填仍有缺口，见[待决问题](../plans/backlog.md)。
 
----
+## 2. 文件契约
 
-## 1. 数据落在哪
+支持 `.csv`、`.parquet`、`.xlsx`、`.xls`，**一个文件对应一个策略、一个日期的全量池子**。列名会去除首尾空格并转小写；未知列忽略并告警，只有 `symbol` 必填。
 
-| 表 | 内容 |
-|---|---|
-| `pick.batch` | 一次上传 = 一个批次，记 `trading_day` / `item_count` / `status` / `note` |
-| `pick.item` | 该批次的每日**全量**快照，一行一只标的 |
+| 列 | 说明 |
+| --- | --- |
+| `symbol` | 6 位代码加 `.SH`、`.SZ` 或 `.BJ`，如 `600000.SH`；首尾空格和后缀大小写会归一化，不接受重复代码 |
+| `symbol_name` | 快照名称，超 64 字符截断；留空时尝试用 `meta.instruments.name` 补齐 |
+| `entry_date` | 入池日，建议 `YYYY-MM-DD`，不得晚于导入日；留空按第 4 节推算 |
+| `rank` | 整数且 ≥ 1；留空为 NULL、排序时置后，不按文件行序补排名 |
+| `score` | 有限数值，量纲由策略定义，跨策略不可比 |
+| `suggest_weight` | `[0, 1]` 内的小数：`0.25` 表示 25%，不接受 `25` 或文本 `25%`；不校验全池权重之和 |
+| `reason_text` | 入选理由 |
 
-`pick` schema **不在**连接池的 `search_path` 里，写 SQL 一律显式加前缀（`pick.item`）。
+`score` 和 `suggest_weight` 会存库，当前选股展示接口不返回这两个字段。
 
-同一策略同一交易日只能有一个 `status='active'` 的批次（唯一索引 `uq_batch_active`）。
-重传会把旧批次置 `superseded` 并**先删后插**——不是 UPSERT，因为重传的池子可能比原来少
-几只，UPSERT 会把它们留成脏行。
+### 读取注意事项
 
-## 2. 参考数据在哪
+- CSV／Excel 在读取时按字符串解析；代码仍须存为文本，已丢失的前导零不会补回。
+- Excel 必须恰有一个工作表，第一行是表头。日期单元格接受无时区的午夜值，如 `2026-10-26 00:00:00`；非零时间、时区或日期序号（如 `46321`）会报错。百分比单元格的底层值仍须为 `0.25`。
+- Parquet 保留类型，筛选已知列后转字符串；已知列不接受 List／Struct 等嵌套数据，未知嵌套列仍忽略并告警。
+- 超过 100,000 行使用 Parquet，不存普通 CSV。
 
-```
-packages/gr-api/tests/fixtures/picks/strategy_picks_30d.csv        # 人可读，可直接丢给 CLI
-packages/gr-api/tests/fixtures/picks/strategy_picks_30d.parquet    # 同样内容，走 Parquet 读取路径
-packages/gr-api/tests/fixture_picks.py                             # 生成器，确定性可重跑
-```
+入库后，`pick.item.symbol` 为裸代码（`600000`），`exchange` 为 `SSE/SZSE/BSE`，与 `meta.*` 的 `XSHG/XSHE/XBSE` 分开。当前解析器统一写 `asset_class='stock'`，不据代码判定真实资产类别，也不支持期货／期权代码。
 
-30 个交易日 × 20 只，代码是真实 A 股代码段格式，名称一律「模拟股 NN」，**不对应任何真实证券**。
-数据形态刻意贴近真实上传习惯：首日给 `entry_date`（带入历史持仓）、之后留空让系统推算，
-每天换 0–3 只制造出池／重新入池，`rank` 留几个空验证「系统不按行序推断排名」。
+## 3. 命令行导入
 
-重新生成（同样的种子必然产出同样的字节）：
-
-```bash
-uv run python packages/gr-api/tests/fixture_picks.py
-```
-
-> **这两份是长表**：比导入契约多一列 `trading_day`，30 天的数据都在一个文件里。
-> 直接丢给 CLI 会被当成同一天的 600 行，`symbol` 大面积重复而报错。用法见 §4.1。
-
-## 3. 文件格式
-
-支持 `.csv`、`.parquet`、`.xlsx`、`.xls`，表头**必须**是下面 7 列中的若干个，多余列忽略并告警，列名大小写与
-前后空格会被归一化。**只有 `symbol` 是必需的**。
-
-| 列 | 必需 | 说明 |
-|---|---|---|
-| `symbol` | ✅ | 带后缀的完整代码，`^\d{6}\.(SH\|SZ\|BJ)$`，如 `600000.SH` |
-| `symbol_name` | | 快照时点名称，超过 64 字符直接截断，不因名字太长让整批失败 |
-| `entry_date` | | 入池日 `YYYY-MM-DD`。**留空则由系统推算**，见 §6 |
-| `rank` | | 推荐排名，≥ 1。留空即 NULL，排序时落末尾；系统**不会**按行序补 |
-| `score` | | 策略评分，量纲自定，跨策略不可比 |
-| `suggest_weight` | | 建议权重，**小数不是百分数**：0.25 表示 25%，写 25 会被拒 |
-| `reason_text` | | 入选理由，展示给订阅者 |
-
-CSV / Excel 通过 `gr_tools.read_frame(all_string=True)` 在读取时按字符串解析，
-防止纯数字代码（如 `000001`）丢掉前导零。Parquet 保留文件类型，筛选已知列后再统一
-转字符串；未知的 List / Struct 等嵌套列同样忽略并告警，已知列只接受标量。
-自己写脚本生成文件时也要注意别让 Excel 把代码列转成数字。
-
-Excel 工作簿必须恰好有一个工作表，第一行是表头。日期单元格可以直接使用，
-但不能带非零时间或时区；例如 `2026-10-26 00:00:00` 可用，`09:30` 会报错。
-日期序号（如 `46321`）不作为日期接受，请把单元格格式设为日期。
-代码列必须设为文本格式；已经存为数字而丢失的前导零不会自动补回。
-权重单元格可以设为百分比格式，底层值仍须是 `0.25`（显示为 `25%`）。
-
-入库时 `symbol` 会被拆开：`pick.item.symbol` 存**不带后缀**的裸代码（`600000`），
-交易所存进 `exchange` 列且用 `SSE`/`SZSE`/`BSE`（**不是** `meta.*` 的 `XSHG`/`XSHE`/`XBSE`）。
-
-## 4. 命令行导入
+先预检，核对策略、日期、行数和告警，再去掉 `--dry-run` 正式写入。样例文件切片见第 8 节：
 
 ```bash
-uv run gr-picks import --strategy <UUID 或 strategy_code> \
-                       --trading-day YYYY-MM-DD \
-                       --file <path.csv|path.parquet|path.xlsx|path.xls> \
-                       [--dry-run] [--overwrite] [--allow-empty] \
-                       [--uploaded-by <user UUID>] [--note "本期备注"] [-v]
-```
-
-| 参数 | 作用 |
-|---|---|
-| `--strategy` | 策略 UUID 或 `strategy_code`。策略必须已存在，且 `strategy_kind='pick'` 才会出现在选股接口里 |
-| `--trading-day` | 池子归属的交易日 |
-| `--file` | `.csv` / `.parquet` / `.xlsx` / `.xls`；Excel 只能有一个工作表 |
-| `--dry-run` | 只预检不写库。**每次正式导入前先跑一遍** |
-| `--overwrite` | 该交易日已有 active 批次时覆盖。不加就报 409——误选日期会不可逆地覆盖正确数据 |
-| `--allow-empty` | 接受 0 行的池子，表示**确认当日空仓**。空文件更常见的原因是导错了，所以要显式声明 |
-| `--uploaded-by` | 操作者 user UUID，可不填 |
-| `--note` | 本期备注，会展示给前端 |
-| `-v` | 打印 DEBUG 日志 |
-
-退出码：`0` 成功（含 `--dry-run` 预检通过），`1` 有阻断错误或参数非法。
-
-### 4.1 用参考数据跑一遍
-
-长表要先切出某一天、去掉 `trading_day` 列：
-
-```bash
-uv run python -c "
-import polars as pl
-f = pl.read_parquet('packages/gr-api/tests/fixtures/picks/strategy_picks_30d.parquet')
-f.filter(pl.col('trading_day') == '2026-08-11').drop('trading_day').write_csv('/tmp/picks_20260811.csv')
-"
-
-# 先预检
-uv run gr-picks import --strategy STR_DEMO_STK_001 --trading-day 2026-08-11 \
+uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-11 \
     --file /tmp/picks_20260811.csv --dry-run
 
-# 确认无误再写库
-uv run gr-picks import --strategy STR_DEMO_STK_001 --trading-day 2026-08-11 \
+uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-11 \
     --file /tmp/picks_20260811.csv
 ```
 
-成功输出长这样：
+| 参数 | 作用 |
+| --- | --- |
+| `--strategy` | 必填，策略 UUID 或 `strategy_code` |
+| `--trading-day` | 必填，归属日期 `YYYY-MM-DD`；多日文件须先按日拆分，按日期升序导入 |
+| `--file` | 必填，单日文件路径 |
+| `--dry-run` | 连接数据库预检、推算入池日，但不写批次与条目；不是离线校验，也不保证后续写入必定成功 |
+| `--overwrite` | 允许替换同日 active 批次；不能绕过历史日期限制 |
+| `--allow-empty` | 接受有表头、0 行的池子，表示确认空仓；不等于接受无法解析的空白文件 |
+| `--uploaded-by` | 可选，操作者用户 UUID |
+| `--note` | 本期备注，供接口展示 |
+| `-v`／`--verbose` | 启用 DEBUG 日志 |
 
-```
-[validated] STR_DEMO_STK_001 2026-08-11 — 20 rows valid / 20 rows total (298ms)
-  superseded an existing batch with 20 item(s)
-```
+### 结果与覆盖语义
 
-状态有三种：`blocked` 有阻断错误未写库 / `validated` 预检通过但 `--dry-run` 未写库 /
-`committed` 已落库。
+| 状态 | 含义 |
+| --- | --- |
+| `validated` | 预检通过，未写入 |
+| `committed` | 已提交入库，返回 `batch_id` |
+| `blocked` | 有行级错误，整批不写入 |
 
-### 4.2 空仓日
+正常退出码为 `0`；导入阻断或已捕获的文件／业务错误为 `1`；缺必填参数、未知选项等 argparse 参数错误为 `2`。结构性失败输出 `[failed]`，不返回上述结果状态。
+
+同策略同日最多一个 active 批次。**小于最新 active 日期的导入一律拒绝，包括 `--overwrite`**。覆盖时在同一事务内将旧批次置 `superseded`、创建新批次、删除同日旧条目并插入全量新池；旧批次只保留元数据，不能从它恢复旧持仓。覆盖预检也须带 `--overwrite`；日志中的覆盖提示不代表已写入，以结果状态为准。
+
+### 空仓日
 
 ```bash
-uv run gr-picks import --strategy STR_DEMO_STK_001 --trading-day 2026-08-12 \
-    --file /tmp/empty.csv --allow-empty --note "本期无符合条件标的"
+printf 'symbol\n' > /tmp/picks_empty.csv
+uv run gr-picks import --strategy STR_STK_001 --trading-day 2026-08-12 \
+    --file /tmp/picks_empty.csv --allow-empty --dry-run
 ```
 
-`item_count=0` 是合法状态，前端会显示成 `empty`，与「当天没上传」（`not_updated`）是
-两种不同的空态，别混淆。
+确认后去掉 `--dry-run`。`item_count=0` 对应 `empty`（确认空仓），没有对应批次才是 `not_updated`，两者不可混用。
+
+## 4. 入池日推算
+
+显式提供 `entry_date` 时采用该值，标记 `entry_date_source='provided'`；留空时标记 `derived`，按下表处理：
+
+| 条件 | 处理 |
+| --- | --- |
+| 上一交易日有 active 批次，且标的在池 | 继承上一期入池日 |
+| 上一交易日有 active 批次，但标的不在池（含确认空仓） | 取本次 `trading_day`，视为重新入池 |
+| 上一交易日没有 active 批次，或无法确定上一交易日 | 查本期之前该标的最近一条历史记录，沿用入池日；没有历史则取本次日期 |
+
+日历先查 `prev_trading_day`，缺失时改查日历中小于本期日期的最大开市日；两者都找不到才进入无法确定上一交易日的分支并告警。实际发生历史沿用时，CLI 输出 WARN，并将沿用提示追加到批次 `note`。
+
+`product_entry_date` 以 `entry_date` 兜底；存在历史品种记录时取两者较早值，确保不晚于 `entry_date`。业务取舍见 [D-008](../../.agents/brain/DECISIONS.md#d-008)。
 
 ## 5. 函数接口
 
-CLI 只是薄壳。脚本／notebook 里直接调：
+普通同步脚本可使用：
 
 ```python
+from __future__ import annotations
+
 from gr_api.services.pick_import import import_picks_sync
 
 result = import_picks_sync(
-    strategy="STR_DEMO_STK_001",
+    strategy="STR_STK_001",
     trading_day="2026-08-11",
-    source=frame,          # .csv/.parquet/.xlsx/.xls 路径，或 polars / pandas DataFrame
-    overwrite=False,
-    allow_empty=False,
-    dry_run=False,
+    source="/tmp/picks_20260811.csv",
+    dry_run=True,
 )
 print(result.status, result.batch_id, result.summary)
 ```
 
-`import_picks_sync()` 自己开关连接池，**不要**在已经跑着事件循环的进程里调用它；
-FastAPI 路由里请直接 `await import_picks(conn, ...)`（异步版，事务由调用方掌握）。
+`source` 也接受 Polars／pandas DataFrame；`overwrite`、`allow_empty`、`uploaded_by`、`note` 与 CLI 对应。
 
-行级错误放在 `result.errors` 里返回而**不抛异常**，这样一次能把整份文件的问题都告诉用户；
-结构性问题才抛（见 §7）。
+`import_picks_sync()` 自行开关连接池，不能在已有事件循环中调用。FastAPI／异步 notebook 使用 `await import_picks(conn, ...)`；**异步版正式写入同样会调用 `conn.commit()`**，不要按“提交由调用方控制”使用，也不要混入无关的未提交操作。
 
-## 6. 入池日是怎么定的
+行级错误保存在 `result.errors`；结构性问题抛异常。完整签名与行为见[导入实现](../../packages/gr-api/src/gr_api/services/pick_import.py)，参数解析与输出见 [CLI 实现](../../packages/gr-api/src/gr_api/picks_cli.py)。
 
-`entry_date` 那列留空时，系统按「连续在池」推算：
+## 6. 校验与排障
 
-- 上一交易日的池子里**有**这只 → 继承它的 `entry_date`；
-- 上一交易日**没有** → 今天就是新入池，取 `trading_day`；
-- 上传方**显式给了** `entry_date` → 原样采用，`entry_date_source` 记 `provided`。
+错误行号按解析后的记录计数，表头为第 1 行、数据从第 2 行开始；CSV 引号内的换行不增加记录行号，不能按文本物理行定位。
 
-漏传某一天时（上一交易日没有 active 批次），系统**沿用**而不是重置——重置会静默破坏
-历史且不可恢复。这种情况会往 `pick.batch.note` 追加一条系统提示，并在 CLI 输出里
-打 WARN。
-
-推算依赖 `meta.trading_calendar`（交易所用 `XSHG`）。日历缺当天的上一交易日时会退到
-「扫全量历史找最近一条」，同时打 WARN——**看到这条 WARN 说明日历没灌全，要补**。
-
-## 7. 校验规则与常见报错
-
-只保留「不做就会 DB 抛异常」或「不做会静默产生错误数据」的检查。是否为合法交易日、
-标的是否停牌退市、`rank` 是否连续、`symbol_name` 是否与代码匹配——**有意不查**，
-出错后前端一眼可见。
-
-**行级**（报错带 CSV 物理行号，表头是第 1 行，数据从第 2 行起）：
-
-| 错误码 | 触发条件 |
-|---|---|
+| 行级错误码 | 条件 |
+| --- | --- |
 | `required` | `symbol` 为空 |
-| `invalid_symbol` | 不匹配 `^\d{6}\.(SH\|SZ\|BJ)$` |
-| `duplicate` | 同一文件里 `symbol` 重复 |
-| `out_of_range` | `entry_date > trading_day` / `suggest_weight` 不在 [0,1] / `rank < 1` |
+| `invalid_symbol` | 代码格式不符 |
+| `duplicate` | 归一化后的代码重复 |
+| `invalid_date` | 日期无法解析，或带非零时间／时区 |
+| `invalid_integer` | `rank` 无法解析为整数 |
+| `invalid_number` | `score`／`suggest_weight` 不是有效数值，含 NaN／Inf |
+| `out_of_range` | 入池日晚于导入日、权重超出 `[0, 1]` 或排名小于 1 |
 
-**批次级**（直接失败，退出码 1）：
+结构性失败包括格式不支持、多工作表、已知列含嵌套数据、缺 `symbol` 列、未允许空池、策略不存在、乱序导入、同日已有批次却未允许覆盖。预检通过不替代正式写入时的数据库约束检查。
 
+当前不校验是否开市、标的是否停牌／退市、排名是否连续或名称与代码是否匹配；导入成功不代表数据在业务上正确。
+
+## 7. 导入后核验
+
+在已配置连接的数据库客户端执行以下 SQL；根 `.env` 不会自动导出为 shell 变量。SQL 使用 schema 全限定名，`pick` 不在连接池默认 `search_path` 中。
+
+```sql
+-- 批次概览
+SELECT b.trading_day, b.status, b.item_count, b.note
+FROM pick.batch b
+JOIN app.strategies s ON s.id = b.strategy_id
+WHERE s.strategy_code = 'STR_STK_001'
+ORDER BY b.trading_day DESC, b.batch_id DESC
+LIMIT 10;
+
+-- 单日池子；覆盖后仅保留当前条目
+SELECT i.rank, i.symbol, i.exchange, i.symbol_name, i.instrument_id,
+       i.score, i.entry_date, i.entry_date_source
+FROM pick.item i
+JOIN app.strategies s ON s.id = i.strategy_id
+WHERE s.strategy_code = 'STR_STK_001' AND i.trading_day = DATE '2026-08-11'
+ORDER BY i.rank NULLS LAST, i.symbol;
 ```
-# 补传历史日期——会让后续所有日期的 entry_date 推算错乱，且从数据本身看不出来
-[failed] out-of-order upload: strategy already has data up to 2026-08-11, refusing to import 2026-07-14
 
-# 该交易日已有生效批次
-[failed] an active batch already exists for 2026-08-11 with 20 item(s); pass overwrite=True to supersede it
-
-# 长表没切片就直接导：trading_day 被当成未知列忽略，600 行里 symbol 大面积重复
-[blocked] STR_DEMO_STK_001 2026-08-11 — 52 rows valid / 600 rows total
-  WARN  ignored unknown column(s): trading_day
-  ERROR row 22 [symbol] duplicate: duplicate symbol in this file
-```
-
-其它结构性失败：缺 `symbol` 列、空文件未加 `--allow-empty`、策略不存在。
-
-## 8. 导入后怎么验
+API 已启动时，可读取指定日期的池子与历史批次日期：
 
 ```bash
-# 批次概览
-psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -c "
-SELECT b.trading_day, b.status, b.item_count, COALESCE(b.note,'') AS note
-FROM pick.batch b JOIN app.strategies s ON s.id = b.strategy_id
-WHERE s.strategy_code = 'STR_DEMO_STK_001' ORDER BY b.trading_day DESC LIMIT 10"
-
-# 某天的池子
-psql -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -c "
-SELECT i.rank, i.symbol, i.symbol_name, i.score, i.entry_date, i.entry_date_source
-FROM pick.item i JOIN app.strategies s ON s.id = i.strategy_id
-WHERE s.strategy_code = 'STR_DEMO_STK_001' AND i.trading_day = '2026-08-11'
-ORDER BY i.rank NULLS LAST"
+curl --fail --silent --show-error \
+    'http://127.0.0.1:8001/v1/pick-strategies/STR_STK_001/picks?trading_day=2026-08-11' \
+    | jq '.data.batch'
+curl --fail --silent --show-error \
+    'http://127.0.0.1:8001/v1/pick-strategies/STR_STK_001/trading-days' \
+    | jq '.data.list[:5]'
 ```
 
-或者直接打接口（前端看到的就是这个）：
+`picks` 不传 `trading_day` 时取最新 active 批次；`trading-days` 只列有 active 批次的日期，不补出漏传日。
+
+## 8. 模拟数据与测试
+
+[参考 CSV](../../packages/gr-api/tests/fixtures/picks/strategy_picks_30d.csv) 与 [Parquet](../../packages/gr-api/tests/fixtures/picks/strategy_picks_30d.parquet) 均为 30 日 × 20 只的编造数据，日期只跳过周末，不代表真实交易日历；代码格式像 A 股，不代表真实证券。生成器见 [fixture_picks.py](../../packages/gr-api/tests/fixture_picks.py)，运行它会重写两份 fixture，不创建数据库策略。
+
+**两份文件都是多日长表，不能直接作为单日池导入**：导入器会忽略 `trading_day` 列，将所有行按 CLI 指定日处理，最终因代码重复阻断。先切片，再按第 3 节预检：
 
 ```bash
-curl -s "http://127.0.0.1:8001/v1/pick-strategies/STR_DEMO_STK_001/picks" | jq '.data.batch'
-curl -s "http://127.0.0.1:8001/v1/pick-strategies/STR_DEMO_STK_001/trading-days" | jq '.data.list[:5]'
+uv run python - <<'PYCODE'
+import polars as pl
+
+frame = pl.read_parquet('packages/gr-api/tests/fixtures/picks/strategy_picks_30d.parquet')
+frame.filter(pl.col('trading_day') == '2026-08-11').drop('trading_day').write_csv(
+    '/tmp/picks_20260811.csv'
+)
+PYCODE
 ```
 
-## 9. 前置条件清单
-
-导入前确认这几件事，否则要么报错要么数据不完整：
-
-1. **库已建**：`uv run gr-db migrate --target pg`（`pick` schema 来自 `034_pick.sql`）。
-2. **策略已存在**且 `strategy_kind='pick'`——没回填这一列的策略不会出现在选股接口里。
-3. **`meta.trading_calendar` 已灌**对应区间（`exchange='XSHG'`），否则入池日推算走退化路径。
-4. **`meta.instruments` 已登记**这些代码，否则 `pick.item.instrument_id` 整批为 NULL。
-   P0 允许为 NULL 不阻断，但效果跟踪上线前必须补。
-5. `.env` 里的 PG 连接信息可用。
-
-## 10. 相关文档与测试
-
-前端怎么起见 [`frontend-dev.md`](./frontend-dev.md)。
-
+不连接数据库的导入／CLI 用例：
 
 ```bash
-# 假游标用例（不需要数据库）
 uv run pytest packages/gr-api/tests/test_pick_import.py packages/gr-api/tests/test_picks_cli.py -v
+```
 
-# 打真库的端到端：用 30 天参考数据跑「导入 → 读接口」，跑完自己清理
+真库端到端测试仅在**隔离测试库**运行：先将 `PG_*` 指向该库并完成迁移，再显式开启。用例会写模拟策略和标的，且 UPSERT 交易日历；清理不恢复日历，不能在工作库执行。
+
+```bash
 GETRICH_TEST_PG=1 uv run pytest packages/gr-api/tests/test_pick_pg_integration.py -v
 ```
+
+相关说明：[前端开发](frontend-dev.md)、[DDL 真源](../../packages/gr-db/src/gr_db/ddl/postgres/034_pick.sql)。

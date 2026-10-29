@@ -1,163 +1,140 @@
 # gr-data 可靠采集实施计划
 
-> **状态：待用户审核，未开工。** 本文批准前不开始实现；本次仅记录方案。  
-> **读者 / 用途**：维护者审核范围、顺序与验收；后续实现者按任务推进。  
-> **日期 / 证据版本**：2026-10-06；本机代码 HEAD `b4fe01e87f0708e94145da0e9e004720a5ceb07c`，审计时 `packages/gr-data` 无未提交改动。  
-> **修订**：2026-10-06 按计划审查意见调整阶段顺序与优先级口径、A0 状态模型、C1 manifest 字段、测试环境前置、遗漏项与故障场景；仍未开工。  
-> **依据**：[实现审计](../../../getrich-design/data-platform/gr-data-implementation-audit-2026-10-06.md)、[可靠采集架构](../../../getrich-design/data-platform/dataapi-reliable-pipeline-design.md)、本仓 [AGENTS.md](../../AGENTS.md)。相邻仓库链接用于本地双仓布局，不是已发布远端链接。  
-> **范围参考（2026-10-20 补充）**：持仓诊断一期需要哪些数据集、各自的核验要点与建议顺序，见设计仓 [一期数据集清单](../../../getrich-design/data-platform/portfolio-diagnosis-phase1-datasets.md)；本计划的可靠性方案不因此改变。\
-> **验证边界**：静态调用链审计＋7 项未改函数体的隔离 stub 局部复现；未运行原 pytest 或真实 PG / 供应商验收，未证明生产可用。
+面向审核范围与顺序的维护者，以及后续实现者。状态：**通用协议仍待评审，Tushare 最低导入门禁与米筐风险模型 2a 已限定落地**；本文修订不授权新的实现、供应商调用、工作库迁移或部署。
 
-## 1. 目标与保留能力
+核对日期：2026-10-28，静态核对源码、DDL、测试与已确认决策，检查本机解释器及测试依赖可解析；未运行业务测试、启动容器或连接数据库／供应商。2026-10-06 的审计结论仅作历史依据。
 
-让采集、文件落地和数据库导入具有可证明的完整性与恢复能力，再接无人值守调度。**成功标准是目标范围的数据质量、覆盖和提交水位正确，不是进程退出码为 0。** 首期围绕 RiceQuant / Tushare，不扩展 tick、策略计算、零售产品或商业计划书。
+依据：[可靠采集方案](../../../getrich-design/data-platform/proposals/reliable-pipeline.md)、[历史实现审计](../../../getrich-design/archive/data-platform/reviews/2026-10-06-implementation-audit.md)、[一期数据集清单](../../../getrich-design/data-platform/portfolio-diagnosis-phase1-datasets.md)。相邻仓库链接用于本地双仓布局；当前采集进度见 [NOTES](../../.agents/brain/NOTES.md)，业务缺口见 [backlog](backlog.md)。
 
-| 保留 | 边界 |
-|---|---|
-| Tushare raw / ingest 分层、按日分页和限流 | ingest 只读 raw，无 SDK 兜底；补齐完整 manifest 门禁，不重造客户端 |
-| RiceQuant supplement planner / store 和风险 bundle 恢复 | 保留已实现观察、hash、分片、配额暂停和逐日事务；不把此保证误套 legacy 日线 |
-| PostgreSQL / TimescaleDB 行情主存、COPY / UPSERT、ownership | DuckDB 只辅助查文件；DDL 仍只在 gr-db；增加 receipt / 版本 / 租约约束 |
-| 现有 CLI 与手工数据 | 通过显式兼容读取和渐进启用迁移；不覆盖、删除或自动升级已有 raw |
-| 本地＋服务器异地备份导入目标 | 一个采集 / 调度权威，复制验证后两端独立幂等导入；不自动双活 |
+## 1. 当前基线与边界
 
-## 2. 风险与实施顺序
+成功标准是目标范围的质量、覆盖、提交结果和水位可核验，退出码为 0 只是一项信号。保留 raw → Parquet → ingest → PostgreSQL／TimescaleDB、单表单一来源、COPY／UPSERT 及现有 CLI，不另建行情主库或编排平台。
 
-P0 指可靠运行前的正确性前置，不表示已发生线上事故。工作量只标相对大小：小 / 中 / 大，须在范围确认后估算，不作固定工期承诺。
+| 已有能力 | 适用范围与尚缺部分 |
+| --- | --- |
+| Tushare 最低导入门禁 | 已有损坏文件硬失败、所选月份必需分区检查、未知代码拦截、硬／软分级及失败流水；尚无统一 A0 状态模型、quarantine、完整开始记录／本地 spool，也未推广全部供应商 |
+| 米筐风险 2a | 迁移 049 已提供 variant 用途、整包收据、run 绑定和观察级 capture／import 检查点；`factor.risk_bundle` 覆盖五件套及覆盖表。不是连续日期水位、通用 B1、B2 防回退或 B3 全量切换 |
+| 米筐观察恢复 | 补充链路已有不可变观察、哈希、拆片及配额暂停；风险链路复用完整模型日，失败日以新 observation 重抓，不能声称已支持通用 chunk 续传 |
+| CLI 提交结果区分 | 已有失败、软告警及提交后停止语义；米筐 ingest 的退出码 `4` 表示已提交但发布资格不满足，`5` 表示事务退出异常后暂停，结果可能已确认提交或仍未知，须结合 outcome 核对，不能一律记失败或宣称已回滚。具体以 [cli.py](../../packages/gr-data/src/gr_data/cli.py) 为准 |
+| 认证边界 | [D-020](../../.agents/brain/DECISIONS.md#d-020) 已默认关闭 mock、限制仅 dev 显式开启，无效 JWT 不回退请求头；远端权限与网络边界仍需专项验收 |
 
-**优先级口径**：本文 P0 / P1 沿用实现审计，表示“上线前置”，不是严重度。设计 §1.2 把质量 warning 记为 P1，本文按审计 F3 提为 P0；设计 §11 的 P0–P4 是阶段，对应关系如下。
+原 S0“解释器失效、缺测试依赖”不再作为当前阻塞。S0 保留为每台目标机的前置核验；本次依赖检查不代表测试通过或服务可用。
 
-| 本文任务 | 设计 §11 阶段 |
-|---|---|
-| S0 | 设计未列，实施前置 |
-| A0 | P0 契约与范围 |
-| A1–A2、C1–C4、B1–B3 | P1 可靠数据路径 |
-| D、E1、E4 | P2 执行与调度 |
-| E2、E3、E6 | P3 可见性 |
-| E5 | 设计 §11 未单列，按设计 §10 异地复制协议 |
-| 分钟、财报、大分钟 shadow 代际 | P4 按需扩展，不在本计划 |
+**运行分工已确认**：iMac 为唯一正式采集／入库主端，Air 用于远程开发与隔离测试；迁移及切换仍待验收。存储、部署和备份目标按 [iMac 迁移计划](imac-collector-migration.md)核对，不在本计划重新选择主机或写入机器路径。
+
+## 2. 实施顺序
+
+保留原任务编号，按依赖推进，不再混用设计阶段编号和严重度。以下均为通用协议的剩余工作；涉及已有链路时先复用并验证兼容性。
 
 ```mermaid
 flowchart LR
-  S0[S0 测试环境] --> A[A 错误与质量门禁]
-  A --> L[C1 落地协议 + C4 存储 fail-closed]
-  L --> B[B1 receipt / B2 版本 CAS]
-  B --> R[C2 覆盖 / C3 replay 与预算]
-  R --> F[B3 full 候选发布]
-  R --> D[D 租约与提交防护]
-  D --> E[E 运行层与异地复制]
-  F -. 启用 full 时 .-> E
+  S["S0 环境核验"] --> A["A0–A2 状态与质量"]
+  A --> C["C1 + C4 可信落地"]
+  C --> B["B1 收据 / B2 防回退"]
+  B --> R["C2 覆盖 / C3 恢复"]
+  R --> D["D1–D2 租约与提交防护"]
+  R --> F["B3 全量候选发布"]
+  D --> E["E1 定时运行"]
+  F -. 仅启用可靠 full 时 .-> E
 ```
 
-C1 与 C4 先于 B 闭环：receipt 与版本 CAS 都依赖可信 manifest 和分区身份，所以不能先启用“可靠 full”再补可靠落地。B1 / B2 的接口草案在 A0 冻结。C2 / C3 依赖 B1 的 receipt 才能区分“已落地未导入”。全量发布（B3）、并发无人值守（D）分别通过门禁后才开放；E1 定时不依赖 B3，但 full 模式在 B3 验收前保持禁用。
+B1／B2 的接口在 A0 定义，闭环依赖 C1／C4 的可信文件与分区身份。D、E1 不以 B3 为通用前提；首期可只开放逐分区增量／补数，可靠 full 在 B3 验收前禁用。既有 `--mode init` 不自动等同于全量原子发布。
 
-### A. P0：测试环境、错误、质量与运行账本
+### A. 环境、状态与质量
 
-| 任务 / 大小 | 风险 → 具体改动位置 | 拟改点 / 依赖 | 验收证据 |
-|---|---|---|---|
-| S0 测试环境 / 小 | 仓库 `.venv` 解释器链接失效，本机 Python 缺 pytest / pandas / pyarrow / psycopg；后续任务没有通过 / 失败信号 | 先确认维护者已有合法项目环境；若需重建，单独批准使用既有 lock 和指定解释器，不复用迁移来的失效路径。离线子集用 marker 或路径排除 `tests/conftest.py` 的 `pg_dsn` / `pg_conn`，它们会探测 Docker、启动 TimescaleDB 并 TRUNCATE 测试库 | 离线子集可运行并给出通过 / 失败；未经 G2 批准不起容器、不连 PG |
-| A0 契约冻结 / 小 | CLI 结果、质量 / 分区身份语义不统一；`gr_data/cli.py`、`common/quality.py`、`ingest/base.py` | process_status 直接采用设计 §6 状态机：queued、running、deferred、raw_ready、importing、succeeded、partial、blocked、failed、abandoned。data_status 至少区分 complete、valid_empty、degraded、partial、waiting（未到发布窗口）、blocked。定义 hard / soft 规则、expected / actual / rejected 计数和 run / attempt / partition 身份；冻结 B1 receipt、B2 代际接口草案；先选首批 dataset；依赖 S0 | 一张表从 process_status × data_status 推导退出码；合法空按 dataset 定义；valid_empty、waiting 均能与缺数区分 |
-| A1 质量门禁 / 中 | 坏文件 / 丢行可假 success；`common/parquet.py`、`ingest/tushare/adapter.py`、`ingest/tushare/importers/{market,reference}.py`、`ingest/base.py` | 严格读取区分不存在 / 损坏，损坏文件进 quarantine 并保留证据；必需分片校验；build 阶段丢行进入结构化质量结果；hard fail 拒写、soft 告警明确降级；依赖 A0 | 一好一坏 Parquet、缺月份、未知 symbol 均可定位且不假 success；损坏文件不被覆盖或删除；合法稀疏空按契约通过 |
-| A2 退出和失败记录 / 中 | warning 后 CLI 返回 0、失败无 run；`cli.py`、`ingest/__init__.py`、`ingest/base.py`；gr-db 新增迁移 | 未知任务明确失败；partial / blocked 返回明确非成功结果；开始 / 失败记录使用独立短事务，真实开始结束时间；构建 / 挂载 / 配置预检也有事件；依赖 A0 | build 前 / 中失败仍有 record；PG 不可用则结构化本地事件 spool，恢复幂等汇入；不是默默丢运行记录 |
+| 任务 | 剩余工作与落点 | 完成条件 |
+| --- | --- | --- |
+| S0 环境核验 | 使用现有 uv lock 核验解释器与依赖；逐项检查所选测试的 fixture 依赖。`tests/conftest.py` 的 `pg_dsn`／`pg_conn` 被请求时会启动容器、迁移并 TRUNCATE 隔离库，不能仅凭 marker 或环境开关认定离线 | 离线用例只依赖 Fake SDK／临时文件；PG 用例明确使用隔离实例，记录实际通过、跳过和未验证范围 |
+| A0 契约冻结 | `cli.py`、`common/quality.py`、`ingest/base.py`；依赖 S0。区分 process_status 与 data_status，统一 run／attempt／partition 身份、expected／actual／rejected 计数、hard／soft 规则及退出码映射；选定首批 dataset | 合法空、未到发布窗口、部分覆盖、硬失败与提交结果未知可区分；兼容已有 CLI 调用方及米筐已提交后停止语义 |
+| A1 质量推广 | `common/parquet.py`、provider adapter／importer；依赖 A0。推广严格读取与覆盖检查，损坏文件隔离并保留证据，build 丢行进入结构化质量结果 | 不将损坏当缺失；hard fail 拒写，soft 明确降级；source／accepted／rejected 可对账，未知代码和缺分区有定位信息 |
+| A2 运行账本 | `ingest/__init__.py`、`ingest/base.py` 及 gr-db 迁移；依赖 A0。补独立短事务的开始、失败与真实耗时，覆盖 build／挂载／配置预检失败；PG 不可达时写有界本地事件 spool | 主事务回滚后仍有失败证据；恢复后幂等汇入。spool 仅存脱敏事件，不成为第二套采集计划、水位或业务提交账本 |
 
-A2 的本地事件 spool 仅承接 PG 不可达期间的有限诊断 / 告警事件，不承担第二套采集计划、水位或业务提交账本。凭据解析失败只记固定错误类别，不保存异常敏感全文。
+A0 的逻辑状态沿用设计 §6：process_status 包含 queued、running、deferred、raw_ready、importing、succeeded、partial、blocked、failed、abandoned；data_status 区分 complete、valid_empty、degraded、partial、waiting、blocked。迁移与现有状态映射需在实现前审阅，不直接替换现行数据库枚举或 CLI 约定。
 
-**2026-10-22 进展（仅 Tushare，最低门禁）**：A1 的严格读取（损坏文件硬失败、不删不改）、所选月份必需分区、未知代码硬失败、硬／软分级已落地；A2 的失败记录（独立短事务写 `failed`）、未知 importer 在连库前报错、退出码 0／1／2／3 已落地，未新增迁移。仍未做：quarantine、A0 状态机与 expected／actual／rejected 计数、开始记录与本地 spool、其他供应商。详见 gr-data README「导入门禁与退出码」。
+### C. 可信落地、覆盖与恢复
 
-### C. 可靠落地、范围与恢复（C1 / C4 为 P0，先于 B；C2 / C3 为 P1，在 B1 / B2 之后）
+| 任务 | 剩余工作与落点 | 完成条件 |
+| --- | --- | --- |
+| C1 raw-first 标准化 | `raw/ricequant/{store,riskmodel,risk_dynamic}.py`、`common/{parquet,paths}.py`、Tushare fetcher／adapter；依赖 A0。版本化 manifest，登记身份、精确范围、aware 时间、质量、文件哈希／schema、分页拆片及 producer 版本，字段定义见设计 §5.1。Tushare 新格式采用不可变日分片，月文件降为可重建兼容视图 | 同文件系统临时写、文件 fsync、校验读回、不可变路径发布、目录 fsync，最后持久化 manifest；孤儿／partial 文件不可消费。旧 raw 保留，缺字段不能伪造完成证据 |
+| C4 存储保护 | `common/paths.py` 与运行预检；依赖 A0，与 C1 同批。核验 storage_id、sentinel、realpath、挂载及容量；本地 spool 单独设有限目录 | 外盘未挂载、错误卷、路径越界或空间不足时拒绝写入，不在系统盘创建同名替代目录，不删唯一证据；在实际文件系统验证 rename／fsync／锁语义 |
+| C2 覆盖与模式 | raw planner、provider fetcher；依赖 C1、B2。明确 full／incremental／backfill／reconcile 的范围，按交易日、生命周期、分页与发布截止识别洞集；标的和日历只有完整 scope 才可差集删除／撤销 | 最新分区存在也能发现旧月缺日；未发布、合法空、截断与缺数可区分；历史修订有新观察及影响范围。停复牌空响应与整月时间刷新问题纳入此阶段 |
+| C3 replay 与预算 | raw 入口、米筐轮次／journal、ingest manifest 消费；依赖 B1、C1、C2。扫描已落地未 receipt 的观察，复用链路允许的完整单元，明确失败日／片的重试边界，按端点与账号控制预算 | 文件成功库失败只重导；已完成单元不重复耗费额度；恢复不丢原失败证据。现有风险专用执行器的人工复核暂停不得被通用调度绕过 |
 
-| 任务 / 优先级 / 大小 | 具体模块 / 文件 | 拟改点 / 依赖 | 验收证据 |
-|---|---|---|---|
-| C1 raw-first 标准化 / P0 / 中 | `raw/ricequant/store.py`、`common/parquet.py`、`common/paths.py`；Tushare fetcher / adapter | 从 RQ store 提炼兼容版本的 manifest 协议，字段按设计 §5.1 最小字段表，至少含：身份（provider、dataset、variant_id、request_id、observation_id、observation_seq）；运行（run_id、partition_key、generation_id、fence_token）；范围（scope、fields、adjust_type、calendar_hash、evidence_hash）；时间（requested_at、observed_at、vendor_published_at、availability_basis）；完成（status、empty_reason、expected / actual_coverage、gaps）；`files[]`；分页拆片（pages、attempts、parent_request_id、children）；回放版本（sdk_version、producer_version、config_hash）。延后的字段须写明受阻的下游任务。Tushare 改为不可变日分片，月文件降为可重建的兼容视图（设计 §1、§3）。源文件只读、目录权限最小化；落地不存 token；文件和目录 fsync、manifest 最后发布；依赖 A0 | 孤儿 / partial 文件不可消费；hash / schema / 路径越界拒绝；旧格式只能显式兼容读，不冒充 validated；manifest 字段齐全，或延后项有记录 |
-| C4 存储 fail-closed / P0 / 小–中 | `common/paths.py`、landing 入口、运行预检 | 预登记 volume / storage_id 及 sentinel、realpath、空间余量；未挂载不 mkdir 同名路径、不退回系统盘；spool 另设系统盘有限目录；与 C1 同批，依赖 A0 | 未挂载 / 错误卷 / 磁盘满均不发布 complete manifest、不移动 DB 水位，旧文件保留 |
-| C2 分区 coverage 与模式 / P1 / 中 | `raw/tushare/fetchers/market.py`、`raw/ricequant/{planner.py,fetchers/bars.py}` | 交易日 / 标的洞集、发布截止、历史回扫；修正 legacy update 重拉；full / incremental / backfill / reconcile 明确范围；请求粒度尊重端点。标的、日历按完整快照发布，保留退市与历史标识；只有完整 scope 才允许差集删除 / 撤销（设计 §3、§4、§5.2）；依赖 C1、B2 | 最新日存在但旧月缺日仍补洞；历史修订产生新观察；合法空 / 未到期 / 截断 / partial 分开；不完整快照不切换、不删除 |
-| C3 replay 与预算 / P1 / 中 | raw 统一入口、RQ supplement / risk 轮次、ingest manifest 消费 | 复用成功片续跑；已落地未 receipt 扫描；端点 / 账号限流与额度暂停、有限重试；依赖 B1、C1、C2 | 只重试缺片；quota 恢复不反复耗费首片；库故障不触发重新下载 |
+C1 上线前核算不可变观察的增长及保留预算；清理协议未验收前不删除唯一副本。日线／分钟保持不复权主存，复权修订关联数据版本；财报保留发布、观察及修订时点。分钟／财报及尚未准入 writer 的启用不包含在本计划中。
 
-**容量**：不可变观察会让 raw 持续增长。C1 上线前评估外接盘容量；保留与清理策略（设计 §10 两阶段清理）本计划延后，期间不得因磁盘满删除唯一证据。
+### B. 收据、防回退与发布
 
-日线 / 分钟保持不复权主存；复权因子修订关联受影响数据版本。财报扩展须保留发布 / 观察 / 修订时点，不把日期级公告或当前重述冒充历史日内 PIT；本计划不借可靠性工程顺便启用尚未准入的财报 / 分钟接口。
+| 任务 | 剩余工作与落点 | 完成条件 |
+| --- | --- | --- |
+| B1 通用收据与双水位 | `db/risk_receipts.py`、`ingest/base.py`、`db/copy.py` 及 gr-db；依赖 A、C1、C4。推广 `(target, manifest_hash, importer_version)` 收据，业务 merge、质量、receipt 与 DB 检查点同事务，capture 独立提交；预留 E4 outbox 的原子写入位置 | 同批重放不重写业务；COMMIT 响应丢失按收据核对，确认前不假定回滚或自动继续；观察级检查点与连续完成水位分开 |
+| B2 观察版本防回退 | 导入层及代际／分区当前指针；依赖 B1。显式登记 authority epoch、代际顺序与 canonical 分区观察序，事务锁定当前版本并 CAS；不能按 UUID、mtime、到达顺序或不同 variant 的局部序号比较新旧 | 新 B 提交后旧 A 晚到，仅保留历史／记 superseded，不改当前业务值与水位；异地端采用同一权威顺序 |
+| B3 可靠 full（可选） | raw planner、候选 staging、发布服务及 gr-db；依赖 B1、B2、C1、C2。冻结 generation，全部必需分区通过后一次发布；评估锁、WAL、峰值空间与读契约，大分钟 full 另审 | 任一片失败，旧可用业务数据不变；发布失败可重放，无半激活代际。未实现时拒绝可靠 full，逐分区 backfill 不宣称全量原子性 |
 
-### B. P0：提交、幂等和全量发布协议
+**先核对现有 DDL，再设计通用扩展。** 049 的 `ops.import_receipt.target` 目前限定 `factor.risk_bundle`，并与 variant、capture、run 绑定建立不可变约束；不能直接放宽它来接全部 provider，也不能另起同名收据体系。表名、键、状态及兼容迁移须单独评审，全部 DDL 只放 gr-db，不改已记账 SQL，不在 API 启动时建表。
 
-| 任务 / 大小 | 风险 → 具体改动位置 | 拟改点 / 依赖 | 验收证据 |
-|---|---|---|---|
-| B1 receipt 与双水位 / 中 | 同批重放无提交收据；`ingest/base.py`、`db/copy.py`；gr-db ops / staging 新迁移 | `(target, manifest_hash, importer_version)` 唯一 receipt；业务 merge / 质量 / DB 水位 / receipt 同事务；capture 水位独立；预留 outbox 写入点，E4 落地时纳入同一事务（设计 §5.2）；接口在 A0 冻结，依赖 A、C1、C4 | 文件成功库失败只重导，不再抓取；commit 响应丢失查询 receipt；同 run / attempt 重复不重写逻辑成果 |
-| B2 观察版本防回退 / 中 | 旧 A 会覆盖新 B；上述导入层及代际 / 分区版本 DDL | 权威 epoch / 代际顺序 / 分区观察序 CAS。需新增代际与当前版本登记实体，例如 `ops.data_generation` 或分区当前版本表，名称以迁移审查为准；设计 §6 未列此实体。旧观察记 superseded，只保留历史；不能按 UUID、mtime 或异地到达顺序选最新；依赖 B1 | B 先 commit 后 A 迟到，不改当前值 / 水位；独立备端亦按同一权威顺序 |
-| B3 full 候选发布 / 大 | init 逐月覆写、逐表 commit 导致混代；raw planner、landing、ingest 发布服务及 gr-db 版本元数据 | 明确候选 generation，全部必需分区通过后才切 active；容量允许用候选 staging＋最终事务；大分钟全量需单独 shadow / 读契约方案，未验收不得伪称原子 full。**可选降范围**：首期禁用可靠模式的 full / init，只开放分区级 incremental / backfill，B3 移出关键路径；依赖 B1、B2、C1、C2 | 下载或导入任意片失败，旧可用版本不变；发布失败可重试，恢复时无半激活 generation；未做 B3 时 full 入口明确拒绝 |
+**诊断发布另按 [D-022](../../.agents/brain/DECISIONS.md#d-022) 的 2b 验收**：发布清单钉住组成收据／run，失效与组成写入原子衔接，统一读取在一致性快照内核对；数据库层拒绝 validation run，消费 `publishable=false` 的旧 run 禁用证据。组成变化后旧版本不可复算，不以当前最新数据冒充历史版本；一期不建可变数据版本表，诊断专用角色延后。B2 当前指针、B3 全量切换和诊断发布不是同一能力，正式风险读取保持关闭。
 
-DDL 实施分开提交审核：复用 / 扩展现有 `ops.etl_job_run`、`ops.import_checkpoint`、`staging.parquet_file`、`ops.data_quality_check`；新增 receipt、代际 / 分区版本等表的名称和键以最终迁移审查为准。所有 DDL 只在 `packages/gr-db/src/gr_db/ddl/`，不修改已记账 SQL checksum，不在 API 运行时建表。
+### D. 租约与提交防护
 
-### D. 并发无人值守前置：资源租约与事务所有权
+| 任务 | 剩余工作与依赖 | 完成条件 |
+| --- | --- | --- |
+| D1 跨 run 租约 | `gr_data.jobs` 薄层及 gr-db lease；依赖 B1／B2、C。稳定资源键不含 run_id，跨 variant 写同一 canonical 分区须互斥；同账号 raw 执行流也互斥，账号标识不得泄露凭据。使用数据库时钟、owner、单调 fence 和固定心跳 | 两 run 不能各拿“合法锁”写同一资源；失租旧 worker 即使 SDK 成功返回也不能提交；锁与版本选择的作用域一致 |
+| D2 事务所有权 | worker 独占连接，提交事务锁定共享租约并验证 token；dataset 全量排他与分区任务使用固定锁序；依赖 D1 | 超时、重启、心跳丢失、连接中断后可恢复，旧 token 不推进 active／水位；不提交调用方无关事务，也不将自行 commit 的 importer 包装成假原子事务 |
 
-| 任务 / 大小 | 模块 / 拟改点 | 依赖 / 验收 |
-|---|---|---|
-| D1 跨 run 租约 / 中 | 新 `gr_data.jobs` 薄层＋gr-db lease 迁移；稳定资源键不含 run_id；同 canonical 分区跨 variant 冲突也互斥；“供应商账号 + raw 执行流”也是资源键，同一账号同时只放行一个 raw 执行流（设计 §2）；owner / fence 单调递增、数据库时钟、固定心跳 | 依赖 B、C；两 run 不能各拿独立“合法锁”并写同一分区；同账号第二个 raw 执行流等待或被拒；失租旧 worker 即使 SDK 返回成功也不能 commit |
-| D2 提交防护 / 中 | 业务提交事务锁共享 lease 并验证 token；full 的 dataset 排他与普通任务共享门闩使用固定锁序；worker 使用独占连接 | 依赖 D1；超时 / 重启 / 心跳丢失 / 连接中断可恢复；旧 token 不推进 active / 水位；不得提交调用方无关事务 |
+RQ 本地 flock 继续用于文件 writer 互斥，不能替代 PG fencing。D 不依赖 B3；启用 E1 定时前必须通过 D，即使只开一个 worker，手工 CLI 与定时任务也可能竞争。
 
-现有 RQ flock 继续做本地文件 writer 互斥，不能替代 PG 资源 fencing；不照搬现有回测队列无 owner / token 的完成 SQL。**启用 E1 定时之前必须通过 D**：即使只有一个 worker，手工 CLI 与定时任务同时运行也是并发。多机或多 worker 生产同样以 D 为前提。
+### E. 运行、监控与备份
 
-### E. 独立运行层与异地备份导入
+| 任务 | 拟实施范围与依赖 | 完成条件 |
+| --- | --- | --- |
+| E1 唯一调度与补跑 | `gr_data.jobs` 独立 CLI，仓库外 OS 定时器唤起，PG 保存计划／run；依赖 B1／B2、C、D | 同 job 只有一个正式触发源；休眠／断网恢复后按洞集补跑；API 多 worker 不各自启动调度；首期不增加 Redis 或新编排平台 |
+| E2 只读监控 | `gr-api` 查询域与 `apps/web` 现有请求层；依赖 A、B1／B2、E1，远端开放还需 E3 | 展示计划、分区、质量、脱敏日志、capture 与 DB 水位；关闭浏览器不影响任务，HTTP 存活不冒充数据健康 |
+| E3 远端安全验收 | 复用 D-020 认证修复；验证 JWT、权限、安全头及 TLS／网络边界 | mock 不用于远端正式访问；伪造请求头、过期 JWT、越权请求被拒；管理重试／启停另定授权与审计 |
+| E4 告警与健康 | 独立 notifier、PG outbox、本地有界 spool 与异机 watchdog；依赖 E1，outbox 与 B1 提交集成 | 发送去重、合并、有限退避并检查业务码；失败／dead 可见，通知失败不重跑 ETL；主机断网／停机由独立节点发现 |
+| E5 异地复制与导入 | 仅复制完成文件／manifest，目标校验后发布 replicated，各 PG 独立 receipt；依赖 B1／B2、C、D | partial／哈希不符不导入；源端删除不传播；提升备用端前隔离旧主并切换 epoch，不自动双活 |
+| E6 PG 逻辑备份与恢复 | 仓库外运维，备份目标、保留和 RPO／RTO 单独确认；不以 E5 raw 复制完成为前提 | 使用逻辑导出／恢复，不复制数据库数据目录；隔离还原核对 schema、ownership、数据键、质量、收据／水位与 raw 引用，记录恢复结果 |
 
-| 任务 / 大小 | 归属与改动边界 | 依赖 / 验收 |
-|---|---|---|
-| E1 唯一调度与补跑 / 中 | `gr_data.jobs` 与独立 CLI 执行入口；OS 在仓库外提供唤起 / 守护；PG 保存计划与 run，不在每个 API worker 启动调度 | B1 / B2、C、D 通过；Linux / macOS 恢复后按日历 / 洞集补跑；同一 job 只一套生产触发源；先不引入 Redis / 新编排平台 |
-| E2 只读监控 / 中 | `gr-api` 新增数据任务查询域；`apps/web` 复用请求层；只读任务 / 运行 / 分区 / 行数 / 新鲜度 / 脱敏日志 | A、B、E1；对远端开放前还依赖 E3；关闭浏览器任务继续；展示 capture 与 DB 水位、rejected / partial；HTTP 健康不冒充数据健康 |
-| E3 远端安全前置 / 小–中 | `gr_api/deps.py` 身份兼容路径单独安全任务；远端暴露前关闭 X-User-Id 兜底（2026-10-21 已改为默认关闭、仅 dev 可开，见 D-020），验证 JWT / 授权 / 安全头 / TLS 网络边界 | 远端只读 API 也须认证；管理重试 / 启停另阶段授权与审计；未证明现环境公网暴露，不宣称已修代码 |
-| E4 飞书与健康 / 中 | 独立 notifier＋PG outbox，扩展 B1 提交事务写 outbox；PG 宕机时用系统盘 spool；服务器 watchdog 判断本机离线 | E1；发送去重 / 合并 / 有限退避，检查业务码；告警失败不重跑 ETL；完全断网 / 停机由独立服务器告警 |
-| E5 异地复制 / 导入 / 中–大 | 运行层可替换传输组件；本地↔服务器复制已完成文件 / manifest，目标校验发布后 replicated；各 PG 独立 receipt | B、C、D；partial / hash 错误不导入；源删除不传播；独立备份保留；一个采集权威，切换先隔离旧主再提升 epoch，不能靠两端独立本地 lease 自动双活 |
-| E6 PG 备份与恢复 / 中 | 仓库外运维；PG 备份与 raw 副本分开，版本 / 保留 / 恢复清单；WAL / PITR 按 RPO 另审 | E5；隔离恢复核对 schema、ownership、数据键、质量、水位与 raw 引用，测 RPO / RTO；本次不上传或配置备份 |
+## 3. 验收门禁
 
-## 3. 验收门禁与测试环境
+| 门禁 | 范围与证据 |
+| --- | --- |
+| G0 范围评审 | 确认本轮阶段、首批 dataset、接口及迁移草案；已有 2a 批准不扩大为通用协议全部获准 |
+| G1 离线实现 | Fake SDK、临时文件、故障注入及真实项目断言；确认 fixture 不触发网络／数据库。历史 7 项 stub 复现不替代项目测试 |
+| G2 隔离 PG | 按实现任务确定独立 PG／TimescaleDB 与临时 named volume，不连接业务库；验证真实 COPY／JSONB、回滚、收据唯一、CAS、锁竞争及提交结果恢复 |
+| G3 受限供应商样本 | 依任务授权限定账号能力、日期与标的；验证实际 schema、单位、合法空、覆盖及预算，不扩大采集或记录凭据 |
+| G4 上线与恢复 | 工作库迁移、部署、主源切换及实际备份目标按各自授权执行；验证挂载／重启顺序、隔离恢复、补跑、脱敏告警与 RPO／RTO |
 
-| 门禁 | 允许验证范围 | 必须出示的证据 |
-|---|---|---|
-| G0 审核计划 | 本文、接口 / 迁移草案、首批范围、S0 环境方案 | 选定实施阶段，S0 方案获批；不等于授权购买数据、提供凭据、配置生产或部署 |
-| G1 离线实现验收 | 网络禁用 Fake SDK、单元 / 契约测试、临时文件、故障注入；排除会自动启动 PG 的 fixture | 下表标 G1 的场景有真实项目测试断言；本轮 7 个局部 stub 仅供复现参考，不能替代完整 suite |
-| G2 隔离 PG 集成 | **取得用户批准后**使用独立 PG / TimescaleDB、临时卷，绝不连接业务库 | COPY / JSONB / 回滚、receipt 唯一、版本 CAS、锁冲突、commit 响应丢失、full 切换可重放 |
-| G3 小范围供应商验收 | **取得用户批准后**，用户配置权限 / 配额 / 密钥，受限日期 / 标的 | 实际 schema / 单位 / 空规则 / 分钟时区及配额，完整性对账；不把测试 token 写文档 |
-| G4 上线与灾备 | schema 迁移、部署、主源切换、备份目标分别审批并验收 | 恢复演练、脱敏告警、离线补跑、RPO / RTO；通过前保持手工受控模式 |
-
-测试环境现状与修复方案见 S0。**本次未修环境、未安装依赖。**
-
-必须覆盖的故障验收：
+必须覆盖的故障场景：
 
 | 场景 | 通过条件 | 门禁 |
-|---|---|---|
-| 坏 Parquet、缺分片、build 阶段丢行 | 不假 success；hard / soft 等级明确；source / accepted / rejected 可对账 | G1 |
-| 空 / partial / 截断 / schema 漂移 / 重复页 | 稀疏合法空与缺数分开；重复页不能冒充完整；破坏性 schema 变更暂停 ingest；hard fail 不推进严格水位 | G1 |
-| 构建前失败、PG 不可达 | 可定位 run / attempt 或本地有界事件；恢复后幂等汇入，不遗失失败 | G1 spool；G2 汇入 |
-| 文件成功库失败；重复 run / attempt / commit 响应丢失 | 仅重放已完成文件，无新增供应商调用；receipt 和业务键均幂等 | G2 |
-| 旧 observation 晚到、异地乱序 | 旧批 superseded，新业务值及水位不倒退 | G2 |
-| A→B→A 重复观察 | 三次观察均保留，不因内容重复丢历史；当前值按观察序确定 | G1 文件层；G2 入库 |
-| full 任意阶段失败 | 旧可用 generation 与业务版本不变，无先删后建 | G1 文件层；G2 入库 |
-| 旧月缺日、历史修订、停牌 / 未到期 | 按交易日 / 生命周期补洞，状态有证据，不能机械补零或固定 240 bar | G1 |
-| 睡眠 / 断网跨多日、UTC 时区主机 | 按 Asia/Shanghai 交易日日历补洞；有限配额先补缺片再回扫；重复唤起不重复 run | G1 |
-| worker 竞争、lease 失效后旧 worker 恢复 | 同资源只一合法提交者，旧 fence 拒绝；heartbeat 不是进度百分比 | G2 |
-| 未挂载、错误卷、磁盘满 | fail-closed，不误写系统盘，不发布 complete，不删唯一副本 | G1 |
-| 备份 partial 文件 / 误删 | 验证完成后才发布 / 导入；copy-only，备端版本与保留不跟随误删 | G1 文件层；G4 实际目标 |
-| 飞书失败、主机离线 | ETL 不因通知失败重跑；outbox / spool / dead 可见；独立 watchdog 判离线 | G1 发送失败；G4 主机离线 |
-| 分钟夜盘 / 停牌 / 日内边界（启用分钟时） | dt 带时区、trading_day 正确，无机械补零 / 补 bar，单位与 raw 对照一致 | G3 |
+| --- | --- | --- |
+| 坏 Parquet、缺分片、丢行、重复页、schema 漂移 | 可定位、可对账；硬失败拒写，partial 不冒充 complete，损坏证据保留 | G1 |
+| 未发布、合法空、截断、停牌／生命周期不适用 | 按 dataset 契约判断，不补零、不机械补 bar；空响应有依据 | G1；真实契约 G3 |
+| 构建前失败、PG 不可达 | 有 run／attempt 或有界事件，恢复后幂等汇入 | G1／G2 |
+| 文件成功库失败、重复提交、COMMIT 响应丢失 | 文件可重放，收据与业务结果一致，不因超时重复抓取或误判回滚 | G2 |
+| 旧观察晚到、跨 variant／异地乱序 | 当前值不倒退；A→B→A 三次观察均保留，不按内容哈希合并掉观察历史 | G1／G2 |
+| full 任意阶段失败（选择 B3 时） | 旧数据仍可读，候选不半激活；发布重试幂等 | G1／G2 |
+| 旧月缺日、历史修订、睡眠／断网、UTC 主机 | 按上海交易日日历识别洞集，修订有新观察，重复唤起不重复运行 | G1 |
+| worker 竞争、失租旧 worker 恢复 | 同资源仅一个合法提交者；旧 fence 被拒，固定心跳不伪装业务进度 | G2 |
+| 未挂载、错误卷、磁盘满、复制中断／源端误删 | 不误写系统盘，未完成文件不作为 complete 发布，不删唯一副本；源删除不传到备份 | G1；实际环境 G4 |
+| 告警失败、主机离线、备份还原 | ETL 不被通知重试牵连；dead 可见；异机发现离线，隔离恢复证据完整 | G1／G4 |
 
-## 4. 渐进迁移、兼容与回滚
+分钟夜盘、日内边界与财报 PIT 在对应能力获准扩展时另做 G3，不由日频样本外推通过。
 
-| 变更 | 渐进启用 | 回滚边界 |
-|---|---|---|
-| 严格结果与退出码 | 新严格模式先在选定任务启用，旧自动调用者逐一核对；未知任务不能继续假成功 | 可暂停新调度；不得用全局忽略 warning 回滚硬质量保护 |
-| manifest / 文件布局 | 新格式独立版本 / 目录；旧 raw 只读兼容，显式校验迁移，不伪造历史完成证据 | 旧文件保留；关闭新 writer，保留候选和审计记录，不反向覆盖旧格式 |
-| ops / schema 扩展 | additive 迁移优先，既有列 / 表保持兼容；迁移先隔离 PG 验收再单独批准生产 | 先回滚应用开关 / 停止 worker；DDL 是否逆迁移另审，不删除 receipt 或已提交证据 |
-| 全量 / 版本读契约 | 候选 generation 离线验收，再原子切 active；大范围容量单独评估 | active 可指回已验证旧代际；不可把未验证旧观察无条件 merge 覆盖新数据 |
-| 调度 / 主机切换 | 停旧调度、处理在途 run、隔离旧 worker、转移权威后启新；传输和 PG 导入分开验收 | 保持单 writer，不能用“双开一会儿”过渡；缺隔离能力则备端只读 |
+## 4. 兼容与回滚
 
-## 5. 待用户决定（最多三项）
+| 变更 | 渐进启用与回滚边界 |
+| --- | --- |
+| 状态／退出码 | 先核对调用方，在选定任务启用；可暂停新调度，但不以忽略 warning 撤销硬质量门禁 |
+| manifest／文件布局 | 新格式独立版本／目录，旧 raw 显式只读兼容；关闭新 writer 时保留候选、旧文件及审计证据，不反向覆盖旧格式 |
+| ops／schema | 优先兼容扩展，先隔离验收，再按授权迁移工作库；回退先停止 worker／关闭入口，DDL 逆迁移另审，不删除既有 receipt／绑定 |
+| generation／读契约 | 只有旧代际业务数据仍可读且验证一致时才切回；若数据已被 UPSERT 覆盖，仅修改 active 指针不能恢复旧值 |
+| 主机切换 | 停旧调度、处理在途 run、隔离旧 worker，再转移权威；保持单 writer，缺隔离能力则备端只读 |
 
-1. 本次实施先批准到哪一阶段：建议 S0、A、C、B1 / B2 及离线验收先行，D、E 运行平台另阶段。B3 首期是否实施，还是先禁用可靠 full、只开放分区级增量与补数？
-2. 首批数据集、日频 / 分钟频率及历史区间：建议先收敛 Tushare 现有日频和已准入的 RiceQuant 链路，再扩分钟 / 财报。
-3. 主采集 host 与常在线服务器角色、可接受新鲜度 / RPO / RTO 及异地保留预算；据此决定备份节奏、watchdog 与切换方式。
+## 5. 剩余范围决定
 
-以上决定用于确定实施范围，不代表已授权付款、获取额外数据权限、处理真实凭据、生产迁移或上线。批准后，阶段边界、首批数据集等关键取舍按 AGENTS.md §7 记入 `.agents/brain/DECISIONS.md`。
+1. 通用协议本轮实施到哪一阶段；建议先 S0、A、C、B1／B2 与隔离验收，D／E 分阶段，明确是否选择 B3 或暂不开放可靠 full。
+2. 首批升级协议的数据集、日频范围与受限验收区间；不自动把分钟、财报或未准入的米筐补充数据列入实施。
+3. 数据新鲜度、异机告警、RPO／RTO、备份目标与保留预算；主机角色沿用已确认的 iMac 分工，不重复待决。
 
-
-### 2026-10-23 已批准的风险模型 2a 限定实施
-
-当前仅实现米筐风险模型的 variant 用途、整套提交收据、run 绑定和观察级采集／入库检查点。五件套与覆盖表共用 factor.risk_bundle 逻辑目标；采集与入库分开提交，失败 raw 可重放，不能以最大日期宣称连续水位。旧 fixed v1 保持兼容，动态 v2 在导入时使用收据；production 仅允许已确认的 listed_cn_a_v2。工作库新增 DDL 必须先经用户审阅批准。
-
-这不是全供应商 B1 完成，也不是 B2 权威观察顺序／当前指针、B3 full 代际切换或并发无人值守完成。2b 另行评审发布清单和统一读取。用户确认一期只做最新日诊断：组成收据变化使旧发布版本不可复算，不建可变数据版本表；诊断专用 DB 角色延后，但发布明细数据库层拒绝 validation run 的反例测试必须保留。所有相关写入路径尚未纳入失效协议前，不能对外宣称 D-022 已落地。
+这些决定用于确定后续实现范围。本次只更新文档，不启动新的采集、调度、外部通知或部署。

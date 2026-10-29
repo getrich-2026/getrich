@@ -16,12 +16,12 @@
 | 诊断页面接入者 | [诊断 API](guides/diagnosis-api.md) | 调用流程与状态，模型真源在代码／OpenAPI |
 | 数据库开发者 | [数据字典](guides/data-dictionary.md) | 生成字典与注释门禁，不手抄 schema |
 | 安排工作的人 | [待决问题](plans/backlog.md) | 缺口、证据、待定选择、验收条件 |
-| 采集主端迁移维护者 | [iMac 迁移盘点与验收](plans/imac-collector-migration.md) | 2026-10-27 Air 实查清单；iMac 唯一采集、Air 远程开发；迁移及切换尚未执行 |
-| 数据接入实施评审者 | [gr-data可靠采集实施计划](plans/gr-data-reliability-implementation-plan.md) | 待审核；风险修补顺序、文件落点、验收与回滚，未开工 |
-| 米筐历史回补维护者 | [全市场历史名单与覆盖](plans/ricequant-historical-universe.md) | 方向已确认、修订待复核；动态名单、验证 run 隔离、降级日读取与配额估算 |
+| 采集主端迁移维护者 | [iMac 迁移盘点与验收](plans/imac-collector-migration.md) | 2026-10-29 本机核验；当前测试／采样、MBA 硬盘带回后的复制恢复与正式切换顺序 |
+| 数据接入实施评审者 | [gr-data 可靠采集实施计划](plans/gr-data-reliability-implementation-plan.md) | 通用协议待审核；最低导入门禁与米筐 2a 已局部落地，剩余顺序、验收与回滚见计划 |
+| 米筐历史回补维护者 | [全市场历史名单与覆盖](plans/ricequant-historical-universe.md) | 动态名单、2a 与历史回补已完成；覆盖／用途契约、2b 发布读取及剩余验收顺序 |
+| 米筐源单位核查者 | [120 日单位探针](history/2026-10-22-rq-risk-units-probe.md) | 源单位实证依据、判定方法与固定样本名单；保留证据原文 |
 | 米筐验证追溯者 | [米筐验证记录](history/2026-10-23-rq-risk-validation.md) | 验证 variant、源单位依据、production 首 20 日验收与容量估算；units_evidence 引用的锚点在此 |
 | 米筐数值修复验收者 | [REAL 修复验收](history/2026-10-24-rq-real-recovery.md) | 历史全量等价依据、旧 run 禁止发布、新观察替代与版本追溯 |
-| 追溯历史的维护者 | [数据字典旧计划](history/data-dictionary-plan.md)、[诊断旧审查](history/diagnosis-api-review.md) | 已完成快照，不作为当前指令或待办 |
 
 产品、商业与会议材料（商业计划书、内部判断备忘、会议记录、团队任务与支出）维护在团队飞书，不放公开仓库，原因见 [D-019](../.agents/brain/DECISIONS.md#d-019)。
 
