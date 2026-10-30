@@ -5,16 +5,33 @@ from __future__ import annotations
 from gr_data.common.contracts.base import TableContract
 
 
+# tushare daily_basic 的唯一落库位置：源字段一个只落一处，单位在 ingest 层一次归一。
+_VALUATION_NUMERIC = (
+    "total_mv",
+    "circ_mv",
+    "pe",
+    "pe_ttm",
+    "pb",
+    "ps",
+    "ps_ttm",
+    "dv_ratio",
+    "dv_ttm",
+    "total_share",
+    "float_share",
+    "free_share",
+    "turnover_rate",
+    "turnover_rate_f",
+    "volume_ratio",
+)
+
 VALUATION_1D = TableContract(
     schema="fundamental",
     table="valuation_1d",
     columns=(
         "instrument_id",
         "trading_day",
-        "total_mv",
-        "circ_mv",
-        "pb",
-        "pe_ttm",
+        *_VALUATION_NUMERIC,
+        "limit_status",
         "currency",
         "source",
         "available_at",
@@ -25,10 +42,8 @@ VALUATION_1D = TableContract(
     column_types=(
         ("instrument_id", "int8"),
         ("trading_day", "date"),
-        ("total_mv", "float8"),
-        ("circ_mv", "float8"),
-        ("pb", "float8"),
-        ("pe_ttm", "float8"),
+        *((name, "float8") for name in _VALUATION_NUMERIC),
+        ("limit_status", "int2"),
         ("currency", "text"),
         ("source", "text"),
         ("available_at", "timestamptz"),

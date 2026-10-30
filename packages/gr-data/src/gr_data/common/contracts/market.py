@@ -1,7 +1,7 @@
 """`market` schema 的表契约。
 
 DDL 真源：gr-db `ddl/postgres/003_market.sql`（K 线）、`007_insight.sql`
-（复权因子 / 每日指标 / 估值等参考表）、`036_market_ext.sql`（复权因子明细）。
+（复权因子等参考表）、`036_market_ext.sql`（复权因子明细）。
 """
 
 from __future__ import annotations
@@ -99,39 +99,6 @@ def bar_1m(asset: str) -> TableContract:
 
 
 # ---- 参考表 ----
-# 表结构是 insight 时代定的（OHLC + 换手 + 市值），而 tushare `daily_basic`
-# 返回的是估值口径（pe/pb/ps/dv/股本）。两边只在 close / turnover_rate /
-# 两个市值列上重合，其余 tushare 字段进 raw_payload —— 面向分析的规整形态
-# 在 `fundamental.valuation_1d`，不在这里。
-STOCK_DAILY_BASIC = TableContract(
-    schema="market",
-    table="stock_daily_basic",
-    columns=(
-        "instrument_id",
-        "trading_day",
-        "close",
-        "turnover_rate",
-        "float_market_cap",
-        "total_market_cap",
-        "source",
-        "raw_payload",
-    ),
-    conflict_keys=("instrument_id", "trading_day", "source"),
-    # 声明的是**发送端的线上类型**，不是目标列的 PG 类型：这几列在表里是
-    # NUMERIC，但 Python 侧给的是 float，声明 numeric 会让 psycopg 选中
-    # NumericDumper 而它不接受 float。float8 的文本表示能被 NUMERIC 原样解析。
-    column_types=(
-        ("instrument_id", "int8"),
-        ("trading_day", "date"),
-        ("close", "float8"),
-        ("turnover_rate", "float8"),
-        ("float_market_cap", "float8"),
-        ("total_market_cap", "float8"),
-        ("source", "text"),
-        ("raw_payload", "jsonb"),
-    ),
-)
-
 # 每日单值复权因子的明细表（tushare `adj_factor`）。canonical 的
 # `market.*_bar_1d.adj_factor` 列仍然照填，这张表存的是不依赖行情表的原始序列。
 ADJ_FACTOR_TS = TableContract(

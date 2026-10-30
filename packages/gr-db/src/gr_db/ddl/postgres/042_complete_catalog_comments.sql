@@ -936,31 +936,6 @@ COMMENT ON COLUMN market.stock_bar_1m.trading_status IS '交易状态。';
 COMMENT ON COLUMN market.stock_bar_1m.updated_at IS '记录最后更新时间。';
 COMMENT ON COLUMN market.stock_bar_1m.volume IS '成交量；股票与 ETF 单位为股，期货与期权单位为手。';
 
--- market.stock_daily_basic
-COMMENT ON COLUMN market.stock_daily_basic.amount IS '成交额，单位为元。';
-COMMENT ON COLUMN market.stock_daily_basic.amplitude IS '日内振幅。';
-COMMENT ON COLUMN market.stock_daily_basic.avg_amount_per_trade IS 'stock_daily_basic表的avg_amount_per_trade字段。';
-COMMENT ON COLUMN market.stock_daily_basic.avg_price IS '平均成交价。';
-COMMENT ON COLUMN market.stock_daily_basic.avg_volume_per_trade IS 'stock_daily_basic表的avg_volume_per_trade字段。';
-COMMENT ON COLUMN market.stock_daily_basic.backward_adjusted_closing_price IS 'stock_daily_basic表的backward_adjusted_closing_price字段。';
-COMMENT ON COLUMN market.stock_daily_basic.close IS '收盘价或最新收盘价。';
-COMMENT ON COLUMN market.stock_daily_basic.day_change IS 'stock_daily_basic表的day_change字段。';
-COMMENT ON COLUMN market.stock_daily_basic.float_market_cap IS 'stock_daily_basic表的float_market_cap字段。';
-COMMENT ON COLUMN market.stock_daily_basic.high IS '最高价。';
-COMMENT ON COLUMN market.stock_daily_basic.instrument_id IS '关联 meta.instruments 的标的 ID。';
-COMMENT ON COLUMN market.stock_daily_basic.low IS '最低价。';
-COMMENT ON COLUMN market.stock_daily_basic.num_trades IS 'stock_daily_basic表的num_trades字段。';
-COMMENT ON COLUMN market.stock_daily_basic.open IS '开盘价。';
-COMMENT ON COLUMN market.stock_daily_basic.pre_close IS '前一交易日收盘价。';
-COMMENT ON COLUMN market.stock_daily_basic.raw_payload IS '保留供应商原始字段的 JSONB 载荷。';
-COMMENT ON COLUMN market.stock_daily_basic.source IS '产生或提供该记录的数据源标识。';
-COMMENT ON COLUMN market.stock_daily_basic.total_market_cap IS 'stock_daily_basic表的total_market_cap字段。';
-COMMENT ON COLUMN market.stock_daily_basic.trading_day IS '所属交易日。';
-COMMENT ON COLUMN market.stock_daily_basic.trading_state IS '当日交易状态。';
-COMMENT ON COLUMN market.stock_daily_basic.turnover_rate IS '换手率。';
-COMMENT ON COLUMN market.stock_daily_basic.updated_at IS '记录最后更新时间。';
-COMMENT ON COLUMN market.stock_daily_basic.volume IS '成交量；股票与 ETF 单位为股，期货与期权单位为手。';
-
 -- market.stock_valuation
 COMMENT ON TABLE market.stock_valuation IS '市场行情与参考数据表：stock_valuation。';
 COMMENT ON COLUMN market.stock_valuation.avg_amount_per_trade IS 'stock_valuation表的avg_amount_per_trade字段。';

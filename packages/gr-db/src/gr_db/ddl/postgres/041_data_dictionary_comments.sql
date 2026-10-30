@@ -59,15 +59,13 @@ COMMENT ON COLUMN factor.specific_return.instrument_id IS '关联的标的 ID。
 COMMENT ON COLUMN factor.specific_return.trading_day IS '特质收益所属交易日。';
 COMMENT ON COLUMN factor.specific_return.available_at IS '该收益可供下游使用的时间。';
 
-COMMENT ON TABLE fundamental.valuation_1d IS '面向分析的每日估值快照。';
+COMMENT ON TABLE fundamental.valuation_1d IS '每日估值、股本与换手快照；tushare daily_basic 的唯一落库位置，单位已归一。';
 COMMENT ON COLUMN fundamental.valuation_1d.instrument_id IS '关联的标的 ID。';
 COMMENT ON COLUMN fundamental.valuation_1d.trading_day IS '估值所属交易日。';
 COMMENT ON COLUMN fundamental.valuation_1d.circ_mv IS '流通市值，单位元。';
 COMMENT ON COLUMN fundamental.valuation_1d.pb IS '市净率。';
 COMMENT ON COLUMN fundamental.valuation_1d.currency IS '估值金额的币种。';
-COMMENT ON COLUMN fundamental.valuation_1d.fx_as_of IS '非人民币估值使用的汇率日期。';
 COMMENT ON COLUMN fundamental.valuation_1d.source IS '估值数据来源。';
-COMMENT ON COLUMN fundamental.valuation_1d.source_revision IS '数据源版本，仅供追溯。';
 COMMENT ON TABLE fundamental.indicator_q IS '按公告日可用的季度财务指标。';
 COMMENT ON COLUMN fundamental.indicator_q.instrument_id IS '关联的标的 ID。';
 COMMENT ON COLUMN fundamental.indicator_q.end_date IS '财务报告期末日期。';

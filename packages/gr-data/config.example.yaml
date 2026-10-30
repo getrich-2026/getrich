@@ -179,7 +179,7 @@ enabled:
     # 可用的 importer（也可以直接写组名 reference / events / bars_1d / market_ext / all）：
     #   instruments, symbol_map, calendar,
     #   stock_bar_1d, index_bar_1d, future_bar_1d,
-    #   suspend_d, daily_basic, adj_factor_ts, valuation_1d, instrument_category
+    #   suspend_d, adj_factor_ts, valuation_1d, instrument_category
     # 顺序有依赖：instruments -> symbol_map -> 其余全部（都要靠 symbol_map 解析
     # instrument_id）。
     #

@@ -117,7 +117,7 @@ def _amount_in_yuan(series: pd.Series, multiplier: int) -> pd.Series:
 class _SymbolResolvingImporter(BaseImporter):
     """把 ``ts_code`` 解析成 ``instrument_id`` 的公共部分。
 
-    行情 importer 与参考行情 importer（daily_basic / adj_factor_ts）都要做这件事，
+    行情 importer 与参考 importer（valuation_1d / adj_factor_ts）都要做这件事，
     且「未登记标的必须可见地跳过」这条纪律对两者一样重要，所以提到一处。
     """
 
@@ -734,103 +734,34 @@ class FutureBars1dImporter(_BaseBarsImporter):
         return out[list(self.contract.columns)].reset_index(drop=True)
 
 
-class DailyBasicImporter(_SymbolResolvingImporter):
-    """daily_basic → market.stock_daily_basic。
-
-    目标表的形状是 insight 时代定的（OHLC + 换手 + 市值），而 tushare 这个接口
-    返回的是估值口径。两边只在 ``close`` / ``turnover_rate`` / 两个市值列上重合：
-
-    | tushare | 目标列 | 换算 |
-    |---|---|---|
-    | ``close``         | ``close``            | — |
-    | ``turnover_rate`` | ``turnover_rate``    | 原样，单位是 **%**（见下） |
-    | ``circ_mv``       | ``float_market_cap`` | 万元 → 元（×10000）|
-    | ``total_mv``      | ``total_market_cap`` | 万元 → 元（×10000）|
-
-    其余字段（pe / pb / ps / dv / 三个股本 / limit_status …）目标表没有实体列，
-    **按供应商原名原值**进 ``raw_payload`` —— 那一列的语义就是「完整原始行」，
-    在里面做单位换算会让同一个数字在库里有两套口径且无从分辨。面向分析的规整
-    形态（换算后的 total_mv / pb / pe_ttm）在 `fundamental.valuation_1d`，
-    由另一个 importer 读同一份 raw 生成。
-
-    ``turnover_rate`` 的单位是百分数（tushare 文档明写「换手率（%）」）。目标列
-    在 insight 时代没有单位注释，本仓也没有 insight 写入过的数据可比对，因此
-    **以 tushare 口径为准并原样入库**，不做任何缩放猜测。
-    """
-
-    DATASET = "daily_basic"
-    CONTRACT = contracts.STOCK_DAILY_BASIC
-    NOT_NULL_COLUMNS = ("instrument_id", "trading_day", "source")
-    JSON_COLUMNS = ("raw_payload",)
-
-    #: 已提升为实体列的字段，不再重复放进 raw_payload（同一个数字两处存储，
-    #: 改一处漏一处）。派生列 instrument_id / trading_day 同理。
-    _PROMOTED = (
-        "ts_code",
-        "trade_date",
-        "close",
-        "turnover_rate",
-        "circ_mv",
-        "total_mv",
-        "instrument_id",
-        "trading_day",
-    )
-
-    def build(self) -> pd.DataFrame:
-        # 提升列缺失时整列会写成 NULL，再经 UPSERT 覆盖库内已有值，所以缺列必须硬失败。
-        raw = self._read_selected(
-            "daily_basic",
-            frozenset({"ts_code", "trade_date", "close", "turnover_rate", "circ_mv", "total_mv"}),
-        )
-        if raw.empty:
-            self.log.warning("daily_basic 无 raw 数据")
-            return pd.DataFrame(columns=list(self.contract.columns))
-
-        df = raw.copy()
-        df["ts_code"] = df["ts_code"].astype(str).str.strip()
-        df["trading_day"] = _parse_trade_date(df, "daily_basic")
-        df = self._attach_ids(df, self._id_map())
-        if df.empty:
-            return pd.DataFrame(columns=list(self.contract.columns))
-
-        _to_numeric(df, ["close", "turnover_rate", "circ_mv", "total_mv"])
-
-        payload_cols = [c for c in df.columns if c not in self._PROMOTED]
-        payload = df[payload_cols].to_dict("records")
-
-        out = pd.DataFrame(
-            {
-                "instrument_id": df["instrument_id"].astype("int64"),
-                "trading_day": df["trading_day"],
-                "close": df["close"],
-                "turnover_rate": df["turnover_rate"],
-                # 万元 → 元
-                "float_market_cap": df["circ_mv"] * 10000.0,
-                "total_market_cap": df["total_mv"] * 10000.0,
-                "source": PROVIDER,
-                "raw_payload": payload,
-            }
-        )
-        out = out.drop_duplicates(subset=["instrument_id", "trading_day"], keep="last")
-        return out[list(self.contract.columns)].reset_index(drop=True)
+#: daily_basic 源字段 → valuation_1d 列的换算倍率。未列出的字段原值入库。
+_DAILY_BASIC_SCALE = {
+    # 万元 → 元
+    "total_mv": 10000.0,
+    "circ_mv": 10000.0,
+    # 万股 → 股
+    "total_share": 10000.0,
+    "float_share": 10000.0,
+    "free_share": 10000.0,
+}
 
 
 class ValuationImporter(_SymbolResolvingImporter):
-    """daily_basic → fundamental.valuation_1d（面向分析的规整估值快照，G3）。
+    """daily_basic → fundamental.valuation_1d（每日估值、股本与换手快照，G3）。
 
-    与 `DailyBasicImporter` 读同一份 raw，但目标不同：那张表保留 insight 时代的
-    形状、多余字段进 raw_payload；**这张表是计算层直接取用的形态**，单位与口径
-    都已归一，下游不再临时乘除。
+    这是 daily_basic 在库内**唯一**的落点，源字段一个只落一处；完整源行留在 raw
+    parquet，库内不再用 JSONB 复制。单位与口径在这里一次归一，下游不再临时乘除：
 
     | tushare | 目标列 | 换算 |
     |---|---|---|
-    | ``total_mv`` | ``total_mv`` | 万元 → 元（×10000）|
-    | ``circ_mv``  | ``circ_mv``  | 万元 → 元（×10000）|
-    | ``pb``       | ``pb``       | 无量纲，原样 |
-    | ``pe_ttm``   | ``pe_ttm``   | 无量纲，原样；**亏损股为 NULL，保持 NULL** |
+    | ``total_mv`` / ``circ_mv`` | 同名 | 万元 → 元（×10000）|
+    | ``total_share`` / ``float_share`` / ``free_share`` | 同名 | 万股 → 股（×10000）|
+    | ``pe`` / ``pe_ttm`` / ``pb`` / ``ps`` / ``ps_ttm`` / ``volume_ratio`` | 同名 | 无量纲，原样 |
+    | ``dv_ratio`` / ``dv_ttm`` / ``turnover_rate(_f)`` | 同名 | 百分数原值，**不除以 100** |
+    | ``limit_status`` | 同名 | 0–6 枚举原值 |
 
-    亏损股的 `pe_ttm` 用 0 或极大值兜底会让估值分档整体失真 —— 那是
-    「不知道」不是「等于某个数」，两者不能混为一谈。
+    亏损股的 ``pe`` / ``pe_ttm`` 在源侧为 NULL，保持 NULL：用 0 或极大值兜底会让
+    估值分档整体失真 —— 那是「不知道」不是「等于某个数」。
     """
 
     DATASET = "valuation_1d"
@@ -841,11 +772,26 @@ class ValuationImporter(_SymbolResolvingImporter):
     #: 供应商没给逐行时间戳，只能用固定小时近似（见 ingest/pit.py 的分级说明）。
     PUBLISH_HOUR = 17
 
+    #: 原样入库的数值字段（与 _DAILY_BASIC_SCALE 一起覆盖全部数值目标列）。
+    _PASSTHROUGH = (
+        "pe",
+        "pe_ttm",
+        "pb",
+        "ps",
+        "ps_ttm",
+        "dv_ratio",
+        "dv_ttm",
+        "turnover_rate",
+        "turnover_rate_f",
+        "volume_ratio",
+    )
+
     def build(self) -> pd.DataFrame:
-        # 缺列整列写 NULL 会经 UPSERT 覆盖库内已有值，必须硬失败；pe_ttm 的 NULL 只能来自源值。
+        # 缺列整列写 NULL 会经 UPSERT 覆盖库内已有值，必须硬失败；NULL 只能来自源值。
+        numeric = [*_DAILY_BASIC_SCALE, *self._PASSTHROUGH]
         raw = self._read_selected(
             "daily_basic",
-            frozenset({"ts_code", "trade_date", "total_mv", "circ_mv", "pb", "pe_ttm"}),
+            frozenset({"ts_code", "trade_date", *numeric, "limit_status"}),
         )
         if raw.empty:
             self.log.warning("daily_basic 无 raw 数据")
@@ -858,17 +804,22 @@ class ValuationImporter(_SymbolResolvingImporter):
         if df.empty:
             return pd.DataFrame(columns=list(self.contract.columns))
 
-        _to_numeric(df, ["total_mv", "circ_mv", "pb", "pe_ttm"])
+        _to_numeric(df, [*numeric, "limit_status"])
+        limit_status = df["limit_status"]
+        invalid = limit_status.notna() & ~limit_status.isin(range(7))
+        if invalid.any():
+            # 枚举外的值说明源语义变了，CHECK 会拒掉整批；先在这里给出可定位的错误。
+            bad = sorted(limit_status[invalid].unique())
+            raise ValueError(f"daily_basic.limit_status 含 0–6 以外的值: {bad}")
 
         out = pd.DataFrame(
             {
                 "instrument_id": df["instrument_id"].astype("int64"),
                 "trading_day": df["trading_day"],
-                # 万元 → 元。换算只在这里发生一次，计算层与文档都不再乘除。
-                "total_mv": df["total_mv"] * 10000.0,
-                "circ_mv": df["circ_mv"] * 10000.0,
-                "pb": df["pb"],
-                "pe_ttm": df["pe_ttm"],
+                # 换算只在这里发生一次，计算层与文档都不再乘除。
+                **{name: df[name] * scale for name, scale in _DAILY_BASIC_SCALE.items()},
+                **{name: df[name] for name in self._PASSTHROUGH},
+                "limit_status": limit_status.astype("Int64"),
                 "currency": "CNY",
                 "source": PROVIDER,
                 "available_at": pit.from_trading_day(
@@ -928,7 +879,6 @@ class AdjFactorTsImporter(_SymbolResolvingImporter):
 __all__ = [
     "AdjFactorTsImporter",
     "ValuationImporter",
-    "DailyBasicImporter",
     "StockBars1dImporter",
     "IndexBars1dImporter",
     "FutureBars1dImporter",

@@ -226,7 +226,6 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     assert _count(pg_conn, "market.stock_bar_1d") == 4  # 2 codes x 2 days
     assert _count(pg_conn, "market.index_bar_1d") == 2
     assert _count(pg_conn, "market.future_bar_1d") == 2
-    assert _count(pg_conn, "market.stock_daily_basic") == 4
     assert _count(pg_conn, "market.adj_factor_ts") == 4
     assert _count(pg_conn, "fundamental.valuation_1d") == 4
     assert _count(pg_conn, "classify.instrument_category") == 2
@@ -273,7 +272,7 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     owners = {o.target: o.provider for o in OwnershipManager(pg_conn).list_all()}
     assert owners["market.stock_bar_1d"] == "tushare"
     assert owners["market.future_bar_1d"] == "tushare"
-    assert owners["market.stock_daily_basic"] == "tushare"
+    assert owners["fundamental.valuation_1d"] == "tushare"
     assert owners["market.adj_factor_ts"] == "tushare"
 
     # 仅在临时测试库模拟他源占有，拒绝写入且保持原行情与 owner。
@@ -287,42 +286,25 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     assert _count(pg_conn, "market.stock_bar_1d") == 4
 
 
-def test_daily_basic_jsonb_roundtrip(pg_conn, tmp_raw_root, fake_tushare):
-    """JSONB 列的 COPY 通路必须真的走通一次。
+def test_valuation_roundtrip(pg_conn, tmp_raw_root, fake_tushare):
+    """daily_basic 只落 valuation_1d：全部字段换算后经真库 COPY 往返一致。
 
-    `upsert_rows` 走的是文本 COPY，psycopg 靠首行的 Python 类型推断适配器；
-    dict → jsonb 能不能落地、`set_types` 有没有生效，只有真库能证明。
-    mock 测试在这件事上是完全无效的。
+    `upsert_rows` 走文本 COPY，float8 → NUMERIC、Int64 → SMALLINT 能否落地、
+    available_at 的时区是否钉对，只有真库能证明。
     """
     _run_tushare_raw(tmp_raw_root, fake_tushare)
     ctx = IngestContext(paths=tmp_raw_root)
 
     from gr_data.ingest.tushare import REGISTRY
 
-    for name in ("instruments", "symbol_map", "daily_basic", "adj_factor_ts", "valuation_1d"):
+    for name in ("instruments", "symbol_map", "adj_factor_ts", "valuation_1d"):
         REGISTRY[name](pg_conn, ctx).run()
 
-    assert _count(pg_conn, "market.stock_daily_basic") == 4  # 2 codes x 2 days
     assert _count(pg_conn, "market.adj_factor_ts") == 4
-    assert _count(pg_conn, "fundamental.valuation_1d") == 4
-
+    assert _count(pg_conn, "fundamental.valuation_1d") == 4  # 2 codes x 2 days
     with pg_conn.cursor() as cur:
-        cur.execute(
-            "SELECT total_market_cap, float_market_cap, close, turnover_rate, "
-            "       raw_payload->>'pb', raw_payload->>'total_share', raw_payload ? 'close' "
-            "FROM market.stock_daily_basic b JOIN meta.instruments i USING (instrument_id) "
-            "WHERE i.symbol = '600000.SH' AND b.trading_day = DATE '2024-01-02'"
-        )
-        total_mv, circ_mv, close, turnover, pb, total_share, has_close = cur.fetchone()
-        # 万元 → 元
-        assert float(total_mv) == 120_000_000.0
-        assert float(circ_mv) == 80_000_000.0
-        assert float(close) == 10.5
-        assert float(turnover) == 1.25
-        # raw_payload 是真 jsonb（能用 ->> 取值），且不重复装已提升的列
-        assert float(pb) == 1.2
-        assert float(total_share) == 100000.0  # 原值原名，不换算
-        assert has_close is False
+        cur.execute("SELECT to_regclass('market.stock_daily_basic')")
+        assert cur.fetchone()[0] is None  # 不再有第二个落点
 
         cur.execute(
             "SELECT adj_factor, source FROM market.adj_factor_ts a "
@@ -333,23 +315,38 @@ def test_daily_basic_jsonb_roundtrip(pg_conn, tmp_raw_root, fake_tushare):
         assert float(adj) == 1.25
         assert source == "tushare"
 
-        # fundamental.valuation_1d：同一份 raw 的另一条路，单位已归一。
         # available_at 断言的是**瞬间**而不是 utcoffset —— 后者只反映读取连接的
         # 会话时区，换个连接就变，证明不了写入时钉对了时区。
         cur.execute(
-            "SELECT total_mv, circ_mv, pb, pe_ttm, currency, "
-            "       available_at AT TIME ZONE 'UTC' "
+            "SELECT total_mv, circ_mv, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, "
+            "       total_share, float_share, free_share, turnover_rate, turnover_rate_f, "
+            "       volume_ratio, limit_status, currency, available_at AT TIME ZONE 'UTC' "
             "FROM fundamental.valuation_1d v "
             "JOIN meta.instruments i USING (instrument_id) "
             "WHERE i.symbol = '600000.SH' AND v.trading_day = DATE '2024-01-02'"
         )
-        total_mv, circ_mv, pb, pe_ttm, currency, avail_utc = cur.fetchone()
-        assert float(total_mv) == 120_000_000.0
-        assert float(circ_mv) == 80_000_000.0
-        assert float(pb) == 1.2
-        assert float(pe_ttm) == 11.5
-        assert currency == "CNY"
-        assert avail_utc == datetime(2024, 1, 2, 9, 0)  # 17:00 +08:00
+        row = cur.fetchone()
+    *numbers, limit_status, currency, avail_utc = row
+    assert [float(x) for x in numbers] == [
+        120_000_000.0,  # 12000 万元
+        80_000_000.0,
+        12.0,
+        11.5,
+        1.2,
+        3.0,
+        2.9,
+        2.5,
+        2.4,
+        1_000_000_000.0,  # 100000 万股
+        800_000_000.0,
+        700_000_000.0,
+        1.25,  # 百分数原值
+        1.5,
+        0.9,
+    ]
+    assert limit_status == 0
+    assert currency == "CNY"
+    assert avail_utc == datetime(2024, 1, 2, 9, 0)  # 17:00 +08:00
 
 
 _SCALING = {

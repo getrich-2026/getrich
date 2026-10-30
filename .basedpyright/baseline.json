@@ -8204,14 +8204,6 @@
             {
                 "code": "reportArgumentType",
                 "range": {
-                    "startColumn": 34,
-                    "endColumn": 38,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportArgumentType",
-                "range": {
                     "startColumn": 33,
                     "endColumn": 37,
                     "lineCount": 1
@@ -8236,8 +8228,8 @@
             {
                 "code": "reportArgumentType",
                 "range": {
-                    "startColumn": 38,
-                    "endColumn": 42,
+                    "startColumn": 37,
+                    "endColumn": 41,
                     "lineCount": 1
                 }
             }
@@ -9028,8 +9020,8 @@
             {
                 "code": "reportArgumentType",
                 "range": {
-                    "startColumn": 34,
-                    "endColumn": 38,
+                    "startColumn": 33,
+                    "endColumn": 37,
                     "lineCount": 1
                 }
             },

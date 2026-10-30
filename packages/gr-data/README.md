@@ -79,8 +79,8 @@ uv run gr-data ingest tushare               # 归一化入库
 | `reference` | `instruments` → `meta.instruments`；`symbol_map` → `meta.symbol_map`；`calendar` → `meta.trading_calendar` |
 | `events` | `suspend_d` → `market.stock_suspend_event`、`market.stock_suspend_coverage` |
 | `bars_1d` | `stock_bar_1d`／`index_bar_1d`／`future_bar_1d` → 对应 `market.*_bar_1d` |
-| `market_ext` | `daily_basic` → `market.stock_daily_basic`；`adj_factor_ts` → `market.adj_factor_ts` |
-| `fundamental` | `valuation_1d` → `fundamental.valuation_1d` |
+| `market_ext` | `adj_factor_ts` → `market.adj_factor_ts` |
+| `fundamental` | `valuation_1d` → `fundamental.valuation_1d`（raw `daily_basic` 的唯一落点） |
 | `classify` | `instrument_category` → `classify.instrument_category` |
 
 raw 先抓标的和日历。股票按 `trade_date` 逐日请求全市场；指数按白名单逐代码整段请求，
@@ -115,8 +115,8 @@ uv run gr-data ingest tushare --only events,bars_1d,market_ext,fundamental,class
 
 选中的数据集按依赖顺序执行，即使 `--only` 顺序相反也先处理依赖；未选中的依赖
 不会自动启用。历史数据建议逐月导入，避免一次加载全部月份。
-`daily_basic` 和 `valuation_1d` 共用原始文件，各自在目标金额列做万元→元转换；
-未提升字段在 `raw_payload` 中保持供应商原单位。缺复权因子或股票 OHLC 会中断；
+raw `daily_basic` 只落 `fundamental.valuation_1d`：市值万元→元、股本万股→股，
+百分数（换手率、股息率）保持源值不除以 100，其余比率原样。缺复权因子或股票 OHLC 会中断；
 个别代码缺涨跌停价保留 NULL 并记软告警。股票辅助表关联前统一 int8／字符串日期
 及代码首尾空格，再按键去重；期货成交量与持仓量保持「手」。
 
@@ -359,7 +359,7 @@ Tushare importer 严格校验，下列情况**硬失败**：本 importer 不写�
 | raw Parquet 存在但不可读 | 报 `Corrupt raw parquet: <数据集>/<文件>`，不删除、不覆盖该文件 |
 | 所选月份缺必需分区 | `--months` 指定的月份或主数据集现有月份缺分区；`stock_bar_1d` 还要求同月的 `adj_factor`、`stk_limit` |
 | 未知代码 | 不在 `meta.symbol_map` 的行整批拒绝，不丢行；先跑 `instruments`、`symbol_map` |
-| 质量问题 | 空数据集、缺必需列、主键重复、必需列为空；股票日线成交量／成交额缺失、非数值或非有限；`daily_basic`／`valuation_1d` 缺目标列对应的源字段（缺列会让整列 NULL 经 UPSERT 覆盖已有值） |
+| 质量问题 | 空数据集、缺必需列、主键重复、必需列为空；股票日线成交量／成交额缺失、非数值或非有限；`valuation_1d` 缺目标列对应的 `daily_basic` 源字段（缺列会让整列 NULL 经 UPSERT 覆盖已有值） |
 | 股票标的或沪深日历缺失 | `instruments[stock]`、`calendar[SSE]`、`calendar[SZSE]` |
 | 停复牌 raw 与库不一致 | raw `suspend_d` 有有效凭据，但库内缺这些日期的覆盖或哈希不同，说明未重导停复牌，先跑 `suspend_d` |
 | 表归属冲突 | 目标表已归属其他 provider；记 `failed`，退出码 1（此前为 2） |

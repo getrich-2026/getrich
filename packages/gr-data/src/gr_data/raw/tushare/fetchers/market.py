@@ -64,7 +64,7 @@ INDEX_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,v
 FUT_DAILY_FIELDS = (
     "ts_code,trade_date,pre_close,pre_settle,open,high,low,close,settle,vol,amount,oi"
 )
-# 每日指标（估值 + 股本）。字段全取 —— 目标表只有几列对得上，其余进 raw_payload，
+# 每日指标（估值 + 股本 + 换手）。字段全取，全部落 fundamental.valuation_1d；
 # 少取一个字段就等于永久丢掉一段历史（这个接口不支持按字段回补）。
 DAILY_BASIC_FIELDS = (
     "ts_code,trade_date,close,turnover_rate,turnover_rate_f,volume_ratio,"

@@ -84,37 +84,6 @@ CREATE TABLE IF NOT EXISTS market.stock_adj_factor (
 );
 SELECT create_hypertable('market.stock_adj_factor', 'begin_date', chunk_time_interval => INTERVAL '1 year', if_not_exists => TRUE);
 
-CREATE TABLE IF NOT EXISTS market.stock_daily_basic (
-    instrument_id                       BIGINT NOT NULL REFERENCES meta.instruments(instrument_id),
-    trading_day                         DATE NOT NULL,
-    trading_state                       VARCHAR(32),
-    open                                NUMERIC(20,6),
-    high                                NUMERIC(20,6),
-    low                                 NUMERIC(20,6),
-    close                               NUMERIC(20,6),
-    pre_close                           NUMERIC(20,6),
-    backward_adjusted_closing_price     NUMERIC(20,6),
-    volume                              BIGINT,
-    amount                              NUMERIC(24,4),
-    day_change                          NUMERIC(20,6),
-    turnover_rate                       NUMERIC(18,8),
-    amplitude                           NUMERIC(18,8),
-    avg_price                           NUMERIC(20,6),
-    avg_volume_per_trade                NUMERIC(24,6),
-    avg_amount_per_trade                NUMERIC(24,6),
-    float_market_cap                    NUMERIC(28,4),
-    total_market_cap                    NUMERIC(28,4),
-    num_trades                          BIGINT,
-    source                              VARCHAR(32) NOT NULL,
-    raw_payload                         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    updated_at                          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (instrument_id, trading_day, source),
-    CONSTRAINT chk_stock_daily_basic_ohlc CHECK (high IS NULL OR low IS NULL OR high >= low),
-    CONSTRAINT chk_stock_daily_basic_volume CHECK (volume IS NULL OR volume >= 0),
-    CONSTRAINT chk_stock_daily_basic_trades CHECK (num_trades IS NULL OR num_trades >= 0)
-);
-SELECT create_hypertable('market.stock_daily_basic', 'trading_day', chunk_time_interval => INTERVAL '1 year', if_not_exists => TRUE);
-
 CREATE TABLE IF NOT EXISTS market.stock_valuation (
     instrument_id          BIGINT NOT NULL REFERENCES meta.instruments(instrument_id),
     trading_day            DATE NOT NULL,
@@ -342,38 +311,6 @@ CREATE TABLE IF NOT EXISTS market.etf_redemption (
     )
 );
 SELECT create_hypertable('market.etf_redemption', 'trading_day', chunk_time_interval => INTERVAL '1 year', if_not_exists => TRUE);
-
-CREATE OR REPLACE VIEW market.v_stock_daily_basic AS
-SELECT
-    b.source,
-    sm.source_symbol,
-    i.instrument_id,
-    i.asset,
-    i.exchange,
-    i.symbol,
-    i.name,
-    b.trading_day,
-    b.trading_state,
-    b.open,
-    b.high,
-    b.low,
-    b.close,
-    b.pre_close,
-    b.backward_adjusted_closing_price,
-    b.volume,
-    b.amount,
-    b.day_change,
-    b.turnover_rate,
-    b.amplitude,
-    b.float_market_cap,
-    b.total_market_cap,
-    b.updated_at
-FROM market.stock_daily_basic b
-JOIN meta.instruments i
-  ON i.instrument_id = b.instrument_id
-JOIN meta.symbol_map sm
-  ON sm.instrument_id = b.instrument_id
- AND sm.source = b.source;
 
 CREATE OR REPLACE VIEW market.v_stock_valuation AS
 SELECT

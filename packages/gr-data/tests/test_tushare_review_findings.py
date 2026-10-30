@@ -375,46 +375,44 @@ def _daily_basic_raw_without(*columns: str) -> pd.DataFrame:
         "trade_date": "20240102",
         "close": 10.5,
         "turnover_rate": 1.25,
+        "turnover_rate_f": 1.5,
+        "volume_ratio": 0.9,
+        "pe": 12.0,
         "pe_ttm": 11.5,
         "pb": 1.2,
+        "ps": 3.0,
+        "ps_ttm": 2.9,
+        "dv_ratio": 2.5,
+        "dv_ttm": 2.4,
+        "total_share": 100000.0,
+        "float_share": 80000.0,
+        "free_share": 70000.0,
         "total_mv": 12000.0,
         "circ_mv": 8000.0,
+        "limit_status": 0,
     }
     return pd.DataFrame([{k: v for k, v in row.items() if k not in columns}])
 
 
-@pytest.mark.parametrize("missing", ["turnover_rate", "circ_mv", "total_mv"])
-def test_daily_basic_missing_column_rejected(tmp_raw_root, monkeypatch, missing):
-    """#46：提升列缺失时硬失败，不让整列 NULL 经 UPSERT 覆盖库内已有值。"""
-    from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.market import DailyBasicImporter
-
-    _write(tmp_raw_root, "daily_basic", _daily_basic_raw_without(missing))
-    imp = DailyBasicImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
-    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
-
-    with pytest.raises(ValueError, match=f"缺少字段.*{missing}"):
-        imp.build()
-
-
-@pytest.mark.parametrize("importer", ["DailyBasicImporter", "ValuationImporter"])
-def test_one_partition_missing_column_rejected(tmp_raw_root, monkeypatch, importer):
+def test_one_partition_missing_column_rejected(tmp_raw_root, monkeypatch):
     """#46：只有某个月分区缺列时，拼接后的列表面齐全，必须按分区逐个校验才拦得住。"""
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers import market
+    from gr_data.ingest.tushare.importers.market import ValuationImporter
 
-    missing = "turnover_rate" if importer == "DailyBasicImporter" else "pe_ttm"
     _write(tmp_raw_root, "daily_basic", _daily_basic_raw_without())
-    february = _daily_basic_raw_without(missing).assign(trade_date="20240201")
+    february = _daily_basic_raw_without("pe_ttm").assign(trade_date="20240201")
     _write(tmp_raw_root, "daily_basic", february, ym="2024-02")
-    imp = getattr(market, importer)(conn=None, ctx=IngestContext(paths=tmp_raw_root))
+    imp = ValuationImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
     monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
 
-    with pytest.raises(ValueError, match=rf"daily_basic\[2024-02\] 缺少字段.*{missing}"):
+    with pytest.raises(ValueError, match=r"daily_basic\[2024-02\] 缺少字段.*pe_ttm"):
         imp.build()
 
 
-@pytest.mark.parametrize("missing", ["total_mv", "circ_mv", "pb", "pe_ttm"])
+@pytest.mark.parametrize(
+    "missing",
+    ["total_mv", "circ_mv", "pb", "pe_ttm", "total_share", "turnover_rate", "limit_status"],
+)
 def test_valuation_missing_column_rejected(tmp_raw_root, monkeypatch, missing):
     """#46：估值缺列时硬失败；pe_ttm 的 NULL 只能来自源值（亏损股），不能来自缺列。"""
     from gr_data.ingest.base import IngestContext

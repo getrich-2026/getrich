@@ -619,9 +619,10 @@ def test_index_no_adj_factor_no_limits(tmp_raw_root, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# daily_basic → market.stock_daily_basic
+# daily_basic → fundamental.valuation_1d
 # --------------------------------------------------------------------------- #
 def _daily_basic_df():
+    # 数值取整十整百，断言里直接写死换算后的期望值，不用被测代码的系数反算。
     return pd.DataFrame(
         [
             {
@@ -629,10 +630,18 @@ def _daily_basic_df():
                 "trade_date": "20240102",
                 "close": 10.5,
                 "turnover_rate": 1.25,
+                "turnover_rate_f": 1.5,
+                "volume_ratio": 0.9,
+                "pe": 12.0,
                 "pe_ttm": 11.5,
                 "pb": 1.2,
+                "ps": 3.0,
+                "ps_ttm": 2.9,
+                "dv_ratio": 2.5,
+                "dv_ttm": 2.4,
                 "total_share": 100000.0,
                 "float_share": 80000.0,
+                "free_share": 70000.0,
                 "total_mv": 12000.0,
                 "circ_mv": 8000.0,
                 "limit_status": 0,
@@ -641,59 +650,6 @@ def _daily_basic_df():
     )
 
 
-def _daily_basic_importer(tmp_raw_root, monkeypatch):
-    from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.market import DailyBasicImporter
-
-    imp = DailyBasicImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
-    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
-    return imp
-
-
-def test_daily_basic_market_cap_wan_yuan_to_yuan(tmp_raw_root, monkeypatch):
-    """万元 → 元（×10000）。期望值写死，不用被测代码的系数反算。"""
-    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
-
-    row = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]
-
-    assert row["total_market_cap"] == 120_000_000.0  # 12000 万元
-    assert row["float_market_cap"] == 80_000_000.0  # 8000 万元
-    assert row["close"] == 10.5
-    assert row["turnover_rate"] == 1.25  # 百分数，原样
-
-
-def test_daily_basic_payload_holds_only_unpromoted_fields(tmp_raw_root, monkeypatch):
-    """已提升为实体列的字段不得在 raw_payload 里重复出现。"""
-    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
-
-    payload = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]["raw_payload"]
-
-    assert payload["pb"] == 1.2
-    assert payload["total_share"] == 100000.0  # 原值原名，raw_payload 不做换算
-    for promoted in ("close", "total_mv", "circ_mv", "turnover_rate", "ts_code", "trade_date"):
-        assert promoted not in payload
-
-
-def test_daily_basic_payload_nan_becomes_none(tmp_raw_root, monkeypatch):
-    """NaN 必须换成 None：json.dumps(nan) 产出 `NaN` 字面量，PG 的 jsonb 会拒收整批。"""
-    import json
-
-    from gr_data.ingest.base import _json_safe
-
-    df = _daily_basic_df()
-    df.loc[0, "pe_ttm"] = float("nan")
-    _write(tmp_raw_root, "daily_basic", df)
-
-    payload = _daily_basic_importer(tmp_raw_root, monkeypatch).build().iloc[0]["raw_payload"]
-    safe = _json_safe(payload)
-
-    assert safe["pe_ttm"] is None
-    assert "NaN" not in json.dumps(safe)
-
-
-# --------------------------------------------------------------------------- #
-# daily_basic → fundamental.valuation_1d
-# --------------------------------------------------------------------------- #
 def _valuation_importer(tmp_raw_root, monkeypatch):
     from gr_data.ingest.base import IngestContext
     from gr_data.ingest.tushare.importers.market import ValuationImporter
@@ -716,16 +672,62 @@ def test_valuation_market_cap_wan_yuan_to_yuan(tmp_raw_root, monkeypatch):
     assert row["source"] == "tushare"
 
 
+def test_valuation_shares_wan_gu_to_gu(tmp_raw_root, monkeypatch):
+    """股本万股 → 股，与市值同样只换算一次。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert row["total_share"] == 1_000_000_000.0  # 100000 万股
+    assert row["float_share"] == 800_000_000.0
+    assert row["free_share"] == 700_000_000.0
+
+
+def test_valuation_percent_and_ratio_fields_pass_through(tmp_raw_root, monkeypatch):
+    """百分数保持源值（1.25 表示 1.25%），比率无量纲原样；不得悄悄除以 100。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert (row["turnover_rate"], row["turnover_rate_f"]) == (1.25, 1.5)
+    assert (row["dv_ratio"], row["dv_ttm"]) == (2.5, 2.4)
+    assert (row["pe"], row["ps"], row["ps_ttm"], row["volume_ratio"]) == (12.0, 3.0, 2.9, 0.9)
+    assert row["limit_status"] == 0
+
+
+def test_valuation_output_has_no_source_close(tmp_raw_root, monkeypatch):
+    """close 与日线重复，不在估值表另存一份。"""
+    _write(tmp_raw_root, "daily_basic", _daily_basic_df())
+
+    out = _valuation_importer(tmp_raw_root, monkeypatch).build()
+
+    assert "close" not in out.columns
+
+
 def test_valuation_loss_making_pe_stays_null(tmp_raw_root, monkeypatch):
-    """亏损股的 pe_ttm 是「不知道」，不是某个数 —— 用 0 或极大值兜底会让估值分档失真。"""
+    """亏损股的 pe / pe_ttm 是「不知道」，不是某个数 —— 用 0 或极大值兜底会让估值分档失真。"""
     df = _daily_basic_df()
+    df.loc[0, "pe"] = None
     df.loc[0, "pe_ttm"] = None
     _write(tmp_raw_root, "daily_basic", df)
 
     row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
 
+    assert pd.isna(row["pe"])
     assert pd.isna(row["pe_ttm"])
     assert row["total_mv"] == 120_000_000.0  # 同行其余字段照常入库
+
+
+@pytest.mark.parametrize("bad", [7, -1, 2.5])
+def test_valuation_rejects_limit_status_outside_enum(tmp_raw_root, monkeypatch, bad):
+    """limit_status 只有 0–6；枚举外的值意味着源语义变了，整批拒绝并指出取值。"""
+    df = _daily_basic_df()
+    df["limit_status"] = df["limit_status"].astype(float)
+    df.loc[0, "limit_status"] = bad
+    _write(tmp_raw_root, "daily_basic", df)
+
+    with pytest.raises(ValueError, match="limit_status"):
+        _valuation_importer(tmp_raw_root, monkeypatch).build()
 
 
 def test_valuation_available_at_is_trading_day_1700_shanghai(tmp_raw_root, monkeypatch):
@@ -809,7 +811,7 @@ def test_months_window_limits_what_is_read(tmp_raw_root, monkeypatch):
     """
     from gr_data.common.parquet import write_parquet
     from gr_data.ingest.base import IngestContext
-    from gr_data.ingest.tushare.importers.market import DailyBasicImporter
+    from gr_data.ingest.tushare.importers.market import ValuationImporter
 
     for ym, code in (("2024-01", "600000.SH"), ("2024-02", "000001.SZ")):
         df = _daily_basic_df()
@@ -820,7 +822,7 @@ def test_months_window_limits_what_is_read(tmp_raw_root, monkeypatch):
     id_map = {"600000.SH": 42, "000001.SZ": 43}
 
     def build_with(months):
-        imp = DailyBasicImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root, months=months))
+        imp = ValuationImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root, months=months))
         monkeypatch.setattr(imp, "_id_map", lambda: id_map)
         return imp.build()
 
