@@ -1,14 +1,20 @@
 """米筐 raw fetcher：期货合约参数。
 
 - all_instruments(type='Future') → instruments/future.parquet（SDK 字段原样）
-- get_tick_size(普通合约)        → instruments/future_tick.parquet（order_book_id, tick_size）
+- get_tick_size(普通合约)        → instruments/future_tick.parquet
+  （order_book_id, tick_size, instruments_sha256）
 
 两者都是**最新快照**。主力／指数连续合约（``IF88``、``IF99``）没有对应的交易所合约，
 不查最小变动价位。
+
+两个文件各自原子替换但不能一起替换，所以先发布合约快照，再在最小变动价位文件的
+``instruments_sha256`` 列记下它的哈希：第二个文件发布失败时留下的是旧哈希，ingest
+据此拒绝新合约参数与旧最小变动价位的混合批次。
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 import pandas as pd
@@ -67,9 +73,9 @@ class FutureContractsFetcher(BaseFetcher):
                 "RiceQuant tick size missing count=%d samples=%s", len(missing), missing[:5]
             )
 
-        write_parquet(
-            frame, self.paths.dataset_file(self.PROVIDER, "instruments", "future"), append=False
-        )
+        instruments_path = self.paths.dataset_file(self.PROVIDER, "instruments", "future")
+        write_parquet(frame, instruments_path, append=False)
+        tick["instruments_sha256"] = hashlib.sha256(instruments_path.read_bytes()).hexdigest()
         write_parquet(
             tick,
             self.paths.dataset_file(self.PROVIDER, "instruments", "future_tick"),

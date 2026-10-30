@@ -63,11 +63,13 @@ class _ProfileImporter(BaseImporter):
     REQUIRED: ClassVar[bool] = False
 
     def build(self) -> pd.DataFrame:
+        self._snapshot_missing = False
         raw = TushareAdapter(self.paths).read_instruments(self.ASSET)
         if raw is None or raw.empty:
             message = f"instruments[{self.ASSET}] raw is missing or empty"
             if self.REQUIRED:
                 raise IngestGateError(message)
+            self._snapshot_missing = True
             self._soft(f"{message}; skipped")
             return pd.DataFrame(columns=list(self.contract.columns))
         sources = {source for _, source in self.FIELDS}
@@ -99,6 +101,13 @@ class _ProfileImporter(BaseImporter):
         out["source"] = PROVIDER
         self._validate(out)
         return out[list(self.contract.columns)].reset_index(drop=True)
+
+    def _check_quality(self, df: pd.DataFrame) -> list[str]:
+        # 可选快照缺失是已记录的软跳过：空结果不能再被 STRICT_QUALITY 当成「空数据集」
+        # 硬失败，否则会中断同批后续 importer（与 instruments importer 的软跳过一致）。
+        if df.empty and getattr(self, "_snapshot_missing", False):
+            return []
+        return super()._check_quality(df)
 
     def _validate(self, out: pd.DataFrame) -> None:
         """子类追加枚举等业务校验；默认不做额外检查。"""

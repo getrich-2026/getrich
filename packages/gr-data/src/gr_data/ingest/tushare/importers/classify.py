@@ -79,6 +79,7 @@ class InstrumentCategoryImporter(BaseImporter):
             rows,
             columns=["instrument_id", "asset", "list_date", "delist_date", "fund_type", "channel"],
         )
+        scope = [int(iid) for iid in df["instrument_id"]]
         df["asset_category"] = df["asset"].map({a: c for a, (c, _) in _CATEGORY_BY_ASSET.items()})
         df["market"] = df["asset"].map({a: m for a, (_, m) in _CATEGORY_BY_ASSET.items()})
         etf = df["asset"].eq("etf")
@@ -132,7 +133,36 @@ class InstrumentCategoryImporter(BaseImporter):
                 "source": PROVIDER,
             }
         )
-        return out[list(self.contract.columns)].reset_index(drop=True)
+        out = out[list(self.contract.columns)].reset_index(drop=True)
+        self._retire_stale(scope, out)
+        return out
+
+    def _retire_stale(self, scope: list[int], out: pd.DataFrame) -> None:
+        """删除本次范围内未重新产出的旧分类，与随后的写入同一事务提交。
+
+        每次重导都是整个股票／ETF 范围的完整快照：某只 ETF 由股票型变为「其他」、QDII
+        或失去档案时，只跳过写入会让旧的 equity 行继续生效，诊断无法降级。这里删除而不是
+        填 out_date：in_date 本就是按上市日回填的当前快照，不是历史时点，编一个「今天失效」
+        反而是伪造时点（与 D-026「删除后按上市日重写」一致）。上市日变更后旧 in_date 的行
+        同样在此清除。失败时调用方回滚整个事务，不会只删不写。
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM classify.instrument_category c "
+                "WHERE c.source = %s AND c.instrument_id = ANY(%s) AND NOT EXISTS ("
+                "  SELECT 1 FROM unnest(%s::bigint[], %s::date[]) AS k(iid, in_date) "
+                "  WHERE k.iid = c.instrument_id AND k.in_date = c.in_date"
+                ") RETURNING c.instrument_id",
+                (
+                    PROVIDER,
+                    scope,
+                    [int(x) for x in out["instrument_id"]],
+                    list(out["in_date"]),
+                ),
+            )
+            retired = pd.DataFrame(cur.fetchall(), columns=["instrument_id"])
+        if not retired.empty:
+            self._record_skipped("classify_category_retired", retired)
 
     def _record_skipped(
         self,

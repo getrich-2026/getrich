@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date
 
@@ -76,7 +77,14 @@ def test_fetcher_skips_continuous_contracts_for_tick_size(tmp_raw_root):
     tick = pd.read_parquet(tmp_raw_root.dataset_file("ricequant", "instruments", "future_tick"))
     assert len(raw) == 3
     # 源未返回的最小变动价位不补值
-    assert tick.to_dict("records") == [{"order_book_id": "CU2401", "tick_size": 10.0}]
+    instruments = tmp_raw_root.dataset_file("ricequant", "instruments", "future")
+    assert tick.to_dict("records") == [
+        {
+            "order_book_id": "CU2401",
+            "tick_size": 10.0,
+            "instruments_sha256": hashlib.sha256(instruments.read_bytes()).hexdigest(),
+        }
+    ]
 
 
 def _tushare_future(cur, symbol: str, exchange: str, product: str, month: str, listed: date) -> int:
@@ -95,9 +103,17 @@ def _tushare_future(cur, symbol: str, exchange: str, product: str, month: str, l
 
 
 def _write_raw(paths, rows: list[dict], ticks: dict[str, float]) -> None:
-    write_parquet(pd.DataFrame(rows), paths.dataset_file("ricequant", "instruments", "future"))
+    """按 fetcher 的发布顺序写入：先合约快照，再带其哈希的最小变动价位。"""
+    instruments = paths.dataset_file("ricequant", "instruments", "future")
+    write_parquet(pd.DataFrame(rows), instruments)
     write_parquet(
-        pd.DataFrame({"order_book_id": list(ticks), "tick_size": list(ticks.values())}),
+        pd.DataFrame(
+            {
+                "order_book_id": list(ticks),
+                "tick_size": list(ticks.values()),
+                "instruments_sha256": hashlib.sha256(instruments.read_bytes()).hexdigest(),
+            }
+        ),
         paths.dataset_file("ricequant", "instruments", "future_tick"),
     )
 
@@ -208,4 +224,40 @@ def test_importer_requires_both_raw_files(tmp_raw_root):
     imp = FutureContractsImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))  # type: ignore[arg-type]
 
     with pytest.raises(IngestGateError, match="tick"):
+        imp.build()
+
+
+def test_importer_rejects_tick_file_from_another_snapshot(tmp_raw_root):
+    """第二个文件发布失败时留下旧哈希：新合约参数不能与旧最小变动价位混用。"""
+    _write_raw(tmp_raw_root, [_future("CU2401", "CU", "SHFE")], {"CU2401": 10.0})
+    # 模拟新合约快照已发布、最小变动价位文件仍是上一批
+    write_parquet(
+        pd.DataFrame([_future("CU2401", "CU", "SHFE", contract_multiplier=10.0)]),
+        tmp_raw_root.dataset_file("ricequant", "instruments", "future"),
+    )
+    imp = FutureContractsImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))  # type: ignore[arg-type]
+
+    with pytest.raises(IngestGateError, match="different instruments snapshot"):
+        imp.build()
+
+
+def test_fetcher_failure_after_first_file_leaves_detectable_mix(tmp_raw_root, monkeypatch):
+    """故障注入：合约快照写完、最小变动价位写失败，导入器必须识别出混合批次。"""
+    client = _FakeFutures([_future("CU2401", "CU", "SHFE")], {"CU2401": 10.0})
+    FutureContractsFetcher(client, _ctx(tmp_raw_root)).fetch()
+    client.rows = [_future("CU2401", "CU", "SHFE", contract_multiplier=10.0)]
+    calls = []
+
+    def failing_write(frame, path, **kwargs):
+        calls.append(path.name)
+        if path.name == "future_tick.parquet":
+            raise OSError("disk full")
+        return write_parquet(frame, path, **kwargs)
+
+    monkeypatch.setattr("gr_data.raw.ricequant.fetchers.contracts.write_parquet", failing_write)
+    with pytest.raises(OSError):
+        FutureContractsFetcher(client, _ctx(tmp_raw_root)).fetch()
+
+    imp = FutureContractsImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))  # type: ignore[arg-type]
+    with pytest.raises(IngestGateError, match="different instruments snapshot"):
         imp.build()

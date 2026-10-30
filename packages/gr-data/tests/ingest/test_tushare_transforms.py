@@ -730,6 +730,31 @@ def test_valuation_rejects_limit_status_outside_enum(tmp_raw_root, monkeypatch, 
         _valuation_importer(tmp_raw_root, monkeypatch).build()
 
 
+@pytest.mark.parametrize("column", ["free_share", "limit_status", "pe_ttm"])
+def test_valuation_rejects_unparseable_values(tmp_raw_root, monkeypatch, column):
+    """有值但解析失败必须拒绝：coerce 成 NaN 会以 NULL 覆盖库内已有值且无告警。"""
+    df = _daily_basic_df().astype(object)
+    df.loc[0, column] = "bad"
+    _write(tmp_raw_root, "daily_basic", df.astype(str))
+
+    with pytest.raises(ValueError, match=rf"daily_basic\.{column} 含无法解析的数值"):
+        _valuation_importer(tmp_raw_root, monkeypatch).build()
+
+
+def test_valuation_source_null_stays_null(tmp_raw_root, monkeypatch):
+    """源值本身缺失（含空串）是合法的 NULL，与解析失败区分开。"""
+    df = _daily_basic_df().astype(object)
+    df.loc[0, "dv_ratio"] = None
+    df.loc[0, "free_share"] = ""
+    _write(tmp_raw_root, "daily_basic", df)
+
+    row = _valuation_importer(tmp_raw_root, monkeypatch).build().iloc[0]
+
+    assert pd.isna(row["dv_ratio"])
+    assert pd.isna(row["free_share"])
+    assert row["total_share"] == 1_000_000_000.0
+
+
 def test_valuation_available_at_is_trading_day_1700_shanghai(tmp_raw_root, monkeypatch):
     """available_at 必须是交易日 17:00 +08:00 —— 下游按它过滤，早一天就是前视。"""
     _write(tmp_raw_root, "daily_basic", _daily_basic_df())

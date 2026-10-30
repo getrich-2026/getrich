@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date
 
@@ -89,13 +90,21 @@ class FutureContractsImporter(BaseImporter):
     STRICT_QUALITY = True
 
     def build(self) -> pd.DataFrame:
+        instruments_path = self.paths.dataset_file(PROVIDER, "instruments", "future")
         raw = RicequantAdapter(self.paths).read_instruments("future")
         tick = read_parquet_strict(self.paths.dataset_file(PROVIDER, "instruments", "future_tick"))
         if raw is None or raw.empty or tick is None:
             raise IngestGateError("Missing RiceQuant future instruments or tick raw")
         missing = set(_REQUIRED) - set(raw.columns)
-        if missing or not {"order_book_id", "tick_size"} <= set(tick.columns):
+        if missing or not {"order_book_id", "tick_size", "instruments_sha256"} <= set(tick.columns):
             raise IngestGateError(f"RiceQuant future raw lacks columns {sorted(missing)}")
+        # 两个文件须来自同一次采集：最小变动价位文件记录了它对应的合约快照哈希。
+        digest = hashlib.sha256(instruments_path.read_bytes()).hexdigest()
+        if set(tick["instruments_sha256"].astype(str)) != {digest}:
+            raise IngestGateError(
+                "RiceQuant future tick file belongs to a different instruments snapshot; "
+                "re-fetch ricequant future_contracts"
+            )
 
         rq = raw.copy()
         rq["order_book_id"] = rq["order_book_id"].astype(str).str.strip()

@@ -143,7 +143,8 @@ raw `daily_basic` 只落 `fundamental.valuation_1d`：市值万元→元、股�
 
 `classify.instrument_category` 的 ETF 类别取自 `meta.etf_profile.fund_type`：股票型→equity、
 债券型→fixed_income、货币型→cash，且投资通道须为「纯境内」才记 cn_a；其他类型、QDII 与
-无档案的 ETF 不写行，记 `classify_category_etf_unmapped` 质量检查。`instrument_category`
+无档案的 ETF 不写行，记 `classify_category_etf_unmapped` 质量检查；此前已写入、本次未重新产出的
+分类在同一事务中删除并记 `classify_category_retired`，诊断随之降级。`instrument_category`
 注册在 ETF importer 之后，同批运行时读到的是本批档案。
 
 ETF 期权标的必须是 ETF，股指期权标的是指数，商品期权标的是具体期货合约。
@@ -447,7 +448,8 @@ Parquet 哈希及分区观察时间。缺凭据须重抓，哈希不符拒绝导
 Tushare 的 `fut_basic.multiplier` 只覆盖国债、股指期货（2026-10-30 真实样本商品期货全为空），
 也没有数值型最小变动价位，所以 `meta.future_contracts` 由米筐写入：
 `all_instruments(type='Future')` 取乘数、合约种类、最低保证金率、行业、股指标的代码，
-`get_tick_size` 取普通合约的最小变动价位，两者都是最新快照。
+`get_tick_size` 取普通合约的最小变动价位，两者都是最新快照。最小变动价位文件记录合约快照的
+SHA-256，两者不是同一次采集时导入拒绝，需重采 `future_contracts`。
 
 ```bash
 uv run gr-data --config /path/to/config.yaml raw ricequant --only future_contracts

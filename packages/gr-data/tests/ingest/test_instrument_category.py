@@ -64,3 +64,46 @@ def test_etf_category_follows_fund_type_and_channel(pg_conn, tmp_raw_root):
     assert detail["count"] == 3
     assert detail["by_fund_type"] == {"其他": 1, "股票型": 1, "<no_profile>": 1}
     assert detail["by_channel"] == {"纯境内": 1, "QDII": 1, "<no_profile>": 1}
+
+
+def test_etf_losing_its_mapping_retires_previous_category(pg_conn, tmp_raw_root):
+    """首次为股票型／纯境内写 equity；档案后续变为「其他」、QDII 或删除时，旧分类必须退出。"""
+    with pg_conn.cursor() as cur:
+        ids = {
+            symbol: _instrument(cur, symbol, "etf", "XSHG")
+            for symbol in ("510300.SH", "513100.SH", "518880.SH", "510500.SH")
+        }
+        for iid in ids.values():
+            cur.execute(
+                "INSERT INTO meta.etf_profile(instrument_id, fund_type, channel, source) "
+                "VALUES (%s, '股票型', '纯境内', 'tushare')",
+                (iid,),
+            )
+    pg_conn.commit()
+    InstrumentCategoryImporter(pg_conn, IngestContext(paths=tmp_raw_root)).run()
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE meta.etf_profile SET channel = 'QDII' WHERE instrument_id = %s",
+            (ids["513100.SH"],),
+        )
+        cur.execute(
+            "UPDATE meta.etf_profile SET fund_type = '其他' WHERE instrument_id = %s",
+            (ids["518880.SH"],),
+        )
+        cur.execute("DELETE FROM meta.etf_profile WHERE instrument_id = %s", (ids["510500.SH"],))
+    pg_conn.commit()
+    InstrumentCategoryImporter(pg_conn, IngestContext(paths=tmp_raw_root)).run()
+
+    with pg_conn.cursor() as cur:
+        cur.execute("SELECT instrument_id FROM classify.instrument_category ORDER BY 1")
+        remaining = [r[0] for r in cur.fetchall()]
+        cur.execute(
+            "SELECT detail FROM ops.data_quality_check WHERE rule = 'classify_category_retired'"
+        )
+        (detail,) = cur.fetchone()
+    assert remaining == [ids["510300.SH"]]
+    detail = detail if isinstance(detail, dict) else json.loads(detail)
+    assert sorted(detail["sample"]) == sorted(
+        ids[s] for s in ("513100.SH", "518880.SH", "510500.SH")
+    )

@@ -49,6 +49,24 @@ def _to_numeric(df: pd.DataFrame, columns: list[str]) -> None:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
 
+def _to_numeric_strict(df: pd.DataFrame, columns: list[str], source: str) -> None:
+    """转数值并区分两种空：源值本身缺失保留 NULL，有值但解析失败硬失败。
+
+    ``_to_numeric`` 的 coerce 会把非法字符串变成 NaN，经 UPSERT 以 NULL 覆盖库内已有值，
+    且质量门禁看不出来（必需列外的 NULL 是合法的）。
+    """
+    for c in columns:
+        present = df[c].notna() & df[c].astype(str).str.strip().ne("")
+        parsed = pd.to_numeric(df[c], errors="coerce")
+        bad = present & parsed.isna()
+        if bad.any():
+            samples = df.loc[bad, c].head(5).tolist()
+            raise ValueError(
+                f"{source}.{c} 含无法解析的数值 rows={int(bad.sum())} samples={samples}"
+            )
+        df[c] = parsed
+
+
 def _to_bigint(series: pd.Series) -> pd.Series:
     """转成可空整数。
 
@@ -804,7 +822,7 @@ class ValuationImporter(_SymbolResolvingImporter):
         if df.empty:
             return pd.DataFrame(columns=list(self.contract.columns))
 
-        _to_numeric(df, [*numeric, "limit_status"])
+        _to_numeric_strict(df, [*numeric, "limit_status"], "daily_basic")
         limit_status = df["limit_status"]
         invalid = limit_status.notna() & ~limit_status.isin(range(7))
         if invalid.any():

@@ -209,3 +209,19 @@ def test_index_profile_accepts_zero_base_point(pg_conn):
                 "UPDATE meta.index_profile SET base_point = -1 WHERE instrument_id = %s", (iid,)
             )
     pg_conn.rollback()
+
+
+def test_optional_profile_missing_snapshot_does_not_fail_run(pg_conn, tmp_raw_root):
+    """走真实 run() 路径：指数／期货快照缺失只记软告警，不触发空数据集门禁中断整批。"""
+    for cls in (profile.IndexProfileImporter, profile.FutureProfileImporter):
+        result = cls(pg_conn, IngestContext(paths=tmp_raw_root)).run()
+
+        assert result.rows_written == 0
+        assert any("raw is missing or empty" in w for w in result.warnings)
+
+
+def test_required_stock_profile_missing_snapshot_still_fails_run(pg_conn, tmp_raw_root):
+    """股票快照是必需的，run() 仍硬失败。"""
+    with pytest.raises(IngestGateError, match=r"instruments\[stock\]"):
+        profile.StockProfileImporter(pg_conn, IngestContext(paths=tmp_raw_root)).run()
+    pg_conn.rollback()
