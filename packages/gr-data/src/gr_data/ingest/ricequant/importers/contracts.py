@@ -4,11 +4,16 @@
 合约乘数、最小变动价位等参数。两边代码格式不同（米筐无交易所后缀、郑商所年份补齐为
 4 位），**不改写代码字符串去对齐**，而是按两边各自的结构化字段匹配：
 
-    米筐 (exchange, underlying_symbol, 20 + 代码中的 YYMM)
+    米筐 (exchange, underlying_symbol, 代码中的 YYMM 按上市年份定世纪)
     tushare (meta.instruments.exchange, future_profile.product_code, future_profile.delivery_month)
 
-键在任一侧不唯一、上市日不一致或匹配不到时都不写，记入 ops.data_quality_check。
-写错一行的后果（乘数错位）远大于少一行，两者不对称。
+代码只有两位年份，1999 年的 ``AL9901`` 与 2099 年同形，世纪必须由米筐上市日确定
+（交割年落在上市当年至其后 10 年内且唯一）。键在任一侧不唯一、世纪无法唯一确定或
+匹配不到时都不写，记入 ops.data_quality_check；写错一行（乘数错位）远比少一行危害大。
+
+两源对老合约的上市日记录不一致（2026-10-30 实测上期所 2003–2010 年合约为主，相差中位
+13 天）不影响身份判定：上述键在交易所规则下唯一确定一份合约，上市日归 tushare 身份表，
+这里照常写入并记 ``future_contracts_list_date_mismatch`` 留作对账。
 """
 
 from __future__ import annotations
@@ -57,6 +62,15 @@ def _rq_date(value: object) -> date | None:
     return parsed.date()
 
 
+def _delivery_month(yymm: str, listed: date | None) -> str | None:
+    """两位年份按上市年份补世纪：交割年须在上市当年至其后 10 年内且唯一，否则返回 None。"""
+    if listed is None:
+        return None
+    yy, mm = int(yymm[:2]), yymm[2:]
+    years = [c + yy for c in (1900, 2000) if listed.year <= c + yy <= listed.year + 10]
+    return f"{years[0]}{mm}" if len(years) == 1 else None
+
+
 def _positive(series: pd.Series, field: str, *, allow_zero: bool = False) -> pd.Series:
     """严格转数值；缺失保持 None，非法或非正值硬失败。"""
     parsed = pd.to_numeric(series, errors="coerce")
@@ -88,7 +102,15 @@ class FutureContractsImporter(BaseImporter):
         parts = rq["order_book_id"].str.extract(REGULAR_FUTURE)
         # 主力／指数连续合约没有交易所合约可对应；代码前缀须与品种一致才算普通合约。
         regular = parts[0].notna() & parts[0].eq(rq["underlying_symbol"].astype(str))
-        rq = rq[regular].assign(delivery_month="20" + parts.loc[regular, 1])
+        rq = rq[regular].copy()
+        rq["delivery_month"] = [
+            _delivery_month(yymm, _rq_date(listed))
+            for yymm, listed in zip(parts.loc[regular, 1], rq["listed_date"], strict=True)
+        ]
+        undetermined = rq["delivery_month"].isna()
+        if undetermined.any():
+            self._record("future_contracts_ambiguous_year", rq[undetermined])
+            rq = rq[~undetermined]
         rq["exchange"] = rq["exchange"].astype(str).str.strip()
         unknown_exchange = ~rq["exchange"].isin(_CANONICAL_EXCHANGES)
         if unknown_exchange.any():
@@ -117,8 +139,8 @@ class FutureContractsImporter(BaseImporter):
             rq_listed.notna() & merged["list_date"].notna() & rq_listed.ne(merged["list_date"])
         )
         if conflict.any():
-            self._record("future_contracts_list_date_conflict", merged[conflict])
-        merged = merged[~conflict]
+            # 身份已由唯一键确定；上市日差异是两源记录口径不同，写入并留痕供对账。
+            self._record("future_contracts_list_date_mismatch", merged[conflict])
 
         tick_map = dict(zip(tick["order_book_id"].astype(str), tick["tick_size"], strict=True))
         underlying = merged["underlying_order_book_id"].astype(object)

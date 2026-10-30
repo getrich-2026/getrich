@@ -182,7 +182,8 @@ CREATE TABLE IF NOT EXISTS meta.index_profile (
     description    TEXT,
     source         VARCHAR(32) NOT NULL,
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT chk_index_profile_base_point CHECK (base_point IS NULL OR base_point > 0)
+    -- 股息点指数（如 H30401.CSI）从 0 起算，基点 0 是源语义，不是缺失
+    CONSTRAINT chk_index_profile_base_point CHECK (base_point IS NULL OR base_point >= 0)
 );
 
 COMMENT ON TABLE meta.index_profile IS
@@ -195,7 +196,7 @@ COMMENT ON COLUMN meta.index_profile.publisher IS '发布方（源 publisher）�
 COMMENT ON COLUMN meta.index_profile.index_type IS '指数风格（源 index_type）。';
 COMMENT ON COLUMN meta.index_profile.category IS '指数类别（源 category，如规模指数）。';
 COMMENT ON COLUMN meta.index_profile.base_date IS '基期（源 base_date）。';
-COMMENT ON COLUMN meta.index_profile.base_point IS '基点（源 base_point）。';
+COMMENT ON COLUMN meta.index_profile.base_point IS '基点（源 base_point）。股息点指数为 0。';
 COMMENT ON COLUMN meta.index_profile.weight_rule IS '加权方式（源 weight_rule）。';
 COMMENT ON COLUMN meta.index_profile.description IS '指数描述（源 desc）。';
 COMMENT ON COLUMN meta.index_profile.source IS '写入方 provider；本表只由 tushare 写入。';

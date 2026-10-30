@@ -109,7 +109,8 @@ def test_importer_matches_by_exchange_product_and_month(pg_conn, tmp_raw_root):
         # tushare 郑商所代码为 3 位年月，米筐补齐为 4 位：不改写代码，按结构化键匹配
         ap = _tushare_future(cur, "AP405.ZCE", "CZCE", "AP", "202405", date(2023, 5, 16))
         idx = _tushare_future(cur, "IF2401.CFX", "CFFEX", "IF", "202401", date(2023, 5, 22))
-        _tushare_future(cur, "AL2401.SHF", "SHFE", "AL", "202401", date(2023, 1, 17))
+        al = _tushare_future(cur, "AL2401.SHF", "SHFE", "AL", "202401", date(2023, 1, 17))
+        wt = _tushare_future(cur, "WT9903.ZCE", "CZCE", "WT", "199903", date(1999, 1, 4))
     pg_conn.commit()
     _write_raw(
         tmp_raw_root,
@@ -125,17 +126,20 @@ def test_importer_matches_by_exchange_product_and_month(pg_conn, tmp_raw_root):
                 product="Index",
                 underlying_order_book_id="000300.XSHG",
             ),
-            _future("AL2401", "AL", "SHFE", listed_date="2023-01-18"),  # 上市日冲突
+            _future("AL2401", "AL", "SHFE", listed_date="2023-01-18"),  # 上市日两源不一致
+            # 1999 年合约：两位年份须按上市年份补成 1999，不能当成 2099
+            _future("WT9903", "WT", "CZCE", listed_date="1999-01-04", contract_multiplier=10.0),
+            _future("ZZ0001", "ZZ", "SHFE", listed_date=None),  # 无上市日，世纪无法确定
             _future("ZN2401", "ZN", "SHFE"),  # tushare 无此身份
             _future("XX2401", "XX", "NYMEX"),  # 未知交易所
             _future("CU88", "CU", "SHFE", listed_date="0000-00-00"),  # 连续合约
         ],
-        {"CU2401": 10.0, "AP2405": 1.0, "IF2401": 0.2},
+        {"CU2401": 10.0, "AP2405": 1.0, "IF2401": 0.2, "AL2401": 5.0, "WT9903": 1.0},
     )
 
     result = FutureContractsImporter(pg_conn, IngestContext(paths=tmp_raw_root)).run()
 
-    assert result.rows_written == 3
+    assert result.rows_written == 5
     with pg_conn.cursor() as cur:
         cur.execute(
             "SELECT instrument_id, multiplier, price_tick, product, underlying_code, source "
@@ -152,9 +156,13 @@ def test_importer_matches_by_exchange_product_and_month(pg_conn, tmp_raw_root):
         (cu, 5.0, 10.0, "Commodity", None, "ricequant"),
         (ap, 10.0, 1.0, "Commodity", None, "ricequant"),
         (idx, 300.0, 0.2, "Index", "000300.XSHG", "ricequant"),
+        # 身份键唯一，上市日两源不一致照常写入，只留对账记录
+        (al, 5.0, 5.0, "Commodity", None, "ricequant"),
+        (wt, 10.0, 1.0, "Commodity", None, "ricequant"),
     ]
     assert {rule: d["sample"] for rule, d in checks.items()} == {
-        "future_contracts_list_date_conflict": ["AL2401"],
+        "future_contracts_ambiguous_year": ["ZZ0001"],
+        "future_contracts_list_date_mismatch": ["AL2401"],
         "future_contracts_unknown_exchange": ["XX2401"],
         "future_contracts_unmatched": ["ZN2401"],
     }

@@ -455,11 +455,12 @@ uv run gr-data --config /path/to/config.yaml ingest ricequant --only future_cont
 ```
 
 入库前须已导入 tushare `reference,profile`：期货身份来自 tushare，按
-（交易所、品种、交割年月）匹配，米筐取 `underlying_symbol` 与代码中的 4 位年月，tushare
-取 `future_profile.product_code` 与 `delivery_month`，不改写两边的代码格式。键不唯一、
-上市日不一致、匹配不到或交易所不在 canonical 集合的合约不写，分别记
-`future_contracts_ambiguous_key`／`_list_date_conflict`／`_unmatched`／`_unknown_exchange`
-质量检查；一行都写不进时质量门禁失败。主力／指数连续合约（`IF88`、`IF99`）不处理。
+（交易所、品种、交割年月）匹配，米筐取 `underlying_symbol` 与代码中的两位年份＋月份
+（世纪按米筐上市年份确定，1999 年的 `AL9901` 不当成 2099），tushare 取
+`future_profile.product_code` 与 `delivery_month`，不改写两边的代码格式。键不唯一、世纪
+无法唯一确定、匹配不到或交易所不在 canonical 集合的合约不写，分别记
+`future_contracts_ambiguous_key`／`_ambiguous_year`／`_unmatched`／`_unknown_exchange`
+质量检查；两源上市日不一致的照常写入并记 `_list_date_mismatch`；一行都写不进时质量门禁失败。主力／指数连续合约（`IF88`、`IF99`）不处理。
 
 ### 米筐风险模型五件套
 

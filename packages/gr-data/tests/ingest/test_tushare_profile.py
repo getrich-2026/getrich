@@ -187,3 +187,25 @@ def test_future_profile_rejects_non_numeric_per_unit(tmp_raw_root, monkeypatch):
 
     with pytest.raises(IngestGateError, match="per_unit"):
         _build(profile.FutureProfileImporter, tmp_raw_root, monkeypatch, {"CU2401.SHF": 9})
+
+
+def test_index_profile_accepts_zero_base_point(pg_conn):
+    """股息点指数从 0 起算（2026-10-30 真实快照 5 只 CSI 股息点指数），基点 0 必须能入库。"""
+    import psycopg
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO meta.instruments(symbol, asset, exchange) "
+            "VALUES ('H30401.CSI', 'index', 'CSI') RETURNING instrument_id"
+        )
+        iid = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO meta.index_profile(instrument_id, base_point, source) "
+            "VALUES (%s, 0, 'tushare')",
+            (iid,),
+        )
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute(
+                "UPDATE meta.index_profile SET base_point = -1 WHERE instrument_id = %s", (iid,)
+            )
+    pg_conn.rollback()
