@@ -70,7 +70,7 @@ C1 上线前核算不可变观察的增长及保留预算；清理协议未验�
 | B2 观察版本防回退 | 导入层及代际／分区当前指针；依赖 B1。显式登记 authority epoch、代际顺序与 canonical 分区观察序，事务锁定当前版本并 CAS；不能按 UUID、mtime、到达顺序或不同 variant 的局部序号比较新旧 | 新 B 提交后旧 A 晚到，仅保留历史／记 superseded，不改当前业务值与水位；异地端采用同一权威顺序 |
 | B3 可靠 full（可选） | raw planner、候选 staging、发布服务及 gr-db；依赖 B1、B2、C1、C2。冻结 generation，全部必需分区通过后一次发布；评估锁、WAL、峰值空间与读契约，大分钟 full 另审 | 任一片失败，旧可用业务数据不变；发布失败可重放，无半激活代际。未实现时拒绝可靠 full，逐分区 backfill 不宣称全量原子性 |
 
-**先核对现有 DDL，再设计通用扩展。** 049 的 `ops.import_receipt.target` 目前限定 `factor.risk_bundle`，并与 variant、capture、run 绑定建立不可变约束；不能直接放宽它来接全部 provider，也不能另起同名收据体系。表名、键、状态及兼容迁移须单独评审，全部 DDL 只放 gr-db，不改已记账 SQL，不在 API 启动时建表。
+**先核对现有 DDL，再设计通用扩展。** 2026-10-29 新库已将风险专用 variant／receipt／checkpoint 归入 `factor`，037 直接建表，049 完成证据触发器；`factor.import_receipt.target` 仍限定 `factor.risk_bundle`。现有记录与 variant、capture、run 绑定建立不可变约束，不直接放宽为全部 provider 的通用收据。通用协议须另审键、状态、公共与领域校验边界及兼容迁移，不能把风险表原样复制后宣称通用。全部 DDL 只放 gr-db，后续不改已部署的基线 SQL，不在 API 启动时建表。
 
 **诊断发布另按 [D-022](../../.agents/brain/DECISIONS.md#d-022) 的 2b 验收**：发布清单钉住组成收据／run，失效与组成写入原子衔接，统一读取在一致性快照内核对；数据库层拒绝 validation run，消费 `publishable=false` 的旧 run 禁用证据。组成变化后旧版本不可复算，不以当前最新数据冒充历史版本；一期不建可变数据版本表，诊断专用角色延后。B2 当前指针、B3 全量切换和诊断发布不是同一能力，正式风险读取保持关闭。
 

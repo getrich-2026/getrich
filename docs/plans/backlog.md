@@ -36,6 +36,8 @@
 | 停复牌空响应与观察时间语义 | 当日尚未发布的 `suspend_d` 空响应可能被记为已覆盖；局部重抓会刷新整月观察时间。纳入可靠性计划 C1／C2，区分未发布与合法空，保留分片观察／修订证据；估值交易日 17:00 的文档值不能冒充实际观测时间（原 T3） |
 | Tushare 仍有 4 项 strict xfail | [回归用例](../../packages/gr-data/tests/test_tushare_review_findings.py)：#4 强制换源无日志、#5 坏日历误报缺失、#26 未知股票上市状态默认 active、#37 收盘价越过高低价范围。修复后移除相应 xfail，保留行为断言 |
 | 日线重复键处理口径 | 当前按重复键保留最后一行（原 #35）；需决定冲突值是否拒绝或记录修订，覆盖同值重复、异值冲突与跨分区重放 |
+| Tushare 全接入表真实字段双向核对（2026-10-29 登记，待执行） | 覆盖全部 `*_bar_1d`、`market.stock_daily_basic`、`fundamental.valuation_1d`、`classify.instrument_category` 及所有 Tushare writer 的目标表，包括身份、映射、日历、复权、停复牌和期权参数。逐项对照官方字段定义、真实响应、raw、adapter／importer、canonical contract 与 DDL，列出源字段去向、表字段来源、未落库字段及可补充信息；说明单位、精度、空值、时间语义和派生规则，区分源缺失、raw 保留、JSONB 保留与专列存储。分类等派生字段不要求源中存在同名字段；新增字段先评审用途与迁移，不默认全量扩列。优先复用已有真实样本，缺失样本再限定请求范围；期权仍只在隔离库 validation-only 验证 |
+| RiceQuant 风险表真实字段双向核对（2026-10-29 登记，待执行） | 覆盖 `factor.model`／`definition`／`model_run`、风险五件套、`model_run_coverage`／`model_run_binding` 及关联 variant／checkpoint／receipt。对照 SDK 真实响应、raw／manifest、转换代码、contract 与 DDL，列出源字段去向、目标字段来源和未使用信息；核验因子分类／顺序、数组维度、REAL／DOUBLE 精度、收益与风险单位、标准差平方、年化、缺失值，以及交易日／实际观察时间／可用时间。区分供应商字段与平台生成的身份、覆盖及证据字段，不把采集时刻写成供应商估计或发布时间；复用已有真实样本，新增采样范围另定，验收不等于校准或正式发布 |
 | 米筐补充数据准入仍排除 DataYes 重复项 | `gr_data/config/ricequant.py` 仍要求 `tushare_overlap` 和 `datayes_overlap` 均为 `distinct`；按 DP-02 确认去重门槛并同步配置、README 与测试，准入完成前不启用补充 writer |
 
 DataYes 历史 SW14／SW21 切换仅在恢复该备用源时按 [D-013](../../.agents/brain/DECISIONS.md#d-013)处理；不作为当前采集前置。ETF／期权验收、全历史预算及分类更正的当前待办见 NOTES。

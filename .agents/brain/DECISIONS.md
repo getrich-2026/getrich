@@ -64,6 +64,8 @@ macOS 文件共享层的 bind 数据目录曾使 PostgreSQL 出现文件／POSIX
 
 迁移以 `file_name + checksum` 记账，内容变化会触发重新应用，因此迁移必须幂等、schema 全限定，不为整理文档修改已记账 SQL。
 
+2026-10-29 用户确认目标是新库，授权将增量结构合入 CREATE：最终字段／约束／索引作为初始化基线，历史编号保留占位，移除旧 schema 改名与旧数据回填／截断。这是一次性例外，不代表以后可改已部署迁移。旧库不就地升级：恢复旧备份后跑 migrate 会按 checksum 重放，形成新旧证据表并存的混合结构，因此迁移改为从 raw 重新入库，源 PG 只在隔离库作对账参照。
+
 数据字典从活库 catalog 生成，并与 canonical contracts、注册表、表归属核对，不手写第二份字段真源；受管 schema 以 DDL 为准，包含 `diag`，排除 TimescaleDB 内部 catalog。新增／修改迁移的注释由门禁校验，存量欠账不阻塞无关改动。
 
 ## 接口与选股回测
@@ -101,6 +103,8 @@ macOS 文件共享层的 bind 数据目录曾使 PostgreSQL 出现文件／POSIX
 风险量可能年化、收益量仍为日频，单一 `annualization_basis` 无法描述两者；下游以 `model_run.units` 为准。协方差用双精度；全区间五表自洽校验通过前保持 `calibrated=false`，下游必须暴露未校准状态。
 
 `factor.*` 归属是表级。2026-09-18 起米筐接替通联，归属已显式转移给 ricequant，不允许两个 provider 并行写入；自研与采购模型若要同表并存，须先设计表 + run_id 的归属隔离。旧 CNE6 历史保留，米筐按模型、行业体系和实际因子顺序建立独立身份，下游必须显式选择模型；每次日度观测是不可变 run，源单位按已核对配置换算（特异风险接口返回 σ，入库先平方）。供应商未给逐值发布时间，`available_at` 保守取 raw 实际采集时间，历史回填不能充当当时已知数据。
+
+2026-10-29 用户确认风险专用导入证据归入已有 `factor` schema：`dataset_variant`、`import_receipt`、`import_checkpoint` 及其风险校验函数与 model_run／binding 同域；`ops` 只保留通用运维设施。收据仍只接受 `factor.risk_bundle`，不是所有 provider 的通用协议。新证据表写入前核对并登记单表单源，capture 的独立提交连同自身归属保留，业务写入失败不抹掉已完成采集；旧库的 `ops` 证据只在隔离库对账时按表名对应，不搬表。
 
 迁移 047 起，风险数组不接受空、多维、NULL 或非有限元素。通联载荷曾允许 NaN 入库，NaN 是「非该行业」还是真缺失未经真实样本核实，因此写库前硬失败；恢复通联前须先用真实 raw 定口径。
 

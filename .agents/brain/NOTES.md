@@ -1,7 +1,7 @@
 # GetRich 当前状态
 
 读者：接续任务的 Claude/Codex/Antigravity；维护者也可用它快速定位工作。
-最后整理：2026-10-29。只写现状与待办；已完成的工作留一行结论和证据位置，过程与测试数字不写入（可从 Git、代码和 docs/history 追溯）。
+最后整理：2026-10-30。只写现状与待办；已完成的工作留一行结论和证据位置，过程与测试数字不写入（可从 Git、代码和 docs/history 追溯）。
 
 ## 开始任务
 
@@ -11,12 +11,16 @@
 
 ## 当前方向与阻塞
 
-- iMac 准备（2026-10-29）：PG18／TimescaleDB 已运行，目标工作库当日核验尚无业务表；用户已更新 RAW_PARQUET_ROOT 并复制根 config.yaml，离线加载确认 raw 根生效但目录尚不存在。本机米筐配置已改沪深 A 股动态名单／production，用于后续全市场任务；仍为 v1，日期保留原三天窗口，运行前按迁移账本调整，不自动滚动。硬盘带回后复制普通文件并以逻辑备份恢复 PG，正式调度未启用。顺序见[迁移盘点](../../docs/plans/imac-collector-migration.md)。
+- iMac 准备（2026-10-29）：PG18／TimescaleDB 已运行，目标工作库当日核验尚无业务表；用户已更新 RAW_PARQUET_ROOT 并复制根 config.yaml，离线加载确认 raw 根生效但目录尚不存在。本机米筐配置已改沪深 A 股动态名单／production，用于后续全市场任务；仍为 v1，日期保留原三天窗口，运行前按迁移账本调整，不自动滚动。硬盘带回后复制 raw，工作库按当前 DDL 建表后重新入库，源 PG 只在隔离库作对账参照；正式调度未启用。顺序见[迁移盘点](../../docs/plans/imac-collector-migration.md)。
+- DDL 新库基线（2026-10-29）：用户授权将增量列／最终约束／索引并回 CREATE，历史编号保留占位；旧库 schema 改名、历史回填／截断不再执行，演示账号从初始化即停用。041／042 注释按代码语义修正，注释覆盖由基线测试守卫；旧库不就地升级（D-006）。Tushare／米筐真实字段双向比对已登记 backlog，尚未执行。
+- 风险证据归域（2026-10-29）：用户确认 variant／receipt／checkpoint 及风险校验函数归入 `factor`，新库直接建立，代码／测试／回补审计／现行文档引用同步；通用 ETL、质量、归属和迁移记账仍在 `ops`。证据表写入前校验单表单源，capture 及其归属独立保留。不开放正式风险读取；重导带不回的人工否决等见迁移盘点。
+- 构建副本清理（2026-10-29）：确认安装均指向 `src` 后，已按用户授权删除未跟踪的 `packages/gr-data/build` 与 `packages/gr-tools/build`；保留 basedpyright 的构建目录排除规则，后续重新构建也不重复扫描。
 
 ### Tushare ETF／三类期权
 
 - 现状：已合入 dev（`588a2c5`，样本修复 A1–A5 为 `24e0fdd`）。期权 OHL 全零占位、基金非标准代码、ETF 待上市 P 按源义留在 raw 并软告警；opt_basic 按显式标的分页。四个期权 writer 正式写入默认关闭，仅 `TUSHARE_OPTION_VALIDATION_ONLY=1` 的隔离验证可写，APP_ENV=prod 拒绝（D-026）。用法见 gr-data README「ETF 与三类期权」。
 - 2026-10-29：离线子集和合成样本 PG 往返／幂等验收通过；真实 2024-01 复验仅部分完成，基金日线／因子及八所日历已取得。ETF 已上市名单出现 `158008.OF`；期权日线触发 OHL 全零且 close 非正的门禁，未发布整月，元数据因前置缺失未完成。原响应与审计在独立验证目录，位置见[迁移盘点](../../docs/plans/imac-collector-migration.md)；未改源码／校验，未写工作库。
+- 2026-10-30 续验：郑商所官方同日日行情与 Tushare 的全部合约及 9 个共同字段一致，零成交 OHLC 全零确为源记录；ETF 的 `.OF`／市场冲突仍存在。原基金日线／因子文件可复用，新库与既有 ETF／期权测试通过；两类异常的处理契约待用户确认，尚未补齐整月或做真实样本 PG 入库。具体证据及验证范围见迁移盘点第二节；工作库未改动。
 - 待办：
   1. 核对上述两类真实源异常的语义与处理契约，再补齐受限样本及真实数据隔离 PG 验收，不改码、不静默删行或填价。
   2. opt_basic 全历史去重请求预算未测；旧逐代码方案的 2024-01 预算见 gr-data README，不能套用为当前批量方案预算。
@@ -59,7 +63,7 @@
 - JWT 默认密钥的启动检查尚未处理（mock 认证已按 D-020 默认关闭；本机用 `VITE_DEMO_USER_ID` 开发前端时需在自己的 `.env` 加 `GETRICH_ALLOW_MOCK_AUTH`）。
 - 策略／信号接口仍有契约与管理导入缺口；不能把诊断接口已有响应模型推广为所有接口均已覆盖。
 - 回测 `oi` 映射、公司行为接入、Black-Litterman 建模口径及选股历史关联回填见待决问题。
-- DDL 审核遗留（2026-10-10／10-22 记录，未处理）：分钟线压缩后重灌会触发 `timescaledb.max_tuples_decompressed_per_dml_transaction`（默认 100000），回填前需定 chunk 间隔、压缩参数并暂停压缩作业；`004` 的 `*_1d_ca` 物化视图无人引用且 WITH NO DATA；034 `chk_item_option_type` 放行 NULL；回测比率列 DECIMAL(20,10) 可能溢出；app schema 缺外键、meta 交易所码缺 CHECK；042 对 `pick.item.symbol` 的注释写错；btree_gist 装在 pg_catalog；重复索引、选股约束、runner 默认阻断；`gr-db migrate --dry-run` 会建记账表且汇总行误报 0；`lint_migrations.py --comments --base-ref` 只查已提交差异，未提交的新迁移需直接调用 `comment_violations` 自查。
+- DDL 审核遗留（2026-10-10／10-22 记录，未处理）：分钟线压缩后重灌会触发 `timescaledb.max_tuples_decompressed_per_dml_transaction`（默认 100000），回填前需定 chunk 间隔、压缩参数并暂停压缩作业；`004` 的 `*_1d_ca` 物化视图无人引用且 WITH NO DATA；034 `chk_item_option_type` 放行 NULL；回测比率列 DECIMAL(20,10) 可能溢出；app schema 缺外键、meta 交易所码缺 CHECK；btree_gist 装在 pg_catalog；重复索引、选股约束、runner 默认阻断；`gr-db migrate --dry-run` 会建记账表且汇总行误报 0；`lint_migrations.py --comments --base-ref` 只查已提交差异，未提交的新迁移需直接调用 `comment_violations` 自查。
 - `apps/backtest-web` 暂停维护（2026-09-17 移除独立 CI），其 `src/lib/` 缺失，恢复前需补齐安全插件、HTML 清洗及 UI 工具并重跑 lint／测试／构建，见该目录 README。`gr-agent` 仍为空包。
 
 ## 运行模式与公共工具
@@ -73,6 +77,8 @@
 ## 验证边界
 
 - 历史记录中的主机路径、服务健康、凭证配置、数据行数均不能当实时事实；使用前查当前配置、代码或执行对应检查。失败时记录具体命令、日期、范围与原因。
+- 2026-10-29 风险证据归域专项：gr-db、全部米筐用例、回补审计和新库重放共 582 项通过；新增证据表换源冲突回归，覆盖独立 capture 归属保留及业务回滚。一次性 PG18 中，映射已授权的表／函数 schema 后其余字段、约束、索引、触发器、函数和物化视图定义一致；默认 basedpyright、改动文件 Ruff、迁移与注释检查及 lock 检查通过。工作库和真实供应商未访问；历史记录中的旧 `ops` 名称保留为当时证据。
+- 2026-10-29 DDL 专项：一次性 PG18／TimescaleDB 中，合并前后字段（含顺序）、约束、索引、触发器、函数及物化视图定义一致，全 SQL 直接重放与 runner 幂等通过；gr-db、风险约束／收据／导入、股票别名及完整导入用例通过。迁移安全、显式注释覆盖、改动测试 Ruff 和 lock 检查通过。后续已在根 basedpyright 配置中排除 `packages/*/build/**`，解决旧 setuptools 构建副本被重复扫描的问题；默认 `uv run --frozen basedpyright` 现为 0 errors／0 warnings，无需手列源码或修改 baseline。未连接工作库或供应商，临时容器与卷已清理。
 - 最近全仓基线（2026-10-26，本机 Python 3.12，ETF／期权合并后的组合版本）：`uv run --frozen pytest -q -m 'not live_sdk'` 3557 passed／22 skipped／28 deselected／4 既有 xfailed；Ruff、495 文件格式检查、basedpyright 0 errors、迁移 lint（1 CH／50 PG）、`uv lock --check` 通过。去除供应商 token 和 `GETRICH_TEST_PG`，未连接工作库。约 44 条既有 warning（ORJSONResponse 弃用、mock 协程未 await）保留。
 - 2026-10-27 远程 CI 两个 Python 版本都因回测产物 MIME 测试失败（[运行记录](https://github.com/getrich-2026/getrich/actions/runs/40457446826)），2026-10-28 已修正 `test_backtest_runs.py` 并随 `7b8e650` 推送；**待确认远程 CI 恢复通过**。
 - 2026-10-28 提交前本机全仓（Python 3.12，排除 live_sdk，未设 `GETRICH_TEST_PG`，含一次性 Docker PG 用例）：3594 passed／22 skipped／28 deselected／4 既有 xfailed；Ruff、495 文件格式、basedpyright 0 errors、迁移 lint（50 PG）、`uv lock --check` 通过。
