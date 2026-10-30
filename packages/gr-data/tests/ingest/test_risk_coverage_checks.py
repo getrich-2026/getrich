@@ -35,7 +35,7 @@ def test_048_unrequested_status_constraints_and_replay(pg_conn):
     run_id = uuid4()
     pg_conn.execute(
         "INSERT INTO factor.model_run(run_id,model_id,model_version,factor_order,"
-        "factor_count,factor_order_hash,annualization_basis,estimated_at,source) "
+        "factor_count,factor_order_hash,annualization_basis,observed_at,source) "
         "VALUES (%s,'coverage-test','test',ARRAY['market'],1,'test',"
         "'annual_252',now(),'ricequant')",
         (run_id,),

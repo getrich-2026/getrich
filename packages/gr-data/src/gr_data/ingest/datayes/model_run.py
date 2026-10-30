@@ -72,7 +72,7 @@ def get_or_create_run(
     factor_order: list[str],
     scaling: Scaling,
     *,
-    estimated_at: datetime,
+    observed_at: datetime,
     model_version: str = MODEL_VERSION,
 ) -> uuid.UUID:
     """取回或创建 model_run，返回 run_id。
@@ -107,7 +107,7 @@ def get_or_create_run(
             "INSERT INTO factor.model_run "
             "  (run_id, model_id, model_version, factor_order, factor_count, "
             "   factor_order_hash, factor_set_hash, annualization_basis, units, calibrated, "
-            "   estimated_at, code_version, param_hash, source) "
+            "   observed_at, code_version, param_hash, source) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 run_id,
@@ -120,7 +120,7 @@ def get_or_create_run(
                 ANNUALIZATION_BASIS,
                 Jsonb(scaling.as_units()),
                 scaling.calibrated,
-                estimated_at,
+                observed_at,
                 None,
                 # 供应商未公开 CNE6 的估计参数（半衰期、窗口），恒为 NULL。
                 # 填一个猜的值比留空更糟：口径追溯会指向一个从未成立的参数。

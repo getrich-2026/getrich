@@ -20,7 +20,7 @@ def _seed(pg_conn, *, factor_count: int = 2) -> int:
     pg_conn.execute("INSERT INTO factor.model VALUES ('test_model','test','test')")
     pg_conn.execute(
         "INSERT INTO factor.model_run (run_id,model_id,model_version,factor_order,factor_count,"
-        "factor_order_hash,annualization_basis,estimated_at,source) "
+        "factor_order_hash,annualization_basis,observed_at,source) "
         "VALUES (%s,'test_model','v1',%s,%s,'h','annual_252',now(),'test')",
         (RUN_ID, ["size", "beta"][:factor_count], factor_count),
     )
@@ -118,7 +118,7 @@ def test_047_model_run_factor_order(pg_conn, literal, factor_count, ok):
     pg_conn.commit()
     sql = (
         "INSERT INTO factor.model_run (run_id,model_id,model_version,factor_order,factor_count,"
-        "factor_order_hash,annualization_basis,estimated_at,source) "
+        "factor_order_hash,annualization_basis,observed_at,source) "
         "VALUES (%s,'test_model','v1',%s::text[],%s,'h','annual_252',now(),'test')"
     )
     _assert_insert(pg_conn, sql, (RUN_ID, literal, factor_count), ok, "chk_model_run_factor_order")

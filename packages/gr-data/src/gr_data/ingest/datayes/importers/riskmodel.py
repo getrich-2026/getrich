@@ -293,7 +293,7 @@ class ModelRunImporter(_DatayesImporter):
         months = adapter.list_months(self.DATASET_RAW)
         factor_order: list[str] | None = None
         first_ym = ""
-        estimated_at = None
+        observed_at = None
         for ym in months:
             raw = adapter.read_month(self.DATASET_RAW, ym)
             if raw is None or raw.empty:
@@ -311,7 +311,7 @@ class ModelRunImporter(_DatayesImporter):
                     "同一个 model_run 内因子集合必须恒定，请人工确认后按体系分段建 run。"
                 )
             month_max = _available_at(raw).max()
-            estimated_at = month_max if estimated_at is None else max(estimated_at, month_max)
+            observed_at = month_max if observed_at is None else max(observed_at, month_max)
             del raw
 
         if factor_order is None:
@@ -332,10 +332,10 @@ class ModelRunImporter(_DatayesImporter):
                 sorted(expected - set(factor_order)),
             )
 
-        estimated_at = estimated_at.to_pydatetime()
+        observed_at = observed_at.to_pydatetime()
         mr.upsert_model_and_definitions(self.conn, factor_order)
         run_id = mr.get_or_create_run(
-            self.conn, factor_order, self.scaling, estimated_at=estimated_at
+            self.conn, factor_order, self.scaling, observed_at=observed_at
         )
         self.log.info(
             "model_run 就绪 run_id=%s factors=%d calibrated=%s",

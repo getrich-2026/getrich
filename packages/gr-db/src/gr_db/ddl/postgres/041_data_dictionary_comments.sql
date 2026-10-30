@@ -24,7 +24,7 @@ COMMENT ON COLUMN factor.model_run.factor_order IS '按 definition.ordinal 排�
 COMMENT ON COLUMN factor.model_run.factor_count IS '本次运行的因子数量。';
 COMMENT ON COLUMN factor.model_run.factor_order_hash IS '因子顺序的 MD5 指纹。';
 COMMENT ON COLUMN factor.model_run.factor_set_hash IS '排序后因子集合的 MD5 指纹。';
-COMMENT ON COLUMN factor.model_run.estimated_at IS '模型批次的时间标记；当前米筐填 raw 实际 observed_at，不代表供应商估计完成或发布时间。';
+COMMENT ON COLUMN factor.model_run.observed_at IS '本 run 数据最晚已为系统所知的时刻：米筐取采集清单的 observed_at（采集程序收到供应商响应的时间），通联取所入 raw 各月 available_at 的最大值。可作回测可用时间的保守上界；不是供应商估计完成或发布时间。';
 COMMENT ON COLUMN factor.model_run.code_version IS '产生本次运行的代码版本。';
 COMMENT ON COLUMN factor.model_run.source IS '模型数据来源。';
 COMMENT ON TABLE factor.exposure IS '标的在每个因子上的日度暴露。';
@@ -37,15 +37,11 @@ COMMENT ON TABLE factor.covariance IS '因子协方差矩阵的日度上三角�
 COMMENT ON COLUMN factor.covariance.run_id IS '所属模型运行。';
 COMMENT ON COLUMN factor.covariance.trading_day IS '协方差所属交易日。';
 COMMENT ON COLUMN factor.covariance.factor_count IS '协方差矩阵的因子维度。';
-COMMENT ON COLUMN factor.covariance.half_life IS '协方差估计的半衰期（交易日）。';
-COMMENT ON COLUMN factor.covariance.window_days IS '协方差估计使用的窗口长度（交易日）。';
 COMMENT ON COLUMN factor.covariance.available_at IS '该矩阵可供下游使用的时间。';
 COMMENT ON TABLE factor.specific_risk IS '标的日度特质方差。';
 COMMENT ON COLUMN factor.specific_risk.run_id IS '所属模型运行。';
 COMMENT ON COLUMN factor.specific_risk.instrument_id IS '关联的标的 ID。';
 COMMENT ON COLUMN factor.specific_risk.trading_day IS '特质风险所属交易日。';
-COMMENT ON COLUMN factor.specific_risk.half_life IS '特质风险估计的半衰期（交易日）。';
-COMMENT ON COLUMN factor.specific_risk.window_days IS '特质风险估计使用的窗口长度（交易日）。';
 COMMENT ON COLUMN factor.specific_risk.source IS '该风险数据的数据源。';
 COMMENT ON COLUMN factor.specific_risk.available_at IS '该风险值可供下游使用的时间。';
 COMMENT ON TABLE factor.factor_return IS '因子日收益向量。';

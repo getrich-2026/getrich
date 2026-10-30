@@ -716,7 +716,7 @@ def audit_bundle(
     run = runs[0]
     units = run["units"]
     require(run["source"] == "ricequant" and run["calibrated"] is False, "source_or_calibrated")
-    require(run["estimated_at"] == observed, "run_observed_time")
+    require(run["observed_at"] == observed, "run_observed_time")
     require(run["annualization_basis"] == "annual_252", "annualization_basis")
     require(units["purpose"] == manifest["purpose"] == "production", "purpose")
     require(

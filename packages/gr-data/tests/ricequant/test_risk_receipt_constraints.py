@@ -51,7 +51,7 @@ def receipt_case(pg_conn):
         cur.execute(
             "INSERT INTO factor.model_run "
             "(run_id,model_id,model_version,factor_order,factor_count,factor_order_hash,"
-            "annualization_basis,units,calibrated,estimated_at,source) "
+            "annualization_basis,units,calibrated,observed_at,source) "
             "VALUES (%s,'receipt_fixture',%s,%s,1,%s,'annual_252',%s,false,%s,'ricequant')",
             (
                 case.run_id,
@@ -238,9 +238,9 @@ def test_binding_rejects_forged_run_metadata(receipt_case, field, value):
         cur.execute(
             "INSERT INTO factor.model_run "
             "(run_id,model_id,model_version,factor_order,factor_count,factor_order_hash,"
-            "annualization_basis,units,calibrated,estimated_at,source) "
+            "annualization_basis,units,calibrated,observed_at,source) "
             "SELECT %s,model_id,%s,factor_order,factor_count,factor_order_hash,"
-            "annualization_basis,%s,calibrated,estimated_at,source "
+            "annualization_basis,%s,calibrated,observed_at,source "
             "FROM factor.model_run WHERE run_id=%s",
             (new_run_id, new_run_id.hex, Jsonb({**case.units, field: value}), case.run_id),
         )
@@ -255,7 +255,7 @@ def test_binding_rejects_forged_run_metadata(receipt_case, field, value):
 
 
 @pytest.mark.parametrize(
-    "change", ["units", "source", "factor_order", "estimated_at", "calibrated", "delete"]
+    "change", ["units", "source", "factor_order", "observed_at", "calibrated", "delete"]
 )
 def test_bound_model_run_metadata_cannot_be_relabelled(receipt_case, change):
     case = receipt_case
@@ -264,7 +264,7 @@ def test_bound_model_run_metadata_cannot_be_relabelled(receipt_case, change):
         "units": "UPDATE factor.model_run SET units=jsonb_set(units,'{purpose}','\"production\"')",
         "source": "UPDATE factor.model_run SET source='datayes'",
         "factor_order": "UPDATE factor.model_run SET factor_order=ARRAY['other']",
-        "estimated_at": "UPDATE factor.model_run SET estimated_at=estimated_at+interval '1 day'",
+        "observed_at": "UPDATE factor.model_run SET observed_at=observed_at+interval '1 day'",
         "calibrated": "UPDATE factor.model_run SET calibrated=true",
         "delete": "DELETE FROM factor.model_run",
     }
@@ -441,9 +441,9 @@ def test_legacy_fixed_run_without_purpose_cannot_be_promoted(receipt_case):
         cur.execute(
             "INSERT INTO factor.model_run "
             "(run_id,model_id,model_version,factor_order,factor_count,factor_order_hash,"
-            "annualization_basis,units,calibrated,estimated_at,source) "
+            "annualization_basis,units,calibrated,observed_at,source) "
             "SELECT %s,model_id,%s,factor_order,factor_count,factor_order_hash,"
-            "annualization_basis,units-'purpose'-'trading_day',calibrated,estimated_at,source "
+            "annualization_basis,units-'purpose'-'trading_day',calibrated,observed_at,source "
             "FROM factor.model_run WHERE run_id=%s",
             (legacy_id, legacy_id.hex, case.run_id),
         )
@@ -473,9 +473,9 @@ def test_receipt_cannot_be_bound_to_a_second_run(receipt_case):
         cur.execute(
             "INSERT INTO factor.model_run "
             "(run_id,model_id,model_version,factor_order,factor_count,factor_order_hash,"
-            "annualization_basis,units,calibrated,estimated_at,source) "
+            "annualization_basis,units,calibrated,observed_at,source) "
             "SELECT %s,model_id,%s,factor_order,factor_count,factor_order_hash,"
-            "annualization_basis,units,calibrated,estimated_at,source "
+            "annualization_basis,units,calibrated,observed_at,source "
             "FROM factor.model_run WHERE run_id=%s",
             (duplicate_run_id, duplicate_run_id.hex, case.run_id),
         )

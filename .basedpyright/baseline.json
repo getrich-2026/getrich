@@ -6718,8 +6718,8 @@
             {
                 "code": "reportOptionalMemberAccess",
                 "range": {
-                    "startColumn": 36,
-                    "endColumn": 49,
+                    "startColumn": 34,
+                    "endColumn": 47,
                     "lineCount": 1
                 }
             }
