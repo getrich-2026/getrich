@@ -218,6 +218,8 @@ include = ["packages", "scripts"]
 # gr-data/reference/ 与 Ruff 的 exclude 保持一致：厂商资料与历史脚本，不是可运行源码。
 exclude = [
     "packages/gr-data/reference",
+    # setuptools 的构建副本可能滞后于 src；只检查实际源码，不重复扫描产物。
+    "packages/*/build/**",
     "**/__pycache__",
     "**/.*",
 ]
