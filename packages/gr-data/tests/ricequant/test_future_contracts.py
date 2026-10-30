@@ -146,6 +146,12 @@ def test_importer_matches_by_exchange_product_and_month(pg_conn, tmp_raw_root):
             "FROM meta.future_contracts ORDER BY instrument_id"
         )
         rows = [(r[0], float(r[1]), float(r[2]), r[3], r[4], r[5]) for r in cur.fetchall()]
+        # 上市日两源不一致时以米筐为准写入本表，身份表保留 tushare 原值
+        cur.execute(
+            "SELECT c.list_date, i.list_date FROM meta.future_contracts c "
+            "JOIN meta.instruments i USING (instrument_id) WHERE i.symbol = 'AL2401.SHF'"
+        )
+        assert cur.fetchone() == (date(2023, 1, 18), date(2023, 1, 17))
         cur.execute("SELECT rule, detail FROM ops.data_quality_check ORDER BY rule")
         checks = {rule: (d if isinstance(d, dict) else json.loads(d)) for rule, d in cur.fetchall()}
         cur.execute(

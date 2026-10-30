@@ -165,6 +165,7 @@ FUTURE_CONTRACTS = TableContract(
         "margin_rate",
         "industry_name",
         "underlying_code",
+        "list_date",
         "source",
     ),
     conflict_keys=("instrument_id",),
@@ -176,6 +177,7 @@ FUTURE_CONTRACTS = TableContract(
         ("margin_rate", "float8"),
         ("industry_name", "text"),
         ("underlying_code", "text"),
+        ("list_date", "date"),
         ("source", "text"),
     ),
 )

@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS meta.future_contracts (
     margin_rate   NUMERIC(10,6),
     industry_name VARCHAR(64),
     underlying_code VARCHAR(32),
+    list_date     DATE,
     source        VARCHAR(32) NOT NULL,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT chk_future_contracts_positive CHECK (
@@ -85,6 +86,8 @@ COMMENT ON COLUMN meta.future_contracts.margin_rate IS '最低保证金率（米
 COMMENT ON COLUMN meta.future_contracts.industry_name IS '行业分类名称（米筐 industry_name）。';
 COMMENT ON COLUMN meta.future_contracts.underlying_code IS
     '合约标的代码（米筐 underlying_order_book_id 原样，仅股指期货有值，如 000300.XSHG）；未解析为 instrument_id。';
+COMMENT ON COLUMN meta.future_contracts.list_date IS
+    '上市日（米筐 listed_date）。2026-10-30 用户确定期货上市日暂以本列为准；meta.instruments.list_date 保留 tushare 原值作身份与对账，两者不一致时记 future_contracts_list_date_mismatch。';
 COMMENT ON COLUMN meta.future_contracts.source IS '写入方 provider；本表只由 ricequant 写入。';
 COMMENT ON COLUMN meta.future_contracts.updated_at IS '记录最后更新时间。';
 

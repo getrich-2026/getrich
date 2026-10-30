@@ -12,8 +12,9 @@
 匹配不到时都不写，记入 ops.data_quality_check；写错一行（乘数错位）远比少一行危害大。
 
 两源对老合约的上市日记录不一致（2026-10-30 实测上期所 2003–2010 年合约为主，相差中位
-13 天）不影响身份判定：上述键在交易所规则下唯一确定一份合约，上市日归 tushare 身份表，
-这里照常写入并记 ``future_contracts_list_date_mismatch`` 留作对账。
+13 天）不影响身份判定：上述键在交易所规则下唯一确定一份合约，照常写入并记
+``future_contracts_list_date_mismatch`` 留作对账。用户确定期货上市日暂以米筐为准，
+米筐 ``listed_date`` 写入本表 ``list_date``；meta.instruments.list_date 仍是 tushare 原值。
 """
 
 from __future__ import annotations
@@ -142,6 +143,7 @@ class FutureContractsImporter(BaseImporter):
             # 身份已由唯一键确定；上市日差异是两源记录口径不同，写入并留痕供对账。
             self._record("future_contracts_list_date_mismatch", merged[conflict])
 
+        listed = merged["listed_date"].map(_rq_date)
         tick_map = dict(zip(tick["order_book_id"].astype(str), tick["tick_size"], strict=True))
         underlying = merged["underlying_order_book_id"].astype(object)
         out = pd.DataFrame(
@@ -158,6 +160,7 @@ class FutureContractsImporter(BaseImporter):
                 "underlying_code": underlying.where(
                     underlying.notna() & ~underlying.astype(str).isin(["null", ""]), None
                 ),
+                "list_date": listed.astype(object).where(listed.notna(), None),
                 "source": PROVIDER,
             }
         )
