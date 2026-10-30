@@ -75,8 +75,33 @@ CREATE TABLE IF NOT EXISTS meta.option_contracts (
     list_date       DATE,
     last_trade_date DATE,
     exercise_date   DATE,
-    CONSTRAINT chk_option_type CHECK (option_type IN ('C', 'P'))
+    delivery_date   DATE,
+    maturity_date   DATE,
+    settle_month    VARCHAR(8),
+    contract_type   VARCHAR(32),
+    trading_code    VARCHAR(64),
+    per_unit        NUMERIC(18,4),
+    price_tick      NUMERIC(18,6),
+    quote_unit      VARCHAR(32),
+    list_price      NUMERIC(18,6),
+    CONSTRAINT chk_option_type CHECK (option_type IN ('C', 'P')),
+    CONSTRAINT chk_option_contract_positive CHECK (
+        (per_unit IS NULL OR per_unit > 0)
+        AND (price_tick IS NULL OR price_tick > 0)
+        AND (list_price IS NULL OR list_price >= 0)
+    )
 );
+
+COMMENT ON COLUMN meta.option_contracts.delivery_date IS '最后交割日（opt_basic.last_ddate）。';
+COMMENT ON COLUMN meta.option_contracts.maturity_date IS '到期日（opt_basic.maturity_date）。';
+COMMENT ON COLUMN meta.option_contracts.settle_month IS '结算月（opt_basic.s_month，YYYYMM 文本原样）。';
+COMMENT ON COLUMN meta.option_contracts.contract_type IS '合约类型（opt_basic.opt_type，如 ETF期权）。';
+COMMENT ON COLUMN meta.option_contracts.trading_code IS '交易所交易代码（opt_basic.symbol），与 ts_code 不同，不可由其推导。';
+COMMENT ON COLUMN meta.option_contracts.per_unit IS
+    '合约单位（opt_basic.per_unit）。multiplier 取 opt_multiplier（经除权除息调整），两者语义不同，不互相替代。';
+COMMENT ON COLUMN meta.option_contracts.price_tick IS '最小价格波幅（opt_basic.min_price_chg），单位同报价单位。';
+COMMENT ON COLUMN meta.option_contracts.quote_unit IS '报价单位（opt_basic.quote_unit）。';
+COMMENT ON COLUMN meta.option_contracts.list_price IS '挂牌基准价（opt_basic.list_price）。';
 
 CREATE INDEX IF NOT EXISTS idx_option_contracts_underlying
     ON meta.option_contracts (underlying_id);

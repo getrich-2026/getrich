@@ -138,7 +138,7 @@ raw `daily_basic` 只落 `fundamental.valuation_1d`：市值万元→元、股�
 | raw | `option_instruments` | 从所选日期、市场的 opt_daily 发现代码，按 opt_code 分页查 opt_basic；未知标的先精确引导，缺失代码精确回退；必须在日线之后运行 |
 | ingest | `etf_reference` | `etf_instruments` → `etf_symbol_map` → `etf_profile`，分别写 meta.instruments／symbol_map／etf_profile；档案按 ts_code 精确连接 fund_basic，未匹配的记软告警 |
 | ingest | `etf_bars_1d` | 只导 ETF 清单内记录；源基金因子按代码、日期精确配对 → market.etf_bar_1d |
-| ingest | `option_reference` | `option_instruments` → `option_symbol_map` → `option_contracts`；标的身份和 source 映射须预先具备 |
+| ingest | `option_reference` | `option_instruments` → `option_symbol_map` → `option_contracts`（含最小价格波幅、合约单位、交割日、交易代码等 opt_basic 字段）；标的身份和 source 映射须预先具备 |
 | ingest | `option_bars_1d` | 未复权源报价、结算价及手数 → market.option_bar_1d；默认有验证门禁 |
 
 `classify.instrument_category` 的 ETF 类别取自 `meta.etf_profile.fund_type`：股票型→equity、

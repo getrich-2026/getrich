@@ -94,6 +94,15 @@ def asset_metadata(
                 "opt_multiplier",
                 "delist_date",
                 "last_edate",
+                "last_ddate",
+                "maturity_date",
+                "s_month",
+                "opt_type",
+                "symbol",
+                "per_unit",
+                "min_price_chg",
+                "quote_unit",
+                "list_price",
             ),
             asset,
         )
@@ -451,6 +460,21 @@ class OptionContractsImporter(_OptionValidation, _AssetImporter):
                 "list_date": raw["list_date"].map(parse_date),
                 "last_trade_date": raw["delist_date"].map(parse_date),
                 "exercise_date": raw["last_edate"].map(parse_date),
+                "delivery_date": raw["last_ddate"].map(parse_date),
+                "maturity_date": raw["maturity_date"].map(parse_date),
+                "settle_month": _text(raw["s_month"]),
+                "contract_type": _text(raw["opt_type"]),
+                "trading_code": _text(raw["symbol"]),
+                "per_unit": numeric_values(
+                    raw["per_unit"], "per_unit", precision=18, scale=4, positive=True
+                ),
+                "price_tick": numeric_values(
+                    raw["min_price_chg"], "min_price_chg", precision=18, scale=6, positive=True
+                ),
+                "quote_unit": _text(raw["quote_unit"]),
+                "list_price": numeric_values(
+                    raw["list_price"], "list_price", precision=18, scale=6
+                ),
             }
         )[list(self.contract.columns)]
 

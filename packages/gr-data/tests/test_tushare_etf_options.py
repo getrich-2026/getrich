@@ -93,6 +93,10 @@ def option_meta(exchange):
         list_date="20230102",
         delist_date="20240228",
         last_edate="20240301",
+        last_ddate="20240304",
+        maturity_date="20240301",
+        s_month="202403",
+        list_price=0.4028,
         quote_unit="人民币元",
         min_price_chg="0.0001",
     )
@@ -726,6 +730,19 @@ def test_etf_options_pg_roundtrip_and_replay(pg_conn, asset_setup, quote_case):
             assert sorted(cur.fetchall(), key=lambda r: r[4]) == expected_null
             cur.execute("SELECT multiplier,underlying_id FROM meta.option_contracts")
             assert all(m == 10 and iid is not None for m, iid in cur.fetchall())
+            cur.execute(
+                "SELECT DISTINCT per_unit, price_tick, list_price, delivery_date, settle_month "
+                "FROM meta.option_contracts"
+            )
+            assert cur.fetchall() == [
+                (
+                    Decimal("1.0000"),
+                    Decimal("0.000100"),
+                    Decimal("0.402800"),
+                    date(2024, 3, 4),
+                    "202403",
+                )
+            ]
             cur.execute("SELECT count(*) FROM meta.option_contracts")
             assert cur.fetchone()[0] == 8
         # 全部 canonical 字段逐项核对，不能只靠行数和少数字段证明链路正确。
