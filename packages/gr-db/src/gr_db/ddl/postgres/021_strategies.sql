@@ -34,7 +34,12 @@ CREATE TABLE IF NOT EXISTS app.strategies (
     web                     BOOLEAN         DEFAULT TRUE,                  -- visible on web
     published_at            TIMESTAMPTZ,
     created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    updated_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    strategy_kind           VARCHAR(16),
+    CONSTRAINT strategies_detail_html_length_chk
+        CHECK (detail_html IS NULL OR char_length(detail_html) <= 50000),
+    CONSTRAINT chk_strategies_strategy_kind
+        CHECK (strategy_kind IS NULL OR strategy_kind IN ('pick', 'timing', 'combo'))
 );
 
 COMMENT ON TABLE app.strategies IS
@@ -44,3 +49,11 @@ COMMENT ON TABLE app.strategies IS
 CREATE INDEX IF NOT EXISTS idx_strategies_code ON app.strategies(strategy_code);
 CREATE INDEX IF NOT EXISTS idx_strategies_pub_status ON app.strategies(pub_status);
 CREATE INDEX IF NOT EXISTS idx_strategies_author ON app.strategies(author_id);
+
+COMMENT ON COLUMN app.strategies.strategy_kind IS
+    '策略类型：pick=选股（产出每日标的池，走 /v1/pick-strategies）；timing=择时（产出买卖信号）；combo=组合。NULL 表示未分类，不会出现在选股接口里。';
+
+CREATE INDEX IF NOT EXISTS idx_strategies_kind
+    ON app.strategies(strategy_kind) WHERE strategy_kind IS NOT NULL;
+COMMENT ON CONSTRAINT strategies_detail_html_length_chk ON app.strategies IS
+    '详情 HTML 最长 50000 字符；仅限制长度，HTML 清洗仍由输入与展示边界负责。';

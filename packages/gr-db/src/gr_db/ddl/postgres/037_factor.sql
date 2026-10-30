@@ -17,6 +17,114 @@
 
 CREATE SCHEMA IF NOT EXISTS factor;
 
+-- 风险模型专用的配置身份、成功收据与观察检查点。
+-- 当前收据仅承载米筐风险整包；不扩大为通用供应商收据。
+CREATE TABLE IF NOT EXISTS factor.dataset_variant (
+    variant_id VARCHAR(64) PRIMARY KEY,
+    provider VARCHAR(32) NOT NULL,
+    dataset_name VARCHAR(96) NOT NULL,
+    purpose TEXT NOT NULL,
+    identity JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT chk_dataset_variant_id CHECK (variant_id ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_dataset_variant_provider CHECK (btrim(provider) <> ''),
+    CONSTRAINT chk_dataset_variant_dataset CHECK (btrim(dataset_name) <> ''),
+    CONSTRAINT chk_dataset_variant_purpose CHECK (purpose IN ('validation', 'production')),
+    CONSTRAINT chk_dataset_variant_identity CHECK (
+        jsonb_typeof(identity) = 'object'
+        AND identity ? 'purpose'
+        AND jsonb_typeof(identity -> 'purpose') = 'string'
+        AND identity ->> 'purpose' = purpose
+    ),
+    CONSTRAINT chk_dataset_variant_created_at CHECK (isfinite(created_at)),
+    CONSTRAINT uq_dataset_variant_source UNIQUE (variant_id, provider, dataset_name)
+);
+
+CREATE TABLE IF NOT EXISTS factor.import_receipt (
+    receipt_id UUID PRIMARY KEY,
+    target TEXT NOT NULL,
+    variant_id VARCHAR(64) NOT NULL REFERENCES factor.dataset_variant(variant_id),
+    manifest_hash VARCHAR(64) NOT NULL,
+    importer_version TEXT NOT NULL,
+    observation_id VARCHAR(32) NOT NULL,
+    trading_day DATE NOT NULL,
+    rows_written BIGINT NOT NULL,
+    quality JSONB NOT NULL,
+    committed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT chk_import_receipt_target CHECK (target = 'factor.risk_bundle'),
+    CONSTRAINT chk_import_receipt_manifest CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_import_receipt_version CHECK (btrim(importer_version) <> ''),
+    CONSTRAINT chk_import_receipt_observation CHECK (observation_id ~ '^[0-9a-f]{32}$'),
+    CONSTRAINT chk_import_receipt_day CHECK (isfinite(trading_day)),
+    CONSTRAINT chk_import_receipt_rows CHECK (rows_written >= 0),
+    CONSTRAINT chk_import_receipt_quality CHECK (jsonb_typeof(quality) = 'object'),
+    CONSTRAINT chk_import_receipt_committed_at CHECK (isfinite(committed_at)),
+    CONSTRAINT uq_import_receipt_replay UNIQUE (target, manifest_hash, importer_version),
+    CONSTRAINT uq_import_receipt_binding UNIQUE (
+        receipt_id, variant_id, observation_id, trading_day
+    ),
+    CONSTRAINT uq_import_receipt_capture UNIQUE (
+        receipt_id, variant_id, observation_id, trading_day, manifest_hash
+    )
+);
+
+CREATE TABLE IF NOT EXISTS factor.import_checkpoint (
+    provider       VARCHAR(32) NOT NULL,
+    dataset_name   VARCHAR(96) NOT NULL,
+    partition_key  TEXT NOT NULL,
+    watermark_date DATE,
+    watermark_ts   TIMESTAMPTZ,
+    state          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    variant_id VARCHAR(64),
+    observation_id VARCHAR(32),
+    trading_day DATE,
+    capture_manifest_hash VARCHAR(64),
+    captured_at TIMESTAMPTZ,
+    import_receipt_id UUID,
+    imported_at TIMESTAMPTZ,
+    PRIMARY KEY (provider, dataset_name, partition_key),
+    CONSTRAINT chk_import_checkpoint_provider_not_blank CHECK (btrim(provider) <> ''),
+    CONSTRAINT chk_import_checkpoint_dataset_not_blank CHECK (btrim(dataset_name) <> ''),
+    CONSTRAINT chk_import_checkpoint_partition_not_blank CHECK (btrim(partition_key) <> ''),
+    CONSTRAINT chk_import_checkpoint_tagged_identity
+    CHECK (
+            (variant_id IS NULL AND observation_id IS NULL AND trading_day IS NULL
+                AND capture_manifest_hash IS NULL AND captured_at IS NULL
+                AND import_receipt_id IS NULL AND imported_at IS NULL)
+            OR (
+                variant_id IS NOT NULL AND observation_id IS NOT NULL
+                AND trading_day IS NOT NULL AND capture_manifest_hash IS NOT NULL
+                AND captured_at IS NOT NULL
+                AND variant_id ~ '^[0-9a-f]{64}$'
+                AND observation_id ~ '^[0-9a-f]{32}$'
+                AND capture_manifest_hash ~ '^[0-9a-f]{64}$'
+                AND isfinite(trading_day) AND isfinite(captured_at)
+                AND partition_key = variant_id || '/' || to_char(trading_day, 'YYYY-MM-DD')
+                    || '/' || observation_id
+                AND jsonb_typeof(state) = 'object'
+                AND watermark_ts IS NULL
+                AND (
+                    (import_receipt_id IS NULL AND imported_at IS NULL AND watermark_date IS NULL)
+                    OR (import_receipt_id IS NOT NULL AND imported_at IS NOT NULL
+                        AND watermark_date IS NOT NULL AND watermark_date = trading_day
+                        AND isfinite(imported_at) AND imported_at >= captured_at)
+                )
+            )
+        ),
+    CONSTRAINT fk_import_checkpoint_variant_source
+    FOREIGN KEY (variant_id, provider, dataset_name)
+        REFERENCES factor.dataset_variant (variant_id, provider, dataset_name),
+    CONSTRAINT fk_import_checkpoint_receipt_identity
+    FOREIGN KEY (import_receipt_id, variant_id, observation_id, trading_day, capture_manifest_hash)
+        REFERENCES factor.import_receipt (receipt_id, variant_id, observation_id, trading_day, manifest_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_checkpoint_updated_at
+    ON factor.import_checkpoint (updated_at);
+
+
+
 -- ---------------------------------------------------------------------------
 -- 元数据
 -- ---------------------------------------------------------------------------
@@ -27,13 +135,13 @@ CREATE TABLE IF NOT EXISTS factor.model (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 因子集合与顺序的唯一真相源。ordinal 就是各数组列里的下标。
+-- 因子集合与顺序的唯一真相源。ordinal 为零基业务序号，PG 数组位置为 ordinal + 1。
 CREATE TABLE IF NOT EXISTS factor.definition (
     model_id    VARCHAR(32) NOT NULL REFERENCES factor.model(model_id),
     factor_code VARCHAR(32) NOT NULL,
     factor_name VARCHAR(64),
     factor_type VARCHAR(16) NOT NULL,          -- market / industry / style
-    ordinal     SMALLINT NOT NULL,             -- 0-based，等于数组下标
+    ordinal     SMALLINT NOT NULL,             -- 零基业务序号；PG 数组位置为 ordinal + 1
     PRIMARY KEY (model_id, factor_code),
     CONSTRAINT uq_definition_ordinal UNIQUE (model_id, ordinal),
     CONSTRAINT chk_definition_factor_type CHECK (factor_type IN ('market', 'industry', 'style'))
@@ -53,7 +161,7 @@ CREATE TABLE IF NOT EXISTS factor.definition (
 CREATE TABLE IF NOT EXISTS factor.model_run (
     run_id              UUID PRIMARY KEY,
     model_id            VARCHAR(32) NOT NULL REFERENCES factor.model(model_id),
-    model_version       VARCHAR(32) NOT NULL,  -- 人可读版本号，如 'cne6-sw21'
+    model_version       VARCHAR(32) NOT NULL,  -- 观测版本；米筐填 run_id.hex，源模型见 units
     factor_order        TEXT[] NOT NULL,       -- 按 ordinal 派生，run 内不可变
     factor_count        SMALLINT NOT NULL,
     factor_order_hash   VARCHAR(32) NOT NULL,  -- MD5(顺序)，防错位
@@ -66,8 +174,12 @@ CREATE TABLE IF NOT EXISTS factor.model_run (
     param_hash          VARCHAR(32),
     source              VARCHAR(32) NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT chk_model_run_factor_count CHECK (
-        factor_count > 0 AND factor_count = array_length(factor_order, 1)
+    CONSTRAINT chk_model_run_factor_order CHECK (
+        factor_count > 0
+        AND cardinality(factor_order) = factor_count
+        AND array_ndims(factor_order) = 1
+        AND array_lower(factor_order, 1) = 1
+        AND array_position(factor_order, NULL) IS NULL
     ),
     CONSTRAINT chk_model_run_annualization CHECK (annualization_basis IN ('daily', 'annual_252')),
     CONSTRAINT uq_model_run_version UNIQUE (model_id, model_version)
@@ -94,7 +206,14 @@ CREATE TABLE IF NOT EXISTS factor.exposure (
     available_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id, instrument_id, trading_day),
-    CONSTRAINT chk_exposure_len CHECK (array_length(exposure, 1) = factor_count)
+    CONSTRAINT chk_exposure_array CHECK (
+        factor_count > 0
+        AND cardinality(exposure) = factor_count
+        AND array_ndims(exposure) = 1
+        AND array_lower(exposure, 1) = 1
+        AND array_position(exposure, NULL) IS NULL
+        AND NOT (exposure && ARRAY['NaN', 'Infinity', '-Infinity']::REAL[])
+    )
 );
 SELECT create_hypertable('factor.exposure', 'trading_day',
     chunk_time_interval => INTERVAL '1 year', if_not_exists => TRUE);
@@ -120,8 +239,13 @@ CREATE TABLE IF NOT EXISTS factor.covariance (
     available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id, trading_day),
-    CONSTRAINT chk_cov_len CHECK (
-        array_length(cov_flat, 1) = factor_count * (factor_count + 1) / 2
+    CONSTRAINT chk_cov_array CHECK (
+        factor_count > 0
+        AND cardinality(cov_flat) = factor_count * (factor_count + 1) / 2
+        AND array_ndims(cov_flat) = 1
+        AND array_lower(cov_flat, 1) = 1
+        AND array_position(cov_flat, NULL) IS NULL
+        AND NOT (cov_flat && ARRAY['NaN', 'Infinity', '-Infinity']::DOUBLE PRECISION[])
     )
 );
 
@@ -166,7 +290,14 @@ CREATE TABLE IF NOT EXISTS factor.factor_return (
     available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id, trading_day),
-    CONSTRAINT chk_ret_len CHECK (array_length(ret_vector, 1) = factor_count)
+    CONSTRAINT chk_ret_array CHECK (
+        factor_count > 0
+        AND cardinality(ret_vector) = factor_count
+        AND array_ndims(ret_vector) = 1
+        AND array_lower(ret_vector, 1) = 1
+        AND array_position(ret_vector, NULL) IS NULL
+        AND NOT (ret_vector && ARRAY['NaN', 'Infinity', '-Infinity']::REAL[])
+    )
 );
 
 COMMENT ON COLUMN factor.factor_return.ret_vector IS
@@ -202,3 +333,15 @@ CREATE INDEX IF NOT EXISTS idx_specific_risk_instrument_day
     ON factor.specific_risk (instrument_id, trading_day);
 CREATE INDEX IF NOT EXISTS idx_specific_return_instrument_day
     ON factor.specific_return (instrument_id, trading_day);
+
+COMMENT ON CONSTRAINT chk_model_run_factor_order ON factor.model_run IS
+    'factor_order 非空、一维、下标从 1 起、无 NULL 元素，元素数等于 factor_count（>0）。';
+
+COMMENT ON CONSTRAINT chk_exposure_array ON factor.exposure IS
+    'exposure 非空、一维、下标从 1 起，元素数等于 factor_count，元素非 NULL 且有限。factor_count 与 model_run 一致由入库门禁保证。';
+
+COMMENT ON CONSTRAINT chk_cov_array ON factor.covariance IS
+    'cov_flat 为上三角展平：元素数等于 K(K+1)/2，一维、下标从 1 起，元素非 NULL 且有限。factor_count 与 model_run 一致由入库门禁保证。';
+
+COMMENT ON CONSTRAINT chk_ret_array ON factor.factor_return IS
+    'ret_vector 非空、一维、下标从 1 起，元素数等于 factor_count，元素非 NULL 且有限。factor_count 与 model_run 一致由入库门禁保证。';

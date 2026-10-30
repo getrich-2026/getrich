@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS meta.symbol_map (
     source_symbol VARCHAR(128) NOT NULL,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (source, source_symbol),
-    UNIQUE (instrument_id, source),
     CONSTRAINT chk_symbol_map_source_not_blank
         CHECK (btrim(source) <> ''),
     CONSTRAINT chk_symbol_map_symbol_not_blank
@@ -81,3 +80,9 @@ CREATE TABLE IF NOT EXISTS meta.option_contracts (
 
 CREATE INDEX IF NOT EXISTS idx_option_contracts_underlying
     ON meta.option_contracts (underlying_id);
+
+CREATE INDEX IF NOT EXISTS idx_symbol_map_instrument_source
+    ON meta.symbol_map (instrument_id, source);
+
+COMMENT ON TABLE meta.symbol_map IS
+    '供应商代码到证券身份的映射：(source, source_symbol) 唯一；同一 instrument_id/source 可有多个经证据核实的历史代码。不是历史代码生效区间或 PIT 可得性记录。';

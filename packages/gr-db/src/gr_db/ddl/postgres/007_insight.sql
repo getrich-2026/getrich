@@ -26,23 +26,6 @@ CREATE TABLE IF NOT EXISTS ops.dataset_catalog (
 CREATE INDEX IF NOT EXISTS idx_dataset_catalog_phase_status
     ON ops.dataset_catalog (provider, phase, status);
 
-CREATE TABLE IF NOT EXISTS ops.import_checkpoint (
-    provider       VARCHAR(32) NOT NULL,
-    dataset_name   VARCHAR(96) NOT NULL,
-    partition_key  TEXT NOT NULL,
-    watermark_date DATE,
-    watermark_ts   TIMESTAMPTZ,
-    state          JSONB NOT NULL DEFAULT '{}'::jsonb,
-    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (provider, dataset_name, partition_key),
-    CONSTRAINT chk_import_checkpoint_provider_not_blank CHECK (btrim(provider) <> ''),
-    CONSTRAINT chk_import_checkpoint_dataset_not_blank CHECK (btrim(dataset_name) <> ''),
-    CONSTRAINT chk_import_checkpoint_partition_not_blank CHECK (btrim(partition_key) <> '')
-);
-
-CREATE INDEX IF NOT EXISTS idx_import_checkpoint_updated_at
-    ON ops.import_checkpoint (updated_at);
-
 CREATE TABLE IF NOT EXISTS staging.parquet_file (
     file_id            BIGSERIAL PRIMARY KEY,
     provider           VARCHAR(32) NOT NULL,

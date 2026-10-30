@@ -44,39 +44,6 @@ CREATE TABLE IF NOT EXISTS ops.etl_job_run (
         CHECK (finished_at IS NULL OR started_at IS NULL OR finished_at >= started_at)
 );
 
-ALTER TABLE ops.etl_job_run
-    ADD COLUMN IF NOT EXISTS provider VARCHAR(32),
-    ADD COLUMN IF NOT EXISTS dataset_name VARCHAR(96),
-    ADD COLUMN IF NOT EXISTS start_date DATE,
-    ADD COLUMN IF NOT EXISTS end_date DATE,
-    ADD COLUMN IF NOT EXISTS warning_count INT NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS request JSONB NOT NULL DEFAULT '{}'::jsonb,
-    ADD COLUMN IF NOT EXISTS checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'chk_etl_job_date_range'
-          AND conrelid = 'ops.etl_job_run'::regclass
-    ) THEN
-        ALTER TABLE ops.etl_job_run
-            ADD CONSTRAINT chk_etl_job_date_range
-            CHECK (start_date IS NULL OR end_date IS NULL OR start_date <= end_date);
-    END IF;
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'chk_etl_job_warning_count'
-          AND conrelid = 'ops.etl_job_run'::regclass
-    ) THEN
-        ALTER TABLE ops.etl_job_run
-            ADD CONSTRAINT chk_etl_job_warning_count
-            CHECK (warning_count >= 0);
-    END IF;
-END $$;
-
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id
     ON ops.api_keys (user_id);
 

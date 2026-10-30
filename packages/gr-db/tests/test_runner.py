@@ -332,8 +332,8 @@ def test_pg_ddl_dir_is_contiguous_and_covers_all_schemas() -> None:
 
     不写死文件数量 —— 每加一个迁移就要改一次断言，改的人多半只是把数字 +1，
     这个测试就退化成了噪音。真正的不变量是**前缀连续**（runner 拒绝跳号，
-    跳号意味着有文件没提交）和**schema 齐全**。000 固定是旧库升级脚本：
-    它必须先于 001 建 app schema 执行，否则旧库的 frontend 不会被改名。
+    跳号意味着有文件没提交）和**schema 齐全**。新库基线保留 000 等历史编号
+    作为占位；结构直接定义在 CREATE 中，不再重命名旧 schema。
     """
     found = discover_migrations(_PG_MIGRATIONS_DIR)
     assert found, "PG DDL 目录是空的"

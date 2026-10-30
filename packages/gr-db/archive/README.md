@@ -18,7 +18,7 @@
 |---|---|
 | 全部 DDL | `packages/gr-db/src/gr_db/ddl/postgres/`、`ddl/clickhouse/` |
 | 应用 DDL 的方式 | `uv run gr-db migrate --target all` |
-| 旧库升级到新 schema | `ddl/postgres/000_frontend_to_app_backtest.sql`，随 `gr-db migrate` 自动执行 |
+| 新库初始化 | 2026-10-29 已将增量结构合入 CREATE；历史编号保留占位，不再提供旧 `frontend` schema 自动升级 |
 
 保留而不删除，是因为里面的表设计意图（尤其 `openapi.yaml` 与
 `API_TASKS.md`）对理解历史字段含义仍有价值。确认不再需要后可整体删除，

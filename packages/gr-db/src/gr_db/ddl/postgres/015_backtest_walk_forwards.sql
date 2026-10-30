@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS backtest.backtest_walk_forwards (
     summary_json            JSONB           NOT NULL DEFAULT '{}'::jsonb,
     created_at              TIMESTAMPTZ     NOT NULL,
     completed_at            TIMESTAMPTZ,
-    updated_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    updated_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    user_id TEXT
 );
 
 COMMENT ON TABLE backtest.backtest_walk_forwards IS
@@ -75,3 +76,7 @@ CREATE INDEX IF NOT EXISTS idx_backtest_walk_forward_windows_train_sweep
     ON backtest.backtest_walk_forward_windows(train_sweep_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_walk_forward_windows_validation_run
     ON backtest.backtest_walk_forward_windows(validation_run_id);
+
+CREATE INDEX IF NOT EXISTS ix_backtest_walk_forwards_user_id
+    ON backtest.backtest_walk_forwards (user_id) WHERE user_id IS NOT NULL;
+COMMENT ON COLUMN backtest.backtest_walk_forwards.user_id IS '回测归属用户标识；NULL 表示无归属或系统任务，不由本字段创建外键。';
