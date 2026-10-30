@@ -3,6 +3,7 @@
 from gr_data.raw.tushare.fetchers.asset_markets import (
     EtfInstrumentsFetcher,
     FundAdjFetcher,
+    FundBasicFetcher,
     FundDailyFetcher,
     OptionCalendarFetcher,
     OptionDailyFetcher,
@@ -42,6 +43,7 @@ DEFAULT_DATASETS = tuple(REGISTRY)
 REGISTRY.update(
     {
         "etf_instruments": EtfInstrumentsFetcher,
+        "fund_basic": FundBasicFetcher,
         "option_calendar": OptionCalendarFetcher,
         "fund_daily": FundDailyFetcher,
         "fund_adj": FundAdjFetcher,

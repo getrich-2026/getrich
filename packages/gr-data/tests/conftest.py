@@ -716,7 +716,7 @@ def pg_conn(pg_dsn):
             """
             TRUNCATE
               meta.instruments, meta.symbol_map, meta.trading_calendar,
-              meta.stock_profile, meta.index_profile, meta.future_profile,
+              meta.stock_profile, meta.index_profile, meta.future_profile, meta.etf_profile,
               market.stock_bar_1d, market.stock_suspend_event, market.stock_suspend_coverage,
               market.etf_bar_1d, market.index_bar_1d,
               market.future_bar_1d, market.adj_factor_ts,

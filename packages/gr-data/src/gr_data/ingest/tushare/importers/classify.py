@@ -1,6 +1,7 @@
 """meta.instruments → classify.instrument_category（资产类别，缺口 G5）。
 
-这是**纯规则映射**，不读 raw parquet：输入就是已经入库的 `meta.instruments`。
+这是**纯规则映射**，不读 raw parquet：输入是已经入库的 `meta.instruments`，
+ETF 另读 `meta.etf_profile`（etf_basic + fund_basic 快照）。
 之所以不直接用 `meta.instruments.asset`，是因为那一列是**品种级**取值
 （stock/etf/index/future/option/fund），而持仓诊断要的是**资产类别**
 （equity / fixed_income / commodity / cash / alternative）。两者不是一回事：
@@ -26,23 +27,31 @@ PROVIDER = "tushare"
 
 #: asset → (asset_category, market)。**只列能确定的**：
 #:   stock  A 股个股，权益无疑问
-#:   etf    一律记 equity。区分股票型与债券型 ETF 需要基金持仓明细（缺口 G4，
-#:          一期不处理），按名称猜会把债基误判成权益。这条限制写在 DDL 列注释里。
-#:   fund   同上
+#:   etf    不在这里：按 meta.etf_profile 的 fund_type 与投资通道映射，见下方两张表
 #: 刻意**不列**的：
+#:   fund   没有任何 importer 产出，也没有投资类型可依据
 #:   index  指数不是可持有标的，给它一个资产类别没有意义
 #:   future 交易所定不了类别 —— CFFEX 同时有股指期货（equity）与国债期货
 #:          （fixed_income），必须逐品种判断，而本仓没有品种到类别的权威映射
 #:   option 同上，且还要看标的资产
 _CATEGORY_BY_ASSET: dict[str, tuple[str, str]] = {
     "stock": ("equity", "cn_a"),
-    "etf": ("equity", "cn_a"),
-    "fund": ("equity", "cn_a"),
 }
+
+#: fund_basic.fund_type → asset_category。2026-10-30 全名单核验：旧的「ETF 一律 equity」
+#: 被 62 只债券型、30 只货币型反例证伪。「其他」（黄金等）与混合型无法唯一确定类别，
+#: 不按名称或业绩基准猜，不写行。
+_ETF_CATEGORY_BY_FUND_TYPE: dict[str, str] = {
+    "股票型": "equity",
+    "债券型": "fixed_income",
+    "货币型": "cash",
+}
+#: etf_basic.etf_type → market。QDII 投向境外，具体是 hk／us 还是其他市场源未给出，不写行。
+_ETF_MARKET_BY_CHANNEL: dict[str, str] = {"纯境内": "cn_a"}
 
 
 class InstrumentCategoryImporter(BaseImporter):
-    """按规则给 A 股 / ETF 打资产类别与市场标签。"""
+    """按规则给 A 股 / ETF 打资产类别与市场标签；无法确定的标的不写并记录质量检查。"""
 
     PROVIDER = PROVIDER
     DATASET = "instrument_category"
@@ -53,9 +62,12 @@ class InstrumentCategoryImporter(BaseImporter):
     def build(self) -> pd.DataFrame:
         with self.conn.cursor() as cur:
             cur.execute(
-                "SELECT instrument_id, asset, list_date, delist_date "
-                "FROM meta.instruments WHERE asset = ANY(%s)",
-                (sorted(_CATEGORY_BY_ASSET),),
+                "SELECT i.instrument_id, i.asset, i.list_date, i.delist_date, "
+                "       p.fund_type, p.channel "
+                "FROM meta.instruments i "
+                "LEFT JOIN meta.etf_profile p USING (instrument_id) "
+                "WHERE i.asset = ANY(%s)",
+                (sorted({*_CATEGORY_BY_ASSET, "etf"}),),
             )
             rows = cur.fetchall()
 
@@ -63,7 +75,28 @@ class InstrumentCategoryImporter(BaseImporter):
             self.log.warning("meta.instruments 里没有可分类的标的，请先运行 instruments importer")
             return pd.DataFrame(columns=list(self.contract.columns))
 
-        df = pd.DataFrame(rows, columns=["instrument_id", "asset", "list_date", "delist_date"])
+        df = pd.DataFrame(
+            rows,
+            columns=["instrument_id", "asset", "list_date", "delist_date", "fund_type", "channel"],
+        )
+        df["asset_category"] = df["asset"].map({a: c for a, (c, _) in _CATEGORY_BY_ASSET.items()})
+        df["market"] = df["asset"].map({a: m for a, (_, m) in _CATEGORY_BY_ASSET.items()})
+        etf = df["asset"].eq("etf")
+        df.loc[etf, "asset_category"] = df.loc[etf, "fund_type"].map(_ETF_CATEGORY_BY_FUND_TYPE)
+        df.loc[etf, "market"] = df.loc[etf, "channel"].map(_ETF_MARKET_BY_CHANNEL)
+        # 分不出类别或市场的 ETF 不写：写错一行比少一行危害大（见模块说明）。
+        unmapped = etf & (df["asset_category"].isna() | df["market"].isna())
+        if unmapped.any():
+            skipped = df[unmapped]
+            self._record_skipped(
+                "classify_category_etf_unmapped",
+                skipped,
+                {
+                    "by_fund_type": skipped["fund_type"].fillna("<no_profile>").value_counts(),
+                    "by_channel": skipped["channel"].fillna("<no_profile>").value_counts(),
+                },
+            )
+            df = df[~unmapped]
 
         # in_date 必须有值：它是主键的一部分，也是「这一分类从何时起有效」的唯一依据。
         # 上市日缺失时跳过而不是拿今天顶上 —— 拿今天顶会让这条分类看起来是新生效的，
@@ -83,12 +116,11 @@ class InstrumentCategoryImporter(BaseImporter):
         if df.empty:
             return pd.DataFrame(columns=list(self.contract.columns))
 
-        mapped = df["asset"].map(_CATEGORY_BY_ASSET)
         out = pd.DataFrame(
             {
                 "instrument_id": df["instrument_id"].astype("int64"),
-                "asset_category": mapped.str[0],
-                "market": mapped.str[1],
+                "asset_category": df["asset_category"],
+                "market": df["market"],
                 "in_date": pd.to_datetime(df["list_date"]).dt.date,
                 "out_date": pd.to_datetime(df["delist_date"]).dt.date.where(
                     df["delist_date"].notna(), None
@@ -102,11 +134,18 @@ class InstrumentCategoryImporter(BaseImporter):
         )
         return out[list(self.contract.columns)].reset_index(drop=True)
 
-    def _record_skipped(self, rule: str, skipped: pd.DataFrame) -> None:
-        detail = {
+    def _record_skipped(
+        self,
+        rule: str,
+        skipped: pd.DataFrame,
+        breakdown: dict[str, pd.Series] | None = None,
+    ) -> None:
+        detail: dict[str, object] = {
             "count": int(len(skipped)),
             "sample": [int(x) for x in skipped["instrument_id"].head(20)],
         }
+        for key, counts in (breakdown or {}).items():
+            detail[key] = {str(k): int(v) for k, v in counts.items()}
         self.log.warning("%s：跳过 %d 个标的", rule, detail["count"])
         with self.conn.cursor() as cur:
             cur.execute(

@@ -49,6 +49,14 @@ ETF_FIELDS = (
     "ts_code,csname,extname,cname,index_code,index_name,setup_date,list_date,list_status,"
     "exchange,mgr_name,custod_name,mgt_fee,etf_type"
 )
+# fund_basic 官方字段全取（tushare doc_id=19）；场内 ETF 的投资类型是资产类别映射的依据。
+FUND_FIELDS = (
+    "ts_code,name,management,custodian,fund_type,found_date,due_date,list_date,issue_date,"
+    "delist_date,issue_amount,m_fee,c_fee,duration_year,p_value,min_amount,exp_return,"
+    "benchmark,status,invest_type,type,trustee,purc_startdate,redm_startdate,market"
+)
+# D 摘牌／到期、I 发行、L 存续；不指定 status 时源只返回部分状态。
+FUND_STATUSES = ("L", "D", "I")
 OPTION_FIELDS = (
     "ts_code,symbol,exchange,name,per_unit,opt_code,opt_type,call_put,exercise_type,"
     "exercise_price,opt_multiplier,s_month,maturity_date,list_price,list_date,delist_date,"
@@ -74,7 +82,16 @@ class _AssetFetcher(BaseFetcher):
             logger=self.log,
         )
         # 只保存允许的只读参数，凭据始终留在 client 内。
-        allowed = {"fields", "exchange", "list_status", "ts_code", "trade_date", "opt_code"}
+        allowed = {
+            "fields",
+            "exchange",
+            "list_status",
+            "market",
+            "status",
+            "ts_code",
+            "trade_date",
+            "opt_code",
+        }
         self._requests.append(
             {
                 "api": api,
@@ -322,6 +339,40 @@ class EtfInstrumentsFetcher(_AssetFetcher):
                     "samples": pending["ts_code"].head(5).tolist(),
                 },
             },
+        )
+        return 1
+
+
+class FundBasicFetcher(_AssetFetcher):
+    """场内（market=E）fund_basic 的 L / D / I 全量；与 ETF 名单按 ts_code 精确连接。"""
+
+    DATASET = "fund_basic"
+
+    def fetch(self, mode: str = "update") -> int:
+        frames = []
+        counts: dict[str, int] = {}
+        for status in FUND_STATUSES:
+            frame = self._query("fund_basic", market="E", status=status, fields=FUND_FIELDS)
+            counts[status] = len(frame)
+            if frame.empty:
+                if status == "L":
+                    raise ValueError("Missing listed exchange fund metadata")
+                continue
+            require_columns(frame, ("ts_code", "fund_type", "status", "market"), "fund_basic")
+            source_codes(frame)
+            if not frame["status"].eq(status).all() or not frame["market"].eq("E").all():
+                raise ValueError("Unexpected fund_basic scope")
+            frames.append(frame)
+        combined = pd.concat(frames, ignore_index=True)
+        duplicated = combined["ts_code"].duplicated(keep=False)
+        if duplicated.any():
+            # 同一代码出现在两种状态里时无法判断哪条是当前事实，不替源做选择。
+            samples = combined.loc[duplicated, "ts_code"].head(5).tolist()
+            raise ValueError(f"Duplicate fund_basic ts_code across statuses samples={samples}")
+        self._publish(
+            combined,
+            self.paths.dataset_file(self.PROVIDER, "instruments", "fund_basic"),
+            {"market": "E", "statuses": list(FUND_STATUSES), "status_rows": counts},
         )
         return 1
 

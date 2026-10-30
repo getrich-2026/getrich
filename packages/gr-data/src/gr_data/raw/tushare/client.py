@@ -59,6 +59,8 @@ PAGE_LIMITS: dict[str, int] = {
     "index_basic": 5000,
     "fut_basic": 5000,
     "etf_basic": 5000,
+    # 官方 doc_id=19 单次上限 15000；取保守值只会多翻页，不会漏数据。
+    "fund_basic": 5000,
     "fund_daily": 5000,
     "fund_adj": 2000,
     # 官方未声明 opt_basic 上限；精确代码查询使用保守页长，不做全市场历史翻页。
@@ -124,7 +126,14 @@ class TushareProClient:
         limit = PAGE_LIMITS.get(api_name, DEFAULT_PAGE_LIMIT)
         frames: list[pd.DataFrame] = []
         offset = 0
-        guarded = api_name in {"etf_basic", "fund_daily", "fund_adj", "opt_basic", "opt_daily"}
+        guarded = api_name in {
+            "etf_basic",
+            "fund_basic",
+            "fund_daily",
+            "fund_adj",
+            "opt_basic",
+            "opt_daily",
+        }
         seen_keys: set[tuple] = set()
         while True:
             page = self.query(api_name, limit=limit, offset=offset, **params)

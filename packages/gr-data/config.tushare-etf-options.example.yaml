@@ -19,6 +19,7 @@ enabled:
     tushare:
       - calendar
       - etf_instruments
+      - fund_basic
       - option_calendar
       - fund_daily
       - fund_adj

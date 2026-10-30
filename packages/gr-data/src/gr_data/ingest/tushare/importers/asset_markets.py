@@ -14,6 +14,7 @@ from gr_data.common.paths import RawPaths
 from gr_data.common.retry import int_to_date, today_int
 from gr_data.ingest.base import BaseImporter, IngestContext, IngestGateError, IngestResult
 from gr_data.ingest.tushare.adapter import TushareAdapter
+from gr_data.ingest.tushare.importers.profile import _number, _text
 from gr_data.ingest.tushare.importers.reference import parse_date
 from gr_data.ingest.tushare.symbols import split_ts_code
 from gr_data.raw.tushare.asset_rules import (
@@ -184,6 +185,108 @@ class _AssetInstrumentsImporter(_AssetImporter):
                 "status": status,
             }
         )[list(self.contract.columns)]
+
+
+#: etf_profile 目标列 → (源表, 源字段)。与 meta.instruments 同义的字段（简称、上市日、
+#: 状态）以及 fund_basic 中与 etf_basic 重复的名称、托管人、管理费不再重复存。
+_ETF_PROFILE_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("fullname", "etf", "cname"),
+    ("short_name", "etf", "csname"),
+    ("channel", "etf", "etf_type"),
+    ("index_code", "etf", "index_code"),
+    ("index_name", "etf", "index_name"),
+    ("setup_date", "etf", "setup_date"),
+    ("manager", "etf", "mgr_name"),
+    ("manager_fullname", "fund", "management"),
+    ("custodian", "etf", "custod_name"),
+    ("mgt_fee", "etf", "mgt_fee"),
+    ("c_fee", "fund", "c_fee"),
+    ("fund_type", "fund", "fund_type"),
+    ("fund_class", "fund", "type"),
+    ("invest_type", "fund", "invest_type"),
+    ("benchmark", "fund", "benchmark"),
+    ("found_date", "fund", "found_date"),
+    ("issue_date", "fund", "issue_date"),
+    ("due_date", "fund", "due_date"),
+    ("delist_date", "fund", "delist_date"),
+    ("issue_amount", "fund", "issue_amount"),
+    ("duration_year", "fund", "duration_year"),
+    ("p_value", "fund", "p_value"),
+    ("min_amount", "fund", "min_amount"),
+    ("exp_return", "fund", "exp_return"),
+    ("trustee", "fund", "trustee"),
+    ("purc_startdate", "fund", "purc_startdate"),
+    ("redm_startdate", "fund", "redm_startdate"),
+)
+_ETF_PROFILE_DATES = frozenset(
+    {"setup_date", "found_date", "issue_date", "due_date", "delist_date"}
+    | {"purc_startdate", "redm_startdate"}
+)
+#: 源单位 → 库内单位的倍率：发行份额 亿份 → 份，起点金额 万元 → 元。
+_ETF_PROFILE_SCALE = {"issue_amount": 1e8, "min_amount": 1e4}
+_ETF_PROFILE_NUMBERS = frozenset(
+    {"mgt_fee", "c_fee", "duration_year", "p_value", "exp_return", *_ETF_PROFILE_SCALE}
+)
+
+
+class EtfProfileImporter(_AssetImporter):
+    """etf_basic + 场内 fund_basic → meta.etf_profile，按 ts_code 精确连接。
+
+    只覆盖已登记身份的 ETF（待上市、身份隔离的不写）。fund_basic 未匹配的 ETF 照常
+    写 etf_basic 字段，fund_* 列为 NULL 并记软告警；不按名称或基准猜类型。
+    """
+
+    DATASET = "etf_profile"
+    ASSET = "etf"
+    CONTRACT = contracts.ETF_PROFILE
+    NOT_NULL_COLUMNS = ("instrument_id", "source")
+
+    def build(self) -> pd.DataFrame:
+        etf = self._metadata()
+        fund, _ = read_asset_observation(
+            self.paths.dataset_file(self.PROVIDER, "instruments", "fund_basic")
+        )
+        if fund is None or fund.empty:
+            raise IngestGateError("Missing fund_basic raw; fetch tushare fund_basic first")
+        sources = {"etf": etf, "fund": fund}
+        for name, frame in sources.items():
+            columns = tuple(field for _, src, field in _ETF_PROFILE_FIELDS if src == name)
+            require_columns(frame, columns, "etf_basic" if name == "etf" else "fund_basic")
+        fund = fund.assign(ts_code=source_codes(fund))
+        if fund["ts_code"].duplicated().any():
+            raise IngestGateError("Duplicate fund_basic ts_code")
+        fund_columns = [field for _, src, field in _ETF_PROFILE_FIELDS if src == "fund"]
+        merged = etf.merge(
+            fund[["ts_code", *fund_columns]].rename(columns=lambda c: f"fund.{c}"),
+            left_on="ts_code",
+            right_on="fund.ts_code",
+            how="left",
+            validate="one_to_one",
+        )
+        unmatched = merged["fund.ts_code"].isna()
+        if unmatched.any():
+            self._soft(
+                f"ETF without exact fund_basic match rows={int(unmatched.sum())} "
+                f"samples={merged.loc[unmatched, 'ts_code'].head(5).tolist()}"
+            )
+        ids = self._ids(merged["ts_code"].tolist(), self.ASSET)
+        out = pd.DataFrame({"instrument_id": merged["ts_code"].map(ids)})
+        for column, src, field in _ETF_PROFILE_FIELDS:
+            values = merged[field if src == "etf" else f"fund.{field}"]
+            if column in _ETF_PROFILE_DATES:
+                out[column] = values.map(parse_date)
+            elif column in _ETF_PROFILE_NUMBERS:
+                number = _number(values, f"{src}.{field}")
+                scale = _ETF_PROFILE_SCALE.get(column)
+                out[column] = (
+                    number
+                    if scale is None
+                    else number.map(lambda v, k=scale: None if v is None else v * k)
+                )
+            else:
+                out[column] = _text(values)
+        out["source"] = self.PROVIDER
+        return out[list(self.contract.columns)].reset_index(drop=True)
 
 
 class _OptionValidation:

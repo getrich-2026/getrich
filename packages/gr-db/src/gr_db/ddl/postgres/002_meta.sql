@@ -185,6 +185,72 @@ COMMENT ON COLUMN meta.future_profile.trade_time_desc IS '交易时间说明（�
 COMMENT ON COLUMN meta.future_profile.source IS '写入方 provider；本表只由 tushare 写入。';
 COMMENT ON COLUMN meta.future_profile.updated_at IS '记录最后更新时间。';
 
+CREATE TABLE IF NOT EXISTS meta.etf_profile (
+    instrument_id    BIGINT PRIMARY KEY REFERENCES meta.instruments(instrument_id),
+    fullname         VARCHAR(256),
+    short_name       VARCHAR(128),
+    channel          VARCHAR(16),
+    index_code       VARCHAR(32),
+    index_name       VARCHAR(256),
+    setup_date       DATE,
+    manager          VARCHAR(128),
+    manager_fullname VARCHAR(256),
+    custodian        VARCHAR(128),
+    mgt_fee          NUMERIC(10,4),
+    c_fee            NUMERIC(10,4),
+    fund_type        VARCHAR(16),
+    fund_class       VARCHAR(32),
+    invest_type      VARCHAR(64),
+    benchmark        TEXT,
+    found_date       DATE,
+    issue_date       DATE,
+    due_date         DATE,
+    delist_date      DATE,
+    issue_amount     NUMERIC(24,4),
+    duration_year    NUMERIC(10,4),
+    p_value          NUMERIC(18,4),
+    min_amount       NUMERIC(24,4),
+    exp_return       NUMERIC(10,4),
+    trustee          VARCHAR(128),
+    purc_startdate   DATE,
+    redm_startdate   DATE,
+    source           VARCHAR(32) NOT NULL,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE meta.etf_profile IS
+    'ETF 档案（tushare etf_basic 与场内 fund_basic 最新快照，按 ts_code 精确连接）：classify.instrument_category 的分类依据。fund_basic 未匹配的 ETF 其 fund_* 列为 NULL。不是历史 PIT。';
+COMMENT ON COLUMN meta.etf_profile.instrument_id IS '关联 meta.instruments 的 ETF ID。';
+COMMENT ON COLUMN meta.etf_profile.fullname IS '基金中文全称（etf_basic.cname）。';
+COMMENT ON COLUMN meta.etf_profile.short_name IS 'ETF 中文简称（etf_basic.csname）；交易所扩位简称在 meta.instruments.name。';
+COMMENT ON COLUMN meta.etf_profile.channel IS '投资通道（etf_basic.etf_type，如 纯境内／QDII）。只有「纯境内」可确定为 cn_a 市场。';
+COMMENT ON COLUMN meta.etf_profile.index_code IS '基准指数代码（etf_basic.index_code，源代码原样，未解析为 instrument_id）。';
+COMMENT ON COLUMN meta.etf_profile.index_name IS '基准指数中文全称（etf_basic.index_name）。';
+COMMENT ON COLUMN meta.etf_profile.setup_date IS '设立日期（etf_basic.setup_date）。';
+COMMENT ON COLUMN meta.etf_profile.manager IS '基金管理人简称（etf_basic.mgr_name）。';
+COMMENT ON COLUMN meta.etf_profile.manager_fullname IS '基金管理人全称（fund_basic.management）。';
+COMMENT ON COLUMN meta.etf_profile.custodian IS '基金托管人名称（etf_basic.custod_name）。';
+COMMENT ON COLUMN meta.etf_profile.mgt_fee IS '管理费（etf_basic.mgt_fee 源值原样，官方未注明单位）。';
+COMMENT ON COLUMN meta.etf_profile.c_fee IS '托管费（fund_basic.c_fee 源值原样，官方未注明单位）。';
+COMMENT ON COLUMN meta.etf_profile.fund_type IS '投资类型（fund_basic.fund_type，如 股票型／债券型／货币型／其他）。资产类别映射的唯一依据。';
+COMMENT ON COLUMN meta.etf_profile.fund_class IS '基金类型（fund_basic.type）。';
+COMMENT ON COLUMN meta.etf_profile.invest_type IS '投资风格（fund_basic.invest_type）。';
+COMMENT ON COLUMN meta.etf_profile.benchmark IS '业绩比较基准（fund_basic.benchmark，文本原样）。';
+COMMENT ON COLUMN meta.etf_profile.found_date IS '成立日期（fund_basic.found_date）。';
+COMMENT ON COLUMN meta.etf_profile.issue_date IS '发行日期（fund_basic.issue_date）。';
+COMMENT ON COLUMN meta.etf_profile.due_date IS '到期日期（fund_basic.due_date）。';
+COMMENT ON COLUMN meta.etf_profile.delist_date IS '退市日期（fund_basic.delist_date）。etf_basic 无退市日，meta.instruments.delist_date 对 ETF 为 NULL。';
+COMMENT ON COLUMN meta.etf_profile.issue_amount IS '发行份额，单位**份**（fund_basic.issue_amount 源单位亿份，×1e8 在 ingest 层完成）。';
+COMMENT ON COLUMN meta.etf_profile.duration_year IS '存续期，单位年（fund_basic.duration_year）。';
+COMMENT ON COLUMN meta.etf_profile.p_value IS '面值（fund_basic.p_value）。';
+COMMENT ON COLUMN meta.etf_profile.min_amount IS '起点金额，单位**元**（fund_basic.min_amount 源单位万元，×10000 在 ingest 层完成）。';
+COMMENT ON COLUMN meta.etf_profile.exp_return IS '预期收益率（fund_basic.exp_return 源值原样）。';
+COMMENT ON COLUMN meta.etf_profile.trustee IS '受托人（fund_basic.trustee）。';
+COMMENT ON COLUMN meta.etf_profile.purc_startdate IS '日常申购起始日（fund_basic.purc_startdate）。';
+COMMENT ON COLUMN meta.etf_profile.redm_startdate IS '日常赎回起始日（fund_basic.redm_startdate）。';
+COMMENT ON COLUMN meta.etf_profile.source IS '写入方 provider；本表只由 tushare 写入。';
+COMMENT ON COLUMN meta.etf_profile.updated_at IS '记录最后更新时间。';
+
 CREATE INDEX IF NOT EXISTS idx_symbol_map_instrument_source
     ON meta.symbol_map (instrument_id, source);
 

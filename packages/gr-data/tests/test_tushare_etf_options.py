@@ -38,6 +38,7 @@ from gr_data.raw.tushare.fetchers import asset_markets as raw_asset_markets
 from gr_data.raw.tushare.fetchers.asset_markets import (
     EtfInstrumentsFetcher,
     FundAdjFetcher,
+    FundBasicFetcher,
     FundDailyFetcher,
     OptionCalendarFetcher,
     OptionDailyFetcher,
@@ -105,7 +106,45 @@ def etf_meta(code="510300.SH", status="L"):
         list_date="20230102",
         extname="测试ETF",
         csname="测试ETF",
+        cname="测试交易型开放式指数证券投资基金",
+        index_code="000300.SH",
+        index_name="沪深300指数",
+        setup_date="20221220",
+        mgr_name="测试基金",
+        custod_name="测试银行股份有限公司",
+        mgt_fee=0.5,
         etf_type="QDII",
+    )
+
+
+def fund_meta(code, status, fund_type="股票型"):
+    """场内 fund_basic 一行；只给 etf_profile 用到的字段与采集门禁检查的字段。"""
+    return dict(
+        ts_code=code,
+        name="测试ETF",
+        management="测试基金管理有限公司",
+        custodian="测试银行股份有限公司",
+        fund_type=fund_type,
+        found_date="20221220",
+        due_date=None,
+        list_date="20230102",
+        issue_date="20221201",
+        delist_date="20240601" if status == "D" else None,
+        issue_amount=12.5,
+        m_fee=0.5,
+        c_fee=0.1,
+        duration_year=None,
+        p_value=1.0,
+        min_amount=0.1,
+        exp_return=None,
+        benchmark="沪深300指数收益率×100%",
+        status=status,
+        invest_type="被动指数型",
+        type="契约型开放式",
+        trustee=None,
+        purc_startdate="20230102",
+        redm_startdate="20230102",
+        market="E",
     )
 
 
@@ -142,6 +181,13 @@ class AssetClient:
                 ("SZ", "P"): "159999.SZ",
             }.get((exchange, status))
             return pd.DataFrame([etf_meta(code, status)]) if code else pd.DataFrame()
+        if api_name == "fund_basic":
+            assert params["market"] == "E"
+            rows = {
+                "L": [fund_meta("510300.SH", "L"), fund_meta("159919.SZ", "L", "债券型")],
+                "D": [fund_meta("510999.SH", "D", "货币型")],
+            }.get(params["status"], [])
+            return pd.DataFrame(rows)
         if api_name == "fund_daily":
             return pd.DataFrame(
                 [
@@ -199,6 +245,7 @@ def prepare_assets(setup):
     paths, ctx, client = setup
     for cls in (
         EtfInstrumentsFetcher,
+        FundBasicFetcher,
         FundDailyFetcher,
         FundAdjFetcher,
         OptionDailyFetcher,
@@ -284,6 +331,7 @@ def test_new_ingest_endpoints_are_opt_in():
     assert plan_importers("tushare", Config(), ["etf_bars_1d", "etf_reference"]) == [
         "etf_instruments",
         "etf_symbol_map",
+        "etf_profile",
         "etf_bar_1d",
     ]
 
@@ -625,15 +673,29 @@ def test_etf_options_pg_roundtrip_and_replay(pg_conn, asset_setup, quote_case):
             only=["etf_reference", "option_reference", "etf_bars_1d", "option_bars_1d"],
             months=("2024-01",),
         )
-        assert [r.rows_written for r in results] == [3, 3, 8, 8, 8, 2, 8]
+        assert [r.rows_written for r in results] == [3, 3, 3, 8, 8, 8, 2, 8]
         assert [r.dataset for r in results if r.warnings] == [
             "etf_instruments",
             "etf_symbol_map",
+            "etf_profile",
             "option_contracts",
             "etf_bar_1d",
             "option_bar_1d",
         ]
+        profile_warnings = next(r.warnings for r in results if r.dataset == "etf_profile")
+        assert all("Skipped pending ETF" in w for w in profile_warnings)
         with pg_conn.cursor() as cur:
+            # fund_basic 精确连接：单位换算（亿份→份、万元→元）与类型原样落库
+            cur.execute(
+                "SELECT i.symbol, p.fund_type, p.channel, p.issue_amount, p.min_amount "
+                "FROM meta.etf_profile p JOIN meta.instruments i USING (instrument_id) "
+                "ORDER BY i.symbol"
+            )
+            assert cur.fetchall() == [
+                ("159919.SZ", "债券型", "QDII", Decimal("1250000000.0000"), Decimal("1000.0000")),
+                ("510300.SH", "股票型", "QDII", Decimal("1250000000.0000"), Decimal("1000.0000")),
+                ("510999.SH", "货币型", "QDII", Decimal("1250000000.0000"), Decimal("1000.0000")),
+            ]
             cur.execute("SELECT volume,amount,adj_factor,close FROM market.etf_bar_1d")
             assert (
                 cur.fetchall()

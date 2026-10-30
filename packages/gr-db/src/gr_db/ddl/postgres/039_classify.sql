@@ -117,4 +117,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_category_current
     ON classify.instrument_category (instrument_id) WHERE out_date IS NULL;
 
 COMMENT ON COLUMN classify.instrument_category.asset_category IS
-    '资产类别（权益/固收/商品/现金/另类），由 meta.instruments.asset + 交易所做**纯规则**映射。ETF 一律记 equity：区分股票型与债券型 ETF 需要基金持仓明细（缺口 G4，一期不处理），按名称猜会把债基误判成权益。';
+    '资产类别（权益/固收/商品/现金/另类），**纯规则**映射：股票记 equity；ETF 按 meta.etf_profile.fund_type 映射（股票型→equity，债券型→fixed_income，货币型→cash），且只有投资通道为「纯境内」才记 cn_a。其他类型、QDII 与 fund_basic 未匹配的 ETF 不写行，不按名称猜。';

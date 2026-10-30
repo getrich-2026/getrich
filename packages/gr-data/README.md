@@ -131,14 +131,20 @@ raw `daily_basic` 只落 `fundamental.valuation_1d`：市值万元→元、股�
 | 阶段 | 显式任务／组 | 结果与依赖 |
 |---|---|---|
 | raw | `etf_instruments` | `etf_basic` 的沪深 L／D／P 清单 → `instruments/etf.parquet`；P 表示待上市 |
+| raw | `fund_basic` | 场内（market=E）`fund_basic` 的 L／D／I 全量 → `instruments/fund_basic.parquet`；跨状态重复代码硬失败 |
 | raw | `calendar`、`option_calendar` | 沪深日历，以及 `option_exchanges` 选中期货市场的逐所日历 |
 | raw | `fund_daily`、`fund_adj` | 逐日分页、月分区，源基金记录保留；因子页长 2000，日线 5000 |
 | raw | `opt_daily` | 八所逐所逐日取数，页长 15000 → `opt_daily/YYYY-MM.parquet` |
 | raw | `option_instruments` | 从所选日期、市场的 opt_daily 发现代码，按 opt_code 分页查 opt_basic；未知标的先精确引导，缺失代码精确回退；必须在日线之后运行 |
-| ingest | `etf_reference` | `etf_instruments` → `etf_symbol_map`，分别写 meta.instruments／symbol_map |
+| ingest | `etf_reference` | `etf_instruments` → `etf_symbol_map` → `etf_profile`，分别写 meta.instruments／symbol_map／etf_profile；档案按 ts_code 精确连接 fund_basic，未匹配的记软告警 |
 | ingest | `etf_bars_1d` | 只导 ETF 清单内记录；源基金因子按代码、日期精确配对 → market.etf_bar_1d |
 | ingest | `option_reference` | `option_instruments` → `option_symbol_map` → `option_contracts`；标的身份和 source 映射须预先具备 |
 | ingest | `option_bars_1d` | 未复权源报价、结算价及手数 → market.option_bar_1d；默认有验证门禁 |
+
+`classify.instrument_category` 的 ETF 类别取自 `meta.etf_profile.fund_type`：股票型→equity、
+债券型→fixed_income、货币型→cash，且投资通道须为「纯境内」才记 cn_a；其他类型、QDII 与
+无档案的 ETF 不写行，记 `classify_category_etf_unmapped` 质量检查。`instrument_category`
+注册在 ETF importer 之后，同批运行时读到的是本批档案。
 
 ETF 期权标的必须是 ETF，股指期权标的是指数，商品期权标的是具体期货合约。
 现有标的参考信息可以复用，但必须先核对来源、哈希、映射和表归属；不会自动抓取所有标的的行情。

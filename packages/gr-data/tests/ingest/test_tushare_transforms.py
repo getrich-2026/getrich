@@ -791,12 +791,22 @@ def test_category_mapping_covers_only_what_it_can_decide():
     必须逐品种判断；本仓没有品种到类别的权威映射，猜一份会让资产配置分解整块
     失真且不报错。少一行只会让下游标 degraded，两者代价不对称。
     """
-    from gr_data.ingest.tushare.importers.classify import _CATEGORY_BY_ASSET
+    from gr_data.ingest.tushare.importers.classify import (
+        _CATEGORY_BY_ASSET,
+        _ETF_CATEGORY_BY_FUND_TYPE,
+        _ETF_MARKET_BY_CHANNEL,
+    )
 
-    assert _CATEGORY_BY_ASSET["stock"] == ("equity", "cn_a")
-    # ETF 一律 equity：区分股票型/债券型 ETF 要基金持仓明细（G4，一期不处理）
-    assert _CATEGORY_BY_ASSET["etf"] == ("equity", "cn_a")
-    for undecidable in ("future", "option", "index"):
+    assert _CATEGORY_BY_ASSET == {"stock": ("equity", "cn_a")}
+    # ETF 不再一律 equity：按 fund_basic 投资类型映射，2026-10-30 已被债券型／货币型反例证伪
+    assert _ETF_CATEGORY_BY_FUND_TYPE == {
+        "股票型": "equity",
+        "债券型": "fixed_income",
+        "货币型": "cash",
+    }
+    # QDII 的具体境外市场源未给出，只有纯境内可定为 cn_a
+    assert _ETF_MARKET_BY_CHANNEL == {"纯境内": "cn_a"}
+    for undecidable in ("future", "option", "index", "fund", "etf"):
         assert undecidable not in _CATEGORY_BY_ASSET
 
 

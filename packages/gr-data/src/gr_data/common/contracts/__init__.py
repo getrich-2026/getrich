@@ -39,6 +39,7 @@ from gr_data.common.contracts.market import (
     bar_1m,
 )
 from gr_data.common.contracts.meta import (
+    ETF_PROFILE,
     FUTURE_PROFILE,
     INDEX_PROFILE,
     INSTRUMENTS,
@@ -53,6 +54,7 @@ __all__ = [
     "ADJ_FACTOR_TS",
     "COVARIANCE",
     "DEFINITION",
+    "ETF_PROFILE",
     "EXPOSURE",
     "FACTOR_RETURN",
     "FUTURE_PROFILE",
