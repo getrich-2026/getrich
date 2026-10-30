@@ -50,3 +50,63 @@ OPTION_CONTRACTS = TableContract(
     ),
     conflict_keys=("instrument_id",),
 )
+
+
+# ---- 标的档案（tushare 主数据快照里 meta.instruments 放不下的字段）----
+# 档案列多为可空文本，首行全 NULL 时 psycopg 的类型推断会退化，所以显式声明全部类型。
+def _profile(table: str, typed: tuple[tuple[str, str], ...]) -> TableContract:
+    columns = ("instrument_id", *(name for name, _ in typed), "source")
+    return TableContract(
+        schema="meta",
+        table=table,
+        columns=columns,
+        conflict_keys=("instrument_id",),
+        column_types=(("instrument_id", "int8"), *typed, ("source", "text")),
+    )
+
+
+STOCK_PROFILE = _profile(
+    "stock_profile",
+    (
+        ("fullname", "text"),
+        ("enname", "text"),
+        ("cnspell", "text"),
+        ("area", "text"),
+        ("industry", "text"),
+        ("board", "text"),
+        ("is_hs", "text"),
+        ("currency", "text"),
+        ("act_name", "text"),
+        ("act_ent_type", "text"),
+    ),
+)
+
+INDEX_PROFILE = _profile(
+    "index_profile",
+    (
+        ("fullname", "text"),
+        ("publish_market", "text"),
+        ("publisher", "text"),
+        ("index_type", "text"),
+        ("category", "text"),
+        ("base_date", "date"),
+        ("base_point", "float8"),
+        ("weight_rule", "text"),
+        ("description", "text"),
+    ),
+)
+
+FUTURE_PROFILE = _profile(
+    "future_profile",
+    (
+        ("product_code", "text"),
+        ("trade_unit", "text"),
+        ("per_unit", "float8"),
+        ("quote_unit", "text"),
+        ("quote_unit_desc", "text"),
+        ("delivery_mode", "text"),
+        ("delivery_month", "text"),
+        ("delivery_date", "date"),
+        ("trade_time_desc", "text"),
+    ),
+)

@@ -220,6 +220,9 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
     # 2 stock + 1 index + 1 future
     assert _count(pg_conn, "meta.instruments") == 4
     assert _count(pg_conn, "meta.symbol_map") == 4
+    assert _count(pg_conn, "meta.stock_profile") == 2
+    assert _count(pg_conn, "meta.index_profile") == 1
+    assert _count(pg_conn, "meta.future_profile") == 1
     raw_calendar = read_parquet_strict(tmp_raw_root.dataset_file("tushare", "calendar", "SSE"))
     assert raw_calendar is not None
     assert _count(pg_conn, "meta.trading_calendar") == 2 * len(raw_calendar)
@@ -262,6 +265,19 @@ def test_tushare_full_flow(pg_conn, tmp_raw_root, fake_tushare):
             "WHERE exchange = 'XSHG' AND trading_day = DATE '2024-01-02'"
         )
         assert cur.fetchone()[0].isoformat() == "2024-01-03"
+
+        # 档案：源字段改名映射，日期／数值按类型落库
+        cur.execute(
+            "SELECT p.board, p.is_hs, p.currency FROM meta.stock_profile p "
+            "JOIN meta.instruments i USING (instrument_id) WHERE i.symbol = '600000.SH'"
+        )
+        assert cur.fetchone() == ("主板", "H", "CNY")
+        cur.execute("SELECT base_date, base_point FROM meta.index_profile")
+        base_date, base_point = cur.fetchone()
+        assert (base_date.isoformat(), float(base_point)) == ("2004-12-31", 1000.0)
+        cur.execute("SELECT per_unit, delivery_date FROM meta.future_profile")
+        per_unit, delivery_date = cur.fetchone()
+        assert (float(per_unit), delivery_date.isoformat()) == (5.0, "2024-01-19")
 
         # 代码归一化：交易所后缀映射为 canonical
         cur.execute("SELECT exchange FROM meta.instruments WHERE symbol = 'CU2401.SHF'")

@@ -77,6 +77,7 @@ uv run gr-data ingest tushare               # 归一化入库
 | ingest 组别 | importer → 目标表 |
 |---|---|
 | `reference` | `instruments` → `meta.instruments`；`symbol_map` → `meta.symbol_map`；`calendar` → `meta.trading_calendar` |
+| `profile` | `stock_profile`／`index_profile`／`future_profile` → `meta.*_profile`（主数据快照里的描述性字段，最新值，不是历史 PIT） |
 | `events` | `suspend_d` → `market.stock_suspend_event`、`market.stock_suspend_coverage` |
 | `bars_1d` | `stock_bar_1d`／`index_bar_1d`／`future_bar_1d` → 对应 `market.*_bar_1d` |
 | `market_ext` | `adj_factor_ts` → `market.adj_factor_ts` |
@@ -109,7 +110,7 @@ uv run gr-data raw tushare --only instruments,calendar --mode update
 uv run gr-data raw tushare --only future_calendar --mode update  # 启用期货时必需
 uv run gr-data raw tushare --only daily,adj_factor,stk_limit,suspend_d,index_daily,daily_basic,fut_daily --mode update
 uv run gr-data own list
-uv run gr-data ingest tushare --only reference
+uv run gr-data ingest tushare --only reference,profile
 uv run gr-data ingest tushare --only events,bars_1d,market_ext,fundamental,classify --months 2024-01
 ```
 

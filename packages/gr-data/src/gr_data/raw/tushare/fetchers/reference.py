@@ -28,9 +28,20 @@ STOCK_STATUSES = ("L", "D", "P")
 # 1=普通合约, 2=主力与连续合约
 FUTURE_TYPES = ("1", "2")
 
-STOCK_BASIC_FIELDS = "ts_code,symbol,name,exchange,curr_type,list_status,list_date,delist_date"
-INDEX_BASIC_FIELDS = "ts_code,name,fullname,market,list_date,exp_date"
-FUT_BASIC_FIELDS = "ts_code,symbol,exchange,name,fut_code,multiplier,list_date,delist_date"
+# 主数据接口字段全取：标的身份进 meta.instruments，其余描述性字段进 meta.*_profile。
+# 官方字段表见 tushare doc_id=25 / 94 / 135；默认不返回的字段必须显式列出。
+STOCK_BASIC_FIELDS = (
+    "ts_code,symbol,name,area,industry,fullname,enname,cnspell,market,exchange,"
+    "curr_type,list_status,list_date,delist_date,is_hs,act_name,act_ent_type"
+)
+INDEX_BASIC_FIELDS = (
+    "ts_code,name,fullname,market,publisher,index_type,category,base_date,base_point,"
+    "list_date,weight_rule,desc,exp_date"
+)
+FUT_BASIC_FIELDS = (
+    "ts_code,symbol,exchange,name,fut_code,multiplier,trade_unit,per_unit,quote_unit,"
+    "quote_unit_desc,d_mode_desc,list_date,delist_date,d_month,last_ddate,trade_time_desc"
+)
 TRADE_CAL_FIELDS = "exchange,cal_date,is_open,pretrade_date"
 
 CALENDAR_INIT_START = 20130101

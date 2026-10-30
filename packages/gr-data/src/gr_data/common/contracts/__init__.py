@@ -39,8 +39,11 @@ from gr_data.common.contracts.market import (
     bar_1m,
 )
 from gr_data.common.contracts.meta import (
+    FUTURE_PROFILE,
+    INDEX_PROFILE,
     INSTRUMENTS,
     OPTION_CONTRACTS,
+    STOCK_PROFILE,
     SYMBOL_MAP,
     TRADING_CALENDAR,
 )
@@ -52,6 +55,8 @@ __all__ = [
     "DEFINITION",
     "EXPOSURE",
     "FACTOR_RETURN",
+    "FUTURE_PROFILE",
+    "INDEX_PROFILE",
     "INDUSTRY_NODE",
     "INSTRUMENTS",
     "INSTRUMENT_CATEGORY",
@@ -64,6 +69,7 @@ __all__ = [
     "SCHEME",
     "SPECIFIC_RETURN",
     "SPECIFIC_RISK",
+    "STOCK_PROFILE",
     "STOCK_SUSPEND_COVERAGE",
     "STOCK_SUSPEND_EVENT",
     "SYMBOL_MAP",

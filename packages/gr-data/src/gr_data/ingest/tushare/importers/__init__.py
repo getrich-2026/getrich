@@ -17,6 +17,11 @@ from gr_data.ingest.tushare.importers.market import (
     StockBars1dImporter,
     ValuationImporter,
 )
+from gr_data.ingest.tushare.importers.profile import (
+    FutureProfileImporter,
+    IndexProfileImporter,
+    StockProfileImporter,
+)
 from gr_data.ingest.tushare.importers.reference import (
     CalendarImporter,
     InstrumentsImporter,
@@ -29,6 +34,9 @@ REGISTRY = {
     "instruments": InstrumentsImporter,
     "symbol_map": SymbolMapImporter,
     "calendar": CalendarImporter,
+    "stock_profile": StockProfileImporter,
+    "index_profile": IndexProfileImporter,
+    "future_profile": FutureProfileImporter,
     "suspend_d": SuspensionImporter,
     "stock_bar_1d": StockBars1dImporter,
     "index_bar_1d": IndexBars1dImporter,
@@ -55,6 +63,8 @@ REGISTRY.update(
 # bars 需要 symbol_map 解析 instrument_id。
 GROUPS = {
     "reference": ["instruments", "symbol_map", "calendar"],
+    # 主数据快照里的描述性字段；依赖 instruments 已登记身份
+    "profile": ["stock_profile", "index_profile", "future_profile"],
     "events": ["suspend_d"],
     "bars_1d": ["stock_bar_1d", "index_bar_1d", "future_bar_1d"],
     # 参考行情：不进 canonical K 线表，但同样需要 symbol_map 解析 instrument_id
@@ -67,6 +77,9 @@ GROUPS = {
         "instruments",
         "symbol_map",
         "calendar",
+        "stock_profile",
+        "index_profile",
+        "future_profile",
         "suspend_d",
         "stock_bar_1d",
         "index_bar_1d",
