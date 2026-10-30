@@ -152,3 +152,30 @@ ETF_PROFILE = _profile(
         ("redm_startdate", "date"),
     ),
 )
+
+#: 米筐写入；身份由 tushare 登记，按（交易所、品种、交割年月）匹配。
+FUTURE_CONTRACTS = TableContract(
+    schema="meta",
+    table="future_contracts",
+    columns=(
+        "instrument_id",
+        "multiplier",
+        "price_tick",
+        "product",
+        "margin_rate",
+        "industry_name",
+        "underlying_code",
+        "source",
+    ),
+    conflict_keys=("instrument_id",),
+    column_types=(
+        ("instrument_id", "int8"),
+        ("multiplier", "float8"),
+        ("price_tick", "float8"),
+        ("product", "text"),
+        ("margin_rate", "float8"),
+        ("industry_name", "text"),
+        ("underlying_code", "text"),
+        ("source", "text"),
+    ),
+)

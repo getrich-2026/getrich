@@ -55,15 +55,38 @@ CREATE TABLE IF NOT EXISTS meta.trading_calendar (
 CREATE INDEX IF NOT EXISTS idx_trading_calendar_open
     ON meta.trading_calendar (exchange, is_open, trading_day);
 
+-- 期货合约参数（米筐 all_instruments(type='Future') + get_tick_size 最新快照）。
+-- 只存米筐独有的字段：品种、上市／最后交易日、交割信息已由 tushare 写入
+-- meta.instruments 与 meta.future_profile，这里不再重复（D-012 一表一源）。
 CREATE TABLE IF NOT EXISTS meta.future_contracts (
-    instrument_id   BIGINT PRIMARY KEY REFERENCES meta.instruments(instrument_id),
-    underlying      VARCHAR(64),
-    multiplier      NUMERIC(18,4),
-    price_tick      NUMERIC(18,6),
-    list_date       DATE,
-    last_trade_date DATE,
-    delivery_date   DATE
+    instrument_id BIGINT PRIMARY KEY REFERENCES meta.instruments(instrument_id),
+    multiplier    NUMERIC(18,4),
+    price_tick    NUMERIC(18,6),
+    product       VARCHAR(16),
+    margin_rate   NUMERIC(10,6),
+    industry_name VARCHAR(64),
+    underlying_code VARCHAR(32),
+    source        VARCHAR(32) NOT NULL,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_future_contracts_positive CHECK (
+        (multiplier IS NULL OR multiplier > 0)
+        AND (price_tick IS NULL OR price_tick > 0)
+        AND (margin_rate IS NULL OR margin_rate >= 0)
+    )
 );
+
+COMMENT ON TABLE meta.future_contracts IS
+    '期货合约参数（米筐最新快照）：按（交易所、品种、交割年月）与 tushare 身份精确匹配后写入，对不上的不写。不是历史 PIT：最小变动价位、保证金率会调整。';
+COMMENT ON COLUMN meta.future_contracts.instrument_id IS '关联 meta.instruments 的期货合约 ID（tushare 登记的身份）。';
+COMMENT ON COLUMN meta.future_contracts.multiplier IS '合约乘数（米筐 contract_multiplier），覆盖商品、股指、国债期货。';
+COMMENT ON COLUMN meta.future_contracts.price_tick IS '最小变动价位（米筐 get_tick_size），单位同报价单位；最新值。';
+COMMENT ON COLUMN meta.future_contracts.product IS '合约种类（米筐 product，如 Commodity／Index／Government）。';
+COMMENT ON COLUMN meta.future_contracts.margin_rate IS '最低保证金率（米筐 margin_rate），最新值，不是历史时点保证金。';
+COMMENT ON COLUMN meta.future_contracts.industry_name IS '行业分类名称（米筐 industry_name）。';
+COMMENT ON COLUMN meta.future_contracts.underlying_code IS
+    '合约标的代码（米筐 underlying_order_book_id 原样，仅股指期货有值，如 000300.XSHG）；未解析为 instrument_id。';
+COMMENT ON COLUMN meta.future_contracts.source IS '写入方 provider；本表只由 ricequant 写入。';
+COMMENT ON COLUMN meta.future_contracts.updated_at IS '记录最后更新时间。';
 
 CREATE TABLE IF NOT EXISTS meta.option_contracts (
     instrument_id   BIGINT PRIMARY KEY REFERENCES meta.instruments(instrument_id),

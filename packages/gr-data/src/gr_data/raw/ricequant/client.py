@@ -64,6 +64,8 @@ class RicequantClient(Protocol):
 
     def get_quota(self) -> dict[str, Any]: ...
 
+    def get_tick_size(self, order_book_ids: list[str]) -> pd.Series: ...
+
     def index_components(self, code: str, *, date: str) -> tuple[list[str], object] | None: ...
 
     def index_weights(self, code: str, *, date: str) -> pd.Series | None: ...
@@ -151,6 +153,13 @@ class RqdatacClient:
         """按日期筛选证券；SDK 返回的其他字段仍为最新快照。"""
         extra = {} if date is None else {"date": date}
         return self._call(self._sdk().all_instruments, type=type, market=market, **extra)
+
+    def get_tick_size(self, order_book_ids: list[str]) -> pd.Series:
+        """合约最小价格变动单位（最新值），按 order_book_id 索引。"""
+        result = self._call(self._sdk().get_tick_size, order_book_ids, market=self.market)
+        if not isinstance(result, pd.Series):
+            raise PermanentError("RiceQuant get_tick_size did not return a Series")
+        return result
 
     @classmethod
     def _quiet_init(cls, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:

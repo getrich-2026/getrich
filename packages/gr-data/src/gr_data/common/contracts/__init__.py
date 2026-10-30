@@ -40,6 +40,7 @@ from gr_data.common.contracts.market import (
 )
 from gr_data.common.contracts.meta import (
     ETF_PROFILE,
+    FUTURE_CONTRACTS,
     FUTURE_PROFILE,
     INDEX_PROFILE,
     INSTRUMENTS,
@@ -57,6 +58,7 @@ __all__ = [
     "ETF_PROFILE",
     "EXPOSURE",
     "FACTOR_RETURN",
+    "FUTURE_CONTRACTS",
     "FUTURE_PROFILE",
     "INDEX_PROFILE",
     "INDUSTRY_NODE",

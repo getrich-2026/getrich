@@ -8,6 +8,7 @@ from gr_data.ingest.ricequant.importers.bars import (
     StockBars1dImporter,
     SymbolMapImporter,
 )
+from gr_data.ingest.ricequant.importers.contracts import FutureContractsImporter
 
 
 REGISTRY = {
@@ -17,6 +18,8 @@ REGISTRY = {
     "stock_bar_1d": StockBars1dImporter,
     "etf_bar_1d": EtfBars1dImporter,
     "index_bar_1d": IndexBars1dImporter,
+    # 依赖 tushare 已登记期货身份与 meta.future_profile
+    "future_contracts": FutureContractsImporter,
 }
 GROUPS = {"bars_1d": ["stock_bar_1d", "etf_bar_1d", "index_bar_1d"]}
 

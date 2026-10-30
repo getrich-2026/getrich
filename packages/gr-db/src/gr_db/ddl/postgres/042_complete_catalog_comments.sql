@@ -959,16 +959,6 @@ COMMENT ON COLUMN market.stock_valuation.total_market_cap IS 'stock_valuation表
 COMMENT ON COLUMN market.stock_valuation.trading_day IS '所属交易日。';
 COMMENT ON COLUMN market.stock_valuation.updated_at IS '记录最后更新时间。';
 
--- meta.future_contracts
-COMMENT ON TABLE meta.future_contracts IS '合约、代码映射与交易日历元数据表：future_contracts。';
-COMMENT ON COLUMN meta.future_contracts.delivery_date IS 'delivery日期。';
-COMMENT ON COLUMN meta.future_contracts.instrument_id IS '关联 meta.instruments 的标的 ID。';
-COMMENT ON COLUMN meta.future_contracts.last_trade_date IS 'last_trade日期。';
-COMMENT ON COLUMN meta.future_contracts.list_date IS 'list日期。';
-COMMENT ON COLUMN meta.future_contracts.multiplier IS 'future_contracts表的multiplier字段。';
-COMMENT ON COLUMN meta.future_contracts.price_tick IS 'future_contracts表的price_tick字段。';
-COMMENT ON COLUMN meta.future_contracts.underlying IS 'future_contracts表的underlying字段。';
-
 -- meta.instruments
 COMMENT ON TABLE meta.instruments IS '合约、代码映射与交易日历元数据表：instruments。';
 COMMENT ON COLUMN meta.instruments.asset IS '金融资产品种。';

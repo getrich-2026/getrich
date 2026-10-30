@@ -442,6 +442,25 @@ Parquet 哈希及分区观察时间。缺凭据须重抓，哈希不符拒绝导
 日期重建该月分区与凭据，无需手工删除凭据；读取端仍拒绝不符的凭据。
 这些状态仍需接入具体回测／诊断调用方，不代表已发布诊断数据版本。
 
+### 米筐期货合约参数
+
+Tushare 的 `fut_basic.multiplier` 只覆盖国债、股指期货（2026-10-30 真实样本商品期货全为空），
+也没有数值型最小变动价位，所以 `meta.future_contracts` 由米筐写入：
+`all_instruments(type='Future')` 取乘数、合约种类、最低保证金率、行业、股指标的代码，
+`get_tick_size` 取普通合约的最小变动价位，两者都是最新快照。
+
+```bash
+uv run gr-data --config /path/to/config.yaml raw ricequant --only future_contracts
+uv run gr-data --config /path/to/config.yaml ingest ricequant --only future_contracts
+```
+
+入库前须已导入 tushare `reference,profile`：期货身份来自 tushare，按
+（交易所、品种、交割年月）匹配，米筐取 `underlying_symbol` 与代码中的 4 位年月，tushare
+取 `future_profile.product_code` 与 `delivery_month`，不改写两边的代码格式。键不唯一、
+上市日不一致、匹配不到或交易所不在 canonical 集合的合约不写，分别记
+`future_contracts_ambiguous_key`／`_list_date_conflict`／`_unmatched`／`_unknown_exchange`
+质量检查；一行都写不进时质量门禁失败。主力／指数连续合约（`IF88`、`IF99`）不处理。
+
 ### 米筐风险模型五件套
 
 DataYes 试用到期后的接替入口为 `rq_risk_model`，独立于 R1–R10 补充数据。
