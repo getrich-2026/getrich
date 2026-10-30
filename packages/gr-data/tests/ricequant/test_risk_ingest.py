@@ -64,18 +64,18 @@ class MemoryCursor:
         state = self.conn.state
         if sql.startswith("SELECT file_name FROM ops.schema_migrations"):
             self.result = [(params[0],)] if self.conn.receipt_migration_applied else []
-        elif sql.startswith("INSERT INTO ops.dataset_variant"):
+        elif sql.startswith("INSERT INTO factor.dataset_variant"):
             state.setdefault("variants", {}).setdefault(params[0], (*params[:4], params[4].obj))
         elif sql.startswith("SELECT variant_id, provider, dataset_name, purpose, identity"):
             row = state.get("variants", {}).get(params[0])
             self.result = [row] if row else []
-        elif sql.startswith("INSERT INTO ops.import_checkpoint"):
+        elif sql.startswith("INSERT INTO factor.import_checkpoint"):
             row = (*params[3:8], params[8].obj)
             state.setdefault("checkpoints", {}).setdefault(tuple(params[:3]), [row, None])
         elif sql.startswith("SELECT variant_id,observation_id,trading_day,capture_manifest_hash"):
             row = state.get("checkpoints", {}).get(tuple(params))
             self.result = [row[0]] if row else []
-        elif sql.startswith("INSERT INTO ops.import_receipt"):
+        elif sql.startswith("INSERT INTO factor.import_receipt"):
             key = (params[1], params[3], params[4])
             row = (*params[:8], params[8].obj, datetime.now(timezone.utc))
             state.setdefault("receipts", {}).setdefault(key, row)
@@ -87,7 +87,7 @@ class MemoryCursor:
         elif sql.startswith("SELECT run_id,receipt_id,variant_id,observation_id,trading_day"):
             row = state.get("bindings", {}).get(params[0])
             self.result = [row] if row else []
-        elif sql.startswith("UPDATE ops.import_checkpoint SET import_receipt_id"):
+        elif sql.startswith("UPDATE factor.import_checkpoint SET import_receipt_id"):
             record = state.get("checkpoints", {}).get(tuple(params[3:]))
             if record and record[1] is None:
                 record[1] = tuple(params[:3])
@@ -827,7 +827,11 @@ def test_dynamic_coverage_write_failure_rolls_back_entire_day(risk_case):
     with pytest.raises(RuntimeError, match="simulated"):
         writer.run_risk_ingest(case.conn, case.ctx, case.options)
     assert not case.conn.state["tables"] and not case.conn.state["runs"]
-    assert not case.conn.state["owners"]
+    # 已独立提交的 capture 与其表归属保留；业务表归属随失败事务回滚。
+    assert set(case.conn.state["owners"]) == {
+        "factor.dataset_variant",
+        "factor.import_checkpoint",
+    }
     assert [row[3] for row in case.conn.state["etl"]] == ["failed"]
 
 
@@ -841,7 +845,30 @@ def test_dynamic_coverage_owner_conflict_is_atomic(risk_case):
     with pytest.raises(OwnershipError):
         writer.run_risk_ingest(case.conn, case.ctx, case.options)
     assert not case.conn.state["tables"] and not case.conn.state["runs"]
-    assert set(case.conn.state["owners"]) == {"factor.model_run_coverage"}
+    assert set(case.conn.state["owners"]) == {
+        "factor.model_run_coverage",
+        "factor.dataset_variant",
+        "factor.import_checkpoint",
+    }
+
+
+@pytest.mark.parametrize(
+    "target", ["factor.dataset_variant", "factor.import_checkpoint", "factor.import_receipt"]
+)
+def test_risk_evidence_owner_conflict_refuses_business_write(risk_case, target):
+    """移入 factor 的证据表遵守单表单源；失败不留下成功收据或业务 run。"""
+    case = dynamic_case(risk_case)
+    case.conn.state["owners"][target] = (target, "datayes", "ingest")
+    with pytest.raises(OwnershipError):
+        writer.run_risk_ingest(case.conn, case.ctx, case.options)
+    assert not case.conn.state["tables"] and not case.conn.state["runs"]
+    assert not case.conn.state.get("receipts") and not case.conn.state.get("bindings")
+    expected = {target}
+    if target == "factor.import_receipt":
+        # 回执事务失败不抹掉先前 capture 的独立提交。
+        expected |= {"factor.dataset_variant", "factor.import_checkpoint"}
+    assert set(case.conn.state["owners"]) == expected
+    assert case.conn.state["owners"][target][1] == "datayes"
 
 
 @pytest.mark.parametrize(
@@ -933,12 +960,12 @@ def test_dynamic_pg_partial_coverage_copy_and_replay(risk_case, pg_conn, monkeyp
     replay = writer.run_risk_ingest(pg_conn, case.ctx, case.options)
     assert replay.rows_written == 0
     with pg_conn.cursor() as cur:
-        cur.execute("SELECT receipt_id,rows_written FROM ops.import_receipt")
+        cur.execute("SELECT receipt_id,rows_written FROM factor.import_receipt")
         receipt = cur.fetchone()
         assert receipt[1] == 13
         cur.execute("SELECT receipt_id FROM factor.model_run_binding")
         assert cur.fetchone()[0] == receipt[0]
-        cur.execute("SELECT import_receipt_id,watermark_date FROM ops.import_checkpoint")
+        cur.execute("SELECT import_receipt_id,watermark_date FROM factor.import_checkpoint")
         assert cur.fetchone() == (receipt[0], date(2024, 1, 2))
         cur.execute("SELECT run_id,units,calibrated FROM factor.model_run")
         rows = cur.fetchall()
@@ -1012,8 +1039,11 @@ def test_dynamic_pg_coverage_failure_rolls_back_five_tables_and_run(
             assert cur.fetchone()[0] == 0
         cur.execute("SELECT count(*) FROM meta.symbol_map")
         assert cur.fetchone()[0] == 0
-        cur.execute("SELECT count(*) FROM ops.table_ownership")
-        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT target FROM ops.table_ownership ORDER BY target")
+        assert cur.fetchall() == [
+            ("factor.dataset_variant",),
+            ("factor.import_checkpoint",),
+        ]
         cur.execute("SELECT status,trading_day,request,error FROM ops.etl_job_run")
         audit = cur.fetchall()
         assert len(audit) == 1
@@ -1105,7 +1135,12 @@ def test_dynamic_sdk_conversion_without_verified_db_alias_is_rejected(risk_case)
     with pytest.raises(ContractViolationError, match="unmapped instrument: 600099.XSHG"):
         writer.run_risk_ingest(case.conn, case.ctx, case.options)
     assert not case.conn.state["tables"]  # 包括五件套、覆盖表及新增 symbol_map。
-    assert not case.conn.state["runs"] and not case.conn.state["owners"]
+    assert not case.conn.state["runs"]
+    # 已校验 raw 的 capture 独立提交；身份解析失败只回滚业务事务及业务归属。
+    assert set(case.conn.state["owners"]) == {
+        "factor.dataset_variant",
+        "factor.import_checkpoint",
+    }
     assert len(case.conn.state["etl"]) == 1
     audit = case.conn.state["etl"][0]
     assert audit[3:5] == ("failed", 0)

@@ -522,7 +522,9 @@ def audit_import_evidence(
         options.purpose == "production" and options.universe_policy == "listed_cn_a_v2",
         "production_policy",
     )
-    variants = query(conn, "SELECT * FROM ops.dataset_variant WHERE variant_id=%s", (variant_id,))
+    variants = query(
+        conn, "SELECT * FROM factor.dataset_variant WHERE variant_id=%s", (variant_id,)
+    )
     require(len(variants) == 1, "dataset_variant_missing_or_duplicate")
     variant = variants[0]
     require(
@@ -543,7 +545,7 @@ def audit_import_evidence(
         "model_run_binding_identity",
     )
     receipts = query(
-        conn, "SELECT * FROM ops.import_receipt WHERE receipt_id=%s", (binding["receipt_id"],)
+        conn, "SELECT * FROM factor.import_receipt WHERE receipt_id=%s", (binding["receipt_id"],)
     )
     require(len(receipts) == 1, "import_receipt_missing_or_duplicate")
     receipt = receipts[0]
@@ -564,7 +566,7 @@ def audit_import_evidence(
     require(receipt["committed_at"] >= observed, "import_receipt_before_capture")
     same_receipts = query(
         conn,
-        "SELECT receipt_id FROM ops.import_receipt WHERE target=%s "
+        "SELECT receipt_id FROM factor.import_receipt WHERE target=%s "
         "AND manifest_hash=%s AND importer_version=%s",
         ("factor.risk_bundle", manifest_hash, importer_version),
     )
@@ -583,7 +585,7 @@ def audit_import_evidence(
     partition = f"{variant_id}/{day}/{observation_id}"
     checkpoints = query(
         conn,
-        "SELECT * FROM ops.import_checkpoint WHERE provider=%s "
+        "SELECT * FROM factor.import_checkpoint WHERE provider=%s "
         "AND dataset_name=%s AND partition_key=%s",
         ("ricequant", "rq_risk_model", partition),
     )

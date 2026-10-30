@@ -21,9 +21,13 @@ from gr_data.raw.tushare.asset_rules import (
     BAR_COLUMNS,
     OPTION_BAR_COLUMNS,
     OPTION_SUFFIXES,
+    conflicting_etf_code_mask,
+    czce_settlement_only_counts,
+    missing_etf_listing_mask,
     nonstandard_code_counts,
     ohl_zero_placeholder_counts,
     option_underlying,
+    quarantined_etf_mask,
     read_asset_observation,
     require_columns,
     source_codes,
@@ -31,6 +35,7 @@ from gr_data.raw.tushare.asset_rules import (
     standard_fund_codes,
     unique_rows,
     validate_bars,
+    zero_settlement_candidate_counts,
 )
 from gr_data.raw.tushare.context import as_tushare_context
 from gr_data.raw.tushare.fetchers.reference import (
@@ -277,11 +282,17 @@ class EtfInstrumentsFetcher(_AssetFetcher):
                 if (
                     not frame["exchange"].eq(exchange).all()
                     or not frame["list_status"].eq(status).all()
-                    or (status != "P" and not codes.str.fullmatch(rf"\d{{6}}\.{exchange}").all())
+                    or (
+                        status != "P"
+                        and not (
+                            codes.str.fullmatch(rf"\d{{6}}\.{exchange}")
+                            | conflicting_etf_code_mask(frame)
+                        ).all()
+                    )
                 ):
                     raise ValueError("Unexpected ETF metadata scope")
                 if status != "P":
-                    source_dates(frame["list_date"])
+                    source_dates(frame.loc[~missing_etf_listing_mask(frame), "list_date"])
                 frames.append(frame)
         combined = unique_rows(pd.concat(frames, ignore_index=True), ("ts_code",))
         pending = combined.loc[combined["list_status"].eq("P")]
@@ -290,6 +301,18 @@ class EtfInstrumentsFetcher(_AssetFetcher):
             self.paths.dataset_file(self.PROVIDER, "instruments", "etf"),
             {
                 "statuses": ["L", "D", "P"],
+                "quarantined_rows": {
+                    "rows": int(quarantined_etf_mask(combined).sum()),
+                    "samples": combined.loc[quarantined_etf_mask(combined), "ts_code"]
+                    .head(5)
+                    .tolist(),
+                },
+                "missing_listing_date_rows": {
+                    "rows": int(missing_etf_listing_mask(combined).sum()),
+                    "samples": combined.loc[missing_etf_listing_mask(combined), "ts_code"]
+                    .head(5)
+                    .tolist(),
+                },
                 "pending_rows": {
                     "rows": len(pending),
                     "nonstandard_code_rows": nonstandard_code_counts(pending)["rows"],
@@ -390,7 +413,11 @@ class AssetDailyFetcher(_AssetFetcher):
                             raise ValueError("Missing fund adjustment factor")
                         frame = unique_rows(frame, ("ts_code", "trade_date"))
                     else:
-                        frame = validate_bars(frame, option=self.OPTION)
+                        frame = validate_bars(
+                            frame,
+                            option=self.OPTION,
+                            capture_unverified_expiry=self.OPTION,
+                        )
                         if not self.OPTION:
                             expected_market = (
                                 frame["ts_code"].str[-2:].map({"SH": "SSE", "SZ": "SZSE"})
@@ -436,7 +463,13 @@ class AssetDailyFetcher(_AssetFetcher):
                     "exchanges": list(calendars),
                     "pending_days": pending_days,
                     **(
-                        {"ohl_zero_placeholder_rows": ohl_zero_placeholder_counts(incoming)}
+                        {
+                            "ohl_zero_placeholder_rows": ohl_zero_placeholder_counts(incoming),
+                            "czce_settlement_only_rows": czce_settlement_only_counts(incoming),
+                            "zero_settlement_pending_expiry": zero_settlement_candidate_counts(
+                                incoming
+                            ),
+                        }
                         if self.OPTION
                         else {"nonstandard_code_rows": nonstandard_code_counts(incoming)}
                     ),

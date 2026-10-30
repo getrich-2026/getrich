@@ -14,6 +14,7 @@ import psycopg
 from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 
+from gr_data.common.ownership import OwnershipManager
 from gr_data.common.ricequant_specs import ContractViolationError, semantic_hash
 from gr_data.config.ricequant_risk import RiskOptions
 
@@ -109,7 +110,17 @@ def _idle(conn: psycopg.Connection) -> None:
         raise ValueError("RiceQuant capture registration requires an idle connection")
 
 
-def _register_variant(conn: psycopg.Connection, options: RiskOptions) -> None:
+def _claim_evidence_table(conn: psycopg.Connection, target: str, channel: str) -> None:
+    """在调用方事务中锁定归属并登记风险证据表，拒绝其他 provider 串写。
+
+    channel 须与同批业务表的登记一致，否则 claim 的 UPSERT 会来回改写归属通道。
+    """
+    with conn.cursor() as cur:
+        cur.execute("LOCK TABLE ops.table_ownership IN SHARE ROW EXCLUSIVE MODE")
+    OwnershipManager(conn).claim(target, _PROVIDER, channel=channel, force=False)
+
+
+def _register_variant(conn: psycopg.Connection, options: RiskOptions, channel: str) -> None:
     if options.contract_version != "v2" or options.purpose not in {"validation", "production"}:
         raise ContractViolationError("RiceQuant receipts require an explicit dynamic purpose")
     row = (options.variant_id, _PROVIDER, _DATASET, options.purpose, options.identity)
@@ -122,15 +133,16 @@ def _register_variant(conn: psycopg.Connection, options: RiskOptions) -> None:
             raise ContractViolationError(
                 "RiceQuant capture requires migration 049_risk_import_receipts.sql"
             )
+        _claim_evidence_table(conn, "factor.dataset_variant", channel)
         cur.execute(
-            "INSERT INTO ops.dataset_variant (variant_id, provider, "
+            "INSERT INTO factor.dataset_variant (variant_id, provider, "
             "dataset_name, purpose, identity) "
             "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (variant_id) DO NOTHING",
             (*row[:4], Jsonb(row[4])),
         )
         cur.execute(
             "SELECT variant_id, provider, dataset_name, purpose, identity "
-            "FROM ops.dataset_variant WHERE variant_id=%s",
+            "FROM factor.dataset_variant WHERE variant_id=%s",
             (options.variant_id,),
         )
         stored = cur.fetchone()
@@ -138,16 +150,18 @@ def _register_variant(conn: psycopg.Connection, options: RiskOptions) -> None:
         raise ContractViolationError("Immutable RiceQuant dataset variant conflict")
 
 
-def prepare_capture(conn: psycopg.Connection, options: RiskOptions) -> None:
+def prepare_capture(
+    conn: psycopg.Connection, options: RiskOptions, *, channel: str = "ingest"
+) -> None:
     """在 SDK 调用前检查收据迁移并登记不可变用途；拥有且提交自己的事务。"""
     _idle(conn)
     get_importer_version(require_clean=options.purpose == "production")
     with conn.transaction():
-        _register_variant(conn, options)
+        _register_variant(conn, options, channel)
         with conn.cursor() as cur:
-            cur.execute("SELECT receipt_id FROM ops.import_receipt LIMIT 0")
+            cur.execute("SELECT receipt_id FROM factor.import_receipt LIMIT 0")
             cur.execute("SELECT run_id FROM factor.model_run_binding LIMIT 0")
-            cur.execute("SELECT capture_manifest_hash FROM ops.import_checkpoint LIMIT 0")
+            cur.execute("SELECT capture_manifest_hash FROM factor.import_checkpoint LIMIT 0")
 
 
 def _identity(options: RiskOptions, manifest: dict[str, Any]) -> tuple[str, date, str, str]:
@@ -165,7 +179,11 @@ def _identity(options: RiskOptions, manifest: dict[str, Any]) -> tuple[str, date
 
 
 def record_capture(
-    conn: psycopg.Connection, options: RiskOptions, manifest: dict[str, Any]
+    conn: psycopg.Connection,
+    options: RiskOptions,
+    manifest: dict[str, Any],
+    *,
+    channel: str = "ingest",
 ) -> None:
     """已校验 raw 的采集登记；独立提交，后续业务事务失败不撤销采集证据。
 
@@ -185,10 +203,11 @@ def record_capture(
     }
     row = (options.variant_id, observation, day, digest, captured_at, frozen)
     with conn.transaction():
-        _register_variant(conn, options)
+        _register_variant(conn, options, channel)
+        _claim_evidence_table(conn, "factor.import_checkpoint", channel)
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO ops.import_checkpoint "
+                "INSERT INTO factor.import_checkpoint "
                 "(provider,dataset_name,partition_key,variant_id,observation_id,trading_day,"
                 "capture_manifest_hash,captured_at,state) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                 "ON CONFLICT (provider,dataset_name,partition_key) DO NOTHING",
@@ -197,7 +216,7 @@ def record_capture(
             cur.execute(
                 "SELECT variant_id,observation_id,trading_day,"
                 "capture_manifest_hash,captured_at,state "
-                "FROM ops.import_checkpoint WHERE provider=%s AND "
+                "FROM factor.import_checkpoint WHERE provider=%s AND "
                 "dataset_name=%s AND partition_key=%s "
                 "FOR UPDATE",
                 (_PROVIDER, _DATASET, partition),
@@ -215,7 +234,7 @@ def probe_receipt(
     importer_version = get_importer_version()
     with conn.cursor() as cur:
         cur.execute(
-            f"SELECT {_RECEIPT_COLUMNS} FROM ops.import_receipt "
+            f"SELECT {_RECEIPT_COLUMNS} FROM factor.import_receipt "
             "WHERE target=%s AND manifest_hash=%s AND importer_version=%s",
             (TARGET, digest, importer_version),
         )
@@ -239,6 +258,8 @@ def commit_receipt(
     run_id: uuid.UUID,
     rows_written: int,
     quality: dict[str, Any],
+    *,
+    channel: str = "ingest",
 ) -> dict[str, Any]:
     """五件套、覆盖与 ETL 所在事务内绑定收据并推进当前观察的 DB 检查点。
 
@@ -250,9 +271,10 @@ def commit_receipt(
     partition, day, observation, digest = _identity(options, manifest)
     importer_version = get_importer_version()
     receipt_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{TARGET}:{digest}:{importer_version}")
+    _claim_evidence_table(conn, "factor.import_receipt", channel)
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO ops.import_receipt "
+            "INSERT INTO factor.import_receipt "
             "(receipt_id,target,variant_id,manifest_hash,importer_version,"
             "observation_id,trading_day,rows_written,quality) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
@@ -295,14 +317,14 @@ def commit_receipt(
         if stored is None or tuple(stored) != binding:
             raise ContractViolationError("Immutable RiceQuant model run binding conflict")
         cur.execute(
-            "UPDATE ops.import_checkpoint SET "
+            "UPDATE factor.import_checkpoint SET "
             "import_receipt_id=%s,imported_at=%s,watermark_date=%s,updated_at=clock_timestamp() "
             "WHERE provider=%s AND dataset_name=%s AND partition_key=%s "
             "AND import_receipt_id IS NULL",
             (receipt_id, receipt["committed_at"], day, _PROVIDER, _DATASET, partition),
         )
         cur.execute(
-            "SELECT import_receipt_id,imported_at,watermark_date FROM ops.import_checkpoint "
+            "SELECT import_receipt_id,imported_at,watermark_date FROM factor.import_checkpoint "
             "WHERE provider=%s AND dataset_name=%s AND partition_key=%s",
             (_PROVIDER, _DATASET, partition),
         )
@@ -330,7 +352,7 @@ def verify_committed_receipt(
         )
         binding = cur.fetchone()
         cur.execute(
-            "SELECT import_receipt_id,imported_at,watermark_date FROM ops.import_checkpoint "
+            "SELECT import_receipt_id,imported_at,watermark_date FROM factor.import_checkpoint "
             "WHERE provider=%s AND dataset_name=%s AND partition_key=%s",
             (_PROVIDER, _DATASET, partition),
         )

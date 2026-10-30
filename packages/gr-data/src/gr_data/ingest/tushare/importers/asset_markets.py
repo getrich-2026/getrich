@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
+from typing import cast
 
 import pandas as pd
 import psycopg
@@ -16,10 +18,15 @@ from gr_data.ingest.tushare.importers.reference import parse_date
 from gr_data.ingest.tushare.symbols import split_ts_code
 from gr_data.raw.tushare.asset_rules import (
     OPTION_SUFFIXES,
+    conflicting_etf_code_mask,
+    czce_settlement_only_counts,
+    czce_settlement_only_mask,
+    missing_etf_listing_mask,
     numeric_values,
     ohl_zero_placeholder_counts,
     ohl_zero_placeholder_mask,
     option_underlying,
+    quarantined_etf_mask,
     read_asset_observation,
     require_columns,
     source_codes,
@@ -27,6 +34,8 @@ from gr_data.raw.tushare.asset_rules import (
     standard_fund_codes,
     unique_rows,
     validate_bars,
+    zero_settlement_candidate_counts,
+    zero_settlement_candidate_mask,
 )
 
 
@@ -45,7 +54,7 @@ def asset_metadata(
         raise IngestGateError(f"Missing {asset} instruments raw")
     required = ("ts_code", "exchange", "list_date")
     require_columns(frame, required, asset)
-    codes = source_codes(frame)
+    source_codes(frame)
     frame = unique_rows(frame, ("ts_code",))
     if asset == "etf":
         require_columns(frame, ("list_status", "extname"), asset)
@@ -59,12 +68,19 @@ def asset_metadata(
             )
         # 所有 P 记录保留在 raw，上市后由后续 L 快照正式登记身份。
         frame = frame.loc[~frame["list_status"].eq("P")].copy()
-        codes = frame["ts_code"]
-        if (
-            not codes.str.fullmatch(r"\d{6}\.(SH|SZ)").all()
-            or not frame["ts_code"].str[-2:].eq(frame["exchange"]).all()
-        ):
+        valid_code = (
+            standard_fund_codes(frame["ts_code"]) & frame["ts_code"].str[-2:].eq(frame["exchange"])
+        ) | conflicting_etf_code_mask(frame)
+        if not valid_code.all():
             raise IngestGateError("ETF exchange and suffix mismatch")
+        source_dates(frame.loc[~missing_etf_listing_mask(frame), "list_date"])
+        quarantined = quarantined_etf_mask(frame)
+        if quarantined.any() and notice is not None:
+            notice(
+                f"Quarantined unverified ETF identity rows={int(quarantined.sum())} "
+                f"samples={frame.loc[quarantined, 'ts_code'].head(5).tolist()}"
+            )
+        frame = frame.loc[~quarantined].copy()
     else:
         require_columns(
             frame,
@@ -357,7 +373,16 @@ class _AssetBarsImporter(_AssetImporter):
 
     def build(self) -> pd.DataFrame:
         metadata = self._metadata().set_index("ts_code")
-        raw = validate_bars(self._read(self.RAW_DATASET), option=self.ASSET == "option")
+        raw = validate_bars(
+            self._read(self.RAW_DATASET),
+            option=self.ASSET == "option",
+            expiry_dates=(
+                # 源代码已校验为 str，parse_date 只产出 date／None；收窄 pandas 泛型。
+                cast(dict[str, date | None], metadata["delist_date"].map(parse_date).to_dict())
+                if self.ASSET == "option"
+                else None
+            ),
+        )
         if self.ASSET == "etf":
             selected = raw["ts_code"].isin(metadata.index)
             excluded = int((~selected).sum())
@@ -403,6 +428,23 @@ class _AssetBarsImporter(_AssetImporter):
         if self.ASSET == "option":
             placeholders = ohl_zero_placeholder_mask(raw)
             out.loc[placeholders, ["open", "high", "low"]] = None
+            settlement_only = czce_settlement_only_mask(raw)
+            out.loc[settlement_only, ["open", "high", "low", "close"]] = None
+            for exchange, counts in czce_settlement_only_counts(raw).items():
+                self._soft(
+                    f"Mapped settlement-only OHLC to NULL exchange={exchange} "
+                    f"rows={counts['rows']} "
+                    f"nonzero_activity_rows={counts['nonzero_activity_rows']} "
+                    f"samples={counts['samples']}"
+                )
+            expiry_zero = zero_settlement_candidate_mask(raw)
+            out.loc[expiry_zero, ["open", "high", "low", "close"]] = None
+            for exchange, counts in zero_settlement_candidate_counts(raw).items():
+                self._soft(
+                    f"Mapped verified expiry-day zero settlement OHLC to NULL exchange={exchange} "
+                    f"rows={counts['rows']} nonzero_volume_rows={counts['nonzero_volume_rows']} "
+                    f"samples={counts['samples']}"
+                )
             for exchange, counts in ohl_zero_placeholder_counts(raw).items():
                 self._soft(
                     f"Mapped OHL zero placeholders exchange={exchange} rows={counts['rows']} "

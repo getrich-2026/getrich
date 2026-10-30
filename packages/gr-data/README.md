@@ -171,7 +171,17 @@ ETF 期权标的必须是 ETF，股指期权标的是指数，商品期权标的
 raw 源值不变，收据 `scope.ohl_zero_placeholder_rows` 按交易所记录条数、非零成交量条数，
 以及各最多 5 个键样本。ingest 仅把这些行的 OHL 显式映射为 NULL，
 保留 close／settle／成交量／成交额／OI，并按交易所记软告警和同样的计数／样本。
-只有部分 OHL 为零、OHL 全零而 close 不大于零、high<low 或正常价格中的 close 越界仍失败；
+另一个经过官方同日文件全量对账、于 2026-10-30 经用户确认的模式是：
+`exchange=CZCE`、代码后缀 `.ZCE`、OHLC 全零且 `settle>0`，不按量额判断是否有报价。
+raw 同样保留全部源值，收据 `scope.czce_settlement_only_rows` 记录条数、非零量额行数
+及至多 5 个键样本；ingest 将 OHLC 显式映射为 NULL，保留前收、结算、量额及持仓，
+并记软告警；不以结算价或成交均价填充收盘价，量额／持仓的非法数值仍拒绝。
+对于 CZCE／`.ZCE` 和 GFEX／`.GFE` 的 OHLC／settle 全零记录，raw 只捕获为候选，
+收据 `scope.zero_settlement_pending_expiry` 记录条数、非零成交量条数及源键样本。
+ingest 必须用真实 opt_basic 验证 `trade_date == delist_date` 才可将 OHLC 映射为 NULL，
+保留源 `settle=0` 及量额／持仓并记软告警；到期日缺失或不匹配时整次导入失败。
+raw 捕获开关不会传给 ingest，不将候选形态当作到期证据。
+只有部分 OHL 为零、其他 OHL 全零而 close 不大于零、high<low 或正常价格中的 close 越界仍失败；
 ETF 的价格包络校验不变。此口径不代表期权正式写入已开放。
 
 `fund_daily`／`fund_adj` 的源代码统一只要求非空、无首尾空白的字符串；
@@ -181,6 +191,14 @@ fund_daily 的 closed-market 检查只作用于六位 `.SH/.SZ` 代码。
 ETF 入库仍只选严格 ETF 名单内的代码，日志另记被排除记录中的非标准代码数。
 
 ETF 的 L／D 名单仍要求六位交易代码、市场一致及有效上市日。
+已确认的代码冲突隔离例外是 `158008.OF + exchange=SZ + list_status=L`：
+2026-10-30 复核时，`etf_basic` 标深圳已上市，`fund_basic` 却标场外，身份未验收。
+raw 保留原行，收据 `scope.quarantined_rows` 记录条数和样本；ingest 跳过其身份、映射
+及行情并记软告警，不将它改成 `158008.SZ` 或建立别名；名单中独立存在的合法 `.SZ`
+记录仍按原值登记。
+L 记录的上市日为 NULL／空字符串时同样保留 raw、隔离其身份／映射／行情并记软告警，
+不填日期或改成 P；收据另以 `scope.missing_listing_date_rows` 记录条数和样本。
+缺上市日不能豁免坏代码、错市场、非法日期；D 缺上市日仍硬失败。
 P 名单允许非交易代码（如 `.OF`）、空上市日和空简称；raw 保留全部记录，
 收据 `scope.pending_rows` 记录 P 总数、非标准代码数和缺上市日数。
 **本实现选择全部跳过 P 的身份及 symbol_map 写入**，包括字段完整的 P 行，并记条数和最多 5 个样本的软告警。
@@ -214,8 +232,8 @@ P 名单允许非交易代码（如 `.OF`）、空上市日和空简称；raw �
 且 `APP_ENV=prod` 拒绝该开关。该开关不验证连接是否为临时库，执行者必须先核对 PG_*；
 验证写入明确记录软告警，CLI 返回 3，不可当作已发布成功。
 
-ETF／期权日线一次只导入一个月，防止隐式拼接全历史。未来样本审核获准后，
-确认独立 raw 根、临时 PG 环境及依赖齐备，再执行下面的样本命令；本文未执行这些真实采集命令：
+ETF／期权日线一次只导入一个月，防止隐式拼接全历史。下面为独立 raw 根及临时 PG 的
+样本命令；最新真实复验范围、结果及阻塞见[迁移盘点第二节](../../docs/plans/imac-collector-migration.md#2-现在先做测试与-tushare-受限下载)：
 
 ```bash
 uv run gr-data --config packages/gr-data/config.tushare-etf-options.example.yaml raw tushare --mode init
@@ -227,26 +245,31 @@ TUSHARE_OPTION_VALIDATION_ONLY=1 uv run gr-data --config packages/gr-data/config
 ETF 分类暂时沿用旧规则：一律 `equity`／`cn_a`，已知不准确（缺口 G4），本轮恢复为基线行为。
 目标口径在后续独立任务中改为 Tushare `fund_basic.fund_type` 单一来源，
 显式维护映射，未映射或混合型保持未分类。存量错误分类以“删除后按上市日重写”更正，
-不用 `out_date` 关闭；真实采样、分类实现、数据删除和 DDL 注释迁移本轮均不执行。
+不用 `out_date` 关闭；分类实现与存量删除尚未执行，真实采样及隔离 PG 验收状态见迁移盘点。
 `meta.instruments.status=pending` 仍可表示其他来源的待上市身份；本实现不登记 Tushare ETF 的 P 行。
 单表单一 provider 保持不变，所有新 writer 仍校验 ownership，不自动 force 或切源。
 
-**真实回补前待验收（本轮未执行）**：另行授权后，在独立 raw 根只启用
-`calendar`、`option_calendar`、`opt_daily` 取得一个月；先不启用 `option_instruments`。
+**2024-01 整月已隔离验收，全历史请求预算仍待测**：后续先在独立 raw 根启用
+`calendar`、`option_calendar`、`opt_daily` 取得明确范围，再按观察代码补齐 `option_instruments`。
 预算按需要重查的 `(exchange, opt_code)` 去重数估算，温缓存、每标的一页且无回退时，
 请求数约等于标的数；冷启动另加未知标的引导数，实际总数为各标的页数之和＋引导页数＋回退页数＋重试。
 乘以配置间隔估算限流等待量，另计网络耗时；不能只用标的数宣称实际请求数。
 每日增量先排除到期后已观察的合约；全历史按去重标的／代码集合及分页规模测量，不能把月度去重数相加当精确预算。
 2026-10-26 修复前真实 1 月样本为 19,236 个代码，逐代码约 8 小时；此为旧方案历史证据，
-新方案未重新实取，不给出未经测量的标的数或耗时。本轮仅执行 A1–A5 离线修复；B 部分真实复验等待用户确认，
-不调用真实 Tushare、不连接任何 PG，也不启动全量回补。
+2026-10-30 按标的分页的新方案完成该月：复用已知 882 个合约，分三批新增
+220＋220＋136＝576 次请求，补齐与日线完全对应的 19,236 个合约，每批响应保留后续跑。
+这是有缓存的本月实测，不是冷启动或全历史预算。
+同月真实隔离 PG 验收完成：ETF 日线 19,661 行、八所期权日线 365,508 行及合约 19,236 行，
+两轮导入的全部 canonical 字段及内容哈希一致，并从源值独立核对单位与参数。
+ETF 身份／上市日缺失隔离、CZCE 缺失 OHLC 与核实到期日的零结算均按上述用户确认口径处理；
+未启动全历史回补、修改工作库或开放期权正式写入。原响应、代码指纹和复现脚本见迁移盘点。
 后续 ETF 分类任务在本分支合入后从 dev 另开分支，依赖 ETF symbol_map；
 先验证 fund_basic.fund_type 枚举，存量更正前只读计数、备份，工作库删除另行授权。
 
 **2026-10-26 实测进度：预算已测，真实样本验收未通过。** 代码已合入 dev `588a2c5`；
 使用独立 worktree 的已提交采集器 `537592d`，已核对相关 raw／ingest 源码及 DDL 与 dev 一致，
 采集后源码哈希未变。2024 年 1 月八所各 22 个交易日，共 365,508 条日线、19,236 个代码；
-当前逐代码 `opt_basic` 方案首次约需 19,236 次请求，按 1.5 秒间隔约 8 小时，未计重试和额外分页。
+当时逐代码 `opt_basic` 方案首次约需 19,236 次请求，按 1.5 秒间隔约 8 小时，未计重试和额外分页。
 1 月 31 日 16,840 个代码只是观察数量，不能当作当前增量请求数；全历史去重请求预算尚未测得。
 另做每所一个历史代码的精确元数据探针，8/8 成功，不证明历史调整参数可得。
 
@@ -471,6 +494,11 @@ R1 在归一化后检查总年化波动率：截面中位数须在 `[5%,150%]`�
 `available_at` 使用实际采集时间，历史回填不会伪装为当时已可得；全区间校准前
 始终 `calibrated=false`，不代表已经通过真实市场五表自洽验收。
 
+2026-10-30 的[字段互验与 P6 诊断](../../docs/plans/imac-collector-migration.md#字段互验与补充验证2026-10-30)
+已用三模型真实样本复核源字段、单位及 PG 数值；P6 的 `r` 不能直接取未复权价格收益，
+还需明确超额收益基准和暴露日期。当前有限样本以独立实际国债曲线及复权收盘价复现，
+供应商完整约定和全区间仍待确认；没有将该经验口径写入生产 importer 或改校准状态。
+
 切换到米筐前需显式处理以下 8 张表的归属：`factor.model`、`factor.definition`、
 `factor.model_run`、`factor.exposure`、`factor.covariance`、`factor.factor_return`、
 `factor.specific_risk`、`factor.specific_return`。先查看 `gr-data own list`，
@@ -682,8 +710,9 @@ API 由 `load_api_settings(env)` 组装，`create_app(config)` 将配置绑定�
 
 ### 风险导入收据与用途（2a，需迁移 049）
 
-动态风险导入需要 `ops.dataset_variant`、`ops.import_receipt`、
-`factor.model_run_binding` 及扩展后的 `ops.import_checkpoint`。
+动态风险导入需要 `factor.dataset_variant`、`factor.import_receipt`、
+`factor.model_run_binding` 及 `factor.import_checkpoint`。新库在 037 直接创建风险证据表，
+049 安装绑定及不可变校验；不再创建同名 `ops` 表，不自动迁移旧账本。
 `validation` 和 `production` 是不可变用途，production 只支持
 `universe_policy: listed_cn_a_v2`；改变用途生成新 variant，不能给旧样本改标签。
 五件套与覆盖表共用逻辑目标 `factor.risk_bundle`，不按物理表拆成六份独立收据。
@@ -693,6 +722,10 @@ PG 失败时保留原观察与恢复计划，重试复用 raw。完整轮次的 
 交易日历，但不会重新请求风险五接口或参考名单。动态 ingest 也可从校验过的 raw
 重建 capture，再在同日事务中提交五件套、覆盖、receipt、binding、DB 检查点和 ETL。
 重放已有收据时核对绑定和检查点，不重复 UPSERT 业务行；重放 ETL 标记 replay。
+
+配置身份、检查点和收据均按表登记给 ricequant；写入前锁定并核对归属，不允许强制换源。
+capture 独立提交的身份、检查点及其归属在后续业务失败时继续保留；业务数据、收据、绑定及
+业务事务中新登记的归属一起回滚。`ops.data_quality_check` 和 `ops.etl_job_run` 仍为通用设施。
 
 检查点按 `variant/day/observation` 隔离：只有 capture 时 DB 水位为空，成功提交后
 一次推进到收据；不使用 MAX 日期代表区间完整，不承担 B2 当前版本选择。

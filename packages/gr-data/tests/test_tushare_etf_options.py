@@ -26,7 +26,12 @@ from gr_data.ingest.tushare.importers.asset_markets import (
     OptionInstrumentsImporter,
     OptionSymbolMapImporter,
 )
-from gr_data.raw.tushare.asset_rules import numeric_values, read_asset_observation, validate_bars
+from gr_data.raw.tushare.asset_rules import (
+    czce_settlement_only_mask,
+    numeric_values,
+    read_asset_observation,
+    validate_bars,
+)
 from gr_data.raw.tushare.client import PAGE_LIMITS, TushareProClient
 from gr_data.raw.tushare.context import OPTION_EXCHANGES, TushareRawContext, build_context
 from gr_data.raw.tushare.fetchers import asset_markets as raw_asset_markets
@@ -566,7 +571,26 @@ def test_pending_etf_warning_reaches_ingest_result(asset_setup, monkeypatch, cls
 
 
 @pytest.mark.integration
-def test_etf_options_pg_roundtrip_and_replay(pg_conn, asset_setup):
+@pytest.mark.parametrize("quote_case", ["ordinary", "settlement_only", "expiry_zero"])
+def test_etf_options_pg_roundtrip_and_replay(pg_conn, asset_setup, quote_case):
+    if quote_case != "ordinary":
+        client = asset_setup[2]
+        original = client.query_all
+
+        def source(api, **params):
+            frame = original(api, **params)
+            if api == "opt_daily" and params["exchange"] == "CZCE":
+                frame.loc[:, ["open", "high", "low", "close", "vol", "amount"]] = 0
+                frame["oi"] = 33
+            if quote_case == "expiry_zero" and params.get("exchange") in ("CZCE", "GFEX"):
+                if api == "opt_daily":
+                    frame.loc[:, ["open", "high", "low", "close", "settle", "amount", "oi"]] = 0
+                    frame["vol"] = 5 if params["exchange"] == "GFEX" else 0
+                elif api == "opt_basic":
+                    frame["delist_date"] = "20240102"
+            return frame
+
+        client.query_all = source
     paths = prepare_assets(asset_setup)
     # 标的期货 / 指数只有参考身份，本用例不写其行情或修改已有表归属。
     with pg_conn.cursor() as cur:
@@ -615,8 +639,29 @@ def test_etf_options_pg_roundtrip_and_replay(pg_conn, asset_setup):
                 cur.fetchall()
                 == [(1025, Decimal("123.4000"), Decimal("1.12500000"), Decimal("1.250000"))] * 2
             )
-            cur.execute("SELECT volume,amount,open_interest,settle FROM market.option_bar_1d")
-            assert cur.fetchall() == [(10, Decimal("1234.0000"), None, Decimal("1.220000"))] * 8
+            cur.execute(
+                "SELECT volume,amount,open_interest,settle FROM market.option_bar_1d "
+                "WHERE close IS NOT NULL"
+            )
+            assert (
+                cur.fetchall()
+                == [(10, Decimal("1234.0000"), None, Decimal("1.220000"))]
+                * ({"ordinary": 8, "settlement_only": 7, "expiry_zero": 6}[quote_case])
+            )
+            cur.execute(
+                "SELECT open,high,low,close,volume,amount,open_interest,settle "
+                "FROM market.option_bar_1d WHERE close IS NULL"
+            )
+            expected_null = (
+                [(None, None, None, None, 0, Decimal("0"), 33, Decimal("1.22"))]
+                if quote_case == "settlement_only"
+                else []
+            )
+            if quote_case == "expiry_zero":
+                expected_null = [
+                    (None, None, None, None, vol, Decimal("0"), 0, Decimal("0")) for vol in (0, 5)
+                ]
+            assert sorted(cur.fetchall(), key=lambda r: r[4]) == expected_null
             cur.execute("SELECT multiplier,underlying_id FROM meta.option_contracts")
             assert all(m == 10 and iid is not None for m, iid in cur.fetchall())
             cur.execute("SELECT count(*) FROM meta.option_contracts")
@@ -1130,6 +1175,217 @@ def test_sample_fix_invalid_listed_etf_still_rejected(asset_setup):
         importer(EtfInstrumentsImporter, paths).build()
 
 
+@pytest.mark.parametrize("canonical_present", [False, True])
+def test_verified_etf_conflict_preserved_raw_quarantined_ingest(asset_setup, canonical_present):
+    paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == "etf_basic" and params["exchange"] == "SZ" and params["list_status"] == "L":
+            added = [etf_meta("158008.OF")]
+            if canonical_present:
+                added.append(etf_meta("158008.SZ"))
+            frame = pd.concat([frame, pd.DataFrame(added)], ignore_index=True)
+            frame.loc[frame.ts_code.eq("158008.OF"), "exchange"] = "SZ"
+        return frame
+
+    client.query_all = source
+    prepare_assets(asset_setup)
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", "instruments", "etf"))
+    assert raw is not None and "158008.OF" in set(raw.ts_code)
+    assert receipt["scope"]["quarantined_rows"] == {"rows": 1, "samples": ["158008.OF"]}
+    obj = importer(EtfInstrumentsImporter, paths)
+    identities = obj.build()
+    assert "158008.OF" not in set(identities.symbol)
+    assert ("158008.SZ" in set(identities.symbol)) == canonical_present
+    assert any("Quarantined unverified ETF identity rows=1" in s for s in obj.soft_warnings)
+    assert len(importer(EtfBars1dImporter, paths).build()) == 2
+
+
+@pytest.mark.parametrize("exchange,status", [("SH", "L"), ("SZ", "D")])
+def test_etf_quarantine_does_not_hide_other_scope_conflicts(asset_setup, exchange, status):
+    paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        if (
+            api == "etf_basic"
+            and params["exchange"] == exchange
+            and params["list_status"] == status
+        ):
+            return pd.DataFrame([dict(etf_meta("158008.OF", status), exchange=exchange)])
+        return original(api, **params)
+
+    client.query_all = source
+    with pytest.raises(ValueError, match="ETF metadata scope"):
+        EtfInstrumentsFetcher(client, ctx).fetch()
+    assert not paths.dataset_file("tushare", "instruments", "etf").exists()
+
+
+def test_czce_settlement_only_raw_and_canonical_mapping(asset_setup):
+    paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == "opt_daily" and params["exchange"] == "CZCE":
+            frame.loc[:, ["open", "high", "low", "close", "vol", "amount"]] = 0
+            frame["oi"] = 33
+        return frame
+
+    client.query_all = source
+    prepare_assets(asset_setup)
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", "opt_daily", "2024-01"))
+    assert raw is not None
+    czce = raw.loc[raw.exchange.eq("CZCE")]
+    assert czce[["open", "high", "low", "close", "vol", "amount"]].eq(0).all().all()
+    assert receipt["scope"]["czce_settlement_only_rows"] == {
+        "CZCE": {
+            "rows": 1,
+            "nonzero_activity_rows": 0,
+            "samples": [{"ts_code": OPTIONS["CZCE"][0], "trade_date": "20240102"}],
+        }
+    }
+    obj = importer(OptionBars1dImporter, paths)
+    out = obj.build()
+    iid = obj._ids([OPTIONS["CZCE"][0]], "option")[OPTIONS["CZCE"][0]]
+    row = out.loc[out.instrument_id.eq(iid)].iloc[0]
+    assert row[["open", "high", "low", "close"]].isna().all()
+    assert row.settle == Decimal("1.22") and row.open_interest == 33
+    assert row.volume == 0 and row.amount == 0
+    assert any("settlement-only OHLC to NULL exchange=CZCE rows=1" in s for s in obj.soft_warnings)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"exchange": "DCE", "ts_code": OPTIONS["DCE"][0]},
+        {"settle": 0},
+        {"settle": None},
+        {"close": None},
+    ],
+)
+def test_czce_settlement_only_requires_exact_pattern(overrides):
+    row = bar(OPTIONS["CZCE"][0], exchange="CZCE", oi=33, settle=1.22, pre_settle=1.2)
+    row.update(open=0, high=0, low=0, close=0, vol=0, amount=0)
+    row.update(overrides)
+    with pytest.raises(ValueError, match="OHLC|expiry date"):
+        validate_bars(pd.DataFrame([row]), option=True)
+
+
+@pytest.mark.parametrize("volume,amount", [(3, 4.3), (0, 0), (None, None)])
+def test_czce_missing_ohlc_preserves_activity(asset_setup, volume, amount):
+    paths, _ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == "opt_daily" and params["exchange"] == "CZCE":
+            frame.loc[:, ["open", "high", "low", "close"]] = 0
+            frame["vol"], frame["amount"] = volume, amount
+        return frame
+
+    client.query_all = source
+    prepare_assets(asset_setup)
+    obj = importer(OptionBars1dImporter, paths)
+    frame = obj.build()
+    iid = obj._ids([OPTIONS["CZCE"][0]], "option")[OPTIONS["CZCE"][0]]
+    row = frame.loc[frame.instrument_id.eq(iid)].iloc[0]
+    assert row[["open", "high", "low", "close"]].isna().all()
+    assert row.settle == Decimal("1.22")
+    assert pd.isna(row.volume) if volume is None else row.volume == volume
+    assert pd.isna(row.amount) if amount is None else row.amount == Decimal(str(amount)) * 10000
+    count = int(volume is not None and volume > 0 or amount is not None and amount > 0)
+    assert any(f"nonzero_activity_rows={count}" in s for s in obj.soft_warnings)
+
+
+@pytest.mark.parametrize("column,value", [("vol", -1), ("amount", -1), ("oi", float("inf"))])
+def test_missing_option_ohlc_still_rejects_invalid_activity(column, value):
+    row = bar(OPTIONS["CZCE"][0], exchange="CZCE", oi=0, settle=1, pre_settle=1)
+    row.update(open=0, high=0, low=0, close=0, vol=0, amount=0)
+    row[column] = value
+    with pytest.raises(ValueError, match="Invalid numeric"):
+        validate_bars(pd.DataFrame([row]), option=True)
+
+
+@pytest.mark.parametrize("exchange", ["CZCE", "GFEX"])
+def test_zero_settlement_requires_verified_expiry(exchange):
+    code = OPTIONS[exchange][0]
+    row = bar(code, exchange=exchange, oi=0, settle=0, pre_settle=1)
+    row.update(open=0, high=0, low=0, close=0, vol=5, amount=0)
+    frame = pd.DataFrame([row])
+    assert validate_bars(frame, option=True, capture_unverified_expiry=True).equals(frame)
+    for expiry_dates in (None, {}, {code: None}, {code: date(2024, 1, 3)}):
+        with pytest.raises(ValueError, match="Unverified zero settlement expiry date"):
+            validate_bars(frame, option=True, expiry_dates=expiry_dates)
+    assert validate_bars(frame, option=True, expiry_dates={code: date(2024, 1, 2)}).equals(frame)
+
+
+@pytest.mark.parametrize("expiry", [None, "20240103", "20240101"])
+def test_ingest_rechecks_zero_settlement_lifecycle(asset_setup, expiry):
+    paths = prepare_assets(asset_setup)
+    daily = paths.dataset_file("tushare", "opt_daily", "2024-01")
+    frame = pd.read_parquet(daily)
+    frame.loc[frame.exchange.eq("GFEX"), ["open", "high", "low", "close", "settle"]] = 0
+    replace_fixture(daily, frame)
+    meta = paths.dataset_file("tushare", "instruments", "option")
+    frame = pd.read_parquet(meta)
+    frame.loc[frame.exchange.eq("GFEX"), "delist_date"] = expiry
+    replace_fixture(meta, frame)
+    with pytest.raises(ValueError, match="expiry date"):
+        importer(OptionBars1dImporter, paths).build()
+
+
+@pytest.mark.parametrize("missing", [None, ""])
+def test_missing_listed_etf_date_is_retained_and_quarantined(asset_setup, missing):
+    paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == "etf_basic" and params["exchange"] == "SH" and params["list_status"] == "L":
+            frame = pd.concat(
+                [frame, pd.DataFrame([dict(etf_meta("581050.SH"), list_date=missing)])],
+                ignore_index=True,
+            )
+        return frame
+
+    client.query_all = source
+    EtfInstrumentsFetcher(client, ctx).fetch()
+    path = paths.dataset_file("tushare", "instruments", "etf")
+    raw, receipt = read_asset_observation(path)
+    assert raw is not None and raw.loc[raw.ts_code.eq("581050.SH"), "list_status"].tolist() == ["L"]
+    assert receipt["scope"]["missing_listing_date_rows"] == {"rows": 1, "samples": ["581050.SH"]}
+    obj = importer(EtfInstrumentsImporter, paths)
+    assert "581050.SH" not in set(obj.build().symbol)
+    assert any("Quarantined unverified ETF identity rows=1" in s for s in obj.soft_warnings)
+
+
+@pytest.mark.parametrize("bad", ["20260230", "00000000", " "])
+def test_etf_invalid_date_is_not_quarantined(asset_setup, bad):
+    _paths, ctx, client = asset_setup
+    original = client.query_all
+
+    def source(api, **params):
+        frame = original(api, **params)
+        if api == "etf_basic" and params["list_status"] == "L":
+            frame["list_date"] = bad
+        return frame
+
+    client.query_all = source
+    with pytest.raises(ValueError):
+        EtfInstrumentsFetcher(client, ctx).fetch()
+
+
+def test_czce_settlement_only_does_not_reinterpret_partial_null_prices():
+    row = bar(OPTIONS["CZCE"][0], exchange="CZCE", oi=33, settle=1.22, pre_settle=1.2)
+    row.update(open=0, high=0, low=None, close=0, vol=0, amount=0)
+    frame = validate_bars(pd.DataFrame([row]), option=True)
+    assert not czce_settlement_only_mask(frame).any()
+    assert frame.close.iloc[0] == 0 and pd.isna(frame.low.iloc[0])
+
+
 def test_sample_fix_pending_etf_incomplete_raw_kept_ingest_skipped(asset_setup):
     paths, ctx, client = asset_setup
     original = client.query_all
@@ -1156,14 +1412,16 @@ def test_sample_fix_pending_etf_incomplete_raw_kept_ingest_skipped(asset_setup):
     assert any("Skipped pending ETF rows=2" in message for message in obj.soft_warnings)
 
 
-def test_sample_fix_listed_etf_requires_list_date(asset_setup):
+def test_sample_fix_delisted_etf_requires_list_date(asset_setup):
     _, ctx, client = asset_setup
     original = client.query_all
 
     def source(api, **params):
         frame = original(api, **params)
-        if api == "etf_basic" and params["list_status"] == "L":
-            frame["list_date"] = None
+        if api == "etf_basic" and params["list_status"] == "D":
+            return pd.DataFrame(
+                [dict(etf_meta(f"999999.{params['exchange']}", "D"), list_date=None)]
+            )
         return frame
 
     client.query_all = source

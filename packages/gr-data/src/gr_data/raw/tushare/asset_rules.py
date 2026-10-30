@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -32,6 +34,90 @@ OPTION_BAR_COLUMNS = (*BAR_COLUMNS, "exchange", "settle", "pre_settle", "oi")
 def standard_fund_codes(codes: pd.Series) -> pd.Series:
     """识别可用于沪深市场检查的六位交易代码；不改写或过滤源代码。"""
     return codes.str.fullmatch(r"\d{6}\.(SH|SZ)")
+
+
+def quarantined_etf_mask(frame: pd.DataFrame) -> pd.Series:
+    """隔离用户确认的源身份冲突及 L 缺上市日，不改码或改状态。
+
+    2026-10-30：etf_basic 将 158008.OF 列为深圳 L，fund_basic 却标 market=O。
+    原响应及对账位置见 imac-collector-migration.md 第二节；待源端更正再复验。
+    """
+    return conflicting_etf_code_mask(frame) | missing_etf_listing_mask(frame)
+
+
+def conflicting_etf_code_mask(frame: pd.DataFrame) -> pd.Series:
+    """只识别已有原响应佐证的 OF 身份冲突，不能为其他坏代码豁免校验。"""
+    return (
+        frame["ts_code"].eq("158008.OF") & frame["exchange"].eq("SZ") & frame["list_status"].eq("L")
+    )
+
+
+def missing_etf_listing_mask(frame: pd.DataFrame) -> pd.Series:
+    """L 名单上市日缺失时只保留 raw；非法日期不当作缺失隔离。"""
+    return frame["list_status"].eq("L") & (frame["list_date"].isna() | frame["list_date"].eq(""))
+
+
+def czce_settlement_only_mask(frame: pd.DataFrame) -> pd.Series:
+    """识别郑商所结算价正、OHLC 全零的缺失报价，不按量额推断成交价。
+
+    仅接受 CZCE／.ZCE、OHLC 全零且 settle>0；价格 NULL 不匹配。
+    2026-10-30 用户确认有成交量额时同样映射 NULL，量额／持仓仍独立严格校验。
+    https://www.czce.com.cn/cn/DFSStaticFiles/Option/2024/20240102/OptionDataDaily.txt
+    """
+    return (
+        frame["exchange"].eq("CZCE")
+        & frame["ts_code"].str.endswith(".ZCE")
+        & pd.concat(
+            [numeric_values(frame[c], c).eq(0) for c in ("open", "high", "low", "close")],
+            axis=1,
+        ).all(axis=1)
+        & numeric_values(frame["settle"], "settle").gt(0)
+    )
+
+
+def czce_settlement_only_counts(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """按市场登记缺失报价行、非零量额行及至多五个源键样本。"""
+    selected = frame.loc[czce_settlement_only_mask(frame)]
+    return {
+        str(exchange): {
+            "rows": len(rows),
+            "nonzero_activity_rows": int(
+                (
+                    numeric_values(rows["vol"], "vol", integer=True).gt(0)
+                    | numeric_values(rows["amount"], "amount", precision=30, scale=10).gt(0)
+                ).sum()
+            ),
+            "samples": rows[["ts_code", "trade_date"]].head(5).to_dict("records"),
+        }
+        for exchange, rows in selected.groupby("exchange", sort=True)
+    }
+
+
+def zero_settlement_candidate_mask(frame: pd.DataFrame) -> pd.Series:
+    """识别 CZCE／GFEX 的 OHLC／settle 全零候选；形态本身不证明到期。"""
+    return (
+        frame["exchange"].isin(["CZCE", "GFEX"])
+        & frame["ts_code"].str.rsplit(".", n=1).str[-1].eq(frame["exchange"].map(OPTION_SUFFIXES))
+        & pd.concat(
+            [numeric_values(frame[c], c).eq(0) for c in ("open", "high", "low", "close", "settle")],
+            axis=1,
+        ).all(axis=1)
+    )
+
+
+def zero_settlement_candidate_counts(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """记录尚需元数据核对到期日的源候选，不把 raw 捕获当作入库验收。"""
+    selected = frame.loc[zero_settlement_candidate_mask(frame)]
+    return {
+        str(exchange): {
+            "rows": len(rows),
+            "nonzero_volume_rows": int(
+                numeric_values(rows["vol"], "vol", integer=True).gt(0).sum()
+            ),
+            "samples": rows[["ts_code", "trade_date"]].head(5).to_dict("records"),
+        }
+        for exchange, rows in selected.groupby("exchange", sort=True)
+    }
 
 
 def ohl_zero_placeholder_mask(frame: pd.DataFrame) -> pd.Series:
@@ -161,10 +247,18 @@ def numeric_values(
     return pd.Series([convert(v) for v in values], index=values.index, dtype=object)
 
 
-def validate_bars(frame: pd.DataFrame, *, option: bool = False) -> pd.DataFrame:
+def validate_bars(
+    frame: pd.DataFrame,
+    *,
+    option: bool = False,
+    capture_unverified_expiry: bool = False,
+    expiry_dates: Mapping[str, date | None] | None = None,
+) -> pd.DataFrame:
     """检查源键、价格和活动值，返回源值不变的去重副本。
 
     价格缺失允许 NULL / NaN；Inf、坏字符串、负值及无 close / settle 的记录失败。
+    raw 捕获可显式暂存 CZCE／GFEX 零结算候选；ingest 必须提供供应商到期日映射，
+    逐行验证 trade_date 等于 delist_date，默认不接受无证据的候选。
     """
     require_columns(frame, OPTION_BAR_COLUMNS if option else BAR_COLUMNS, "bars")
     source_codes(frame)
@@ -192,7 +286,13 @@ def validate_bars(frame: pd.DataFrame, *, option: bool = False) -> pd.DataFrame:
     if option:
         zero_ohl = normalized["open"].eq(0) & high.eq(0) & low.eq(0)
         placeholder = zero_ohl & close.gt(0)
-        if (zero_ohl & ~placeholder).any():
+        expiry_zero = zero_settlement_candidate_mask(out)
+        if expiry_zero.any() and not capture_unverified_expiry:
+            expiration = out["ts_code"].map(expiry_dates or {})
+            verified = source_dates(out["trade_date"]).eq(expiration) & expiration.notna()
+            if (expiry_zero & ~verified).any():
+                raise ValueError("Unverified zero settlement expiry date")
+        if (zero_ohl & ~placeholder & ~czce_settlement_only_mask(out) & ~expiry_zero).any():
             raise ValueError("Invalid OHLC zero placeholder without positive close")
     both = high.notna() & low.notna()
     if high.loc[both].lt(low.loc[both]).any():

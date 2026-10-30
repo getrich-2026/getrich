@@ -229,10 +229,10 @@ def test_045_constraints(pg_conn, status, up, down, ok):
 
 
 @pytest.mark.integration
-def test_045_is_idempotent(pg_conn):
+def test_stock_bar_create_is_idempotent(pg_conn):
     from gr_db import POSTGRES_DDL_DIR
 
-    sql = (POSTGRES_DDL_DIR / "045_stock_price_limit_status.sql").read_text()
+    sql = (POSTGRES_DDL_DIR / "003_market.sql").read_text()
     pg_conn.execute(sql)
     pg_conn.execute(sql)
     pg_conn.commit()

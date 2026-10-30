@@ -719,7 +719,7 @@ def run_risk_ingest(
                 )
             if coverage is not None:
                 request["stage"] = "capture_registration"
-                record_capture(conn, options, manifest)
+                record_capture(conn, options, manifest, channel=ctx.channel)
             order = list(frames["exposure"].columns)
             if not order or len(order) > 32767 or any(len(name) > 32 for name in order):
                 raise ContractViolationError("RiceQuant factor definitions exceed storage contract")
@@ -851,7 +851,9 @@ def run_risk_ingest(
                     if coverage is not None:
                         written += _write_coverage(conn, run_id, day, observed_at, coverage)
                     if coverage is not None:
-                        receipt = commit_receipt(conn, options, manifest, run_id, written, quality)
+                        receipt = commit_receipt(
+                            conn, options, manifest, run_id, written, quality, channel=ctx.channel
+                        )
                 else:
                     run_id = _model_run_id(options, manifest["day"], manifest["observation_id"])
                     verify_committed_receipt(conn, options, manifest, run_id, receipt)

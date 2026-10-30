@@ -125,10 +125,10 @@ def test_047_model_run_factor_order(pg_conn, literal, factor_count, ok):
 
 
 @pytest.mark.integration
-def test_047_replaces_old_constraints_and_is_idempotent(pg_conn):
+def test_factor_create_uses_final_constraints_and_is_idempotent(pg_conn):
     from gr_db import POSTGRES_DDL_DIR
 
-    sql = (POSTGRES_DDL_DIR / "047_factor_array_checks.sql").read_text()
+    sql = (POSTGRES_DDL_DIR / "037_factor.sql").read_text()
     pg_conn.execute(sql)
     pg_conn.execute(sql)
     names = {

@@ -39,7 +39,7 @@ def receipt_case(pg_conn):
     }
     with pg_conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO ops.dataset_variant "
+            "INSERT INTO factor.dataset_variant "
             "(variant_id,provider,dataset_name,purpose,identity) "
             "VALUES (%s,'ricequant','rq_risk_model','validation',%s)",
             (case.variant_id, Jsonb(case.identity)),
@@ -80,7 +80,7 @@ def _capture(cur, case, **changes):
         "captured_at": case.captured_at,
     }
     values.update(changes)
-    _insert(cur, "ops.import_checkpoint", values)
+    _insert(cur, "factor.import_checkpoint", values)
 
 
 def _insert(cur, table, values, *, conflict=False):
@@ -108,7 +108,7 @@ def _receipt(cur, case, *, conflict=False, **changes):
         "committed_at": case.committed_at,
     }
     values.update(changes)
-    _insert(cur, "ops.import_receipt", values, conflict=conflict)
+    _insert(cur, "factor.import_receipt", values, conflict=conflict)
 
 
 def _binding(cur, case, **changes):
@@ -132,7 +132,7 @@ def _advance(cur, case, **changes):
     }
     values.update(changes)
     cur.execute(
-        "UPDATE ops.import_checkpoint SET "
+        "UPDATE factor.import_checkpoint SET "
         + ",".join(f"{column}=%s" for column in values)
         + " WHERE provider='ricequant' AND dataset_name='rq_risk_model' AND partition_key=%s",
         (*values.values(), case.partition_key),
@@ -154,7 +154,7 @@ def test_receipt_capture_binding_success_and_idempotent_replay(receipt_case):
         assert cur.rowcount == 0
         cur.execute(
             "SELECT import_receipt_id,imported_at,watermark_date,captured_at "
-            "FROM ops.import_checkpoint WHERE partition_key=%s",
+            "FROM factor.import_checkpoint WHERE partition_key=%s",
             (case.partition_key,),
         )
         assert cur.fetchone() == (case.receipt_id, case.committed_at, case.day, case.captured_at)
@@ -187,7 +187,7 @@ def test_variant_purpose_cannot_be_forged_on_insert(receipt_case, purpose, ident
         case.conn.cursor() as cur,
     ):
         cur.execute(
-            "INSERT INTO ops.dataset_variant "
+            "INSERT INTO factor.dataset_variant "
             "(variant_id,provider,dataset_name,purpose,identity) "
             "VALUES (%s,'ricequant','rq_risk_model',%s,%s)",
             ("d" * 64, purpose, Jsonb(identity)),
@@ -195,15 +195,15 @@ def test_variant_purpose_cannot_be_forged_on_insert(receipt_case, purpose, ident
 
 
 @pytest.mark.parametrize(
-    "table", ["ops.dataset_variant", "ops.import_receipt", "factor.model_run_binding"]
+    "table", ["factor.dataset_variant", "factor.import_receipt", "factor.model_run_binding"]
 )
 @pytest.mark.parametrize("operation", ["update", "delete"])
 def test_evidence_entities_reject_direct_mutation(receipt_case, table, operation):
     case = receipt_case
     _finish(case)
     assignments = {
-        "ops.dataset_variant": "purpose='production'",
-        "ops.import_receipt": "rows_written=0",
+        "factor.dataset_variant": "purpose='production'",
+        "factor.import_receipt": "rows_written=0",
         "factor.model_run_binding": "observation_id='dddddddddddddddddddddddddddddddd'",
     }
     sql = (
@@ -317,13 +317,14 @@ def test_tagged_capture_required_fields_cannot_use_null(receipt_case, column):
 def test_captured_identity_cannot_be_rewritten(receipt_case, mutation):
     case = receipt_case
     statements = {
-        "manifest": "UPDATE ops.import_checkpoint SET capture_manifest_hash=repeat('d',64)",
+        "manifest": "UPDATE factor.import_checkpoint SET capture_manifest_hash=repeat('d',64)",
         "purpose": (
-            "UPDATE ops.import_checkpoint SET state=jsonb_set(state,'{purpose}','\"production\"')"
+            "UPDATE factor.import_checkpoint "
+            "SET state=jsonb_set(state,'{purpose}','\"production\"')"
         ),
-        "day": "UPDATE ops.import_checkpoint SET trading_day=trading_day+1",
-        "clear_tag": "UPDATE ops.import_checkpoint SET variant_id=NULL",
-        "delete": "DELETE FROM ops.import_checkpoint",
+        "day": "UPDATE factor.import_checkpoint SET trading_day=trading_day+1",
+        "clear_tag": "UPDATE factor.import_checkpoint SET variant_id=NULL",
+        "delete": "DELETE FROM factor.import_checkpoint",
     }
     with (
         pytest.raises(psycopg.errors.CheckViolation),
@@ -364,12 +365,12 @@ def test_receipt_binding_and_checkpoint_roll_back_together(receipt_case):
         _binding(cur, case)
         _advance(cur, case, watermark_date=case.day + timedelta(days=1))
     with case.conn.transaction(), case.conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM ops.import_receipt")
+        cur.execute("SELECT count(*) FROM factor.import_receipt")
         assert cur.fetchone()[0] == 0
         cur.execute("SELECT count(*) FROM factor.model_run_binding")
         assert cur.fetchone()[0] == 0
         cur.execute(
-            "SELECT import_receipt_id,imported_at,watermark_date FROM ops.import_checkpoint "
+            "SELECT import_receipt_id,imported_at,watermark_date FROM factor.import_checkpoint "
             "WHERE partition_key=%s",
             (case.partition_key,),
         )
@@ -390,7 +391,7 @@ def test_imported_checkpoint_cannot_rewind_or_refresh(receipt_case):
             case.conn.cursor() as cur,
         ):
             cur.execute(
-                f"UPDATE ops.import_checkpoint SET {assignment} WHERE partition_key=%s",
+                f"UPDATE factor.import_checkpoint SET {assignment} WHERE partition_key=%s",
                 (case.partition_key,),
             )
 
@@ -399,15 +400,16 @@ def test_legacy_checkpoint_updates_and_delete_remain_compatible(receipt_case):
     case = receipt_case
     with case.conn.transaction(), case.conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO ops.import_checkpoint(provider,dataset_name,partition_key,watermark_date) "
+            "INSERT INTO factor.import_checkpoint"
+            "(provider,dataset_name,partition_key,watermark_date) "
             "VALUES ('legacy','history','old-partition','2024-01-02')"
         )
         cur.execute(
-            "UPDATE ops.import_checkpoint SET watermark_date='2024-02-01',state='[]' "
+            "UPDATE factor.import_checkpoint SET watermark_date='2024-02-01',state='[]' "
             "WHERE provider='legacy'"
         )
         assert cur.rowcount == 1
-        cur.execute("DELETE FROM ops.import_checkpoint WHERE provider='legacy'")
+        cur.execute("DELETE FROM factor.import_checkpoint WHERE provider='legacy'")
         assert cur.rowcount == 1
 
 

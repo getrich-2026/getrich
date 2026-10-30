@@ -112,7 +112,7 @@ def evidence_case(monkeypatch):
     ]
 
     def query(conn, sql, args=()):
-        if "FROM ops.dataset_variant" in sql:
+        if "FROM factor.dataset_variant" in sql:
             return [
                 {
                     "provider": "ricequant",
@@ -130,13 +130,13 @@ def evidence_case(monkeypatch):
                     "trading_day": receipt["trading_day"],
                 }
             ]
-        if sql.startswith("SELECT * FROM ops.import_receipt"):
+        if sql.startswith("SELECT * FROM factor.import_receipt"):
             return [receipt]
-        if sql.startswith("SELECT receipt_id FROM ops.import_receipt"):
+        if sql.startswith("SELECT receipt_id FROM factor.import_receipt"):
             return [{"receipt_id": receipt_id}]
         if sql.startswith("SELECT run_id FROM factor.model_run_binding"):
             return [{"run_id": run_id}]
-        if "FROM ops.import_checkpoint" in sql:
+        if "FROM factor.import_checkpoint" in sql:
             return [checkpoint]
         raise AssertionError(sql)
 
