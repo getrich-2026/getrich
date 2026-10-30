@@ -460,8 +460,7 @@ uv run gr-data --config /path/to/config.yaml ingest ricequant --only future_cont
 `future_profile.product_code` 与 `delivery_month`，不改写两边的代码格式。键不唯一、世纪
 无法唯一确定、匹配不到或交易所不在 canonical 集合的合约不写，分别记
 `future_contracts_ambiguous_key`／`_ambiguous_year`／`_unmatched`／`_unknown_exchange`
-质量检查；两源上市日不一致的照常写入并记 `_list_date_mismatch`；一行都写不进时质量门禁失败。
-期货上市日暂以米筐为准：读 `meta.future_contracts.list_date`；`meta.instruments.list_date` 保留 tushare 原值。主力／指数连续合约（`IF88`、`IF99`）不处理。
+质量检查；两源上市日不一致的照常写入并记 `_list_date_mismatch`；一行都写不进时质量门禁失败。主力／指数连续合约（`IF88`、`IF99`）不处理。
 
 ### 米筐风险模型五件套
 
