@@ -98,6 +98,7 @@ def test_run_docs_clickhouse_only_strict_mode_skips_postgres_drift_checks(
         patch.object(cli, "_open_clickhouse_client", return_value=clickhouse_client),
         patch("gr_db.docs.introspect_clickhouse", return_value=()),
         patch("gr_db.docs.discover_datasets", return_value=()),
+        patch("gr_db.docs.load_registry", return_value=()),
     ):
         rc = cli._run_docs(args)
 

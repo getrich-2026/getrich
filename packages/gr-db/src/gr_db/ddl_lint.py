@@ -27,37 +27,48 @@ _COMMENT_COLUMN = re.compile(
     r"COMMENT\s+ON\s+COLUMN\s+([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)\s+IS\s+",
     re.IGNORECASE,
 )
-_SELF_EXPLANATORY = frozenset({"id", "created_at", "updated_at"})
+SELF_EXPLANATORY_COLUMNS = frozenset({"id", "created_at", "updated_at"})
+"""自明的主键与审计列：迁移注释门禁和数据字典漂移检查共用的豁免集合。"""
+
+# 字符串字面量排在注释前面，从左到右扫描时引号内的 -- 不会被当成注释。
+_COMMENT_OR_LITERAL = re.compile(r"'(?:''|[^'])*'|--[^\n]*|/\*.*?\*/", re.DOTALL)
 
 
 def _strip_sql_comments(sql: str) -> str:
-    """删除 SQL 注释，保留字符串内容。
+    """删除 SQL 注释，保留字符串字面量原文。
 
     Time Complexity: O(n)，n 为 SQL 字符数。
     Space Complexity: O(n)。
     """
-    return re.sub(r"--[^\n]*|/\*.*?\*/", "", sql, flags=re.DOTALL)
+    return _COMMENT_OR_LITERAL.sub(
+        lambda match: match.group() if match.group().startswith("'") else "", sql
+    )
 
 
 def _top_level_parts(definition: str) -> tuple[str, ...]:
-    """按顶层逗号拆分 SQL 定义或 ALTER TABLE 动作。
+    """按顶层逗号拆分 SQL 定义或 ALTER TABLE 动作，忽略字符串字面量内的括号与逗号。
 
     Time Complexity: O(n)，n 为定义字符数。
-    Space Complexity: O(p)，p 为顶层片段数。
+    Space Complexity: O(n)。
     """
     parts: list[str] = []
     depth = 0
-    part = ""
+    in_literal = False
+    part: list[str] = []
     for char in definition + ",":
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        if char == "," and depth == 0:
-            parts.append(part)
-            part = ""
-        else:
-            part += char
+        if char == "'":
+            # '' 转义会让状态连续翻转两次，结果仍正确。
+            in_literal = not in_literal
+        elif not in_literal:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif char == "," and depth == 0:
+                parts.append("".join(part))
+                part = []
+                continue
+        part.append(char)
     return tuple(parts)
 
 
@@ -116,11 +127,14 @@ def comment_violations(changed_files: list[Path], ddl_dir: Path) -> list[str]:
         for schema, table, definition in _CREATE_TABLE.findall(sql):
             if (schema, table) not in table_comments:
                 violations.append(f"{path}: {schema}.{table} 缺少 COMMENT ON TABLE")
-            for column in sorted(_columns(definition) - _SELF_EXPLANATORY):
+            for column in sorted(_columns(definition) - SELF_EXPLANATORY_COLUMNS):
                 if (schema, table, column) not in column_comments:
                     violations.append(f"{path}: {schema}.{table}.{column} 缺少 COMMENT ON COLUMN")
         for schema, table, column in _added_columns(sql):
-            if column not in _SELF_EXPLANATORY and (schema, table, column) not in column_comments:
+            if (
+                column not in SELF_EXPLANATORY_COLUMNS
+                and (schema, table, column) not in column_comments
+            ):
                 violations.append(f"{path}: {schema}.{table}.{column} 缺少 COMMENT ON COLUMN")
     return violations
 
@@ -128,16 +142,17 @@ def comment_violations(changed_files: list[Path], ddl_dir: Path) -> list[str]:
 def changed_migrations(
     repo_root: Path, ddl_dir: Path, base_ref: str
 ) -> tuple[list[Path], str | None]:
-    """取得相对 base ref 新增或修改的 PostgreSQL 迁移。
+    """取得相对 base ref 新增、修改或改名的 PostgreSQL 迁移。
 
-    git 或 base ref 不可用时返回警告而非失败。
+    只比较已提交的 ``base_ref...HEAD``，工作区未提交的迁移不在检查范围内；
+    已删除的文件被过滤，避免后续读取失败。git 或 base ref 不可用时返回警告而非失败。
 
     Time Complexity: O(n)，n 为 git 输出中的文件数。
     Space Complexity: O(n)。
     """
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
+            ["git", "diff", "--name-only", "--diff-filter=AMR", f"{base_ref}...HEAD"],
             cwd=repo_root,
             check=True,
             text=True,

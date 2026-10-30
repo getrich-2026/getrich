@@ -18,13 +18,12 @@ def _escape(value: object | None) -> str:
 def _size(value: int | None) -> str:
     if value is None:
         return "—"
-    units = ("B", "KiB", "MiB", "GiB", "TiB")
     amount = float(value)
-    for unit in units:
-        if amount < 1024 or unit == units[-1]:
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if amount < 1024:
             return f"{amount:.1f} {unit}"
         amount /= 1024
-    return "—"
+    return f"{amount:.1f} TiB"
 
 
 def _table_card(table: TableDoc) -> str:
@@ -39,7 +38,10 @@ def _table_card(table: TableDoc) -> str:
         f"行数估算：{_escape(table.row_estimate)}" if table.row_estimate is not None else "",
         f"大小：{_size(table.total_bytes)}" if table.total_bytes is not None else "",
         f"引擎：{_escape(table.engine)}" if table.engine else "",
+        f"分区键：{_escape(table.partition_key)}" if table.partition_key else "",
+        f"排序键：{_escape(table.sorting_key)}" if table.sorting_key else "",
         f"超表维度：{_escape(table.hypertable)}" if table.hypertable else "",
+        f"压缩：{_escape(table.compression)}" if table.compression else "",
         f"写入方：{_escape(', '.join(table.providers))}" if table.providers else "",
         f"数据集：{_escape(', '.join(table.datasets))}" if table.datasets else "",
     ]
@@ -67,8 +69,9 @@ def _table_card(table: TableDoc) -> str:
 
 def _dataset_row(dataset: DatasetDoc) -> str:
     """渲染 raw 数据集表格的一行。"""
+    search_terms = " ".join((dataset.provider, dataset.dataset, *dataset.targets)).lower()
     return (
-        "<tr>"
+        f'<tr data-search="{_escape(search_terms)}">'
         f"<td>{_escape(dataset.provider)}</td><td>{_escape(dataset.dataset)}</td>"
         f"<td><code>{_escape(dataset.path)}</code></td>"
         f"<td>{_escape(dataset.file_count)}</td><td>{_size(dataset.total_bytes)}</td>"
@@ -116,7 +119,8 @@ def render_html(dictionary: Dictionary) -> str:
         f"</tr>{raw_rows}</table></section>"
     )
     findings = "".join(
-        f'<li class="{item.severity}"><strong>{item.severity.upper()}</strong> '
+        f'<li class="{item.severity}" data-search="{_escape((item.target or "").lower())}">'
+        f"<strong>{item.severity.upper()}</strong> "
         f"{_escape(item.target)}：{_escape(item.message)}</li>"
         for item in dictionary.findings
     )

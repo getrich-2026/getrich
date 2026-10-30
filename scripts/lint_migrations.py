@@ -12,7 +12,7 @@ import re
 import sys
 from pathlib import Path
 
-from gr_db.docs.ddl_lint import changed_migrations, comment_violations
+from gr_db.ddl_lint import changed_migrations, comment_violations
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

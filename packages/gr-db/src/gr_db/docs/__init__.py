@@ -7,7 +7,7 @@ from typing import Any
 
 from .introspect import introspect_clickhouse, introspect_postgres
 from .model import Dictionary
-from .provenance import discover_datasets, enrich_provenance, fetch_ownership
+from .provenance import discover_datasets, enrich_provenance, fetch_ownership, load_registry
 from .render import render_html
 
 
@@ -18,24 +18,26 @@ def build_dictionary(
     """从可用数据库连接构建数据字典。
 
     至少提供一个连接；未提供的一层仍会在产物中保留 raw 数据集清单。
+    ingest 注册表只导入一次，供漂移检查和 raw 数据集清单共用。
 
     Time Complexity: O(t + c + r + f)，由数据库 catalog、注册表和 raw 文件规模决定。
     Space Complexity: O(t + c + r)。
     """
+    registry = load_registry()
     if postgres_conn is None:
         schemas = ()
         findings = ()
     else:
         schemas = introspect_postgres(postgres_conn)
         ownership = fetch_ownership(postgres_conn)
-        schemas, findings = enrich_provenance(schemas, ownership)
+        schemas, findings = enrich_provenance(schemas, ownership, registry)
     clickhouse_tables = (
         introspect_clickhouse(clickhouse_client) if clickhouse_client is not None else ()
     )
     return Dictionary(
         schemas=schemas,
         clickhouse_tables=clickhouse_tables,
-        datasets=discover_datasets(),
+        datasets=discover_datasets(registry=registry),
         findings=findings,
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
