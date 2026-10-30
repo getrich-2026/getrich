@@ -290,7 +290,8 @@ def test_stock_invalid_volume_or_amount_rejected(tmp_raw_root, monkeypatch, over
     daily = pd.DataFrame([_daily_row(**overrides)])
     imp = _stock_importer_with(tmp_raw_root, monkeypatch, daily)
 
-    with pytest.raises(ValueError, match="成交量或成交额"):
+    # 非数值在严格解析时即被拒绝（报出具体列），缺失与非有限值由后续量额检查拒绝。
+    with pytest.raises(ValueError, match=r"成交量或成交额|daily\.(vol|amount) 含无法解析"):
         imp.build()
 
 

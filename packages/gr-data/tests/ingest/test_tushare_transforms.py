@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pandas as pd
 import pytest
 from gr_data.ingest.tushare.importers.reference import parse_date
@@ -931,4 +933,106 @@ def test_nonpositive_pre_close_still_aborts(tmp_raw_root, monkeypatch):
     imp = _stock_importer(tmp_raw_root)
     monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
     with pytest.raises(ValueError, match="非正价格"):
+        imp.build()
+
+
+# --------------------------------------------------------------------------- #
+# 解析失败与源值缺失必须区分：前者拒绝，不能 coerce 成 NULL
+# --------------------------------------------------------------------------- #
+def _adj(paths):
+    _write(
+        paths,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "600000.SH", "trade_date": "20240102", "adj_factor": 1.25}]),
+    )
+
+
+def test_stock_unparseable_pre_close_rejected_not_treated_as_first_listing(tmp_raw_root):
+    """pre_close 是可选列：非法字符串不能伪装成「首日上市缺前收」写成 NULL。"""
+    daily = _daily_df().astype(str)
+    daily.loc[0, "pre_close"] = "bad"
+    _write(tmp_raw_root, "daily", daily)
+    _write_limits(tmp_raw_root)
+    _adj(tmp_raw_root)
+
+    with pytest.raises(ValueError, match=r"daily\.pre_close 含无法解析的数值"):
+        _stock_importer(tmp_raw_root).build()
+
+
+@pytest.mark.parametrize("column", ["up_limit", "down_limit", "pre_close"])
+def test_stock_unparseable_limit_values_rejected(tmp_raw_root, monkeypatch, column):
+    """涨跌停价与其前收非法时不能静默写 NULL 或跳过一致性比对。"""
+    _write(tmp_raw_root, "daily", _daily_df())
+    _adj(tmp_raw_root)
+    limits = {
+        "ts_code": "600000.SH",
+        "trade_date": "20240102",
+        "up_limit": "10.78",
+        "down_limit": "8.82",
+        "pre_close": "9.8",
+    }
+    limits[column] = "bad"
+    _write(tmp_raw_root, "stk_limit", pd.DataFrame([limits]))
+    imp = _stock_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"600000.SH": 42})
+
+    with pytest.raises(ValueError, match=rf"stk_limit\.(limit_pre_close|{column}) 含无法解析"):
+        imp.build()
+
+
+def _index_row(**overrides):
+    row = {
+        "ts_code": "000300.SH",
+        "trade_date": "20240102",
+        "open": "3400.0",
+        "high": "3450.0",
+        "low": "3390.0",
+        "close": "3431.11",
+        "pre_close": "3431.0",
+        "vol": "1000.0",
+        "amount": "2000.0",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_index_unparseable_price_rejected_but_missing_stays_null(tmp_raw_root, monkeypatch):
+    """指数价格缺失是常态（只发收盘点位），可 NULL；非法字符串必须拒绝。"""
+    from gr_data.ingest.base import IngestContext
+    from gr_data.ingest.tushare.importers.market import IndexBars1dImporter
+
+    def build(row):
+        _write(tmp_raw_root, "index_daily", pd.DataFrame([row]))
+        imp = IndexBars1dImporter(conn=cast(Any, None), ctx=IngestContext(paths=tmp_raw_root))
+        monkeypatch.setattr(imp, "_id_map", lambda: {"000300.SH": 3})
+        return imp.build()
+
+    assert pd.isna(build(_index_row(open=None, high=None, low=None)).iloc[0]["open"])
+    with pytest.raises(ValueError, match=r"index_daily\.open 含无法解析"):
+        build(_index_row(open="bad"))
+
+
+@pytest.mark.parametrize("column", ["settle", "close", "pre_settle"])
+def test_future_unparseable_price_rejected(tmp_raw_root, monkeypatch, column):
+    """期货价格／结算价非法时不能当成「无成交」写 NULL，收盘价非法也不能被整行跳过。"""
+    row = {
+        "ts_code": "CU2401.SHF",
+        "trade_date": "20240102",
+        "pre_close": "68000.0",
+        "pre_settle": "68100.0",
+        "open": "68200.0",
+        "high": "68900.0",
+        "low": "68000.0",
+        "close": "68500.0",
+        "settle": "68400.0",
+        "vol": "5000.0",
+        "amount": "34250.0",
+        "oi": "12000.0",
+    }
+    row[column] = "bad"
+    _write(tmp_raw_root, "fut_daily", pd.DataFrame([row]))
+    imp = _future_importer(tmp_raw_root)
+    monkeypatch.setattr(imp, "_id_map", lambda: {"CU2401.SHF": 7})
+
+    with pytest.raises(ValueError, match=rf"fut_daily\.{column} 含无法解析"):
         imp.build()

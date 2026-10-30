@@ -44,16 +44,12 @@ NO_LIMIT_UP_MIN = 99999.0
 NO_LIMIT_DOWN_MAX = 0.01
 
 
-def _to_numeric(df: pd.DataFrame, columns: list[str]) -> None:
-    for c in columns:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-
 def _to_numeric_strict(df: pd.DataFrame, columns: list[str], source: str) -> None:
     """转数值并区分两种空：源值本身缺失保留 NULL，有值但解析失败硬失败。
 
-    ``_to_numeric`` 的 coerce 会把非法字符串变成 NaN，经 UPSERT 以 NULL 覆盖库内已有值，
-    且质量门禁看不出来（必需列外的 NULL 是合法的）。
+    ``pd.to_numeric(errors="coerce")`` 会把非法字符串变成 NaN：可选列经 UPSERT 以 NULL 覆盖
+    库内已有值，指数／期货价格被当成「源未发布」，质量门禁都看不出来。``inf`` 能被解析，
+    仍交给各列原有的非有限值规则处理。
     """
     for c in columns:
         present = df[c].notna() & df[c].astype(str).str.strip().ne("")
@@ -282,7 +278,9 @@ class StockBars1dImporter(_BaseBarsImporter):
 
         market = self._merge_adj_factor(market, adapter)
 
-        _to_numeric(market, ["open", "high", "low", "close", "pre_close", "vol", "amount"])
+        _to_numeric_strict(
+            market, ["open", "high", "low", "close", "pre_close", "vol", "amount"], "daily"
+        )
         self._validate_prices(market, "daily")
         flow = market[["vol", "amount"]].to_numpy(dtype=float)
         # 缺失或非数值（coerce 后为 NaN）不能静默写成 NULL：无成交应是 0，不是「不知道」。
@@ -375,7 +373,7 @@ class StockBars1dImporter(_BaseBarsImporter):
         )
         has_row = merged["has_limit_row"].eq(True).to_numpy()
 
-        _to_numeric(merged, ["up_limit", "down_limit"])
+        _to_numeric_strict(merged, ["up_limit", "down_limit"], "stk_limit")
         up = merged["up_limit"].to_numpy(dtype=float)
         down = merged["down_limit"].to_numpy(dtype=float)
         # 两侧同时满足才认定为哨兵；只有一边像哨兵时无法确认不设涨跌幅，按非法处理。
@@ -404,7 +402,8 @@ class StockBars1dImporter(_BaseBarsImporter):
 
         mismatch = np.zeros(len(merged), dtype=bool)
         if "limit_pre_close" in merged.columns:
-            lp = pd.to_numeric(merged["limit_pre_close"], errors="coerce").to_numpy(dtype=float)
+            _to_numeric_strict(merged, ["limit_pre_close"], "stk_limit")
+            lp = merged["limit_pre_close"].to_numpy(dtype=float)
             # 哨兵值不由前收盘推算，不参与比较。
             comparable = ~no_limit & np.isfinite(lp) & np.isfinite(dp)
             mismatch = comparable & ~np.isclose(dp, lp, atol=PRE_CLOSE_TOLERANCE, rtol=0)
@@ -570,7 +569,9 @@ class IndexBars1dImporter(_BaseBarsImporter):
         m = _daily_rows(raw, "index_daily")
         _validate_activity(m, ["vol", "amount"], "index_daily")
         amounts = _amount_in_yuan(m["amount"], 1000)
-        _to_numeric(m, ["open", "high", "low", "close", "pre_close", "vol", "amount"])
+        _to_numeric_strict(
+            m, ["open", "high", "low", "close", "pre_close", "vol", "amount"], "index_daily"
+        )
         _null_out_invalid(m, list(self.PRICE_COLUMNS))
 
         usable = m["close"].notna()
@@ -691,7 +692,7 @@ class FutureBars1dImporter(_BaseBarsImporter):
             values = pd.to_numeric(m[column], errors="coerce")
             if (values.dropna() % 1 != 0).any():
                 raise ValueError(f"fut_daily noninteger contracts column={column}")
-        _to_numeric(
+        _to_numeric_strict(
             m,
             [
                 "open",
@@ -705,6 +706,7 @@ class FutureBars1dImporter(_BaseBarsImporter):
                 "amount",
                 "oi",
             ],
+            "fut_daily",
         )
         _null_out_invalid(m, [*self.PRICE_COLUMNS, "settle", "pre_settle"])
 

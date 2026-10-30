@@ -85,6 +85,15 @@ def _available_at(df: pd.DataFrame) -> pd.Series:
         # 供应商这批数据没带时间戳：退回文档声明的发布时点（弱，但可解释）
         return pit.from_trading_day(pd.Series(_trading_day(df)), publish_hour=VENDOR_PUBLISH_HOUR)
     parsed = pd.to_datetime(ts, errors="coerce")
+    # 只有源值缺失才退回文档发布时点；有值却解析不了说明格式变了，退回 17:00
+    # 可能早于真实发布时间（前视），必须拒绝。
+    present = ts.notna() & ts.astype(str).str.strip().ne("")
+    unparseable = present & parsed.isna()
+    if unparseable.any():
+        raise ValueError(
+            f"updateTime 含 {int(unparseable.sum())} 行无法解析的时间戳 "
+            f"samples={ts[unparseable].head(3).tolist()}"
+        )
     if parsed.isna().any():
         fallback = pit.from_trading_day(
             pd.Series(_trading_day(df)), publish_hour=VENDOR_PUBLISH_HOUR
