@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 1440" role="img" aria-labelledby="title desc">
+<title id="title">米筐风险模型：从采集观察到业务消费</title>
+<desc id="desc">2026-10-29 静态源码核对。展示 raw 观察、采集检查点、同事务模型批次及五件套、覆盖、收据与绑定。正式发布和诊断读取尚未开放。</desc>
+<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5" /></pattern><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#94a3b8" /></marker></defs>
+<rect width="1160" height="1440" fill="#0f172a" /><rect width="1160" height="1440" fill="url(#grid)" />
+<text x="40" y="48" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="25" fill="#e2e8f0" font-weight="700">米筐风险模型：一份观察如何进入业务</text>
+<text x="40" y="78" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">当前实现：日度观测，不是本地重新估计模型　·　静态核对日期：2026-10-29</text>
+<rect x="40" y="540" width="1080" height="615" rx="16" fill="none" stroke="#a78bfa" stroke-width="2" stroke-dasharray="8 5" />
+<text x="65" y="571" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#a78bfa" font-weight="600">同一 PostgreSQL 事务：成功一起提交，失败一起回滚</text>
+
+<path d="M 400 205 V 260" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 400 365 V 420" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 400 500 V 520 H 720 V 585 H 400 V 605" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 400 705 V 765" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 670 655 H 780" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 400 865 V 925" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 860 720 V 860 H 700 V 966 H 670" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 400 1005 V 1055" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 400 1125 V 1185" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 400 1280 V 1335" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="8 6" />
+<path d="M 670 462 H 780" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+<text x="705" y="449" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">硬失败</text>
+<rect x="130" y="115" width="540" height="90" rx="10" fill="#0f172a" />
+<rect x="130" y="115" width="540" height="90" rx="10" fill="#22d3ee" fill-opacity="0.09" stroke="#22d3ee" stroke-width="1.6" />
+<text x="400.0" y="144" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">1 选择模型、交易日和用途</text>
+<text x="400.0" y="169" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">model / industry_mapping / universe_policy</text>
+<text x="400.0" y="192" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">purpose = production 或 validation；形成独立 variant</text>
+<rect x="130" y="260" width="540" height="105" rx="10" fill="#0f172a" />
+<rect x="130" y="260" width="540" height="105" rx="10" fill="#22d3ee" fill-opacity="0.09" stroke="#22d3ee" stroke-width="1.6" />
+<text x="400.0" y="289" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">2 调用米筐并完成不可变 raw 观察</text>
+<text x="400.0" y="314" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">风险五件套 + 当日候选名单 + coverage / manifest</text>
+<text x="400.0" y="337" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">保留 observed_at、observation_id 和文件哈希</text>
+<rect x="130" y="420" width="540" height="80" rx="10" fill="#0f172a" />
+<rect x="130" y="420" width="540" height="80" rx="10" fill="#34d399" fill-opacity="0.09" stroke="#34d399" stroke-width="1.6" />
+<text x="400.0" y="449" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">3 校验 raw 并登记 capture checkpoint</text>
+<text x="400.0" y="474" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">独立事务记录：raw 已取得，不代表已导入</text>
+<rect x="780" y="420" width="300" height="100" rx="10" fill="#0f172a" />
+<rect x="780" y="420" width="300" height="100" rx="10" fill="#fb7185" fill-opacity="0.09" stroke="#fb7185" stroke-width="1.6" />
+<text x="930.0" y="449" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">失败与质量证据</text>
+<text x="930.0" y="474" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">拒绝写入成功业务批次</text>
+<text x="930.0" y="497" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">ETL failed / data_quality_check</text>
+<rect x="130" y="605" width="540" height="100" rx="10" fill="#0f172a" />
+<rect x="130" y="605" width="540" height="100" rx="10" fill="#a78bfa" fill-opacity="0.09" stroke="#a78bfa" stroke-width="1.6" />
+<text x="400.0" y="634" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">4 建立 factor.model_run</text>
+<text x="400.0" y="659" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">run_id 固定本次模型日观察、因子顺序和单位</text>
+<text x="400.0" y="682" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">model / definition 提供模型与因子定义</text>
+<rect x="130" y="765" width="540" height="100" rx="10" fill="#0f172a" />
+<rect x="130" y="765" width="540" height="100" rx="10" fill="#a78bfa" fill-opacity="0.09" stroke="#a78bfa" stroke-width="1.6" />
+<text x="400.0" y="794" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">5 写入风险五件套</text>
+<text x="400.0" y="819" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">exposure / covariance / factor_return</text>
+<text x="400.0" y="842" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">specific_return / specific_risk，共用 run_id</text>
+<rect x="780" y="605" width="300" height="115" rx="10" fill="#0f172a" />
+<rect x="780" y="605" width="300" height="115" rx="10" fill="#a78bfa" fill-opacity="0.09" stroke="#a78bfa" stroke-width="1.6" />
+<text x="930.0" y="634" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">逐股覆盖账本</text>
+<text x="930.0" y="659" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">model_run_coverage</text>
+<text x="930.0" y="682" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">谁被请求、谁缺数据、缺哪几项</text>
+<text x="930.0" y="705" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">run_id + instrument_id</text>
+<rect x="130" y="925" width="540" height="80" rx="10" fill="#0f172a" />
+<rect x="130" y="925" width="540" height="80" rx="10" fill="#a78bfa" fill-opacity="0.09" stroke="#a78bfa" stroke-width="1.6" />
+<text x="400.0" y="954" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">6 写入收据并绑定 model_run</text>
+<text x="400.0" y="979" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">factor.import_receipt + factor.model_run_binding</text>
+<rect x="130" y="1055" width="540" height="70" rx="10" fill="#0f172a" />
+<rect x="130" y="1055" width="540" height="70" rx="10" fill="#34d399" fill-opacity="0.09" stroke="#34d399" stroke-width="1.6" />
+<text x="400.0" y="1084" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">7 推进 imported checkpoint + 成功 ETL</text>
+<text x="400.0" y="1109" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">记录 receipt_id 和 imported_at，然后提交</text>
+<rect x="130" y="1185" width="540" height="95" rx="10" fill="#0f172a" />
+<rect x="130" y="1185" width="540" height="95" rx="10" fill="#fbbf24" fill-opacity="0.09" stroke="#fbbf24" stroke-width="1.6" />
+<text x="400.0" y="1214" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">8 核对发布资格与质量否决</text>
+<text x="400.0" y="1239" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">提交成功不等于允许发布；不足时停止后续日期</text>
+<text x="400.0" y="1262" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">validation 不转正；calibrated=false 状态继续保留</text>
+<rect x="130" y="1335" width="540" height="75" rx="10" fill="#0f172a" />
+<rect x="130" y="1335" width="540" height="75" rx="10" fill="#fb7185" fill-opacity="0.09" stroke="#fb7185" stroke-width="1.6" stroke-dasharray="8 5" />
+<text x="400.0" y="1364" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">9 正式发布 → 诊断读取固定 run_id</text>
+<text x="400.0" y="1389" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">D-022 2b 尚待实现与验收；正式风险读取关闭</text>
+<rect x="780" y="1185" width="300" height="120" rx="10" fill="#0f172a" />
+<rect x="780" y="1185" width="300" height="120" rx="10" fill="#60a5fa" fill-opacity="0.09" stroke="#60a5fa" stroke-width="1.6" />
+<text x="930.0" y="1214" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#e2e8f0" font-weight="600">重放已有同一观察</text>
+<text x="930.0" y="1239" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">先查询并核对成功收据</text>
+<text x="930.0" y="1262" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">已成功：验证身份与覆盖</text>
+<text x="930.0" y="1285" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">不重复写入五件套</text>
+<text x="780" y="1370" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">实线：已有流程</text><text x="780" y="1395" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="14" fill="#a8b7cc">虚线末端：待实现的业务消费</text></svg>

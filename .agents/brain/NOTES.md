@@ -1,7 +1,7 @@
 # GetRich 当前状态
 
 读者：接续任务的 Claude/Codex/Antigravity；维护者也可用它快速定位工作。
-最后整理：2026-10-30。只写现状与待办；已完成的工作留一行结论和证据位置，过程与测试数字不写入（可从 Git、代码和 docs/history 追溯）。
+最后整理：2026-10-31。只写现状与待办；已完成的工作留一行结论和证据位置，过程与测试数字不写入（可从 Git、代码和 docs/history 追溯）。
 
 ## 开始任务
 
@@ -11,7 +11,12 @@
 
 ## 当前方向与阻塞
 
-- iMac 准备（2026-10-29）：PG18／TimescaleDB 已运行，目标工作库当日核验尚无业务表；用户已更新 RAW_PARQUET_ROOT 并复制根 config.yaml，离线加载确认 raw 根生效但目录尚不存在。本机米筐配置已改沪深 A 股动态名单／production，用于后续全市场任务；仍为 v1，日期保留原三天窗口，运行前按迁移账本调整，不自动滚动。硬盘带回后复制 raw，工作库按当前 DDL 建表后重新入库，源 PG 只在隔离库作对账参照；正式调度未启用。顺序见[迁移盘点](../../docs/plans/imac-collector-migration.md)。
+- BJ 待处理项，后续单独核实：最新已完成 2010-05，本月 2 条／1 个代码；本回补累计 4 条／1 个代码。仅 .BJ 行级失败暂存 `ops.tushare_bj_pending`，合格记录照常入库，沪深失败仍停止；逐月明细见 `/Volumes/neoimac/data/getrich-runs/tushare-stock-20100101-20231231/bj-pending-months.json`，后续单独核实原始值与历史口径。
+
+- iMac 准备（2026-10-31）：工作库迁移、主数据及 2024-01-01～2026-10-29 股票 34 个月全部验收完成，逐月 canonical 字段、价格及首月幂等／独立单位检查通过，原始完成账本和源码指纹保留。正式 raw 为 `/Volumes/neoimac/data/raw_parquet`，状态／证据在 `/Volumes/neoimac/data/getrich-runs/tushare-stock-20240101-20261029/`。myssd 主要为米筐风险因子，后续迁移；米筐与定时调度未启用，日常 config.yaml 起点未扩展。详情见[迁移盘点](../../docs/plans/imac-collector-migration.md)。
+- Tushare 早期股票续接（2026-10-31 BJ 策略调整后已恢复）：从 2010-04 续跑，该月四 writer 全部 canonical 读回／价格／幂等验收通过，股票日线与估值各 35,763 行、复权 37,721 行、停复牌 1,460 条；2 条／1 个 BJ 代码写入待处理，重复导入仍为 2 条，raw 未改。2010-01～03 已用新源码重验且原月账本不改；2024-01～2026-10-29 的 34 月完成账本未改。后台按月继续，当前进度以 `/Volumes/neoimac/data/getrich-runs/tushare-stock-20100101-20231231/state.json`／queue.json 为准，后续品种控制器已恢复等待。规则见 D-023，待处理与主表同事务；沪深及共享设施失败仍停止。证据同目录 `bj-pending-april-acceptance.json`／`approved-source-change-bj-pending-20261031.json`。
+- 股票之后的多品种接续（2026-10-31）：用户确认股票两批全验收并退出后，按 8 只核心指数 → ETF → 六所期货 → 八所期权接续，范围 2010-01-01～2026-10-29。已按已审查的换码／极端值审计／BJ 分流源码及迁移 050／052 修订计划并归档原计划，接续控制器已恢复为 `waiting_for_all_stock`；尚未启动其他品种采集。计划／状态为 `/Volumes/neoimac/data/getrich-runs/tushare-assets-20100101-20261029/plan.json`／queue.json。期权只采 raw 和独立验证库，正式 writer 及历史参数发布仍关闭；期货合约乘数／最小价位留给米筐。源码、DDL、lock、目标与质量异常门禁保持，详情见迁移盘点。
+- 估值容量与审计（2026-10-31 用户授权）：迁移 050 已将 `fundamental.valuation_1d.pe/pe_ttm/ps/ps_ttm` 及分区列扩为 `NUMERIC(20,4)`；执行前无依赖视图／其他会话占锁，原 369 万行的行数、数值汇总及分区文件标识未变。四字段有限值绝对值 >1e6 逐字段写 `ops.data_quality_check`（`tushare_valuation_extreme_ratio`），备注“极端值保留原值、因子层处理”，与估值同事务，规则见 D-027。首月 20 个极端值逐条源／PG／审计一致，两次导入计 40 条审计、去重 20；相关迁移／事务回归、类型及静态检查通过，证据为运行目录 `valuation-widen-applied-20261031.json`／`valuation-first-month-acceptance-20261031.json`。
 - DDL 新库基线（2026-10-29）：用户授权将增量列／最终约束／索引并回 CREATE，历史编号保留占位；旧库 schema 改名、历史回填／截断不再执行，演示账号从初始化即停用。041／042 注释按代码语义修正，注释覆盖由基线测试守卫；旧库不就地升级（D-006）。两源字段互验已于 2026-10-30 完成有界真实样本，缺口转为 backlog 后续处理，不代表全历史验收。
 - 字段互验（2026-10-30）：Tushare 官方／真实字段与全部 writer、contract、DDL 双向核对，米筐三模型原生响应／raw／隔离 PG 逐值与单位重测通过；完整矩阵、报告、复现脚本及验证范围见[迁移盘点第二节](../../docs/plans/imac-collector-migration.md#字段互验与补充验证2026-10-30)。2026-10-30 已按用户确认实施（D-027，提交 `b563d69`～`4028beb`）：daily_basic 只落 valuation_1d、风险模型 `observed_at` 更名及无来源列删除、股票／指数／期货／ETF 档案表、ETF 按 fund_type 分类、opt_basic 补字段、米筐期货合约参数。同日真实采集验收（隔离 raw＋一次性 PG，未写工作库）：tushare 主数据／fund_basic／2024-01 daily_basic 与米筐 future_contracts 全部入库，期货合约 10860 个、六所最小变动价位齐全，暴露的世纪推断与股息点基点问题已修（`89b3909`）；证据见 `/Volumes/neoimac/data/getrich-validation/field-expansion-20261030/summary.md`。opt_basic 新字段未真实采集，daily_basic 只验一个月。外部复核后又修复分类残留、估值／行情非法值静默置空、可选档案软跳过与米筐期货两文件跨批次混用（`de16551`、`4830498`）；米筐最小变动价位文件现须带合约快照哈希，验收目录里修复前的 future_tick 已不可导入，正式采集时重采 `future_contracts`。正式 raw 根已按新字段重采 `tushare/instruments`（2026-10-30）；从硬盘复制旧 raw 时不要覆盖这四个文件，否则 profile 组会因缺字段硬失败。根 config.yaml 已由用户去掉 ingest 的 `daily_basic`。
 - 风险证据归域（2026-10-29）：用户确认 variant／receipt／checkpoint 及风险校验函数归入 `factor`，新库直接建立，代码／测试／回补审计／现行文档引用同步；通用 ETL、质量、归属和迁移记账仍在 `ops`。证据表写入前校验单表单源，capture 及其归属独立保留。不开放正式风险读取；重导带不回的人工否决等见迁移盘点。
@@ -24,7 +29,7 @@
 - 2026-10-30 续验完成：用户确认的 ETF L 缺上市日隔离、CZCE 缺失 OHLC 不限制量额、CZCE／GFEX 零结算须核对到期日三项处理已实施（D-026）。2024-01 ETF 及八所期权 raw／合约资料齐备，真实整月隔离 PG 的字段、源值单位与两轮幂等验收通过。工作库未改动，期权仍未正式发布；输入、源码指纹、脚本及结果见迁移盘点第二节。
 - 待办：
   1. opt_basic 全历史去重请求预算未测；本月有缓存的按标的实测不能当作冷启动或全历史预算，见 gr-data README。
-  2. 全量回补需单独授权。
+  2. 全量历史回补已于 2026-10-30 获用户授权并排在全部股票之后（范围见多品种接续）；期权仅 raw／独立隔离验证，正式写入仍关闭，不能用本次授权绕过 D-026。
   3. ETF 分类已按 `fund_basic.fund_type` 实施（`0b655c5`，D-026）：股票型／债券型／货币型且纯境内才写，“其他”、QDII 与未匹配的不写；新库从 raw 重新入库，无存量需更正。“其他”类与跨境市场的真源仍待确认。
 
 ### 米筐风险模型
@@ -46,19 +51,20 @@
 
 ### Tushare 股票
 
-- 现状：工作库已回补 2024-01-02～2026-10-22（2026-10-22），口径见 D-012／D-023／D-024。导入门禁对坏文件、缺分区、未知代码、缺标的或日历硬失败，软告警退出码 3；其他供应商未接入门禁。
+- 现状：iMac 的 2024-01-01～2026-10-29 股票已全部验收；2010～2023 进度与源码修复见上方接续条目及仓库外运行账本。MBA 旧数据不作为本机完成证据。口径见 D-012／D-023／D-024，坏文件、缺分区、未知代码、缺标的或日历仍硬失败；软告警须复核。
 - 待办：
   1. 剩余审核疑点以 strict xfail 留在 `packages/gr-data/tests/test_tushare_review_findings.py`，清单见 backlog。
-  2. 2013–2023 的 raw 未扫描。若某个过去交易日供应商确实无数据，空响应拒绝规则会让该月每次抓取都失败，且 `raw.run_provider` 遇错即停；回补更早历史前先用临时 raw 根目录预演。
+  2. 2010～2023 历史回补按账本继续；已核实的两对换码仅适用 D-012 明确例外。其他差异、历史开市日空响应仍硬失败，不把无数据当完整分区。
+  3. BJ 待处理项，后续单独核实：回补结束后汇总代码／日期／年月分布，核实原始值、list_date 历史口径、换码与复权来源；集中时优先修正经证实有误的主数据，详见 backlog。
 
 ### 持仓诊断与供应商
 
-- 2026-10-20：持仓诊断一期口径在设计仓 `getrich-design` 确认（`governance/scope.md` PA-01～PA-20），数据集清单见 `data-platform/portfolio-diagnosis-phase1-datasets.md`。本仓实现仍按旧设计（A 已有计算，B/C/D、压力测试与多方案 E 未开放），对齐缺口见 backlog「持仓诊断与数据供给」。先完成 gr-data 一期数据；盲点阈值与画像规则等真实数据后再定。不能用估算值填满界面。
-- 2026-10-21 现有实现审核的问题清单与已定口径见 backlog「2026-10-21 现有实现审核」；D-021／D-022／D-023 同日确认，口径已同步设计仓。T1／T2 已修复，其余审核项待处理。
+- 2026-10-20：持仓诊断一期口径在设计仓 `getrich-design` 确认（`governance/scope.md` PA-01～PA-20），数据集清单见 `data-platform/portfolio-diagnosis-phase1-datasets.md`。先完成 gr-data 一期数据；盲点阈值与画像规则等真实数据后再定。不能用估算值填满界面。
+- 2026-10-31 P0 接口对齐已合入 dev（`43cbba2`）：`options`／`/recompute`、只诊断最新发布日、范围外资产 422、历史别名、TopN 1/3/5 与缺失档、PA-13 覆盖率、纯计算模块 `gr_api/diagnosis_calc/`（D-021）；2026-10-21 审核项 D1／D2／D4 随之关闭。B/C/D 与压力测试为 `feature_not_available`，画像与盲点为「未能判断」；重算在 D-022 2b 前恒 409。迁移 051 新增口径版本 `v1-model-20261031`，风险模型按用户确认选米筐 v2，但 v2 尚未入工作库，`factor_model` 暂空。**051 依赖未提交的 050，二者须一并提交后再推送，否则 CI 迁移因编号不连续失败**；工作库尚未执行 051，API 连工作库前需 `uv run gr-db migrate --target pg`。前端接口层与类型已合入（`9bbc2da`，`src/api/diagnosis.ts`、`src/types/diagnosis.ts`）；`PortfolioDiagnosisPage.tsx` 仍是写死的 mock，用户将单独重做页面。
 - 设计仓 DP-02 供应商方向（2026-10-18）：Tushare 为主要来源，风险因子用米筐，DataYes 为第二档备用，银河为最后备用，INSIGHT 不再使用（代码与历史资料保留）。`factor.*` 归属已转给 ricequant；DataYes 风险因子方案保留但暂不启用。
 - 数据接入 P0–P2 已实现，P5 的 ETF／期权已部分合入（待办见上方 ETF 一节）。待推进：P6 完整口径／全区间校验（有界样本已有经验复现）、行业分类真源（DS11）、P3／P4 排期。SW14/SW21 切换仅在恢复 DataYes 时处理。
-- `diag.data_version` 的维护流程未完成；数据更新后如何推进版本必须与缓存策略一起处理（D-022）。
-- 历史代码别名在诊断与选股导入侧未生效，同一证券新旧代码会算成两笔，见 backlog；不阻塞数据导入。
+- `diag.data_version` 的维护流程未完成；数据更新后如何推进版本必须与缓存策略一起处理（D-022）。2026-10-31 工作库只有 2026-08-30 种子行，诊断日期因此被钉在该日；`available_options` 无写入流程，行业体系与基准都按未验证处理。工作库 `factor.model`／`model_run` 为空、`classify.scheme` 为空、`fundamental.indicator_q` 为空（只读核对）。
+- 历史代码别名在选股导入侧未生效，同一证券新旧代码会算成两笔，见 backlog；诊断侧已于 2026-10-31 走 `meta.symbol_map`。
 
 ### 其他未决
 
@@ -78,6 +84,7 @@
 
 ## 验证边界
 
+- 2026-10-31 诊断 P0（worktree `feat/diag-p0`，本机 Python 3.12）：全量 `pytest -m 'not live_sdk'` 3602 passed（指向一次性 PG18 时 gr-data 自起容器的用例因端口冲突跳过，随后单独重跑 gr-data／gr-db 1483 passed）；一次性 PG18 上 52 个迁移两次执行幂等、数据字典 `--fail-on-drift` 通过、诊断集成 9 passed（含 5×100 边界，不作性能证据）；Ruff、格式、迁移 lint、051 注释检查、basedpyright 0 errors（基线缩减 26 条）、`uv lock --check` 通过。工作库仅做只读取数冒烟（5 只真实股票 2026-10-29 估值与分档、北交所 422），未执行迁移、未启动服务。测试时临时复制了未提交的 050，已删除。
 - 2026-10-30 字段专项：两源有界真实样本双向核验、PG 往返／幂等、风险源单位及隔离逻辑恢复通过；P6 仅为明确范围的数值复现。相关故障／约束回归通过，既有 strict xfail 保留；具体范围和结果见迁移盘点及独立审计目录。未执行生产恢复、全历史对账或无人值守验收。
 
 - 历史记录中的主机路径、服务健康、凭证配置、数据行数均不能当实时事实；使用前查当前配置、代码或执行对应检查。失败时记录具体命令、日期、范围与原因。
