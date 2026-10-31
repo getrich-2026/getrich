@@ -1,369 +1,505 @@
-"""持仓诊断的单元与路由测试。
+"""持仓诊断服务层与路由的单元测试。
 
-重点覆盖表接口篇 §7.8 标注的「算错但不报错」区域 —— 两套哈希的分工。
-其余覆盖降级契约（§7.6）的分支：混合权重、代码解析失败、等权回退、
-MetricValue 三态序列化。
-
-不用 httpx 打真实 HTTP（除安全头一例，那条必须走完整中间件栈）：路由函数
-直接调用即可验证「路由 ↔ 服务层」的契约与信封，HTTP 管道对每个 FastAPI
-路由都一样，已被既有用例覆盖。
+覆盖设计 §7.2 的业务校验顺序（PA-01、PA-02、PA-14、PA-15）、§7.8 计算缓存键与
+重算拒绝。数据库用按 SQL 片段分派的假连接；真实 SQL 由 test_diagnosis_pg_integration 覆盖。
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
+from gr_api.errors import ApiError
 from gr_api.schemas.diagnosis import (
+    CalculationOptions,
     HoldingItem,
-    PlanResult,
+    OptionWindow,
     PortfolioPlan,
-    SnapshotRequest,
-    UnavailableMetric,
+    RecomputeRequest,
 )
 from gr_api.services import diagnosis as svc
 
 
-# ===========================================================================
-# §7.8 两套哈希的分工 —— 本模块最重要的一组断言
-# ===========================================================================
+TZ = ZoneInfo("Asia/Shanghai")
+AS_OF = date(2026, 10, 29)
+_CALENDAR_END = date(2026, 11, 6)
+CALENDAR = [
+    _CALENDAR_END - timedelta(days=i)
+    for i in range(420)
+    if (_CALENDAR_END - timedelta(days=i)).weekday() < 5
+]
 
 
-def _req(plans: list[PortfolioPlan], **kw: Any) -> SnapshotRequest:
-    return SnapshotRequest(plans=plans, **kw)
+Handler = Callable[[tuple[Any, ...]], list[dict[str, Any]]]
 
 
-def _plan(plan_id: str, symbols: list[str], *, label: str | None = None) -> PortfolioPlan:
-    return PortfolioPlan(
-        plan_id=plan_id,
-        label=label,
-        holdings=[HoldingItem(symbol=s) for s in symbols],
-    )
+class FakeCursor:
+    def __init__(self, db: FakeDb) -> None:
+        self.db = db
+        self.rows: list[dict[str, Any]] = []
+
+    async def __aenter__(self) -> FakeCursor:
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        self.db.sql.append(sql)
+        for fragment, handler in self.db.handlers:
+            if fragment in sql:
+                self.rows = handler(params)
+                return
+        raise AssertionError(f"unexpected SQL: {sql[:120]}")
+
+    async def fetchone(self) -> dict[str, Any] | None:
+        return self.rows[0] if self.rows else None
+
+    async def fetchall(self) -> list[dict[str, Any]]:
+        return self.rows
 
 
-def test_request_hash_distinguishes_before_after_order() -> None:
-    """before/after 互换必须得到不同的 request_hash。
+class FakeDb:
+    def __init__(self, handlers: list[tuple[str, Handler]]) -> None:
+        self.handlers = handlers
+        self.sql: list[str] = []
 
-    漏掉 label / plan_index 会让两者命中同一个 snapshot —— 调仓结论直接反向，
-    而且不会有任何报错。这是 §7.8 共有规则第 2 条存在的全部理由。
-    """
-    a = _req(
-        [_plan("p1", ["600000.SH"], label="before"), _plan("p2", ["000001.SZ"], label="after")]
-    )
-    b = _req(
-        [_plan("p1", ["600000.SH"], label="after"), _plan("p2", ["000001.SZ"], label="before")]
-    )
+    def cursor(self) -> FakeCursor:
+        return FakeCursor(self)
 
-    assert svc._request_hash(a) != svc._request_hash(b)
+    @asynccontextmanager
+    async def transaction(self):
+        yield
 
 
-def test_request_hash_is_stable_for_identical_requests() -> None:
-    a = _req([_plan("p1", ["600000.SH", "000001.SZ"])])
-    b = _req([_plan("p1", ["600000.SH", "000001.SZ"])])
-    assert svc._request_hash(a) == svc._request_hash(b)
+def fake_db(handlers: list[tuple[str, Handler]]) -> Any:
+    """服务函数标注为 DictConnection；假连接只实现被调用的子集，按 Any 传入。"""
+    return FakeDb(handlers)
 
 
-def _calc(holdings: list[dict], **kw: Any) -> str:
-    defaults = {
-        "weight_mode": "user",
-        "resolved_as_of_date": date(2026, 8, 28),
-        "spec_version": "v1-hist-20260901",
-        "data_fingerprint": "20260830T0000",
+def _calendar_handlers() -> list[tuple[str, Handler]]:
+    """meta.trading_calendar 的三种查询：on/before、on/after、向前第 N 日。"""
+
+    def on_or_before(params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        days = [d for d in CALENDAR if d <= params[1]]
+        if len(params) == 3:  # LIMIT n
+            return [{"trading_day": d} for d in days[: params[2]]]
+        return [{"trading_day": days[0]}] if days else []
+
+    def on_or_after(params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        days = sorted(d for d in CALENDAR if d >= params[1])
+        return [{"trading_day": days[0]}] if days else []
+
+    return [
+        ("trading_day >= %s", on_or_after),
+        ("trading_day <= %s", on_or_before),
+    ]
+
+
+def _data_version(snapshot_day: date = AS_OF, **available: Any) -> dict[str, Any]:
+    return {
+        "data_version_id": "dv-1",
+        "snapshot_at": datetime.combine(snapshot_day, datetime.min.time(), TZ).replace(hour=18),
+        "available_options": available,
     }
-    defaults.update(kw)
-    return svc._calculation_hash(resolved_holdings=holdings, **defaults)
+
+
+def _instrument(iid: int, symbol: str, **kw: Any) -> dict[str, Any]:
+    exchange = "XSHG" if symbol.endswith(".SH") else "XSHE" if symbol.endswith(".SZ") else "XBSE"
+    return {
+        "instrument_id": iid,
+        "symbol": symbol,
+        "asset": "stock",
+        "exchange": exchange,
+        "name": f"股票{iid}",
+        "list_date": date(2010, 1, 4),
+        "delist_date": None,
+        "status": "active",
+        **kw,
+    }
+
+
+def _symbol_db(instruments: list[dict[str, Any]], aliases: dict[str, int] | None = None) -> Any:
+    by_symbol = {i["symbol"]: i for i in instruments}
+    by_id = {i["instrument_id"]: i for i in instruments}
+    alias_map = aliases or {}
+
+    def current(params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        return [{**by_symbol[s], "lookup": s} for s in params[0] if s in by_symbol]
+
+    def historical(params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        return [{**by_id[alias_map[s]], "lookup": s} for s in params[0] if s in alias_map]
+
+    return fake_db([("FROM meta.symbol_map", historical), ("FROM meta.instruments", current)])
+
+
+@pytest.fixture
+def frozen_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(svc, "_today", lambda: AS_OF)
+
+
+# ===========================================================================
+# §7.8 计算缓存键
+# ===========================================================================
+
+
+def _hash(**overrides: Any) -> str:
+    kwargs: dict[str, Any] = {
+        "weight_mode": "user",
+        "quantized": {1: 60_000_000, 2: 40_000_000},
+        "resolved_as_of_date": AS_OF,
+        "spec_version": "v1",
+        "data_fingerprint": "dv-1",
+        "resolved_options": {"industry_scheme": None},
+    }
+    kwargs.update(overrides)
+    return svc._calculation_hash(**kwargs)
 
 
 def test_calculation_hash_ignores_holding_order() -> None:
-    """换个输入顺序必须命中同一份计算 —— 否则跨用户复用形同虚设。"""
-    forward = _calc([{"instrument_id": 1, "weight": 0.6}, {"instrument_id": 2, "weight": 0.4}])
-    reverse = _calc([{"instrument_id": 2, "weight": 0.4}, {"instrument_id": 1, "weight": 0.6}])
-    assert forward == reverse
-
-
-def test_calculation_hash_changes_with_data_fingerprint() -> None:
-    """数据快照变了必须重算，否则接口会拿旧数据的结果糊弄新请求。"""
-    base = _calc([{"instrument_id": 1, "weight": 1.0}])
-    moved = _calc([{"instrument_id": 1, "weight": 1.0}], data_fingerprint="20260831T0000")
-    assert base != moved
-
-
-def test_calculation_hash_changes_with_spec_version() -> None:
-    base = _calc([{"instrument_id": 1, "weight": 1.0}])
-    other = _calc([{"instrument_id": 1, "weight": 1.0}], spec_version="v2")
-    assert base != other
-
-
-def test_calculation_hash_rounds_weights_half_even() -> None:
-    """权重按 8 位小数舍入后入哈希：第 9 位的差异不该打散缓存。"""
-    a = _calc([{"instrument_id": 1, "weight": 0.333333333}])
-    b = _calc([{"instrument_id": 1, "weight": 0.3333333334}])
-    assert a == b
-
-
-def test_canonical_json_is_key_order_independent() -> None:
-    assert svc._canonical_json({"b": 1, "a": 2}) == svc._canonical_json({"a": 2, "b": 1})
-
-
-# ===========================================================================
-# 权重归一化与降级契约（§7.6）
-# ===========================================================================
-
-
-_INST = {
-    "600000.SH": {"instrument_id": 1, "symbol": "600000.SH"},
-    "000001.SZ": {"instrument_id": 2, "symbol": "000001.SZ"},
-}
-
-
-def test_equal_weight_fallback_when_no_weights_given() -> None:
-    plan = _plan("p1", ["600000.SH", "000001.SZ"])
-    mode, holdings, unresolved, dup, in_w, res_w = svc._normalize_plan(plan, _INST)
-
-    assert mode == "equal"
-    assert [h["weight"] for h in holdings] == [0.5, 0.5]
-    assert unresolved == [] and dup == []
-    # 等权模式下覆盖率用条目数表达
-    assert (in_w, res_w) == (Decimal(2), Decimal(2))
-
-
-def test_user_weights_are_normalised_to_one() -> None:
-    plan = PortfolioPlan(
-        plan_id="p1",
-        holdings=[
-            HoldingItem(symbol="600000.SH", weight=Decimal("30")),
-            HoldingItem(symbol="000001.SZ", weight=Decimal("10")),
-        ],
-    )
-    mode, holdings, *_ = svc._normalize_plan(plan, _INST)
-
-    assert mode == "user"
-    assert [h["weight"] for h in holdings] == [0.75, 0.25]
-
-
-def test_unresolved_symbol_keeps_resolvable_subset_and_reports_coverage() -> None:
-    """部分代码解析不了 → 保留可解析子集出数，覆盖率必须如实反映缺口。"""
-    plan = PortfolioPlan(
-        plan_id="p1",
-        holdings=[
-            HoldingItem(symbol="600000.SH", weight=Decimal("60")),
-            HoldingItem(symbol="999999.SH", weight=Decimal("40")),  # 不在 _INST 里
-        ],
-    )
-    mode, holdings, unresolved, _dup, in_w, res_w = svc._normalize_plan(plan, _INST)
-
-    assert unresolved == ["999999.SH"]
-    # 归一化在可解析子集内完成：唯一剩下的标的权重是 1.0
-    assert [h["weight"] for h in holdings] == [1.0]
-    # 而覆盖率仍按**原始**权重算，暴露出 40% 没算进来
-    assert float(res_w / in_w) == pytest.approx(0.6)
-    assert mode == "user"
-
-
-def test_duplicate_symbols_are_merged_not_rejected() -> None:
-    plan = PortfolioPlan(
-        plan_id="p1",
-        holdings=[
-            HoldingItem(symbol="600000.SH", weight=Decimal("30")),
-            HoldingItem(symbol="600000.SH", weight=Decimal("10")),
-        ],
-    )
-    _mode, holdings, _unres, dup, _in_w, _res_w = svc._normalize_plan(plan, _INST)
-
-    assert dup == ["600000.SH"]
-    assert len(holdings) == 1
-    assert holdings[0]["weight"] == 1.0
-
-
-def test_duplicate_symbols_use_the_same_normalisation_as_resolution() -> None:
-    """大小写与空白不同的同一代码仍然只能算一只。"""
-    plan = PortfolioPlan(
-        plan_id="p1",
-        holdings=[
-            HoldingItem(symbol=" 600000.sh ", weight=Decimal("30")),
-            HoldingItem(symbol="600000.SH", weight=Decimal("10")),
-        ],
-    )
-
-    _mode, holdings, unresolved, duplicated, *_ = svc._normalize_plan(plan, _INST)
-
-    assert unresolved == []
-    assert duplicated == ["600000.SH"]
-    assert len(holdings) == 1
-    assert holdings[0]["weight"] == 1.0
-
-
-def test_zero_weight_resolvable_subset_is_rejected() -> None:
-    """不能把用户权重为零的可解析子集静默改成等权。"""
-    plan = PortfolioPlan(
-        plan_id="p1",
-        holdings=[
-            HoldingItem(symbol="600000.SH", weight=Decimal(0)),
-            HoldingItem(symbol="999999.SH", weight=Decimal(100)),
-        ],
-    )
-
-    with pytest.raises(Exception, match="zero total user weight") as exc_info:
-        svc._normalize_plan(plan, _INST)
-
-    assert exc_info.value.http_status == 422
-
-
-def test_mixed_weight_input_is_rejected_at_schema_level() -> None:
-    """D3：部分填写、部分缺省 → 422，不替用户猜。"""
-    with pytest.raises(ValueError, match="mixed weight input"):
-        PortfolioPlan(
-            plan_id="p1",
-            holdings=[
-                HoldingItem(symbol="600000.SH", weight=Decimal("0.5")),
-                HoldingItem(symbol="000001.SZ"),
-            ],
-        )
-
-
-def test_negative_weight_is_rejected() -> None:
-    """一期不支持负权重/空头/杠杆（§8.1）。"""
-    with pytest.raises(ValueError):
-        HoldingItem(symbol="600000.SH", weight=Decimal("-0.1"))
-
-
-# ===========================================================================
-# 模块 A 计算
-# ===========================================================================
-
-
-def _exposure(holdings: list[dict], **kw: Any) -> dict:
-    defaults: dict[str, Any] = {
-        "params": {"topn": 5, "mktcap_bands_yi": [1000, 3000], "pb_bands": [2, 4]},
-        "industry": {},
-        "category": {},
-        "valuation": {},
-        "has_fund": False,
-        "input_weight": Decimal(len(holdings)),
-        "resolved_weight": Decimal(len(holdings)),
-    }
-    defaults.update(kw)
-    return svc._build_exposure_section(holdings, **defaults)
-
-
-def test_module_a_scalars_on_equal_weight_pair() -> None:
-    """两只等权：L1=2、HHI=0.5、L2=2.0。这是端到端验收用的那组数。"""
-    holdings = [
-        {"instrument_id": 1, "symbol": "600000.SH", "weight": 0.5},
-        {"instrument_id": 2, "symbol": "000001.SZ", "weight": 0.5},
-    ]
-    a = _exposure(holdings)
-
-    assert a["l1_count"]["value"] == 2
-    assert a["hhi"]["value"] == pytest.approx(0.5)
-    assert a["l2_effective_count"]["value"] == pytest.approx(2.0)
-    assert a["topn"]["value"] == pytest.approx(1.0)
-    assert a["calculation_coverage_ratio"] == pytest.approx(1.0)
-    assert a["normalized_within_resolved_subset"] is True
-
-
-def test_module_a_concentrated_portfolio_has_lower_effective_count() -> None:
-    holdings = [
-        {"instrument_id": 1, "symbol": "a", "weight": 0.9},
-        {"instrument_id": 2, "symbol": "b", "weight": 0.1},
-    ]
-    a = _exposure(holdings)
-    # HHI = 0.81 + 0.01 = 0.82 → L2 ≈ 1.22，远低于名义的 2
-    assert a["hhi"]["value"] == pytest.approx(0.82)
-    assert a["l2_effective_count"]["value"] == pytest.approx(1.0 / 0.82)
-
-
-def test_distribution_is_unavailable_not_empty_dict_when_no_data() -> None:
-    """没有分类数据时必须是 unavailable，不能是空字典。
-
-    空字典会被前端渲染成「一个没有任何行业的组合」，看上去像已经算过了。
-    """
-    a = _exposure([{"instrument_id": 1, "symbol": "a", "weight": 1.0}])
-    assert a["industry_distribution"]["status"] == "unavailable"
-    assert "value" not in a["industry_distribution"]
-
-
-def test_partial_industry_coverage_degrades_and_renormalises() -> None:
-    holdings = [
-        {"instrument_id": 1, "symbol": "a", "weight": 0.5},
-        {"instrument_id": 2, "symbol": "b", "weight": 0.5},
-    ]
-    a = _exposure(holdings, industry={1: "银行"})
-
-    ind = a["industry_distribution"]
-    assert ind["status"] == "degraded"
-    # 在覆盖到的子集内归一化 → 银行 100%，而不是 50%
-    assert ind["value"] == {"银行": pytest.approx(1.0)}
-    assert "1/2" in ind["reason"]
-
-
-def test_lookthrough_coverage_degrades_when_portfolio_holds_fund() -> None:
-    a = _exposure([{"instrument_id": 1, "symbol": "510050.SH", "weight": 1.0}], has_fund=True)
-    assert a["lookthrough_coverage"]["status"] == "degraded"
-    assert a["lookthrough_coverage"]["reason_code"] == "lookthrough_incomplete"
-
-
-def test_lookthrough_coverage_is_full_for_pure_stock_portfolio() -> None:
-    a = _exposure([{"instrument_id": 1, "symbol": "600000.SH", "weight": 1.0}])
-    assert a["lookthrough_coverage"] == {
-        "status": "ok",
-        "value": 1.0,
-        "method": "exact",
-        "confidence": "high",
-    }
-
-
-# ===========================================================================
-# 分档口径
-# ===========================================================================
-
-
-def test_mktcap_band_converts_yuan_to_yi_once() -> None:
-    """total_mv 入库单位是元，阈值单位是亿元，换算只能做一次（T1）。"""
-    assert svc._mktcap_band(Decimal("500_00000000"), [1000, 3000]) == "small_cap"  # 500 亿
-    assert svc._mktcap_band(Decimal("2000_00000000"), [1000, 3000]) == "mid_cap"
-    assert svc._mktcap_band(Decimal("5000_00000000"), [1000, 3000]) == "large_cap"
-
-
-def test_negative_book_value_is_not_classified_as_value_stock() -> None:
-    """PB<=0 是负净资产，不是「便宜」，不得分进价值档。"""
-    assert svc._pb_band(Decimal("-1.5"), [2, 4]) is None
-    assert svc._pb_band(Decimal("0"), [2, 4]) is None
-    assert svc._pb_band(Decimal("1.5"), [2, 4]) == "value"
-    assert svc._pb_band(Decimal("5"), [2, 4]) == "growth"
-
-
-# ===========================================================================
-# 意图路由（架构篇 §4.2）
-# ===========================================================================
+    assert _hash() == _hash(quantized={2: 40_000_000, 1: 60_000_000})
 
 
 @pytest.mark.parametrize(
-    ("plans", "expected"),
+    "override",
     [
-        ([("p1", ["600000.SH"])], "single_instrument"),
-        ([("p1", ["600000.SH", "000001.SZ"])], "single_portfolio"),
-        # 两个方案缺省都为多组合，不猜调仓意图
-        ([("p1", ["600000.SH"]), ("p2", ["600000.SH"])], "multi_portfolio"),
-        # 集合不同也不能推断调仓意图
-        ([("p1", ["600000.SH"]), ("p2", ["000001.SZ"])], "multi_portfolio"),
+        {"data_fingerprint": "dv-2"},
+        {"spec_version": "v2"},
+        {"resolved_as_of_date": date(2026, 10, 28)},
+        {"weight_mode": "equal"},
+        {"quantized": {1: 60_000_001, 2: 39_999_999}},
+        # PA-05/PA-09～PA-12：用户可选参数必须隔离结果与缓存
+        {"resolved_options": {"industry_scheme": "sw2021"}},
+    ],
+)
+def test_calculation_hash_changes_with_every_numeric_input(override: dict[str, Any]) -> None:
+    assert _hash() != _hash(**override)
+
+
+def test_canonical_json_is_key_order_independent() -> None:
+    assert svc._canonical_json({"b": 1, "a": [1, 2]}) == svc._canonical_json({"a": [1, 2], "b": 1})
+
+
+# ===========================================================================
+# PA-14 诊断日期
+# ===========================================================================
+
+
+@pytest.mark.anyio
+async def test_default_date_is_latest_published_trading_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(svc, "_today", lambda: date(2026, 10, 31))
+    db = fake_db(_calendar_handlers())
+    # 发布日是周六时向前取最近交易日
+    resolved = await svc._resolve_as_of_date(db, None, _data_version(date(2026, 10, 31)))
+    assert resolved == date(2026, 10, 30)
+
+
+@pytest.mark.anyio
+async def test_default_date_never_exceeds_today(frozen_today: None) -> None:
+    db = fake_db(_calendar_handlers())
+    resolved = await svc._resolve_as_of_date(db, None, _data_version(date(2026, 10, 31)))
+    assert resolved == AS_OF
+
+
+@pytest.mark.anyio
+async def test_explicit_date_after_publication_rolls_back_to_published(frozen_today: None) -> None:
+    db = fake_db(_calendar_handlers())
+    resolved = await svc._resolve_as_of_date(db, AS_OF, _data_version(date(2026, 10, 28)))
+    assert resolved == date(2026, 10, 28)
+
+
+@pytest.mark.anyio
+async def test_earlier_date_is_rejected_as_unavailable_history(frozen_today: None) -> None:
+    db = fake_db(_calendar_handlers())
+    with pytest.raises(ApiError) as exc_info:
+        await svc._resolve_as_of_date(db, date(2026, 10, 27), _data_version())
+    assert exc_info.value.http_status == 422
+    assert exc_info.value.issues[0] == {
+        "path": "/as_of_date",
+        "code": "feature_not_available",
+        "message": exc_info.value.message,
+    }
+
+
+@pytest.mark.anyio
+async def test_future_date_is_rejected(frozen_today: None) -> None:
+    with pytest.raises(ApiError) as exc_info:
+        await svc._resolve_as_of_date(fake_db([]), AS_OF + timedelta(days=1), _data_version())
+    assert exc_info.value.http_status == 422
+
+
+def test_today_uses_platform_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeDateTime(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> FakeDateTime:
+            assert str(tz) == "Asia/Shanghai"
+            return cls(2026, 8, 31, 0, 30, tzinfo=tz)
+
+    monkeypatch.setattr(svc, "datetime", FakeDateTime)
+    assert svc._today() == date(2026, 8, 31)
+
+
+# ===========================================================================
+# §7.2 第 8 步 options 解析
+# ===========================================================================
+
+
+PARAMS = {
+    "industry_scheme": "sw2021",
+    "benchmark_instrument_id": 300,
+    "cov_method_params": {"historical": {"lookback_days": 252}},
+    "beta_lookback_days": 252,
+}
+
+
+async def _options(requested: CalculationOptions | None = None, **kw: Any) -> dict[str, Any]:
+    return await svc._resolve_options(
+        fake_db(_calendar_handlers()),
+        requested=requested or CalculationOptions(),
+        params=kw.pop("params", PARAMS),
+        available=kw.pop("available", {}),
+        as_of=AS_OF,
+        **kw,
+    )
+
+
+@pytest.mark.anyio
+async def test_defaults_are_written_as_concrete_values() -> None:
+    resolved = await _options()
+    start = date.fromisoformat(resolved["correlation_window"]["start"])
+    assert resolved["correlation_window"]["end"] == AS_OF.isoformat()
+    assert len([d for d in CALENDAR if start <= d <= AS_OF]) == 252
+    assert resolved["beta_window"] == resolved["correlation_window"]
+    # 默认项未验证：写 None，相关指标不可用，不回退其他体系或价格指数
+    assert resolved["industry_scheme"] is None
+    assert resolved["benchmark_instrument_id"] is None
+    assert resolved["replay_start"] is None
+    assert resolved["stats_window"] is None
+
+
+@pytest.mark.anyio
+async def test_validated_defaults_are_resolved_with_versions() -> None:
+    resolved = await _options(
+        available={
+            "industry_schemes": [{"code": "sw2021", "version": "2021-07"}],
+            "benchmarks": [{"instrument_id": 300, "symbol": "H00300.CSI", "version": "tr-1"}],
+        }
+    )
+    assert (resolved["industry_scheme"], resolved["industry_scheme_version"]) == (
+        "sw2021",
+        "2021-07",
+    )
+    assert (resolved["benchmark_instrument_id"], resolved["benchmark_version"]) == (300, "tr-1")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("requested", "path"),
+    [
+        (CalculationOptions(industry_scheme="citic"), "/options/industry_scheme"),
+        (CalculationOptions(benchmark="000300.SH"), "/options/benchmark"),
+        (CalculationOptions(replay_start=date(2025, 1, 2)), "/options/replay_start"),
         (
-            [("p1", ["600000.SH"]), ("p2", ["000001.SZ"]), ("p3", ["600519.SH"])],
-            "multi_portfolio",
+            CalculationOptions(
+                correlation_window=OptionWindow(start=date(2026, 1, 5), end=date(2026, 11, 2))
+            ),
+            "/options/correlation_window/end",
+        ),
+        (
+            # 两端解析到同一个交易日
+            CalculationOptions(
+                beta_window=OptionWindow(start=date(2026, 10, 24), end=date(2026, 10, 26))
+            ),
+            "/options/beta_window",
         ),
     ],
 )
-def test_intent_routing(plans: list[tuple[str, list[str]]], expected: str) -> None:
-    req = _req([_plan(pid, syms) for pid, syms in plans])
-    assert svc._resolve_intent(req) == expected
+async def test_explicit_unavailable_or_invalid_options_are_rejected(
+    requested: CalculationOptions, path: str
+) -> None:
+    with pytest.raises(ApiError) as exc_info:
+        await _options(requested)
+    assert exc_info.value.http_status == 422
+    assert exc_info.value.issues[0]["path"] == path
 
 
-def test_explicit_intent_wins_over_inference() -> None:
-    req = _req([_plan("p1", ["600000.SH"])], intent="single_portfolio")
-    assert svc._resolve_intent(req) == "single_portfolio"
+@pytest.mark.anyio
+async def test_explicit_window_is_snapped_to_trading_days() -> None:
+    resolved = await _options(
+        CalculationOptions(
+            correlation_window=OptionWindow(start=date(2026, 1, 3), end=date(2026, 6, 28))
+        )
+    )
+    assert resolved["correlation_window"] == {"start": "2026-01-05", "end": "2026-06-26"}
+
+
+@pytest.mark.anyio
+async def test_recompute_keeps_base_values_and_resets_only_named_fields() -> None:
+    base = await _options()
+    base["beta_window"] = {"start": "2026-03-02", "end": "2026-09-30"}
+    base["correlation_window"] = {"start": "2026-03-02", "end": "2026-09-30"}
+    resolved = await _options(
+        CalculationOptions(
+            correlation_window=OptionWindow(start=date(2026, 5, 4), end=date(2026, 8, 31))
+        ),
+        base=base,
+        reset=frozenset({"beta_window"}),
+    )
+    assert resolved["correlation_window"] == {"start": "2026-05-04", "end": "2026-08-31"}
+    assert resolved["beta_window"]["end"] == AS_OF.isoformat()  # 恢复为口径默认值
+
+
+# ===========================================================================
+# PA-01、PA-02 代码解析与范围校验
+# ===========================================================================
+
+
+@pytest.mark.anyio
+async def test_historical_alias_resolves_through_symbol_map() -> None:
+    db = _symbol_db([_instrument(9, "001872.SZ")], aliases={"000022.SZ": 9})
+    resolved = await svc._resolve_symbols(db, {"000022.SZ", "001872.SZ", "BAD"}, as_of=AS_OF)
+    old, new = resolved["000022.SZ"].instrument, resolved["001872.SZ"].instrument
+    assert old is not None and new is not None
+    assert old["instrument_id"] == new["instrument_id"] == 9
+    assert resolved["BAD"].instrument is None and resolved["BAD"].out_of_scope is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("row", "fragment"),
+    [
+        (_instrument(1, "920001.BJ"), "北交所"),
+        (_instrument(2, "600002.SH", status="delisted"), "已退市"),
+        (_instrument(3, "600003.SH", delist_date=AS_OF), "已退市"),
+        (_instrument(4, "510300.SH", asset="etf"), "etf"),
+    ],
+)
+async def test_recognized_out_of_scope_assets_are_flagged(
+    row: dict[str, Any], fragment: str
+) -> None:
+    resolved = await svc._resolve_symbols(_symbol_db([row]), {row["symbol"]}, as_of=AS_OF)
+    assert fragment in (resolved[row["symbol"]].out_of_scope or "")
+
+
+@pytest.mark.anyio
+async def test_symbol_matching_two_stocks_is_ambiguous() -> None:
+    db = _symbol_db([_instrument(1, "001872.SZ"), _instrument(2, "001914.SZ")])
+    db.handlers.insert(
+        0,
+        (
+            "FROM meta.instruments",
+            lambda params: [
+                {**_instrument(1, "001872.SZ"), "lookup": "001872.SZ"},
+                {**_instrument(2, "001872.SZ"), "lookup": "001872.SZ"},
+            ],
+        ),
+    )
+    with pytest.raises(ApiError, match="ambiguous") as exc_info:
+        await svc._resolve_symbols(db, {"001872.SZ"}, as_of=AS_OF)
+    assert exc_info.value.http_status == 422
+
+
+@pytest.mark.anyio
+async def test_out_of_scope_assets_reject_the_whole_request_with_input_paths() -> None:
+    db = _symbol_db([_instrument(1, "600001.SH"), _instrument(2, "920002.BJ")])
+    plans = [
+        PortfolioPlan(plan_id="a", holdings=[HoldingItem(symbol="600001.SH")]),
+        PortfolioPlan(
+            plan_id="b",
+            holdings=[HoldingItem(symbol="600001.SH"), HoldingItem(symbol="920002.bj")],
+        ),
+    ]
+    with pytest.raises(ApiError) as exc_info:
+        await svc._normalize_request_plans(db, plans, as_of=AS_OF)
+    assert exc_info.value.http_status == 422
+    assert [i["path"] for i in exc_info.value.issues] == ["/plans/1/holdings/1/symbol"]
+    assert exc_info.value.issues[0]["code"] == "unsupported_asset"
+
+
+@pytest.mark.anyio
+async def test_plan_without_resolvable_holdings_points_at_that_plan() -> None:
+    db = _symbol_db([_instrument(1, "600001.SH")])
+    plans = [
+        PortfolioPlan(plan_id="ok", holdings=[HoldingItem(symbol="600001.SH")]),
+        PortfolioPlan(plan_id="bad", holdings=[HoldingItem(symbol="GARBAGE")]),
+    ]
+    with pytest.raises(ApiError) as exc_info:
+        await svc._normalize_request_plans(db, plans, as_of=AS_OF)
+    assert exc_info.value.issues[0]["path"] == "/plans/1/holdings"
+
+
+@pytest.mark.anyio
+async def test_plan_inputs_keep_raw_rows_and_quantized_weights() -> None:
+    db = _symbol_db([_instrument(1, "600001.SH"), _instrument(2, "000002.SZ")])
+    plan = PortfolioPlan(
+        plan_id="p",
+        holdings=[
+            HoldingItem(symbol="600001.sh", weight=Decimal(3)),
+            HoldingItem(symbol="000002.SZ", weight=Decimal(1)),
+        ],
+    )
+    (item,) = await svc._normalize_request_plans(db, [plan], as_of=AS_OF)
+    assert item.requested_holdings[0] == {"symbol": "600001.sh", "weight": "3"}
+    assert item.quantized == {1: 75_000_000, 2: 25_000_000}
+    assert item.summary["holdings"][0]["normalized_symbol"] == "600001.SH"
+
+
+# ===========================================================================
+# PA-03 意图
+# ===========================================================================
+
+
+def _plan_input(n_holdings: int, *, unresolved: float = 0.0) -> svc.PlanInput:
+    return svc.PlanInput(
+        plan_index=0,
+        plan_id="p",
+        label=None,
+        requested_holdings=[],
+        weight_mode="user",
+        summary={
+            "calculation_holdings": [{"instrument_id": i} for i in range(n_holdings)],
+            "unresolved_weight": unresolved,
+        },
+        quantized={},
+    )
+
+
+@pytest.mark.parametrize(
+    ("requested", "plans", "expected"),
+    [
+        (None, [_plan_input(1)], "single_instrument"),
+        (None, [_plan_input(1, unresolved=0.2)], "single_portfolio"),
+        (None, [_plan_input(3)], "single_portfolio"),
+        ("single_portfolio", [_plan_input(1)], "single_portfolio"),
+        (None, [_plan_input(1), _plan_input(2)], "multi_portfolio"),
+    ],
+)
+def test_intent_resolution(
+    requested: str | None, plans: list[svc.PlanInput], expected: str
+) -> None:
+    assert svc._resolve_intent(requested, plans) == expected
+
+
+@pytest.mark.parametrize("intent", ["rebalance_amount", "rebalance_holding"])
+def test_rebalance_intents_are_explicitly_not_available(intent: str) -> None:
+    with pytest.raises(ApiError) as exc_info:
+        svc._resolve_intent(intent, [_plan_input(1), _plan_input(1)])
+    assert exc_info.value.issues[0]["code"] == "feature_not_available"
+
+
+def test_single_instrument_with_unresolved_share_is_rejected() -> None:
+    with pytest.raises(ApiError) as exc_info:
+        svc._resolve_intent("single_instrument", [_plan_input(1, unresolved=0.5)])
+    assert exc_info.value.issues[0]["path"] == "/intent"
 
 
 @pytest.mark.parametrize(
@@ -371,7 +507,6 @@ def test_explicit_intent_wins_over_inference() -> None:
     [
         ("single_portfolio", "standard"),
         ("single_instrument", "single_instrument"),
-        ("rebalance_amount", "compare"),
         ("multi_portfolio", "compare"),
     ],
 )
@@ -379,139 +514,14 @@ def test_report_mode_mapping(intent: str, mode: str) -> None:
     assert svc._report_mode(intent) == mode
 
 
-# ===========================================================================
-# MetricValue 三态与强制声明
-# ===========================================================================
-
-
-def test_unavailable_metric_has_no_value_field() -> None:
-    """把「不得静默估算」从约定升级为类型约束的那一条。"""
-    m = UnavailableMetric(reason_code="spec_not_defined", reason="口径未定")
-    assert "value" not in m.model_dump()
-
-
-def test_plan_result_validates_hand_written_payload() -> None:
-    """服务层手写的 dict 必须能过 PlanResult 校验，否则落库的是坏数据。"""
-    holdings = [{"instrument_id": 1, "symbol": "600000.SH", "weight": 1.0}]
-    section_a = _exposure(holdings)
-    payload = {
-        "plan_id": "p1",
-        "label": None,
-        "weight_mode": "equal",
-        "section_a": section_a,
-        "section_b": None,
-        "section_c": None,
-        "section_d": None,
-        "blindspots": svc._build_blindspots(section_a, {}),
-        "profile": svc._build_profile(section_a, holdings),
-    }
-    parsed = PlanResult.model_validate(payload)
-
-    assert parsed.section_b is None
-    assert parsed.profile.data_status == "partial"
-
-
-def test_equal_weight_triggers_sixth_disclosure() -> None:
-    params = {"rebalance": "daily", "include_dividend": True}
-    equal = svc._build_disclosures(params, weight_mode="equal", fingerprint_time="2026-08-30 00:00")
-    user = svc._build_disclosures(params, weight_mode="user", fingerprint_time="2026-08-30 00:00")
-
-    assert svc.EQUAL_WEIGHT_DISCLOSURE in equal
-    assert svc.EQUAL_WEIGHT_DISCLOSURE not in user
-    # 第 7 项（数据快照声明）固定披露，两种模式都要有
-    assert any("数据快照" in d for d in user)
-
-
-def test_blindspots_report_undecidable_detectors_explicitly() -> None:
-    """依赖 B/D 的检测器必须显式说「没法查」，不能干脆不返回。
-
-    省略会让用户以为已经检查过且没问题。
-    """
-    section_a = _exposure([{"instrument_id": 1, "symbol": "a", "weight": 1.0}])
-    hits = {h["detector"]: h for h in svc._build_blindspots(section_a, {})}
-
-    assert hits["pseudo_diversification"]["triggered"] is False
-    assert hits["pseudo_diversification"]["reason_code"] == "factor_model_unavailable"
-    assert hits["style_bet"]["reason_code"] == "factor_model_unavailable"
-
-
-# ===========================================================================
-# 数据质量合并
-# ===========================================================================
-
-
-def test_merge_data_quality_dedupes_and_takes_worst_coverage() -> None:
-    merged = svc._merge_data_quality(
-        [
-            {"unresolved_symbols": ["X"], "coverage_summary": {"industry": 0.9}},
-            {"unresolved_symbols": ["X", "Y"], "coverage_summary": {"industry": 0.5}},
-        ]
-    )
-    assert merged["unresolved_symbols"] == ["X", "Y"]
-    # 多 plan 时覆盖率取最差，别报喜不报忧
-    assert merged["coverage_summary"]["industry"] == 0.5
-
-
-def test_shared_cache_is_reassembled_with_current_request_metadata() -> None:
-    """旧缓存即使含别人的请求字段，也不能把它们返回给当前 snapshot。"""
-    holdings = [{"instrument_id": 1, "symbol": "600000.SH", "weight": 1.0}]
-    section_a = _exposure(
-        holdings,
-        input_weight=Decimal(100),
-        resolved_weight=Decimal(50),
-    )
-    old_payload = {
-        "plan_id": "before",
-        "label": "before",
-        "weight_mode": "user",
-        "section_a": section_a,
-        "section_b": None,
-        "section_c": None,
-        "section_d": None,
-        "blindspots": svc._build_blindspots(section_a, {}),
-        "profile": svc._build_profile(section_a, holdings),
-    }
-    row = {
-        "plan_index": 0,
-        "plan_id": "my-portfolio",
-        "label": "mine",
-        "weight_mode": "user",
-        "requested_holdings": [{"symbol": "600000.SH", "weight": "100"}],
-        "resolved_holdings": holdings,
-        "payload": old_payload,
-        "data_quality": {
-            "unresolved_symbols": ["GARBAGE"],
-            "duplicated_symbols": ["SECRET"],
-            "coverage_summary": {"symbol_resolution": 0.5, "industry": 0.8},
-            "forced_disclosures": ["safe"],
-        },
-    }
-
-    context = svc._request_context_from_plan_row(row)
-    result = svc._assemble_plan_result(row, context)
-    dq = svc._assemble_plan_data_quality(row, context)
-
-    assert result["plan_id"] == "my-portfolio"
-    assert result["label"] == "mine"
-    assert result["section_a"]["calculation_coverage_ratio"] == pytest.approx(1.0)
-    assert dq["unresolved_symbols"] == []
-    assert dq["duplicated_symbols"] == []
-    assert dq["coverage_summary"] == {
-        "symbol_resolution": pytest.approx(1.0),
-        "industry": 0.8,
-    }
-
-
 @pytest.mark.parametrize(
     ("statuses", "expected"),
     [
-        ([None], "pending"),
-        (["pending", "succeeded"], "pending"),
-        (["running", "succeeded"], "running"),
-        (["succeeded", "succeeded"], "succeeded"),
-        (["partially_succeeded"], "partially_succeeded"),
-        (["failed", "succeeded"], "partially_succeeded"),
+        (["partially_succeeded", "failed"], "partially_succeeded"),
         (["failed", "failed"], "failed"),
+        (["succeeded"], "succeeded"),
+        ([None], "pending"),
+        (["running", "failed"], "running"),
     ],
 )
 def test_run_status_uses_explicit_latest_run_statuses(
@@ -520,106 +530,67 @@ def test_run_status_uses_explicit_latest_run_statuses(
     assert svc._aggregate_run_status([{"status": status} for status in statuses]) == expected
 
 
-@pytest.mark.anyio
-async def test_default_as_of_date_uses_platform_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
-
-    class FakeDateTime(datetime):
-        @classmethod
-        def now(cls, tz: Any = None) -> FakeDateTime:
-            assert str(tz) == "Asia/Shanghai"
-            return cls(2026, 8, 31, 0, 30, tzinfo=tz)
-
-    class Cursor:
-        async def __aenter__(self) -> Cursor:
-            return self
-
-        async def __aexit__(self, *_args: Any) -> None:
-            return None
-
-        async def execute(self, _sql: str, params: tuple[Any, ...]) -> None:
-            captured["target"] = params[1]
-
-        async def fetchone(self) -> dict[str, date]:
-            return {"trading_day": captured["target"]}
-
-    class Db:
-        def cursor(self) -> Cursor:
-            return Cursor()
-
-    monkeypatch.setattr(svc, "datetime", FakeDateTime)
-
-    resolved = await svc._resolve_as_of_date(Db(), None)
-
-    assert resolved == date(2026, 8, 31)
-    assert captured["target"] == date(2026, 8, 31)
+# ===========================================================================
+# PA-14、PA-15 I7 重算
+# ===========================================================================
 
 
-@pytest.mark.anyio
-async def test_symbol_resolution_rejects_ambiguous_stock_etf_match() -> None:
-    class Cursor:
-        async def __aenter__(self) -> Cursor:
-            return self
-
-        async def __aexit__(self, *_args: Any) -> None:
-            return None
-
-        async def execute(self, sql: str, _params: tuple[Any, ...]) -> None:
-            assert "asset IN ('stock', 'etf')" in sql
-            assert "ORDER BY symbol" in sql
-
-        async def fetchall(self) -> list[dict[str, Any]]:
-            return [
-                {"instrument_id": 1, "symbol": "600000.SH"},
-                {"instrument_id": 2, "symbol": "600000.SH"},
-            ]
-
-    class Db:
-        def cursor(self) -> Cursor:
-            return Cursor()
-
-    with pytest.raises(Exception, match="ambiguous symbols") as exc_info:
-        await svc._resolve_symbols(Db(), ["600000.SH"])
-
-    assert exc_info.value.http_status == 422
-
-
-@pytest.mark.anyio
-async def test_sse_stream_ends_immediately_after_complete() -> None:
-    from gr_api.routers.diagnosis import _stream_sections
-
-    class ConnectedRequest:
-        async def is_disconnected(self) -> bool:
-            return False
-
-    result = {
-        "snapshot_id": str(svc.uuid4()),
-        "schema_version": "diagnosis.v1",
-        "spec_version": "test",
-        "as_of_date": "2026-09-01",
-        "data_fingerprint": "test",
-        "data_snapshot_at": "2026-09-01T18:00:00+08:00",
+def _snapshot_row(owner: str | None) -> dict[str, Any]:
+    return {
+        "snapshot_id": uuid4(),
+        "user_id": owner,
+        "data_fingerprint": "dv-1",
+        "data_snapshot_at": datetime(2026, 10, 29, 18, tzinfo=TZ),
+        "resolved_spec_version": "v1",
+        "resolved_as_of_date": AS_OF,
         "resolved_intent": "single_portfolio",
-        "report_mode": "standard",
-        "requested_cov_methods": ["historical"],
-        "plans": [],
-        "cov": {"primary": "historical", "computed": []},
-        "disclosures": [],
-        "run_status": "succeeded",
-        "comparison": None,
-        "data_quality": {},
+        "resolved_options": {},
     }
-    frames = [
-        frame
-        async for frame in _stream_sections(
-            svc.uuid4(),
-            result,
-            ConnectedRequest(),  # type: ignore[arg-type]
-        )
-    ]
 
-    assert len(frames) == 2
-    assert b"event: complete" in frames[-1]
+
+def _recompute_db(snapshot: dict[str, Any]) -> Any:
+    return fake_db(
+        [
+            ("pg_advisory_xact_lock", lambda params: []),
+            ("WHERE request_hash = %s", lambda params: []),
+            ("FROM diag.portfolio_snapshot s", lambda params: [snapshot]),
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_recompute_is_refused_until_the_base_data_version_is_reproducible() -> None:
+    snapshot = _snapshot_row(owner=None)
+    db = _recompute_db(snapshot)
+    with pytest.raises(svc.BaseDataVersionUnavailableError) as exc_info:
+        await svc.recompute_snapshot(
+            db,
+            snapshot["snapshot_id"],
+            RecomputeRequest(),
+            user_id=None,
+            idempotency_key=str(uuid4()),
+        )
+    assert exc_info.value.http_status == 409
+    assert exc_info.value.error_code == "BASE_DATA_VERSION_UNAVAILABLE"
+
+
+@pytest.mark.anyio
+async def test_recompute_checks_access_before_data_version() -> None:
+    from gr_api.errors import Forbidden
+
+    snapshot = _snapshot_row(owner=str(uuid4()))
+    with pytest.raises(Forbidden):
+        await svc.recompute_snapshot(
+            _recompute_db(snapshot),
+            snapshot["snapshot_id"],
+            RecomputeRequest(),
+            user_id=str(uuid4()),
+        )
+
+
+# ===========================================================================
+# 路由
+# ===========================================================================
 
 
 def test_json_diagnosis_routes_declare_response_models() -> None:
@@ -631,22 +602,15 @@ def test_json_diagnosis_routes_declare_response_models() -> None:
         for route in router.routes
         if isinstance(route, APIRoute) and not route.path.endswith("/stream")
     ]
-
-    assert len(json_routes) == 8
+    assert len(json_routes) == 9
     assert all(route.response_model is not None for route in json_routes)
-
-
-# ===========================================================================
-# 安全头（AGENTS.md §8 硬性要求：新增路由后仍须带这 4 个头）
-# ===========================================================================
 
 
 def test_diagnosis_routes_keep_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     """新增 diagnosis 路由后，SecurityHeadersMiddleware 仍覆盖它。
 
-    DB 依赖被 override 掉，走的是**正常 200 响应**这条路径。不用「让它 500」
-    来测：未捕获异常由 Starlette 最外层的 ServerErrorMiddleware 处理，那一层
-    在用户中间件之外，本来就拿不到这几个头，测了会得出错误结论。
+    DB 依赖被 override 掉，走正常 200 响应这条路径；未捕获异常由中间件之外的
+    ServerErrorMiddleware 处理，本来就拿不到这几个头。
     """
     from fastapi import FastAPI
     from gr_api.deps import get_db
@@ -656,22 +620,19 @@ def test_diagnosis_routes_keep_security_headers(monkeypatch: pytest.MonkeyPatch)
     async def _fake_list(db: Any) -> list[dict[str, Any]]:
         return [
             {
-                "spec_version": "v1-hist-20260901",
+                "spec_version": "v1-model-20261031",
                 "factor_model": None,
                 "factor_model_version": None,
                 "params": {},
-                "effective_from": date(2026, 8, 30),
+                "effective_from": date(2026, 10, 31),
                 "effective_to": None,
                 "is_active": True,
-                # response_model 必须过滤未来新增的内部列。
-                "created_at": datetime(2026, 8, 30),
+                # response_model 必须过滤内部列。
+                "created_at": datetime(2026, 10, 31),
             }
         ]
 
     monkeypatch.setattr(svc, "list_spec_versions", _fake_list)
-
-    # main.create_app 的全量路由会冷导入回测统计栈；这里构造同一条
-    # 「SecurityHeadersMiddleware → diagnosis router」链，专注验证本模块新增路由。
     app = FastAPI()
     app.add_middleware(SecurityHeadersMiddleware, csp_policy="default-src 'none'")
     app.include_router(router, prefix="/v1")

@@ -1,4 +1,4 @@
-"""持仓诊断路由：9 个端点（``main.py`` 里统一加 ``/v1`` 前缀）。
+"""持仓诊断路由：10 个端点（``main.py`` 里统一加 ``/v1`` 前缀）。
 
 契约见 ``getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md`` §7.1。
 **实际路径是 ``/v1/diagnosis/...``**，不是设计文档写的 ``/api/v1/...`` ——
@@ -23,7 +23,12 @@ from fastapi.routing import APIRoute
 from gr_api.deps import get_current_user, get_db, request_id
 from gr_api.errors import ApiError
 from gr_api.response import success
-from gr_api.schemas.diagnosis import ApiResponse, ShareTokenCreated, SnapshotRequest
+from gr_api.schemas.diagnosis import (
+    ApiResponse,
+    RecomputeRequest,
+    ShareTokenCreated,
+    SnapshotRequest,
+)
 from gr_api.schemas.diagnosis_response import (
     DataQualityResponse,
     DiagnosisResult,
@@ -75,12 +80,8 @@ class DiagnosisRoute(APIRoute):
                         for error in exc.errors()
                     ]
                 else:
-                    status_code, message, issues = (
-                        exc.http_status,
-                        exc.message,
-                        getattr(exc, "issues", []),
-                    )
-                    code = {
+                    status_code, message, issues = exc.http_status, exc.message, exc.issues
+                    code = exc.error_code or {
                         403: "forbidden",
                         404: "not_found",
                         409: "idempotency_conflict",
@@ -119,6 +120,27 @@ def _response_headers(response: Response, data: dict) -> None:
 # ---------------------------------------------------------------- 提交与读取
 
 
+def _idempotency_key(raw: str | None) -> str | None:
+    """幂等键必须是 UUIDv4；传入就必须兑现，格式不对按请求头校验错误返回。"""
+    if raw is None:
+        return None
+    try:
+        parsed = UUID(raw)
+        if parsed.version != 4:
+            raise ValueError("not UUIDv4")
+    except ValueError:
+        raise RequestValidationError(
+            [
+                {
+                    "loc": ("headers", "Idempotency-Key"),
+                    "type": "uuid4",
+                    "msg": "Idempotency-Key must be a UUIDv4",
+                }
+            ]
+        ) from None
+    return str(parsed)
+
+
 @router.post(
     "/snapshots",
     response_model=ApiResponse[SnapshotAccepted],
@@ -144,24 +166,43 @@ async def create_snapshot(
     因此不会返回 202；``202`` 的分支保留在 ``/result`` 侧，等将来计算转异步时
     前端不需要改。
     """
-    if idempotency_key is not None:
-        try:
-            parsed = UUID(idempotency_key)
-            if parsed.version != 4:
-                raise ValueError("not UUIDv4")
-            idempotency_key = str(parsed)
-        except ValueError:
-            raise RequestValidationError(
-                [
-                    {
-                        "loc": ("headers", "Idempotency-Key"),
-                        "type": "uuid4",
-                        "msg": "Idempotency-Key must be a UUIDv4",
-                    }
-                ]
-            ) from None
     data, status_code = await diag_svc.create_snapshot(
-        db, body, user_id=user_id, idempotency_key=idempotency_key
+        db, body, user_id=user_id, idempotency_key=_idempotency_key(idempotency_key)
+    )
+    response.status_code = status_code
+    response.headers["Location"] = data["links"]["result"]
+    _response_headers(response, data)
+    return success(data, rid)
+
+
+@router.post(
+    "/snapshots/{snapshot_id}/recompute",
+    response_model=ApiResponse[SnapshotAccepted],
+    responses={
+        201: {"model": ApiResponse[SnapshotAccepted]},
+        202: {"model": ApiResponse[SnapshotAccepted]},
+    },
+)
+async def recompute_snapshot(
+    snapshot_id: UUID,
+    body: RecomputeRequest,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    user_id: str | None = Depends(get_current_user),
+    db: DictConnection = Depends(get_db),
+    rid: str = Depends(request_id),
+):
+    """按新的 ``options`` 基于原快照创建新快照，原快照不变（PA-14、PA-15）。
+
+    原数据版本不可取得时返回 ``409 BASE_DATA_VERSION_UNAVAILABLE``（``retryable=false``）；
+    D-022 2b 发布清单落地前，相关性、Beta 等需要原始数据的重算都会走这个分支。
+    """
+    data, status_code = await diag_svc.recompute_snapshot(
+        db,
+        snapshot_id,
+        body,
+        user_id=user_id,
+        idempotency_key=_idempotency_key(idempotency_key),
     )
     response.status_code = status_code
     response.headers["Location"] = data["links"]["result"]
