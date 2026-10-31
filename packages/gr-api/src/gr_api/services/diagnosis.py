@@ -23,6 +23,15 @@ from gr_api.diagnosis_calc.exposure import (
     Valuation,
     compute_exposure,
 )
+from gr_api.diagnosis_calc.history import (
+    DailyObservation,
+    correlation_view,
+    daily_returns,
+    historical_volatility,
+    trading_status,
+)
+from gr_api.diagnosis_calc.metrics import has_value
+from gr_api.diagnosis_calc.sections import risk_section, structure_section
 from gr_api.diagnosis_calc.weights import (
     WEIGHT_UNITS,
     InputRow,
@@ -53,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 #: ``diag.diagnosis_run.payload`` 的结构版本。payload 是 CalculationPayload 同形 JSON，
 #: 缓存字段增删必须同步 +1；它也进入 calculation_hash，旧结构不会被新代码复用。
-PAYLOAD_SCHEMA_VERSION = "4.0"
+PAYLOAD_SCHEMA_VERSION = "5.0"
 
 #: 进程时区不能决定业务日期；数据库连接虽钉住了会话时区，却不会改变 Python 进程时区。
 PLATFORM_TZ = ZoneInfo("Asia/Shanghai")
@@ -64,11 +73,11 @@ CALENDAR_EXCHANGE = "XSHG"
 #: PA-01：一期只诊断沪深 A 股个股。
 SUPPORTED_EXCHANGES = frozenset({"XSHG", "XSHE"})
 
+#: 股票日线、复权因子与停复牌的唯一写入方（D-012 单表单一来源）。
+MARKET_SOURCE = "tushare"
+
 SECTION_REASONS: dict[str, str] = {
-    "section_b": "风险模型计算尚未开放：米筐 v2 风险数据尚未入库并按 D-022 发布，"
-    "不以历史协方差替代。",
     "section_c": "组合回放与历史指标尚未开放：分红送转、退市终止价值与全收益基准数据尚未接入。",
-    "section_d": "模型相关性与结构指标尚未开放：依赖尚未发布的米筐 v2 风险数据。",
     "stress_scenarios": "压力测试不在一期开放范围内。",
 }
 
@@ -692,6 +701,173 @@ async def _fetch_valuation(
         }
 
 
+class IncompleteCalendarError(ValueError):
+    """交易日历缺行：不能判断相邻开市日，历史收益不可算（不跨缺口）。"""
+
+
+async def _trading_day_before(db: DictConnection, day: date) -> date | None:
+    async with db.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT trading_day FROM meta.trading_calendar
+            WHERE exchange = %s AND is_open AND trading_day < %s
+            ORDER BY trading_day DESC LIMIT 1
+            """,
+            (CALENDAR_EXCHANGE, day),
+        )
+        row = await cur.fetchone()
+    return None if row is None else row["trading_day"]
+
+
+async def _fetch_daily_observations(
+    db: DictConnection, ids: list[int], *, start: date, end: date
+) -> tuple[dict[int, list[date]], dict[int, dict[date, DailyObservation]]]:
+    """取 [start, end] 内各股每个开市日的 D-023 状态与复权收盘价。
+
+    状态判定与 ``gr_data.db.trading_status`` 相同（规则见
+    ``diagnosis_calc.history.trading_status``）：由有无 bar、停复牌覆盖与事件推导，
+    交易日既无 bar 也无停牌事件记为 UNKNOWN，不推断为停牌。只读当前观察，不声称历史 PIT；
+    上市日之前、退市日之后不出行。
+
+    Returns:
+        ``(各股所在交易所的开市日列表, 各股按日期索引的观测)``。
+
+    Raises:
+        IncompleteCalendarError: 某交易所日历在区间内缺行。
+    """
+    async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT instrument_id, exchange FROM meta.instruments WHERE instrument_id = ANY(%s)",
+            (ids,),
+        )
+        exchange_of = {r["instrument_id"]: r["exchange"] for r in await cur.fetchall()}
+        open_days: dict[str, list[date]] = {}
+        for exchange in sorted(set(exchange_of.values())):
+            await cur.execute(
+                """
+                SELECT trading_day, is_open FROM meta.trading_calendar
+                WHERE exchange = %s AND trading_day BETWEEN %s AND %s
+                ORDER BY trading_day
+                """,
+                (exchange, start, end),
+            )
+            rows = list(await cur.fetchall())
+            if len(rows) != (end - start).days + 1:
+                raise IncompleteCalendarError(f"incomplete trading calendar for {exchange}")
+            open_days[exchange] = [r["trading_day"] for r in rows if r["is_open"]]
+        await cur.execute(
+            """
+            WITH events AS (
+                SELECT instrument_id, trading_day,
+                       bool_or(suspend_type = 'S' AND suspend_timing IS NULL) AS full_suspend,
+                       bool_or(suspend_type = 'S' AND suspend_timing IS NOT NULL)
+                           AS intraday_suspend,
+                       bool_or(suspend_type = 'R') AS resumed
+                FROM market.stock_suspend_event
+                WHERE instrument_id = ANY(%(ids)s)
+                  AND trading_day BETWEEN %(start)s AND %(end)s AND source = %(source)s
+                GROUP BY instrument_id, trading_day
+            )
+            SELECT i.instrument_id, c.trading_day,
+                   b.instrument_id IS NOT NULL AS has_bar,
+                   p.trading_day IS NOT NULL AS covered,
+                   COALESCE(e.full_suspend, false) AS full_suspend,
+                   COALESCE(e.intraday_suspend, false) AS intraday_suspend,
+                   COALESCE(e.resumed, false) AS resumed,
+                   b.close * b.adj_factor AS adj_close
+            FROM meta.instruments i
+            JOIN meta.trading_calendar c ON c.exchange = i.exchange AND c.is_open
+            LEFT JOIN market.stock_bar_1d b ON b.instrument_id = i.instrument_id
+                 AND b.dt = c.trading_day AND b.source = %(source)s
+            LEFT JOIN events e ON e.instrument_id = i.instrument_id
+                 AND e.trading_day = c.trading_day
+            LEFT JOIN market.stock_suspend_coverage p ON p.trading_day = c.trading_day
+                 AND p.source = %(source)s
+            WHERE i.instrument_id = ANY(%(ids)s)
+              AND c.trading_day BETWEEN %(start)s AND %(end)s
+              AND i.list_date IS NOT NULL AND c.trading_day >= i.list_date
+              AND (i.delist_date IS NULL OR c.trading_day <= i.delist_date)
+            ORDER BY i.instrument_id, c.trading_day
+            """,
+            {"ids": ids, "start": start, "end": end, "source": MARKET_SOURCE},
+        )
+        rows = list(await cur.fetchall())
+
+    observations: dict[int, dict[date, DailyObservation]] = {i: {} for i in ids}
+    for row in rows:
+        observations[row["instrument_id"]][row["trading_day"]] = DailyObservation(
+            status=trading_status(
+                has_bar=row["has_bar"],
+                covered=row["covered"],
+                full_suspend=row["full_suspend"],
+                intraday_suspend=row["intraday_suspend"],
+                resumed=row["resumed"],
+            ),
+            adj_close=row["adj_close"],
+        )
+    calendars = {i: open_days.get(exchange_of.get(i, ""), []) for i in ids}
+    return calendars, observations
+
+
+def _window(option: dict[str, str]) -> tuple[date, date]:
+    return date.fromisoformat(option["start"]), date.fromisoformat(option["end"])
+
+
+async def _compute_history(
+    db: DictConnection, ids: list[int], *, params: dict[str, Any], options: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """模块 B 的逐股历史波动率（PA-20，Beta 区间）与模块 D 的历史相关性（PA-09）。
+
+    Returns:
+        ``(risk_section, structure_section, history_facts)``，前两者为区块 value 同形字典。
+    """
+    corr_window = _window(options["correlation_window"])
+    beta_window = _window(options["beta_window"])
+    historical = (params.get("cov_method_params") or {}).get("historical") or {}
+    min_samples = int(
+        params.get("history_min_samples") or historical.get("min_common_samples") or 120
+    )
+    threshold = float(params.get("corr_high_threshold") or 0.7)
+
+    first = min(corr_window[0], beta_window[0])
+    start = await _trading_day_before(db, first) or first
+    try:
+        calendars, observations = await _fetch_daily_observations(
+            db, ids, start=start, end=max(corr_window[1], beta_window[1])
+        )
+    except IncompleteCalendarError:
+        logger.warning("diagnosis history skipped: incomplete trading calendar %s..", start)
+        calendars, observations = {i: [] for i in ids}, {i: {} for i in ids}
+
+    volatility = {
+        iid: historical_volatility(
+            daily_returns(calendars[iid], observations[iid], window=beta_window),
+            window=beta_window,
+            min_samples=min_samples,
+        )
+        for iid in ids
+    }
+    view = correlation_view(
+        {iid: daily_returns(calendars[iid], observations[iid], window=corr_window) for iid in ids},
+        window=corr_window,
+        min_samples=min_samples,
+        high_threshold=threshold,
+    )
+    facts = {
+        "correlation_status": view.matrix["status"],
+        "correlation_sample_count": view.matrix.get("sample_count"),
+        "correlation_excluded": view.excluded_zero_variance,
+        "volatility_insufficient": [
+            iid for iid, metric in volatility.items() if not has_value(metric)
+        ],
+    }
+    return (
+        risk_section(ids, volatility),
+        structure_section(view, single_instrument=len(ids) == 1),
+        facts,
+    )
+
+
 def _unavailable_section(key: str) -> dict[str, Any]:
     return {
         "status": "unavailable",
@@ -731,14 +907,21 @@ async def _compute_plan(
         category=await _fetch_category(db, ids, as_of=as_of),
         valuation=await _fetch_valuation(db, ids, as_of=as_of),
     )
+    risk, structure, facts["history"] = await _compute_history(
+        db, ids, params=params, options=options
+    )
+    historical_ok = has_value(structure["correlation"]["by_method"]["historical"])
     payload = {
         "cov": {
             "requested": list(params.get("cov_methods") or []),
             "forward_model": None,
+            # primary 只能是口径主方法（forward）；历史只服务相关性视图，不顶替（PA-04/PA-10）
             "primary": None,
-            "computed": [],
+            "computed": ["historical"] if historical_ok else [],
         },
         "section_a": {"status": "ready", "value": metrics},
+        "section_b": {"status": "ready", "value": risk},
+        "section_d": {"status": "ready", "value": structure},
         **{key: _unavailable_section(key) for key in SECTION_REASONS},
     }
     # 落库前过一遍 Pydantic：手写字典的字段拼错或三态组合非法在这里就失败，

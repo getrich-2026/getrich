@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -20,6 +21,8 @@ from gr_api.diagnosis_calc.exposure import (
     Valuation,
     compute_exposure,
 )
+from gr_api.diagnosis_calc.history import correlation_view, historical_volatility
+from gr_api.diagnosis_calc.sections import risk_section, structure_section
 from gr_api.diagnosis_calc.weights import WEIGHT_UNITS, InputRow, normalize_plan
 from gr_api.routers.diagnosis import _stream_sections, router
 from gr_api.schemas.diagnosis import RecomputeRequest, SnapshotRequest
@@ -59,6 +62,28 @@ OPTIONS = {
 }
 
 
+WINDOW = (date(2025, 10, 28), AS_OF)
+
+
+def synthetic_returns(seed: int, n: int = 150) -> dict[date, float]:
+    values = np.random.default_rng(seed).normal(0, 0.02, n)
+    return {WINDOW[0] + timedelta(days=i): float(v) for i, v in enumerate(values)}
+
+
+def history_sections(returns: dict[int, dict[date, float]]) -> dict[str, Any]:
+    """用真实的历史计算与区块组装函数构造 B／D 区块。"""
+    ids = sorted(returns)
+    vols = {i: historical_volatility(returns[i], window=WINDOW, min_samples=120) for i in ids}
+    view = correlation_view(returns, window=WINDOW, min_samples=120, high_threshold=0.7)
+    return {
+        "section_b": {"status": "ready", "value": risk_section(ids, vols)},
+        "section_d": {
+            "status": "ready",
+            "value": structure_section(view, single_instrument=len(ids) == 1),
+        },
+    }
+
+
 def fixture_row(*, coverage: float = 1.0, failed: bool = False) -> dict[str, Any]:
     """浦发银行加一行可选的未识别代码，按真实规范化与计算函数构造共享载体。"""
     rows = [
@@ -86,6 +111,7 @@ def fixture_row(*, coverage: float = 1.0, failed: bool = False) -> dict[str, Any
         {
             "cov": {"requested": ["forward", "historical"], "primary": None, "computed": []},
             "section_a": {"status": "ready", "value": metrics},
+            **history_sections({1: synthetic_returns(1)}),
             **{key: svc._unavailable_section(key) for key in svc.SECTION_REASONS},
         }
     ).model_dump(mode="json")
@@ -133,7 +159,11 @@ def test_all_sections_have_explicit_states_and_input_echo() -> None:
     assert a["max_industry"]["value"]["industry_name"] == "银行"
     assert plan["input"]["holdings"][0]["name"] == "浦发银行"
     assert plan["input"]["calculation_holdings"][0]["calculation_weight"] == 1
-    assert plan["section_b"]["reason_code"] == "feature_not_available"
+    risk = plan["section_b"]["value"]
+    assert risk["instrument_betas"]["value"][0]["historical_volatility"]["status"] == "ok"
+    assert risk["volatility"]["by_method"]["forward"]["reason_code"] == "data_not_validated"
+    structure = plan["section_d"]["value"]
+    assert structure["correlation"]["by_method"]["historical"]["reason_code"] == "not_applicable"
     assert plan["section_c"]["reason_code"] == "feature_not_available"
     assert plan["profile"]["reason_code"] == "spec_not_defined"
     assert all(b["status"] == "unavailable" for b in plan["blindspots"]["value"])
@@ -174,7 +204,11 @@ def test_degraded_coverage_remains_visible_in_both_report_levels() -> None:
         assert report["disclosures"] == result["disclosures"]
         assert report["data_quality"] == result["data_quality"]
         sections = {s["section_id"]: s for s in report["sections"]}
-        assert sections["mine:risk"]["content"]["reason_code"] == "feature_not_available"
+        risk_blocks = sections["mine:risk"]["content"]["value"]
+        vol_card = next(b for b in risk_blocks if b["type"] == "metric_cards")["items"][0]
+        assert vol_card["label"] == "浦发银行 历史年化波动率"
+        assert vol_card["value"]["status"] == "ok"
+        assert sections["mine:history"]["content"]["reason_code"] == "feature_not_available"
         assert sections["mine:instrument"]["content"]["value"][0]["input"][
             "unresolved_weight"
         ] == pytest.approx(0.1)
@@ -489,3 +523,45 @@ def test_valuation_lag_is_listed_in_data_quality() -> None:
     lag = next(i for i in issues if i["code"] == "valuation_lagged")
     assert "600000.SH" in lag["reason"]
     assert "100.0%" in lag["reason"]
+
+
+def test_two_stock_structure_report_shows_matrix_average_and_pairs() -> None:
+    row = fixture_row()
+    a = synthetic_returns(1)
+    payload = deepcopy(row["payload"])
+    payload.update(
+        CalculationPayload.model_validate(
+            {**payload, **history_sections({1: a, 2: {d: 2 * v for d, v in a.items()}})}
+        ).model_dump(mode="json")
+    )
+    holdings = row["input_context"]["calculation_holdings"]
+    holdings[0]["calculation_weight"] = 0.5
+    holdings[0]["input_share"] = 0.5
+    holdings.append(
+        {
+            "instrument_id": 2,
+            "symbol": "600036.SH",
+            "name": "招商银行",
+            "input_share": 0.5,
+            "calculation_weight": 0.5,
+        }
+    )
+    row["payload"] = payload
+    result = view.assemble(
+        fixture_snapshot(), SPEC, [row], row["status"], report_mode=svc._report_mode
+    )
+    report = view.report(result, "retail")
+    ReportResponse.model_validate(report)
+    blocks = {s["section_id"]: s for s in report["sections"]}["mine:diversification"]["content"][
+        "value"
+    ]
+    matrix = blocks[0]
+    assert matrix["type"] == "correlation_matrix"
+    assert matrix["labels"] == {"1": "浦发银行", "2": "招商银行"}
+    assert matrix["values"]["by_method"]["historical"]["status"] == "ok"
+    averages = {c["metric_id"]: c for c in blocks[1]["items"]}
+    assert averages["avg_pairwise_correlation.historical"]["value"]["value"] == pytest.approx(1.0)
+    assert averages["avg_pairwise_correlation.forward"]["value"]["reason_code"] == (
+        "data_not_validated"
+    )
+    assert "浦发银行 与 招商银行：1.00" in blocks[2]["text"]

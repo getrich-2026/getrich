@@ -187,6 +187,25 @@ def _plan_issues(plan: dict[str, Any], facts: dict[str, Any]) -> list[dict[str, 
                     "paths": [f"/section_a/value/{metric_id}"],
                 }
             )
+    history = facts.get("history") or {}
+    if history.get("volatility_insufficient"):
+        issues.append(
+            {
+                "code": "history_insufficient",
+                "reason": "有效日收益不足，个股历史年化波动率不可用："
+                + "、".join(names.get(i, str(i)) for i in history["volatility_insufficient"]),
+                "paths": ["/section_b/value/instrument_betas"],
+            }
+        )
+    if history.get("correlation_excluded"):
+        issues.append(
+            {
+                "code": "zero_variance",
+                "reason": "共同样本内收益恒定，已从历史相关矩阵中排除："
+                + "、".join(names.get(i, str(i)) for i in history["correlation_excluded"]),
+                "paths": ["/section_d/value/correlation"],
+            }
+        )
     return issues
 
 
@@ -208,7 +227,10 @@ def snapshot_disclosures(snapshot: dict[str, Any]) -> list[str]:
         f"本报告基于 {snapshot_at} 发布的数据快照计算，诊断日期 {snapshot['resolved_as_of_date']}；"
         "数据供应商的后续修订不会反映在本报告中。",
         "本报告分析当前输入持仓的构成，不代表用户的真实收益，也不构成投资建议。",
-        "风险模型、相关性、历史回放与压力测试尚未开放，相关章节显示为不可用，不以估算值填充。",
+        "历史相关性与个股历史年化波动率基于复权日简单收益，剔除停牌日与跨停牌收益，"
+        "描述的是统计区间内的历史表现，不代表未来风险。",
+        "风险模型（米筐 v2）口径指标、个股 Beta、组合回放与压力测试尚未开放，"
+        "相关指标显示为不可用，不以历史协方差或价格指数替代。",
     ]
 
 
@@ -348,6 +370,8 @@ def accepted(result: dict[str, Any]) -> dict[str, Any]:
 
 TOPN_LABELS = {1: "Top1 权重", 3: "Top3 权重", 5: "Top5 权重"}
 
+METHOD_LABELS = {"forward": "模型", "historical": "历史"}
+
 FIXED_LABELS = {
     UNCLASSIFIED: "未分类",
     MISSING_OR_INVALID: "缺失或异常",
@@ -469,6 +493,76 @@ def _exposure_blocks(
     return blocks
 
 
+def _risk_blocks(risk: dict[str, Any], names: dict[str, str]) -> list[dict[str, Any]]:
+    """逐股历史年化波动率卡片；模型口径不可用时给出原因，不展示历史协方差组合波动。"""
+    blocks: list[dict[str, Any]] = []
+    model = risk["volatility"]["by_method"].get("forward")
+    if model and not has_value(model):
+        blocks.append({"type": "text", "text": f"模型风险：{model['reason']}"})
+    betas = risk["instrument_betas"]
+    if has_value(betas):
+        blocks.append(
+            {
+                "type": "metric_cards",
+                "items": [
+                    {
+                        "metric_id": f"historical_volatility:{row['instrument_id']}",
+                        "label": f"{names.get(str(row['instrument_id']), row['instrument_id'])} "
+                        "历史年化波动率",
+                        "value": row["historical_volatility"],
+                        "format": "percent",
+                        "decimals": 1,
+                    }
+                    for row in betas["value"]
+                ],
+            }
+        )
+        beta = betas["value"][0]["beta"] if betas["value"] else None
+        if beta and not has_value(beta):
+            blocks.append({"type": "text", "text": f"个股 Beta：{beta['reason']}"})
+    else:
+        blocks.append({"type": "text", "text": betas["reason"]})
+    return blocks
+
+
+def _structure_blocks(structure: dict[str, Any], names: dict[str, str]) -> list[dict[str, Any]]:
+    """相关性热力图（模型与历史并列）、平均两两相关与高相关持仓对（严格大于 0.7）。"""
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "correlation_matrix",
+            "labels": dict(names),
+            "values": structure["correlation"],
+        },
+        {
+            "type": "metric_cards",
+            "items": [
+                {
+                    "metric_id": f"avg_pairwise_correlation.{method}",
+                    "label": f"平均两两相关（{METHOD_LABELS.get(method, method)}）",
+                    "value": metric,
+                    "format": "number",
+                    "decimals": 2,
+                }
+                for method, metric in structure["avg_pairwise_correlation"]["by_method"].items()
+            ],
+        },
+    ]
+    pairs = structure["high_correlation_pairs"]["by_method"].get("historical")
+    if pairs and has_value(pairs):
+        if pairs["value"]:
+            lines = [
+                f"{names.get(str(x['left_instrument_id']), x['left_instrument_id'])} 与 "
+                f"{names.get(str(x['right_instrument_id']), x['right_instrument_id'])}："
+                f"{x['correlation']:.2f}"
+                for x in pairs["value"]
+            ]
+            text = "历史高相关持仓对（相关系数大于 0.7）：" + "；".join(lines)
+        else:
+            text = "历史口径下没有相关系数大于 0.7 的持仓对。"
+        blocks.append({"type": "text", "text": text})
+    return blocks
+
+
 def report(
     result: dict[str, Any],
     level: str = "retail",
@@ -510,9 +604,22 @@ def report(
             "构成与敞口",
             ready(_exposure_blocks(a["value"], level, labels)) if a["status"] == "ready" else a,
         )
-        add(pid, "risk", "风险画像", p["section_b"])
+        names = {str(h["instrument_id"]): h["name"] for h in p["input"]["calculation_holdings"]}
+        b = p["section_b"]
+        add(
+            pid,
+            "risk",
+            "风险画像",
+            ready(_risk_blocks(b["value"], names)) if b["status"] == "ready" else b,
+        )
         add(pid, "style", "历史回放与分位", p["section_c"], "history")
-        add(pid, "diversification", "关系与结构", p["section_d"])
+        d = p["section_d"]
+        add(
+            pid,
+            "diversification",
+            "关系与结构",
+            ready(_structure_blocks(d["value"], names)) if d["status"] == "ready" else d,
+        )
         add(pid, "risk", "压力测试", p["stress_scenarios"], "stress")
         blind = p["blindspots"]
         add(

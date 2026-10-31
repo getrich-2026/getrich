@@ -50,7 +50,9 @@ pytestmark = [
 
 _TZ = ZoneInfo("Asia/Shanghai")
 _AS_OF = date(2099, 1, 5)
-_CALENDAR = [_AS_OF - timedelta(days=i) for i in range(8)]
+# 连续自然日（含周末休市行）：历史收益要求日历完整，否则不判断相邻开市日。
+_CALENDAR = [_AS_OF - timedelta(days=i) for i in range(220)]
+_OPEN_DAYS = sorted(d for d in _CALENDAR if d.weekday() < 5)
 _DATA_VERSION = "diagnosis-pg-test-20990105"
 _SYMBOL_A = "888881.SH"
 _SYMBOL_B = "888882.SZ"
@@ -109,15 +111,28 @@ async def diagnosis_db(
             await cur.executemany(
                 """
                 INSERT INTO meta.trading_calendar (exchange, trading_day, is_open)
-                VALUES ('XSHG', %(day)s, TRUE)
-                ON CONFLICT (exchange, trading_day) DO UPDATE SET is_open = TRUE
+                VALUES (%(exchange)s, %(day)s, %(open)s)
+                ON CONFLICT (exchange, trading_day) DO UPDATE SET is_open = EXCLUDED.is_open
                 """,
-                [{"day": d} for d in _CALENDAR],
+                [
+                    {"exchange": exchange, "day": d, "open": d.weekday() < 5}
+                    for exchange in ("XSHG", "XSHE")
+                    for d in _CALENDAR
+                ],
+            )
+            await cur.executemany(
+                """
+                INSERT INTO market.stock_suspend_coverage
+                    (trading_day, source, raw_sha256, observed_at)
+                VALUES (%(day)s, 'tushare', repeat('0', 64), now())
+                ON CONFLICT DO NOTHING
+                """,
+                [{"day": d} for d in _OPEN_DAYS],
             )
             await cur.executemany(
                 """
                 INSERT INTO meta.instruments (symbol, asset, exchange, name, list_date, status)
-                VALUES (%(symbol)s, 'stock', %(exchange)s, %(name)s, DATE '2090-01-01', 'active')
+                VALUES (%(symbol)s, 'stock', %(exchange)s, %(name)s, DATE '2098-01-02', 'active')
                 """,
                 [
                     {"symbol": _SYMBOL_A, "exchange": "XSHG", "name": _NAME},
@@ -162,9 +177,23 @@ async def _cleanup(conn: DictConnection) -> None:
             "DELETE FROM diag.data_version WHERE data_version_id = %s", (_DATA_VERSION,)
         )
         await cur.execute("DELETE FROM meta.symbol_map WHERE source = 'diagnosis-pg-test'")
+        await cur.execute(
+            """
+            DELETE FROM market.stock_bar_1d WHERE instrument_id IN (
+                SELECT instrument_id FROM meta.instruments WHERE name = %s
+            )
+            """,
+            (_NAME,),
+        )
         await cur.execute("DELETE FROM meta.instruments WHERE name = %s", (_NAME,))
         await cur.execute(
-            "DELETE FROM meta.trading_calendar WHERE exchange = 'XSHG' AND trading_day = ANY(%s)",
+            "DELETE FROM meta.trading_calendar WHERE exchange IN ('XSHG', 'XSHE') "
+            "AND trading_day = ANY(%s)",
+            (_CALENDAR,),
+        )
+        await cur.execute(
+            "DELETE FROM market.stock_suspend_coverage WHERE source = 'tushare' "
+            "AND trading_day = ANY(%s)",
             (_CALENDAR,),
         )
         await cur.execute("DELETE FROM app.users WHERE email LIKE %s", (f"{_EMAIL_PREFIX}%",))
@@ -446,3 +475,65 @@ async def test_key_replay_uses_original_snapshot_before_resolving_latest_data(
     replay, code = await svc.create_snapshot(db, req, user_id=str(user_a), idempotency_key=key)
     assert code == 200
     assert replay == first
+
+
+async def test_historical_correlation_and_volatility_on_real_sql(
+    diagnosis_db: tuple[DictConnection, UUID, UUID],
+) -> None:
+    """日线 + 复权因子 + 停复牌覆盖的真实 SQL 路径：B 波动率与 D 历史相关性出数。"""
+    db, user_a, _ = diagnosis_db
+    async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT symbol, instrument_id FROM meta.instruments WHERE symbol = ANY(%s)",
+            ([_SYMBOL_A, _SYMBOL_B],),
+        )
+        ids = {r["symbol"]: r["instrument_id"] for r in await cur.fetchall()}
+        rows = []
+        price_a, price_b = Decimal(10), Decimal(20)
+        for i, day in enumerate(_OPEN_DAYS):
+            step = Decimal("1.01") if i % 2 else Decimal("0.995")
+            price_a *= step
+            price_b *= step * step  # 与 A 同向，日收益不同但高度相关
+            for symbol, price in ((_SYMBOL_A, price_a), (_SYMBOL_B, price_b)):
+                rows.append(
+                    {
+                        "id": ids[symbol],
+                        "dt": day,
+                        "close": price.quantize(Decimal("0.000001")),
+                        # 复权因子在中途翻倍、价格减半：复权收盘价连续，不能当成 -50% 收益
+                        "factor": Decimal(2) if i >= 60 else Decimal(1),
+                    }
+                )
+        for row in rows:
+            if row["factor"] == 2:
+                row["close"] = (row["close"] / 2).quantize(Decimal("0.000001"))
+        await cur.executemany(
+            """
+            INSERT INTO market.stock_bar_1d (
+                instrument_id, dt, trading_day, close, adj_factor, trading_status, source
+            ) VALUES (%(id)s, %(dt)s, %(dt)s, %(close)s, %(factor)s, 'NORMAL', 'tushare')
+            """,
+            rows,
+        )
+    await db.commit()
+
+    request = _request("hist", [HoldingItem(symbol=_SYMBOL_A), HoldingItem(symbol=_SYMBOL_B)])
+    accepted, _ = await svc.create_snapshot(db, request, user_id=str(user_a))
+    result = await svc.get_result(db, UUID(accepted["snapshot_id"]), user_id=str(user_a))
+    plan = result["plans"][0]
+
+    betas = plan["section_b"]["value"]["instrument_betas"]["value"]
+    vol = betas[0]["historical_volatility"]
+    assert vol["status"] == "ok"
+    assert vol["sample_count"] == len(_OPEN_DAYS) - 1
+    assert vol["value"] < 0.5  # 复权衔接正确时不会出现 -50% 的单日收益
+    correlation = plan["section_d"]["value"]["correlation"]["by_method"]["historical"]
+    assert correlation["status"] == "ok"
+    assert correlation["value"]["matrix"][0][1] > 0.99
+    assert plan["cov"]["computed"] == ["historical"]
+    assert plan["cov"]["primary"] is None
+    pairs = plan["section_d"]["value"]["high_correlation_pairs"]["by_method"]["historical"]
+    assert len(pairs["value"]) == 1
+    report = await svc.get_report(db, UUID(accepted["snapshot_id"]), user_id=str(user_a))
+    kinds = {s["section_id"]: s["content"]["status"] for s in report["sections"]}
+    assert kinds["hist:risk"] == kinds["hist:diversification"] == "ready"
