@@ -14,24 +14,33 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from datetime import date
 from decimal import Decimal
 
 import numpy as np
 import pandas as pd
 
 from gr_data.common import contracts
+from gr_data.common.quality import RowValidationError
 from gr_data.common.trading_status import event_flags, resolve_trading_status
 from gr_data.ingest import pit
 from gr_data.ingest.base import BaseImporter, IngestGateError
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
+from gr_data.ingest.tushare.bj_pending import BJPendingImporter
 from gr_data.ingest.tushare.importers.reference import _require, parse_date
-from gr_data.ingest.tushare.symbols import collapse_alias_rows
+from gr_data.ingest.tushare.symbols import collapse_alias_rows, expand_stock_auxiliary_aliases
 from gr_data.raw.tushare.quote_rules import tas_code_mask
 from gr_data.raw.tushare.suspension_store import read_coverage
 
 
 PROVIDER = "tushare"
+
+
+class _SymbolResolutionError(IngestGateError, RowValidationError):
+    """保留未知标的的既有门禁类型，同时允许识别 BJ 行级失败。"""
+
 
 # daily 与 stk_limit 各自返回 pre_close，四舍五入口径可能差一分钱。
 # 超出该容差说明两者的价格基准不一致，此时涨跌停价不可信。
@@ -57,7 +66,7 @@ def _to_numeric_strict(df: pd.DataFrame, columns: list[str], source: str) -> Non
         bad = present & parsed.isna()
         if bad.any():
             samples = df.loc[bad, c].head(5).tolist()
-            raise ValueError(
+            raise RowValidationError(
                 f"{source}.{c} 含无法解析的数值 rows={int(bad.sum())} samples={samples}"
             )
         df[c] = parsed
@@ -98,7 +107,7 @@ def _check_high_low(df: pd.DataFrame, source: str) -> None:
 def _parse_trade_date(df: pd.DataFrame, source: str) -> pd.Series:
     parsed = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
     if parsed.isna().any():
-        raise ValueError(f"{source} 含非法 trade_date")
+        raise RowValidationError(f"{source} 含非法 trade_date")
     return parsed.dt.date
 
 
@@ -106,10 +115,10 @@ def _daily_rows(raw: pd.DataFrame, source: str) -> pd.DataFrame:
     """先归一代码与 int8／字符串日期，再按业务键保留最后一行。"""
     out = raw.copy()
     if out["ts_code"].isna().any():
-        raise ValueError(f"{source} 含空 ts_code")
+        raise RowValidationError(f"{source} 含空 ts_code")
     out["ts_code"] = out["ts_code"].astype(str).str.strip()
     if out["ts_code"].eq("").any():
-        raise ValueError(f"{source} 含空 ts_code")
+        raise RowValidationError(f"{source} 含空 ts_code")
     out["trade_date"] = _parse_trade_date(out, source)
     return out.drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
 
@@ -120,7 +129,9 @@ def _validate_activity(raw: pd.DataFrame, columns: list[str], source: str) -> No
         numeric = pd.to_numeric(raw[column], errors="coerce")
         invalid = raw[column].notna() & (numeric.isna() | ~np.isfinite(numeric) | numeric.lt(0))
         if invalid.any():
-            raise ValueError(f"{source} invalid activity column={column} rows={int(invalid.sum())}")
+            raise RowValidationError(
+                f"{source} invalid activity column={column} rows={int(invalid.sum())}"
+            )
 
 
 def _amount_in_yuan(series: pd.Series, multiplier: int) -> pd.Series:
@@ -181,7 +192,7 @@ class _SymbolResolvingImporter(BaseImporter):
         unknown = df["instrument_id"].isna()
         if unknown.any():
             codes = sorted(set(df.loc[unknown, "ts_code"]))
-            raise IngestGateError(
+            raise _SymbolResolutionError(
                 f"{self.DATASET}: {int(unknown.sum())} rows ({len(codes)} symbols) are not in "
                 f"meta.symbol_map, samples {codes[:5]}; run instruments and symbol_map first"
             )
@@ -191,8 +202,113 @@ class _SymbolResolvingImporter(BaseImporter):
                 cur.execute(
                     "SELECT instrument_id, symbol FROM meta.instruments WHERE asset='stock'"
                 )
-                df = collapse_alias_rows(df.reset_index(drop=True), dict(cur.fetchall()))
+                canonical = dict(cur.fetchall())
+            try:
+                df = collapse_alias_rows(
+                    df.reset_index(drop=True),
+                    canonical,
+                    price_evidence=self._alias_price_evidence(df, canonical),
+                    audit=self._audit_alias_override,
+                )
+            except ValueError as exc:
+                raise RowValidationError(str(exc)) from exc
         return df
+
+    def _audit_alias_override(self, detail: Mapping[str, object]) -> None:
+        """覆盖审计与本 importer 的业务 UPSERT 同事务提交或回滚。"""
+        payload = {"provider": PROVIDER, "dataset": self.DATASET, **detail}
+        self.conn.execute(
+            "INSERT INTO ops.data_quality_check(rule,severity,detail) VALUES (%s,%s,%s)",
+            (
+                "tushare_stock_alias_metadata_override",
+                "info",
+                json.dumps(payload, ensure_ascii=False, allow_nan=False),
+            ),
+        )
+        self.log.info(
+            "Alias metadata reconciliation validated day=%s field=%s old_code=%s "
+            "canonical_code=%s old_value=%s new_value=%s rule=%s",
+            detail["trading_day"],
+            detail["field"],
+            detail["old_code"],
+            detail["canonical_code"],
+            detail["old_value"],
+            detail["new_value"],
+            detail["processing_rule"],
+        )
+
+    def _alias_price_evidence(
+        self, frame: pd.DataFrame, canonical: Mapping[int, str]
+    ) -> dict[tuple[int, date], Mapping[str, object]]:
+        """只为新授权的涨跌状态冲突读取源 OHLC 与限价，不使用估算限价。"""
+        if self.DATASET != "valuation_1d" or "limit_status" not in frame:
+            return {}
+        relevant = frame.loc[
+            frame["ts_code"].isin(["000022.SZ", "001872.SZ", "000043.SZ", "001914.SZ"])
+        ]
+        groups = []
+        for key, group in relevant.groupby(["instrument_id", "trading_day"], sort=False):
+            if group["limit_status"].nunique(dropna=False) <= 1:
+                continue
+            preferred_code = canonical.get(int(str(key[0])))
+            if preferred_code is None:
+                continue
+            current = group.loc[group["ts_code"].eq(preferred_code)]
+            if len(current) != 1 or pd.isna(current.iloc[0]["limit_status"]):
+                continue
+            if Decimal(str(current.iloc[0]["limit_status"])).is_finite():
+                groups.append((key, group))
+        if not groups:
+            return {}
+        adapter = self._adapter()
+        months = sorted({pd.Timestamp(str(key[1])).strftime("%Y-%m") for key, _ in groups})
+        observations = {}
+        codes = set(relevant["ts_code"])
+        for dataset in ("daily", "stk_limit"):
+            adapter.require_months(dataset, months)
+            raw = _daily_rows(adapter.read_all_months(dataset), dataset)
+            observations[dataset] = raw.loc[raw["ts_code"].isin(codes)]
+        daily, limits = observations["daily"], observations["stk_limit"]
+
+        def unique_value(series: pd.Series, field: str) -> Decimal:
+            if series.empty or series.isna().any():
+                raise ValueError(f"Missing alias price evidence field={field}")
+            values = {Decimal(str(value)) for value in series}
+            if len(values) != 1 or not all(value.is_finite() for value in values):
+                raise ValueError(f"Conflicting alias price evidence field={field}")
+            return next(iter(values))
+
+        result = {}
+        for key, group in groups:
+            day = pd.Timestamp(str(key[1])).date()
+            quotes = daily.loc[
+                daily["trade_date"].eq(day) & daily["ts_code"].isin(group["ts_code"])
+            ]
+            bounds = limits.loc[
+                limits["trade_date"].eq(day) & limits["ts_code"].isin(group["ts_code"])
+            ]
+            evidence = {
+                name: unique_value(quotes[name], name)
+                for name in ("open", "high", "low", "close", "pre_close")
+            }
+            evidence.update(
+                limit_up=unique_value(bounds["up_limit"], "limit_up"),
+                limit_down=unique_value(bounds["down_limit"], "limit_down"),
+            )
+            if (
+                "close" not in group
+                or unique_value(group["close"], "daily_basic.close") != evidence["close"]
+            ):
+                raise ValueError("Alias daily_basic close differs from daily price evidence")
+            if "pre_close" in bounds:
+                observed = bounds["pre_close"].dropna()
+                if any(
+                    abs(Decimal(str(value)) - evidence["pre_close"]) > Decimal("0.011")
+                    for value in observed
+                ):
+                    raise ValueError("Alias price limits use a different pre_close")
+            result[(int(str(key[0])), day)] = evidence
+        return result
 
 
 class _BaseBarsImporter(_SymbolResolvingImporter):
@@ -218,16 +334,16 @@ class _BaseBarsImporter(_SymbolResolvingImporter):
         """
         required = [c for c in self.PRICE_COLUMNS if c not in self.OPTIONAL_PRICE_COLUMNS]
         if not np.isfinite(df[required].to_numpy(dtype=float)).all():
-            raise ValueError(f"{source} 含非有限价格（{'/'.join(required)}）")
+            raise RowValidationError(f"{source} 含非有限价格（{'/'.join(required)}）")
 
         values = df[list(self.PRICE_COLUMNS)].to_numpy(dtype=float)
         if np.isinf(values).any():
-            raise ValueError(f"{source} 含非有限价格")
+            raise RowValidationError(f"{source} 含非有限价格")
         # nan_to_num 只是为了让缺失值不参与「非正」判定，不改动任何入库值
         if (np.nan_to_num(values, nan=1.0) <= 0).any():
-            raise ValueError(f"{source} 含非正价格")
+            raise RowValidationError(f"{source} 含非正价格")
         if (df["high"] < df["low"]).any():
-            raise ValueError(f"{source} 含 high < low 的记录")
+            raise RowValidationError(f"{source} 含 high < low 的记录")
 
         for col in self.OPTIONAL_PRICE_COLUMNS:
             missing = int((~np.isfinite(df[col].to_numpy(dtype=float))).sum())
@@ -253,13 +369,15 @@ class _BaseBarsImporter(_SymbolResolvingImporter):
             )
 
 
-class StockBars1dImporter(_BaseBarsImporter):
+class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
     """daily + adj_factor + stk_limit + suspend_d → market.stock_bar_1d。"""
 
     DATASET = "stock_bar_1d"
     CONTRACT = contracts.bar_1d("stock")
 
-    def build(self) -> pd.DataFrame:
+    BJ_SOURCE_DATASET = "daily"
+
+    def _build_strict(self) -> pd.DataFrame:
         adapter = self._adapter()
         months = adapter.selected_months("daily")
         # 复权因子与涨跌停按月与日线配套；缺整月不能静默写 NULL 覆盖库内已有值。
@@ -277,6 +395,8 @@ class StockBars1dImporter(_BaseBarsImporter):
         market = _daily_rows(daily, "daily")
 
         market = self._merge_adj_factor(market, adapter)
+        if market.empty:
+            return pd.DataFrame(columns=list(self.contract.columns))
 
         _to_numeric_strict(
             market, ["open", "high", "low", "close", "pre_close", "vol", "amount"], "daily"
@@ -285,9 +405,9 @@ class StockBars1dImporter(_BaseBarsImporter):
         flow = market[["vol", "amount"]].to_numpy(dtype=float)
         # 缺失或非数值（coerce 后为 NaN）不能静默写成 NULL：无成交应是 0，不是「不知道」。
         if not np.isfinite(flow).all():
-            raise ValueError("daily 含缺失、非数值或非有限的成交量或成交额")
+            raise RowValidationError("daily 含缺失、非数值或非有限的成交量或成交额")
         if (flow < 0).any():
-            raise ValueError("daily 含负成交量或成交额")
+            raise RowValidationError("daily 含负成交量或成交额")
 
         market["dt"] = market["trade_date"]
         market = self._merge_limits(market, adapter)
@@ -319,23 +439,25 @@ class StockBars1dImporter(_BaseBarsImporter):
     def _merge_adj_factor(self, market: pd.DataFrame, adapter: TushareAdapter) -> pd.DataFrame:
         """合并复权因子。
 
-        缺失直接抛错，不用默认值 1 兜底——``adj_factor`` 在目标表是 NOT NULL，
+        BJ 失败转待处理，其他缺失直接抛错；不用默认值 1 兜底——``adj_factor`` 在目标表是 NOT NULL，
         用 1 冒充「未知」会让下游的前复权价格静默算错。
         """
         adj = adapter.read_all_months("adj_factor")
         if adj.empty:
             raise ValueError("缺少 adj_factor raw 数据；股票日线必须带复权因子")
         _require(adj, {"ts_code", "trade_date", "adj_factor"}, "adj_factor")
-        adj = _daily_rows(adj, "adj_factor")[["ts_code", "trade_date", "adj_factor"]]
+        adj = expand_stock_auxiliary_aliases(_daily_rows(adj, "adj_factor"))[
+            ["ts_code", "trade_date", "adj_factor"]
+        ]
         merged = market.merge(adj, on=["ts_code", "trade_date"], how="left", validate="one_to_one")
         missing = int(merged["adj_factor"].isna().sum())
         if missing:
-            raise ValueError(f"daily 有 {missing} 行缺少 adj_factor")
+            raise RowValidationError(f"daily 有 {missing} 行缺少 adj_factor")
         merged["adj_factor"] = pd.to_numeric(merged["adj_factor"], errors="coerce")
         if not np.isfinite(merged["adj_factor"].to_numpy(dtype=float)).all():
-            raise ValueError("adj_factor 含非有限值")
+            raise RowValidationError("adj_factor 含非有限值")
         if (merged["adj_factor"] <= 0).any():
-            raise ValueError("adj_factor 含非正值")
+            raise RowValidationError("adj_factor 含非正值")
         return merged
 
     def _merge_limits(self, market: pd.DataFrame, adapter: TushareAdapter) -> pd.DataFrame:
@@ -355,14 +477,23 @@ class StockBars1dImporter(_BaseBarsImporter):
         limits = adapter.read_all_months("stk_limit")
         if limits.empty:
             # 分区存在（build 已校验）但为空：涨跌停整体缺失，留 NULL 并要求复核。
-            self._soft(f"stk_limit partitions are empty; {len(market)} rows keep NULL limits")
+            count = len(market)
+            if self._bj_scope and any(
+                len(frame)
+                for (dataset, _), frame in self._bj_sources.items()
+                if dataset == "stk_limit"
+            ):
+                # BJ 子集无匹配限价不代表原分区为空；首日无前收的合法缺失仍保留。
+                count = int((~first_day).sum())
+            if count:
+                self._soft(f"stk_limit partitions are empty; {count} rows keep NULL limits")
             market["limit_up"] = None
             market["limit_down"] = None
             market["price_limit_status"] = "UNKNOWN"
             return market
 
         _require(limits, {"ts_code", "trade_date", "up_limit", "down_limit"}, "stk_limit")
-        lim = _daily_rows(limits, "stk_limit")
+        lim = expand_stock_auxiliary_aliases(_daily_rows(limits, "stk_limit"))
         lim["has_limit_row"] = True
         keep = ["ts_code", "trade_date", "up_limit", "down_limit", "has_limit_row"]
         if "pre_close" in lim.columns:
@@ -432,7 +563,8 @@ class StockBars1dImporter(_BaseBarsImporter):
         merged["limit_up"] = merged["up_limit"]
         merged["limit_down"] = merged["down_limit"]
         merged["price_limit_status"] = status
-        return merged
+        # 诊断关联列已用于验证，不属于最终行情；避免缺失诊断值造成虚假的别名冲突。
+        return merged.drop(columns=["has_limit_row", "limit_pre_close"], errors="ignore")
 
     def _record_no_limit(self, rows: int) -> None:
         """留痕：哨兵值写 NULL 属正常语义，但需要能追溯本次识别了多少行。"""
@@ -766,7 +898,7 @@ _DAILY_BASIC_SCALE = {
 }
 
 
-class ValuationImporter(_SymbolResolvingImporter):
+class ValuationImporter(BJPendingImporter, _SymbolResolvingImporter):
     """daily_basic → fundamental.valuation_1d（每日估值、股本与换手快照，G3）。
 
     这是 daily_basic 在库内**唯一**的落点，源字段一个只落一处；完整源行留在 raw
@@ -806,7 +938,54 @@ class ValuationImporter(_SymbolResolvingImporter):
         "volume_ratio",
     )
 
-    def build(self) -> pd.DataFrame:
+    def _audit_extreme_ratios(self, frame: pd.DataFrame) -> None:
+        """对已严格转数值的估值逐字段留痕：绝对值超过 1e6 时原值保留，随业务提交。"""
+        records = []
+        for field in ("pe", "pe_ttm", "ps", "ps_ttm"):
+            values = frame[field]
+            selected = frame.loc[
+                np.isfinite(values) & values.abs().gt(1_000_000),
+                ["instrument_id", "trading_day", "ts_code", field],
+            ]
+            for instrument_id, day, code, value in selected.itertuples(index=False, name=None):
+                payload = {
+                    "provider": PROVIDER,
+                    "dataset": self.DATASET,
+                    "instrument_id": int(instrument_id),
+                    "trading_day": day.isoformat(),
+                    "source_code": str(code),
+                    "field": field,
+                    "source_value": str(value),
+                    "retained_value": str(value),
+                    "threshold": "1000000",
+                    "processing_rule": "absolute_value_gt_threshold_preserve",
+                    "note": "极端值保留原值、因子层处理",
+                }
+                records.append(
+                    (
+                        "tushare_valuation_extreme_ratio",
+                        "info",
+                        json.dumps(payload, ensure_ascii=False, allow_nan=False),
+                    )
+                )
+        if records:
+            with self.conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO ops.data_quality_check(rule,severity,detail) VALUES (%s,%s,%s)",
+                    records,
+                )
+            self.log.info(
+                "Extreme valuation ratios retained provider=%s dataset=%s fields=%d "
+                "threshold_abs_gt=1000000 target=%s",
+                PROVIDER,
+                self.DATASET,
+                len(records),
+                self.contract.qualified,
+            )
+
+    BJ_SOURCE_DATASET = "daily_basic"
+
+    def _build_strict(self) -> pd.DataFrame:
         # 缺列整列写 NULL 会经 UPSERT 覆盖库内已有值，必须硬失败；NULL 只能来自源值。
         numeric = [*_DAILY_BASIC_SCALE, *self._PASSTHROUGH]
         raw = self._read_selected(
@@ -830,7 +1009,11 @@ class ValuationImporter(_SymbolResolvingImporter):
         if invalid.any():
             # 枚举外的值说明源语义变了，CHECK 会拒掉整批；先在这里给出可定位的错误。
             bad = sorted(limit_status[invalid].unique())
-            raise ValueError(f"daily_basic.limit_status 含 0–6 以外的值: {bad}")
+            raise RowValidationError(f"daily_basic.limit_status 含 0–6 以外的值: {bad}")
+
+        self._audit_extreme_ratios(
+            df.drop_duplicates(subset=["instrument_id", "trading_day"], keep="last")
+        )
 
         out = pd.DataFrame(
             {
@@ -851,7 +1034,7 @@ class ValuationImporter(_SymbolResolvingImporter):
         return out[list(self.contract.columns)].reset_index(drop=True)
 
 
-class AdjFactorTsImporter(_SymbolResolvingImporter):
+class AdjFactorTsImporter(BJPendingImporter, _SymbolResolvingImporter):
     """adj_factor → market.adj_factor_ts（每日单值复权因子明细，D7）。
 
     与 `StockBars1dImporter` 回填 ``stock_bar_1d.adj_factor`` 列是两条独立的路：
@@ -864,7 +1047,9 @@ class AdjFactorTsImporter(_SymbolResolvingImporter):
     CONTRACT = contracts.ADJ_FACTOR_TS
     NOT_NULL_COLUMNS = ("instrument_id", "trading_day", "adj_factor", "source")
 
-    def build(self) -> pd.DataFrame:
+    BJ_SOURCE_DATASET = "adj_factor"
+
+    def _build_strict(self) -> pd.DataFrame:
         raw = self._read_selected("adj_factor")
         if raw.empty:
             self.log.warning("adj_factor 无 raw 数据")
@@ -878,7 +1063,7 @@ class AdjFactorTsImporter(_SymbolResolvingImporter):
 
         bad = ~np.isfinite(df["adj_factor"].to_numpy(dtype=float)) | (df["adj_factor"] <= 0)
         if bad.any():
-            raise ValueError(f"adj_factor 含 {int(bad.sum())} 行非正或非有限的复权因子")
+            raise RowValidationError(f"adj_factor 含 {int(bad.sum())} 行非正或非有限的复权因子")
 
         df = self._attach_ids(df, self._id_map())
         if df.empty:

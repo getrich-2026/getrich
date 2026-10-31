@@ -50,6 +50,23 @@ _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 PROVIDER = "tushare"
 
+
+def _raw_dates(frame: pd.DataFrame, source: str) -> pd.Series:
+    """原始层保留 BJ 非法日期供 ingest 待处理，其他市场仍拒绝坏日期。"""
+    dates = pd.to_datetime(frame["trade_date"], format="%Y%m%d", errors="coerce")
+    bj = pd.Series(False, index=frame.index)
+    if (
+        source in {"daily", "adj_factor", "stk_limit", "daily_basic", "suspend_d"}
+        and "ts_code" in frame
+    ):
+        bj = frame["ts_code"].astype("string").str.strip().str.endswith(".BJ", na=False)
+    if (dates.isna() & ~bj).any():
+        # 仍走原来的严格日期解析，空日期额外拒绝。
+        pd.to_datetime(frame.loc[~bj, "trade_date"], format="%Y%m%d", errors="raise")
+        raise ValueError(f"{source} contains empty trade_date")
+    return dates
+
+
 INIT_START_DATE = 20130101
 
 # 交易日列表取自哪个交易所的日历。沪深交易日相同，取其一即可。
@@ -239,7 +256,7 @@ class _DailyFetcher(BaseFetcher):
             # start_date 可能落在月中；只替换已请求的交易日，保留月内其余日期。
             # 空响应同样替换对应日期，避免已撤销的 suspend_d 事件一直残留。
             if old is not None and not old.empty:
-                old_dates = pd.to_datetime(old["trade_date"], format="%Y%m%d", errors="raise")
+                old_dates = _raw_dates(old, self.DATASET)
                 in_scope = self._in_scope(old)
                 if (
                     self.DATASET != "suspend_d"
@@ -281,10 +298,11 @@ class _DailyFetcher(BaseFetcher):
             if not out_df.empty:
                 # 新旧 raw 可能分别使用 int8／字符串日期，Arrow 不能序列化混合列。
                 # 仅统一为 YYYYMMDD 字符串，不改源日期含义、字段名或数值单位。
-                dates = pd.to_datetime(out_df["trade_date"], format="%Y%m%d", errors="raise")
-                if dates.isna().any():
-                    raise ValueError(f"{self.DATASET}[{ym}] 含空 trade_date，拒绝覆盖")
-                out_df["trade_date"] = dates.dt.strftime("%Y%m%d")
+                dates = _raw_dates(out_df, self.DATASET)
+                original_dates = out_df["trade_date"]
+                out_df["trade_date"] = dates.dt.strftime("%Y%m%d").where(
+                    dates.notna(), original_dates.astype("string")
+                )
             write_parquet(out_df, out, append=False)
             if self.DATASET == "suspend_d":
                 publish_coverage(out, covered_days)

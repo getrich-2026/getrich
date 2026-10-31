@@ -7,11 +7,17 @@ from io import BytesIO
 import pandas as pd
 
 from gr_data.common.paths import RawPaths
+from gr_data.common.quality import RowValidationError
+from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.raw.tushare.suspension_store import normalize_events, read_coverage
 
 
 def read_suspensions(
-    paths: RawPaths, months: tuple[str, ...], *, required: bool
+    paths: RawPaths,
+    months: tuple[str, ...],
+    *,
+    required: bool,
+    adapter: TushareAdapter | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """读取指定月分区；required=False 容许缺文件／旧凭据，损坏仍报错。
 
@@ -32,9 +38,14 @@ def read_suspensions(
                 raise ValueError(f"Missing suspension coverage; recapture suspend_d: {month}")
             continue
         days, observed, digest = proof
-        frame = normalize_events(pd.read_parquet(BytesIO(content)))
+        raw = (
+            adapter.read_month("suspend_d", month) if adapter else pd.read_parquet(BytesIO(content))
+        )
+        if raw is None:
+            raise ValueError(f"Missing suspension partition: {month}")
+        frame = normalize_events(raw)
         if not frame["trade_date"].isin(days).all():
-            raise ValueError(f"Suspension events outside proven coverage: {month}")
+            raise RowValidationError(f"Suspension events outside proven coverage: {month}")
         frame["observed_at"] = observed
         events.append(frame)
         coverage.extend(

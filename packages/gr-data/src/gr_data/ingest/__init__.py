@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import date
 from typing import Any
+from uuid import uuid4
 
 import psycopg
 from gr_tools.config import SettingsError, parse_bool
@@ -12,6 +14,7 @@ from gr_tools.config import SettingsError, parse_bool
 from gr_data.common.ownership import OwnershipError
 from gr_data.common.parquet import CorruptRawError
 from gr_data.common.paths import RawPaths
+from gr_data.common.quality import RowValidationError
 from gr_data.config.pipeline import Config
 from gr_data.ingest.base import IngestContext, IngestGateError, IngestResult, IngestStopError
 
@@ -27,7 +30,7 @@ TUSHARE_OPTION_WRITERS = frozenset(
     }
 )
 
-_EXPECTED_FAILURES = (IngestGateError, CorruptRawError, OwnershipError)
+_EXPECTED_FAILURES = (IngestGateError, RowValidationError, CorruptRawError, OwnershipError)
 
 
 class UnknownImporterError(RuntimeError):
@@ -202,11 +205,15 @@ def run_provider(
     force_ownership: bool = False,
     months: tuple[str, ...] | None = None,
     observation_id: str | None = None,
+    batch_id: str | None = None,
+    requested_days: tuple[date, ...] | None = None,
 ) -> list[IngestResult]:
     """运行某 provider 下启用的（或 only 指定的）importer。
 
     `months` 限定只处理哪些自然月，用于把大数据集分批入库（见
     `IngestContext.months` 里关于内存的说明）。None = 全部。
+    `batch_id` 标识 BJ 待处理批次，省略时每次调用生成新批次；回补应显式固定。
+    `requested_days` 是批次请求范围，仅作 BJ 行级范围校验，不推断交易所日历。
     """
     validate_observation_selection(provider, only, observation_id)
     registry, _ = _registry_groups(provider)
@@ -217,6 +224,8 @@ def run_provider(
         force_ownership=force_ownership,
         months=months,
         observation_id=observation_id,
+        batch_id=batch_id or uuid4().hex,
+        requested_days=requested_days,
     )
     kwargs = _provider_kwargs(provider, cfg)
     results: list[IngestResult] = []

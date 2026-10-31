@@ -26,6 +26,33 @@ def _ctx(paths, start=20240101, end=20240131, **scope):
     )
 
 
+@pytest.mark.parametrize(
+    "code,continues", [("920047.BJ", True), ("600000.SH", False), ("000001.SZ", False)]
+)
+def test_only_bj_bad_raw_date_is_retained_for_pending(tmp_raw_root, code, continues):
+    from gr_data.raw.tushare.fetchers.market import Bars1dFetcher
+
+    _calendar(tmp_raw_root, days=("20240102",))
+    client = Client(
+        lambda api, params: pd.DataFrame(
+            [
+                {"ts_code": "600000.SH", "trade_date": params["trade_date"], "close": 30.0},
+                {"ts_code": code, "trade_date": "bad-date", "close": 30.0},
+            ]
+        )
+    )
+    fetcher = Bars1dFetcher(client, _ctx(tmp_raw_root, start=20240102, end=20240102))
+    path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
+    if continues:
+        assert fetcher.fetch("init") == 1
+        frame = pd.read_parquet(path)
+        assert frame.trade_date.tolist() == ["20240102", "bad-date"]
+    else:
+        with pytest.raises(ValueError):
+            fetcher.fetch("init")
+        assert not path.exists()
+
+
 def _write(paths, dataset, name, rows):
     write_parquet(pd.DataFrame(rows), paths.dataset_file("tushare", dataset, name), append=False)
 

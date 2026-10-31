@@ -11,6 +11,10 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 
+class RowValidationError(ValueError):
+    """可归因到输入记录的校验失败；文件、配置及基础设施错误不使用此类型。"""
+
+
 @dataclass
 class QualityReport:
     dataset: str

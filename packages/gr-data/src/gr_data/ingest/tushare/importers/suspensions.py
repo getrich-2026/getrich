@@ -8,14 +8,16 @@ import pandas as pd
 
 from gr_data.common import contracts
 from gr_data.common.ownership import OwnershipManager
+from gr_data.common.quality import RowValidationError
 from gr_data.common.trading_status import event_flags, resolve_trading_status
 from gr_data.db.copy import upsert_rows
-from gr_data.ingest.base import BaseImporter, IngestResult
+from gr_data.ingest.base import IngestResult
 from gr_data.ingest.tushare.adapter import TushareAdapter
+from gr_data.ingest.tushare.bj_pending import BJPendingImporter
 from gr_data.ingest.tushare.suspensions import read_suspensions
 
 
-class SuspensionImporter(BaseImporter):
+class SuspensionImporter(BJPendingImporter):
     """按有证据的日期替换事件，保留其他日期；空响应可撤销旧事件。
 
     所有输入及标的映射必须完整，失败整体回滚。没有覆盖凭据的旧 raw 须重抓。
@@ -26,7 +28,9 @@ class SuspensionImporter(BaseImporter):
     DATASET = "suspend_d"
     CONTRACT = contracts.STOCK_SUSPEND_EVENT
 
-    def build(self) -> pd.DataFrame:
+    BJ_SOURCE_DATASET = "suspend_d"
+
+    def _build_strict(self) -> pd.DataFrame:
         months = self.ctx.months
         if months is None:
             adapter = TushareAdapter(self.paths)
@@ -35,7 +39,9 @@ class SuspensionImporter(BaseImporter):
             self.soft_warnings.extend(adapter.notices)
         if not months:
             raise ValueError("No suspension partitions selected")
-        raw, self.coverage = read_suspensions(self.paths, months, required=True)
+        raw, self.coverage = read_suspensions(
+            self.paths, months, required=True, adapter=self._adapter()
+        )
         cur = self.conn.execute(
             "SELECT source_symbol, instrument_id FROM meta.symbol_map WHERE source = %s",
             (self.PROVIDER,),
@@ -43,7 +49,7 @@ class SuspensionImporter(BaseImporter):
         mapping = dict(cur.fetchall())
         ids = raw["ts_code"].map(mapping)
         if ids.isna().any():
-            raise ValueError(f"Unmapped suspension symbols: {int(ids.isna().sum())}")
+            raise RowValidationError(f"Unmapped suspension symbols: {int(ids.isna().sum())}")
         result = raw.rename(columns={"ts_code": "source_symbol", "trade_date": "trading_day"})
         result["instrument_id"] = ids.astype("int64")
         result["source"] = self.PROVIDER

@@ -728,7 +728,8 @@ def pg_conn(pg_dsn):
               classify.instrument_industry, classify.industry_node,
               classify.instrument_category, classify.scheme,
               realtime.tick_buffer, ops.table_ownership, ops.etl_job_run,
-              ops.data_quality_check, factor.import_checkpoint, factor.import_receipt,
+              ops.data_quality_check, ops.tushare_bj_pending,
+              factor.import_checkpoint, factor.import_receipt,
               factor.dataset_variant, factor.model_run_binding
             RESTART IDENTITY CASCADE
             """

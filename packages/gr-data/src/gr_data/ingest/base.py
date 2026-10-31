@@ -76,6 +76,8 @@ class IngestContext:
     #: 默认 None 时行为与以前完全一致。
     months: tuple[str, ...] | None = None
     observation_id: str | None = None  # 仅米筐风险五件套允许显式选择不可变观察
+    batch_id: str | None = None  # BJ 待处理记录的调用批次；回补按任务／月份固定
+    requested_days: tuple[date, ...] | None = None  # 批次实际请求日期，不推断为某交易所日历
 
 
 @dataclass

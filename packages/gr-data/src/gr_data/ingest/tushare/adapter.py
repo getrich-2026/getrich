@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 
 import pandas as pd
 
@@ -33,13 +34,20 @@ _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
 class TushareAdapter:
-    def __init__(self, paths: RawPaths, months: tuple[str, ...] | None = None):
+    def __init__(
+        self,
+        paths: RawPaths,
+        months: tuple[str, ...] | None = None,
+        *,
+        overrides: Mapping[tuple[str, str], pd.DataFrame] | None = None,
+    ):
         self.paths = paths
         # None = 全部月份（默认，与以前一致）；给了就只读这些月，见
         # IngestContext.months 里关于内存的说明。
         self.months = months
         #: 软告警（如残留临时文件），由 importer 汇总进运行结果。
         self.notices: list[str] = []
+        self._overrides = overrides or {}
 
     def read_instruments(self, asset: str) -> pd.DataFrame | None:
         return read_parquet_strict(self.paths.dataset_file(PROVIDER, "instruments", asset))
@@ -77,6 +85,8 @@ class TushareAdapter:
         return months
 
     def read_month(self, dataset: str, ym: str) -> pd.DataFrame | None:
+        if (dataset, ym) in self._overrides:
+            return self._overrides[dataset, ym].copy()
         return read_parquet_strict(self.paths.dataset_file(PROVIDER, dataset, ym))
 
     def read_all_months(self, dataset: str) -> pd.DataFrame:

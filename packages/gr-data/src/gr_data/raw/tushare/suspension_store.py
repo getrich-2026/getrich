@@ -10,6 +10,8 @@ from uuid import uuid4
 
 import pandas as pd
 
+from gr_data.common.quality import RowValidationError
+
 
 class InvalidCoverageError(ValueError):
     """凭据与分区不一致或内容非法；读取端拒绝消费，抓取端据此整月重建。"""
@@ -73,14 +75,17 @@ def normalize_events(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame[columns].copy()
     result["ts_code"] = result["ts_code"].astype("string").str.strip()
     if result["ts_code"].isna().any() or result["ts_code"].eq("").any():
-        raise ValueError("suspend_d contains empty symbols")
-    dates = pd.to_datetime(result["trade_date"].astype(str), format="%Y%m%d", errors="raise")
+        raise RowValidationError("suspend_d contains empty symbols")
+    try:
+        dates = pd.to_datetime(result["trade_date"].astype(str), format="%Y%m%d", errors="raise")
+    except ValueError as exc:
+        raise RowValidationError("suspend_d contains invalid dates") from exc
     if dates.isna().any() or not result["suspend_type"].isin(["S", "R"]).all():
-        raise ValueError("suspend_d contains invalid dates or event types")
+        raise RowValidationError("suspend_d contains invalid dates or event types")
     result["trade_date"] = dates.dt.date
     timing = result["suspend_timing"].astype("string").str.strip()
     result["suspend_timing"] = timing.mask(timing.eq(""), pd.NA)
     result = result.drop_duplicates()
     if result.duplicated(["ts_code", "trade_date", "suspend_type"]).any():
-        raise ValueError("suspend_d contains conflicting event timings")
+        raise RowValidationError("suspend_d contains conflicting event timings")
     return result.reset_index(drop=True)
