@@ -537,3 +537,76 @@ async def test_historical_correlation_and_volatility_on_real_sql(
     report = await svc.get_report(db, UUID(accepted["snapshot_id"]), user_id=str(user_a))
     kinds = {s["section_id"]: s["content"]["status"] for s in report["sections"]}
     assert kinds["hist:risk"] == kinds["hist:diversification"] == "ready"
+
+
+async def test_model_risk_path_with_injected_risk_model(
+    diagnosis_db: tuple[DictConnection, UUID, UUID], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """注入风险截面走完整服务路径：模型身份回显、B／D 模型口径出数、未识别份额时整体阻断。"""
+    import numpy as np
+    from gr_api.diagnosis_calc.model_risk import RiskModelInputs
+
+    db, user_a, _ = diagnosis_db
+    async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT symbol, instrument_id FROM meta.instruments WHERE symbol = ANY(%s)",
+            ([_SYMBOL_A, _SYMBOL_B],),
+        )
+        ids = {r["symbol"]: r["instrument_id"] for r in await cur.fetchall()}
+
+    async def loaded(*_args: object, **_kwargs: object) -> svc.LoadedRiskModel:
+        return svc.LoadedRiskModel(
+            inputs=RiskModelInputs(
+                factor_codes=("comovement", "size"),
+                factor_covariance=np.array([[0.04, 0.002], [0.002, 0.01]]),
+                exposures={
+                    ids[_SYMBOL_A]: np.array([1.0, 0.5]),
+                    ids[_SYMBOL_B]: np.array([0.9, -0.3]),
+                },
+                specific_variance={ids[_SYMBOL_A]: 0.02, ids[_SYMBOL_B]: 0.03},
+                market_factor="comovement",
+                style_factors=frozenset({"size"}),
+            ),
+            model_id="rq_test_model",
+            model_version="v2",
+            model_date=_AS_OF,
+        )
+
+    monkeypatch.setattr(svc, "_load_risk_model", loaded)
+    pair = [
+        HoldingItem(symbol=_SYMBOL_A, weight=Decimal(60)),
+        HoldingItem(symbol=_SYMBOL_B, weight=Decimal(40)),
+    ]
+    accepted, _ = await svc.create_snapshot(db, _request("model", pair), user_id=str(user_a))
+    result = await svc.get_result(db, UUID(accepted["snapshot_id"]), user_id=str(user_a))
+    plan = result["plans"][0]
+    assert plan["cov"]["forward_model"] == {
+        "model_id": "rq_test_model",
+        "model_version": "v2",
+        "model_date": _AS_OF.isoformat(),
+    }
+    assert plan["cov"]["primary"] == "forward"
+    assert "forward" in plan["cov"]["computed"]
+    risk = plan["section_b"]["value"]
+    vol = risk["volatility"]["by_method"]["forward"]["value"]
+    w = np.array([0.6, 0.4])
+    b = np.array([[1.0, 0.5], [0.9, -0.3]])
+    sigma = b @ np.array([[0.04, 0.002], [0.002, 0.01]]) @ b.T + np.diag([0.02, 0.03])
+    assert vol == pytest.approx(float(np.sqrt(w @ sigma @ w)))
+    assert risk["l4_effective_count"]["status"] == "ok"
+    assert plan["section_d"]["value"]["style_exposure"]["value"] == pytest.approx(
+        {"size": 0.6 * 0.5 + 0.4 * -0.3}
+    )
+    assert any("rq_test_model" in text for text in result["disclosures"])
+    report = await svc.get_report(
+        db, UUID(accepted["snapshot_id"]), user_id=str(user_a), user_level="pro"
+    )
+    risk_blocks = {s["section_id"]: s for s in report["sections"]}["model:risk"]["content"]
+    assert risk_blocks["status"] == "ready"
+
+    partial = [*pair, HoldingItem(symbol="GARBAGE", weight=Decimal(10))]
+    accepted, _ = await svc.create_snapshot(db, _request("partial", partial), user_id=str(user_a))
+    result = await svc.get_result(db, UUID(accepted["snapshot_id"]), user_id=str(user_a))
+    risk = result["plans"][0]["section_b"]["value"]
+    assert risk["volatility"]["by_method"]["forward"]["reason_code"] == "coverage_below_threshold"
+    assert risk["l3_effective_count"]["reason_code"] == "coverage_below_threshold"

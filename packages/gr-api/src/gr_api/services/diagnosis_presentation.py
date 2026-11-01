@@ -10,7 +10,11 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
-from gr_api.diagnosis_calc.coverage import apply_exposure_coverage, effective_coverage
+from gr_api.diagnosis_calc.coverage import (
+    apply_exposure_coverage,
+    apply_model_coverage,
+    effective_coverage,
+)
 from gr_api.diagnosis_calc.exposure import MISSING_OR_INVALID, NON_POSITIVE, UNCLASSIFIED
 from gr_api.diagnosis_calc.metrics import has_value
 from gr_api.schemas.diagnosis_response import (
@@ -187,6 +191,16 @@ def _plan_issues(plan: dict[str, Any], facts: dict[str, Any]) -> list[dict[str, 
                     "paths": [f"/section_a/value/{metric_id}"],
                 }
             )
+    model_facts = facts.get("model") or {}
+    if model_facts.get("missing"):
+        issues.append(
+            {
+                "code": "model_data_missing",
+                "reason": "缺少模型暴露或特质风险，完整组合模型指标不可用："
+                + "、".join(names.get(i, str(i)) for i in model_facts["missing"]),
+                "paths": ["/section_b/value", "/section_d/value/correlation"],
+            }
+        )
     history = facts.get("history") or {}
     if history.get("volatility_insufficient"):
         issues.append(
@@ -221,17 +235,33 @@ def _plan_disclosures(summary: dict[str, Any]) -> list[str]:
     return out
 
 
-def snapshot_disclosures(snapshot: dict[str, Any]) -> list[str]:
+def snapshot_disclosures(
+    snapshot: dict[str, Any], forward_models: list[dict[str, Any]] | None = None
+) -> list[str]:
     snapshot_at = snapshot["data_snapshot_at"].strftime("%Y-%m-%d %H:%M")
-    return [
+    out = [
         f"本报告基于 {snapshot_at} 发布的数据快照计算，诊断日期 {snapshot['resolved_as_of_date']}；"
         "数据供应商的后续修订不会反映在本报告中。",
         "本报告分析当前输入持仓的构成，不代表用户的真实收益，也不构成投资建议。",
         "历史相关性与个股历史年化波动率基于复权日简单收益，剔除停牌日与跨停牌收益，"
         "描述的是统计区间内的历史表现，不代表未来风险。",
-        "风险模型（米筐 v2）口径指标、个股 Beta、组合回放与压力测试尚未开放，"
-        "相关指标显示为不可用，不以历史协方差或价格指数替代。",
     ]
+    models = sorted(
+        {(m["model_id"], m["model_version"], str(m["model_date"])) for m in forward_models or []}
+    )
+    if models:
+        out += [
+            f"模型口径指标基于风险模型 {mid}（版本 {ver}，截面日 {day}），"
+            "默认信任供应商模型，不代表模型已完成校准。"
+            for mid, ver, day in models
+        ]
+        out.append("个股 Beta、组合回放与压力测试尚未开放，不以价格指数替代全收益基准。")
+    else:
+        out.append(
+            "风险模型（米筐 v2）口径指标、个股 Beta、组合回放与压力测试尚未开放，"
+            "相关指标显示为不可用，不以历史协方差或价格指数替代。"
+        )
+    return out
 
 
 def assemble(
@@ -285,6 +315,15 @@ def assemble(
                         params=params,
                     )
                 )
+            if payload["section_b"]["status"] == payload["section_d"]["status"] == "ready":
+                risk, structure = apply_model_coverage(
+                    payload["section_b"]["value"],
+                    payload["section_d"]["value"],
+                    resolved_weight=summary["resolved_weight"],
+                    model_facts=facts.get("model"),
+                    params=params,
+                )
+                payload["section_b"], payload["section_d"] = ready(risk), ready(structure)
             plan = {
                 **payload,
                 **base,
@@ -296,6 +335,10 @@ def assemble(
                 "profile": dict(PROFILE_UNAVAILABLE),
             }
         coverage = {"symbol_resolution": summary["resolved_weight"]}
+        if facts.get("model"):
+            coverage["risk_model"] = summary["resolved_weight"] * float(
+                facts["model"].get("coverage", 1.0)
+            )
         for source, metric_id in DATA_COVERAGE_KEYS.items():
             if source in (facts.get("coverage") or {}):
                 coverage[source] = effective_coverage(metric_id, summary["resolved_weight"], facts)
@@ -309,7 +352,9 @@ def assemble(
         )
         plans.append(plan)
 
-    disclosures = snapshot_disclosures(snapshot)
+    disclosures = snapshot_disclosures(
+        snapshot, [p["cov"]["forward_model"] for p in plans if p["cov"].get("forward_model")]
+    )
     comparison = (
         unavailable("not_applicable", "单方案不适用方案比较。")
         if len(plans) == 1
@@ -493,26 +538,154 @@ def _exposure_blocks(
     return blocks
 
 
-def _risk_blocks(risk: dict[str, Any], names: dict[str, str]) -> list[dict[str, Any]]:
-    """逐股历史年化波动率卡片；模型口径不可用时给出原因，不展示历史协方差组合波动。"""
-    blocks: list[dict[str, Any]] = []
-    model = risk["volatility"]["by_method"].get("forward")
-    if model and not has_value(model):
-        blocks.append({"type": "text", "text": f"模型风险：{model['reason']}"})
+def _name(names: dict[str, str], instrument_id: object) -> str:
+    return names.get(str(instrument_id), str(instrument_id))
+
+
+def _card(
+    metric_id: str, label: str, value: dict[str, Any], fmt: str, decimals: int
+) -> dict[str, Any]:
+    return {
+        "metric_id": metric_id,
+        "label": label,
+        "value": value,
+        "format": fmt,
+        "decimals": decimals,
+    }
+
+
+def _source_label(source: dict[str, Any], names: dict[str, str]) -> str:
+    if source["kind"] == "factor":
+        return f"与因子 {source['factor_code']} 对应的正交风险源"
+    return f"{_name(names, source['instrument_id'])} 的特质风险"
+
+
+def _per_stock(metric: dict[str, Any], instrument_id: int) -> dict[str, Any]:
+    """把按股票键的字典指标拆成单股卡片的值，保留原状态与原因。"""
+    if not has_value(metric):
+        return metric
+    return {**metric, "value": metric["value"][str(instrument_id)]}
+
+
+def _model_blocks(risk: dict[str, Any], names: dict[str, str], level: str) -> list[dict[str, Any]]:
+    """模型口径组合风险与逐股风险贡献。
+
+    L4 必须与市场源占比、最大风险源占比同时展示，并说明它描述风险源之间的方差集中度、
+    数值越大不代表越分散（计算指标清单 §4）。
+    """
+    forward = risk["volatility"]["by_method"]["forward"]
+    if not has_value(forward):
+        return [{"type": "text", "text": f"模型风险：{forward['reason']}"}]
+    largest = risk["l4_largest_source"]
+    largest_label = (
+        f"最大风险源占比（{_source_label(largest['value'], names)}）"
+        if has_value(largest)
+        else "最大风险源占比"
+    )
+    largest_value = (
+        {**largest, "value": largest["value"]["share"]} if has_value(largest) else largest
+    )
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "metric_cards",
+            "items": [
+                _card("volatility.forward", "模型年化波动率", forward, "percent", 1),
+                _card(
+                    "l3_effective_count",
+                    "风险有效持仓数（L3）",
+                    risk["l3_effective_count"],
+                    "number",
+                    2,
+                ),
+                _card(
+                    "l4_effective_count",
+                    "风险源方差集中度（L4）",
+                    risk["l4_effective_count"],
+                    "number",
+                    2,
+                ),
+                _card(
+                    "l4_market_source_share",
+                    "市场源占比",
+                    risk["l4_market_source_share"],
+                    "percent",
+                    1,
+                ),
+                _card("l4_largest_source", largest_label, largest_value, "percent", 1),
+            ],
+        },
+        {
+            "type": "text",
+            "text": "L4 描述模型下互不相关的风险源之间的方差集中度，数值越大不代表越分散；"
+            "市场因子主导时分散良好的组合 L4 反而可能接近 1。",
+        },
+    ]
+    ratio = risk["risk_contribution_ratio"]
+    if not has_value(ratio):
+        blocks.append({"type": "text", "text": f"风险贡献：{ratio['reason']}"})
+        return blocks
+    ids = [int(k) for k in ratio["value"]]
+    items = [
+        _card(
+            f"risk_contribution_ratio:{i}",
+            f"{_name(names, i)} 风险贡献占比",
+            _per_stock(ratio, i),
+            "percent",
+            1,
+        )
+        for i in ids
+    ]
+    if level == "pro":
+        items += [
+            _card(
+                f"risk_contribution:{i}",
+                f"{_name(names, i)} 风险贡献",
+                _per_stock(risk["risk_contribution"], i),
+                "percentage_point",
+                2,
+            )
+            for i in ids
+        ]
+        items += [
+            _card(
+                f"marginal_risk_contribution:{i}",
+                f"{_name(names, i)} 边际风险贡献",
+                _per_stock(risk["marginal_risk_contribution"], i),
+                "number",
+                4,
+            )
+            for i in ids
+        ]
+    blocks.append({"type": "metric_cards", "items": items})
+    if any(v < 0 for v in ratio["value"].values()):
+        blocks.append(
+            {
+                "type": "text",
+                "text": "部分持仓风险贡献为负，表示在当前模型下起风险抵消作用；"
+                "此时 L3 不能直接理解为独立股票数。",
+            }
+        )
+    return blocks
+
+
+def _risk_blocks(
+    risk: dict[str, Any], names: dict[str, str], level: str = "retail"
+) -> list[dict[str, Any]]:
+    """模型口径风险、逐股历史年化波动率；不可用项给出原因。"""
+    blocks = _model_blocks(risk, names, level)
     betas = risk["instrument_betas"]
     if has_value(betas):
         blocks.append(
             {
                 "type": "metric_cards",
                 "items": [
-                    {
-                        "metric_id": f"historical_volatility:{row['instrument_id']}",
-                        "label": f"{names.get(str(row['instrument_id']), row['instrument_id'])} "
-                        "历史年化波动率",
-                        "value": row["historical_volatility"],
-                        "format": "percent",
-                        "decimals": 1,
-                    }
+                    _card(
+                        f"historical_volatility:{row['instrument_id']}",
+                        f"{_name(names, row['instrument_id'])} 历史年化波动率",
+                        row["historical_volatility"],
+                        "percent",
+                        1,
+                    )
                     for row in betas["value"]
                 ],
             }
@@ -525,8 +698,22 @@ def _risk_blocks(risk: dict[str, Any], names: dict[str, str]) -> list[dict[str, 
     return blocks
 
 
+def _pairs_text(pairs: dict[str, Any], method: str, names: dict[str, str]) -> str | None:
+    if not has_value(pairs):
+        return None
+    label = METHOD_LABELS.get(method, method)
+    if not pairs["value"]:
+        return f"{label}口径下没有相关系数大于 0.7 的持仓对。"
+    lines = [
+        f"{_name(names, x['left_instrument_id'])} 与 {_name(names, x['right_instrument_id'])}："
+        f"{x['correlation']:.2f}"
+        for x in pairs["value"]
+    ]
+    return f"{label}高相关持仓对（相关系数大于 0.7）：" + "；".join(lines)
+
+
 def _structure_blocks(structure: dict[str, Any], names: dict[str, str]) -> list[dict[str, Any]]:
-    """相关性热力图（模型与历史并列）、平均两两相关与高相关持仓对（严格大于 0.7）。"""
+    """相关性热力图（模型与历史并列）、平均两两相关、高相关持仓对与风格暴露。"""
     blocks: list[dict[str, Any]] = [
         {
             "type": "correlation_matrix",
@@ -536,30 +723,39 @@ def _structure_blocks(structure: dict[str, Any], names: dict[str, str]) -> list[
         {
             "type": "metric_cards",
             "items": [
-                {
-                    "metric_id": f"avg_pairwise_correlation.{method}",
-                    "label": f"平均两两相关（{METHOD_LABELS.get(method, method)}）",
-                    "value": metric,
-                    "format": "number",
-                    "decimals": 2,
-                }
+                _card(
+                    f"avg_pairwise_correlation.{method}",
+                    f"平均两两相关（{METHOD_LABELS.get(method, method)}）",
+                    metric,
+                    "number",
+                    2,
+                )
                 for method, metric in structure["avg_pairwise_correlation"]["by_method"].items()
             ],
         },
     ]
-    pairs = structure["high_correlation_pairs"]["by_method"].get("historical")
-    if pairs and has_value(pairs):
-        if pairs["value"]:
-            lines = [
-                f"{names.get(str(x['left_instrument_id']), x['left_instrument_id'])} 与 "
-                f"{names.get(str(x['right_instrument_id']), x['right_instrument_id'])}："
-                f"{x['correlation']:.2f}"
-                for x in pairs["value"]
-            ]
-            text = "历史高相关持仓对（相关系数大于 0.7）：" + "；".join(lines)
-        else:
-            text = "历史口径下没有相关系数大于 0.7 的持仓对。"
-        blocks.append({"type": "text", "text": text})
+    for method in ("forward", "historical"):
+        pairs = structure["high_correlation_pairs"]["by_method"].get(method)
+        text = _pairs_text(pairs, method, names) if pairs else None
+        if text:
+            blocks.append({"type": "text", "text": text})
+    style = structure["style_exposure"]
+    if has_value(style) and style["value"]:
+        blocks.append(
+            {
+                "type": "metric_cards",
+                "items": [
+                    _card(
+                        f"style_exposure:{code}",
+                        f"风格暴露 {code}",
+                        {**style, "value": value},
+                        "number",
+                        2,
+                    )
+                    for code, value in style["value"].items()
+                ],
+            }
+        )
     return blocks
 
 
@@ -610,7 +806,7 @@ def report(
             pid,
             "risk",
             "风险画像",
-            ready(_risk_blocks(b["value"], names)) if b["status"] == "ready" else b,
+            ready(_risk_blocks(b["value"], names, level)) if b["status"] == "ready" else b,
         )
         add(pid, "style", "历史回放与分位", p["section_c"], "history")
         d = p["section_d"]

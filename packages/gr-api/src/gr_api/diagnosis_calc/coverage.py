@@ -124,3 +124,75 @@ def apply_exposure_coverage(
                 confidence="low",
             )
     return result
+
+
+#: PA-13 完整组合模型指标（波动率另行处理，它包在 MethodValues 里）。
+FULL_PORTFOLIO_MODEL_METRICS: tuple[tuple[str, str], ...] = (
+    ("section_b", "risk_contribution"),
+    ("section_b", "risk_contribution_ratio"),
+    ("section_b", "marginal_risk_contribution"),
+    ("section_b", "l3_effective_count"),
+    ("section_b", "l4_effective_count"),
+    ("section_b", "l4_market_source_share"),
+    ("section_b", "l4_largest_source"),
+    ("section_d", "style_exposure"),
+)
+
+
+def apply_model_coverage(
+    risk: Mapping[str, Any],
+    structure: Mapping[str, Any],
+    *,
+    resolved_weight: float,
+    model_facts: Mapping[str, Any] | None,
+    params: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """按当前请求的输入份额判定模型口径指标状态（PA-13），返回副本。
+
+    * 存在正份额的未识别代码时，完整组合模型指标（波动率、风险贡献及占比、MRC、L3、
+      L4 及配套、风格暴露）整体不可用，不在已覆盖子集上出数；
+    * 模型口径的平均两两相关与高相关持仓对按一般指标阈值，覆盖率为已识别份额 ×
+      子集内具备模型数据的权重；热力图对有数据的股票照常展示。
+    """
+    sections = {"section_b": deepcopy(dict(risk)), "section_d": deepcopy(dict(structure))}
+    if model_facts is None:
+        return sections["section_b"], sections["section_d"]
+    reason = (
+        f"有 {1 - resolved_weight:.1%} 的输入份额未能识别，完整组合模型指标不在已识别子集上出数。"
+    )
+
+    def blocked(metric: dict[str, Any]) -> bool:
+        return resolved_weight < 1 and has_value(metric)
+
+    volatility = sections["section_b"]["volatility"]
+    if blocked(volatility["by_method"]["forward"]):
+        volatility["by_method"]["forward"] = unavailable(
+            reason_code="coverage_below_threshold", reason=reason
+        )
+        volatility["primary"] = None
+    for section, name in FULL_PORTFOLIO_MODEL_METRICS:
+        if blocked(sections[section][name]):
+            sections[section][name] = unavailable(
+                reason_code="coverage_below_threshold", reason=reason
+            )
+
+    degraded_at, unavailable_at = _thresholds(DEFAULT_GROUP, params)
+    coverage = resolved_weight * float(model_facts.get("coverage", 1.0))
+    for name in ("avg_pairwise_correlation", "high_correlation_pairs"):
+        by_method = sections["section_d"][name]["by_method"]
+        metric = by_method["forward"]
+        if not has_value(metric):
+            continue
+        if unavailable_at is not None and coverage < unavailable_at:
+            by_method["forward"] = unavailable(
+                reason_code="coverage_below_threshold",
+                reason=f"具备模型数据的部分仅覆盖完整输入的 {coverage:.1%}。",
+            )
+        elif coverage < degraded_at:
+            metric.update(
+                status="degraded",
+                reason_code="coverage_below_threshold",
+                reason=f"具备模型数据的部分覆盖完整输入的 {coverage:.1%}。",
+                confidence="low",
+            )
+    return sections["section_b"], sections["section_d"]

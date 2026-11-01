@@ -31,6 +31,11 @@ from gr_api.diagnosis_calc.history import (
     trading_status,
 )
 from gr_api.diagnosis_calc.metrics import has_value
+from gr_api.diagnosis_calc.model_risk import (
+    ModelRiskResult,
+    RiskModelInputs,
+    compute_model_risk,
+)
 from gr_api.diagnosis_calc.sections import risk_section, structure_section
 from gr_api.diagnosis_calc.weights import (
     WEIGHT_UNITS,
@@ -813,10 +818,40 @@ def _window(option: dict[str, str]) -> tuple[date, date]:
     return date.fromisoformat(option["start"]), date.fromisoformat(option["end"])
 
 
+@dataclass(frozen=True)
+class LoadedRiskModel:
+    """一次诊断使用的风险截面及其身份（回显为 ``cov.forward_model``）。"""
+
+    inputs: RiskModelInputs
+    model_id: str
+    model_version: str
+    model_date: date
+
+
+async def _load_risk_model(
+    db: DictConnection, ids: list[int], *, spec: dict[str, Any], as_of: date
+) -> LoadedRiskModel | None:
+    """取口径版本指定模型在诊断日的风险截面；不可取得时返回 None，模型口径指标不可用。
+
+    当前固定返回 None：米筐 v2 数据尚未入工作库，正式风险读取须等 D-022 2b 的发布清单与
+    统一读取入口（含 production run 绑定、单位与期限换算、特异波动率平方）落地后开放。
+    在那之前不能直接读 ``factor.*`` 业务表，否则无法保证同一模型、日期、版本与发布可见性。
+    """
+    del db, ids, spec, as_of
+    return None
+
+
 async def _compute_history(
-    db: DictConnection, ids: list[int], *, params: dict[str, Any], options: dict[str, Any]
+    db: DictConnection,
+    ids: list[int],
+    *,
+    params: dict[str, Any],
+    options: dict[str, Any],
+    model: ModelRiskResult | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """模块 B 的逐股历史波动率（PA-20，Beta 区间）与模块 D 的历史相关性（PA-09）。
+
+    ``model`` 为同一截面的模型口径结果，与历史口径并列组装，互不顶替。
 
     Returns:
         ``(risk_section, structure_section, history_facts)``，前两者为区块 value 同形字典。
@@ -862,8 +897,8 @@ async def _compute_history(
         ],
     }
     return (
-        risk_section(ids, volatility),
-        structure_section(view, single_instrument=len(ids) == 1),
+        risk_section(ids, volatility, model),
+        structure_section(view, single_instrument=len(ids) == 1, model=model),
         facts,
     )
 
@@ -880,11 +915,12 @@ async def _compute_plan(
     db: DictConnection,
     *,
     item: PlanInput,
-    params: dict[str, Any],
+    spec: dict[str, Any],
     as_of: date,
     options: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """算一个 plan 的纯计算载体与跨用户安全的数据事实。"""
+    params: dict[str, Any] = spec["params"]
     holdings = [
         CalcHolding(instrument_id=iid, weight=Decimal(units) / Decimal(WEIGHT_UNITS))
         for iid, units in sorted(item.quantized.items())
@@ -907,17 +943,37 @@ async def _compute_plan(
         category=await _fetch_category(db, ids, as_of=as_of),
         valuation=await _fetch_valuation(db, ids, as_of=as_of),
     )
-    risk, structure, facts["history"] = await _compute_history(
-        db, ids, params=params, options=options
+    loaded = await _load_risk_model(db, ids, spec=spec, as_of=as_of)
+    model = (
+        compute_model_risk(
+            [(h.instrument_id, float(h.weight)) for h in holdings],
+            loaded.inputs,
+            high_threshold=float(params.get("corr_high_threshold") or 0.7),
+        )
+        if loaded is not None
+        else None
     )
+    risk, structure, facts["history"] = await _compute_history(
+        db, ids, params=params, options=options, model=model
+    )
+    facts["model"] = None if model is None else model.facts
+    forward_ok = model is not None and (has_value(model.volatility) or has_value(model.correlation))
     historical_ok = has_value(structure["correlation"]["by_method"]["historical"])
     payload = {
         "cov": {
             "requested": list(params.get("cov_methods") or []),
-            "forward_model": None,
-            # primary 只能是口径主方法（forward）；历史只服务相关性视图，不顶替（PA-04/PA-10）
-            "primary": None,
-            "computed": ["historical"] if historical_ok else [],
+            "forward_model": {
+                "model_id": loaded.model_id,
+                "model_version": loaded.model_version,
+                "model_date": loaded.model_date,
+            }
+            if forward_ok and loaded is not None
+            else None,
+            # primary 只能是口径主方法（forward）；未算出时为 null，历史只服务相关性视图，
+            # 不顶替（PA-04/PA-10）
+            "primary": "forward" if forward_ok else None,
+            "computed": (["forward"] if forward_ok else [])
+            + (["historical"] if historical_ok else []),
         },
         "section_a": {"status": "ready", "value": metrics},
         "section_b": {"status": "ready", "value": risk},
@@ -962,9 +1018,7 @@ async def _ensure_run(
     if hit is not None:
         run_id = hit["run_id"]
     else:
-        payload, facts = await _compute_plan(
-            db, item=item, params=spec["params"], as_of=as_of, options=options
-        )
+        payload, facts = await _compute_plan(db, item=item, spec=spec, as_of=as_of, options=options)
         run_id = uuid4()
         # run 行状态只表示计算是否无系统错误地完成；方案级「部分成功」由展示层按
         # 区块可用性合成（§7.4），不写进共享缓存行。
