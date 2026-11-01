@@ -632,3 +632,53 @@ def test_shanghai_pharma_absorbed_companies_keep_separate_identities():
     assert metadata["aliases"] == [
         {"source": "tushare", "source_symbol": "600849.SH", "instrument_id": 1}
     ]
+
+
+def test_probe_plan_compares_models_before_spending_full_month_budget():
+    jobs = probe.make_plan()["jobs"]
+    assert [job["model"] for job in jobs[:3]] == ["v1", "v2", "v2trd"]
+    assert {job["key"] for job in jobs[:3]} == {"representative-2010"}
+    assert all(job["key"].startswith("representative") for job in jobs[:15])
+    assert {job["key"] for job in jobs[15:18]} == {"month-2023-01"}
+    assert all(job["key"].startswith("industry") for job in jobs[18:])
+
+
+def test_budget_stop_resume_reuses_completed_raw_days_and_indexes_partial_evidence(tmp_path):
+    from gr_data.common.ricequant_specs import BudgetDeferredError
+
+    class BudgetClient(ProbeClient):
+        exhausted = True
+
+        def risk_piece(self, piece, day, codes, **kwargs):
+            if day == "2010-01-05" and self.exhausted:
+                raise BudgetDeferredError("synthetic-budget-stop")
+            return super().risk_piece(piece, day, codes, **kwargs)
+
+    options = probe.options_for_job(
+        template(), {"model": "v1", "start": "2010-01-04", "end": "2010-01-06"}
+    )
+    ctx = RawContext(RawPaths(tmp_path), {"sleep_between_requests_sec": 0, "max_retries": 1})
+    client = BudgetClient()
+    with pytest.raises(BudgetDeferredError):
+        probe.execute_job(
+            client,
+            ctx,
+            options,
+            RicequantImportOptions({}),
+            probe_provider(),
+            lambda manifest: None,
+        )
+    evidence = probe.failure_evidence(ctx, options)
+    assert len(evidence["published_manifests_retained"]) == 1
+    assert len(evidence["failed_receipts"]) == 1
+    failed = evidence["failed_receipts"][0]
+    assert failed["failure"]["error_type"] == "BudgetDeferredError"
+    assert failed["quota_observation"]["before"]["bytes_used"] == 5000
+    assert len(client.calls) == 5
+    client.exhausted = False
+    resumed = probe.execute_job(
+        client, ctx, options, RicequantImportOptions({}), probe_provider(), lambda manifest: None
+    )
+    assert resumed["calendar_complete"] and len(client.calls) == 15
+    assert resumed["newly_fetched_days"] == ["2010-01-05", "2010-01-06"]
+    assert resumed["account_counter_delta"] == 10000

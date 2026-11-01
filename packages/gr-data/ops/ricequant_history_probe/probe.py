@@ -153,7 +153,7 @@ def make_plan() -> dict[str, Any]:
         "additional_code_changes_require_registered_aliases": list(
             REGISTRATION_GUARDED_CODE_CHANGES
         ),
-        "jobs": [{**window, "model": model} for model in MODELS for window in windows],
+        "jobs": [{**window, "model": model} for window in windows for model in MODELS],
         "formal_collection_authorized": False,
         "working_database_ingest_authorized": False,
         "start_dates_require_user_confirmation": True,
@@ -512,6 +512,40 @@ def execute_job(
     }
 
 
+def failure_evidence(ctx: RawContext, options: RiskOptions) -> dict[str, Any]:
+    """在请求边界失败时索引完整 raw 日和失败观察，不把部分响应记为完整。"""
+    root = ctx.paths.ricequant_variant(
+        "rq_risk_model", options.contract_version, options.variant_id
+    )
+    receipts = []
+    for path in sorted(root.glob("_failed/????-??-??/*/receipt.json")):
+        day = date.fromisoformat(path.parent.parent.name)
+        if not options.start_date <= day <= options.end_date:
+            continue
+        receipt = json.loads(path.read_text())
+        receipts.append(
+            {
+                "path": str(path),
+                "sha256": digest(path),
+                "failure": receipt.get("failure"),
+                "quota_observation": receipt.get("quota_observation"),
+                "successful_responses": len(receipt.get("requests", [])),
+            }
+        )
+    published = []
+    for path in sorted(root.glob("????-??-??/*/manifest.json")):
+        day = date.fromisoformat(path.parent.parent.name)
+        if options.start_date <= day <= options.end_date:
+            published.append({"path": str(path), "sha256": digest(path)})
+    return {
+        "variant_id": options.variant_id,
+        "raw_variant_root": str(root),
+        "failed_receipts": receipts,
+        "published_manifests_retained": published,
+        "resume_mode": "init_reuse_complete_days_only",
+    }
+
+
 def quota_estimate(reports: list[dict[str, Any]]) -> dict[str, Any]:
     """按新增模型日和候选日给出经验区间，零增量不视为免费，重置窗口剔除。"""
     per_day, per_candidate = [], []
@@ -812,7 +846,10 @@ def main() -> None:
                         )
                     except (BudgetDeferredError, PermanentError, ConnectionError) as exc:
                         state.update(
-                            status="stopped", active_job=key, error_type=type(exc).__name__
+                            status="stopped",
+                            active_job=key,
+                            error_type=type(exc).__name__,
+                            failure_evidence=failure_evidence(ctx, options),
                         )
                         save(state_path, state)
                         raise
