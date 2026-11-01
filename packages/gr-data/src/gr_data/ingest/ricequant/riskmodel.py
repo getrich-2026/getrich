@@ -32,6 +32,7 @@ from gr_data.db.risk_receipts import (
 )
 from gr_data.ingest.base import IngestContext, IngestResult, IngestStopError
 from gr_data.ingest.factor_gate import check_factor_counts
+from gr_data.ingest.ricequant.identity_mapping import IdentityMapping
 from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
 from gr_data.raw.ricequant.riskmodel import read_bundles
 
@@ -542,6 +543,7 @@ def _run_metadata(
     manifest: dict[str, Any],
     order: list[str],
     observed_at: datetime,
+    identity_evidence: dict[str, Any] | None = None,
 ) -> uuid.UUID:
     order_hash = _hash_order(order)
     identity = f"{options.model}|{options.industry_mapping}|{order_hash}"
@@ -576,6 +578,8 @@ def _run_metadata(
             raw_files_hash=semantic_hash(manifest["files"]),
             universe_evidence=_universe_evidence(manifest),
         )
+    if identity_evidence is not None:
+        units["cross_database_identity"] = identity_evidence
     upsert_rows(
         conn,
         contracts.MODEL,
@@ -645,7 +649,11 @@ def _publication_quality(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_risk_ingest(
-    conn: psycopg.Connection, ctx: IngestContext, options: RiskOptions
+    conn: psycopg.Connection,
+    ctx: IngestContext,
+    options: RiskOptions,
+    *,
+    identity_mapping: IdentityMapping | None = None,
 ) -> IngestResult:
     """逐日读取经过校验的五件套并原子写库。
 
@@ -653,6 +661,7 @@ def run_risk_ingest(
         conn: 空闲 PostgreSQL 连接；每个观测日独立提交，失败日完整回滚。
         ctx: raw 路径和可选月份过滤；禁止通过 force_ownership 隐式切换源。
         options: 已确认模型、单位和标的范围的配置。
+        identity_mapping: 独立生成并按文件哈希校验的跨库映射；只适用于动态快照。
 
     Returns:
         五张业务数据表和动态覆盖表的累计写入行数，不含模型元数据、映射和 ETL 流水。
@@ -668,6 +677,8 @@ def run_risk_ingest(
     """
     if options.purpose == "production" and options.contract_version != "v2":
         raise ContractViolationError("RiceQuant production requires dynamic universe receipts")
+    if identity_mapping is not None and options.contract_version != "v2":
+        raise ContractViolationError("Cross-database mapping requires dynamic raw coverage")
     if ctx.force_ownership:
         raise OwnershipError("RiceQuant risk import requires explicit gr-data own release/set")
     if conn.info.transaction_status != TransactionStatus.IDLE:
@@ -738,6 +749,8 @@ def run_risk_ingest(
                     "Degraded coverage: "
                     f"{manifest['coverage_counts']['complete']}/{len(coverage)} candidates complete"
                 )
+            if identity_mapping is not None:
+                request["cross_database_identity"] = identity_mapping.evidence
             request["stage"] = "write"
             storage = _storage_values(values)
             symbols = list(frames["exposure"].index)
@@ -758,6 +771,8 @@ def run_risk_ingest(
                 if coverage is None:
                     ids = _instrument_ids(conn, symbols)
                 else:
+                    if identity_mapping is not None:
+                        coverage = identity_mapping.translate(conn, manifest, coverage)
                     resolved = _verify_coverage_identities(conn, coverage)
                     ids = [resolved[symbol] for symbol in symbols]
                 receipt = probe_receipt(conn, options, manifest) if coverage is not None else None
@@ -780,12 +795,20 @@ def run_risk_ingest(
                                     "reprocessing requires a separately approved identity"
                                 )
                     owner.claim(SYMBOL_MAP.qualified, "ricequant", channel=ctx.channel, force=False)
-                    upsert_rows(
+                    if identity_mapping is None:
+                        upsert_rows(
+                            conn,
+                            SYMBOL_MAP,
+                            list(zip(ids, ["ricequant"] * len(ids), symbols, strict=True)),
+                        )
+                    run_id = _run_metadata(
                         conn,
-                        SYMBOL_MAP,
-                        list(zip(ids, ["ricequant"] * len(ids), symbols, strict=True)),
+                        options,
+                        manifest,
+                        order,
+                        observed_at,
+                        identity_mapping.evidence if identity_mapping is not None else None,
                     )
-                    run_id = _run_metadata(conn, options, manifest, order, observed_at)
                     count = len(order)
                     rows = {
                         contracts.EXPOSURE: [
@@ -857,6 +880,20 @@ def run_risk_ingest(
                 else:
                     run_id = _model_run_id(options, manifest["day"], manifest["observation_id"])
                     verify_committed_receipt(conn, options, manifest, run_id, receipt)
+                    if identity_mapping is not None:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "SELECT units FROM factor.model_run WHERE run_id=%s", (run_id,)
+                            )
+                            bound = cur.fetchone()
+                            if (
+                                bound is None
+                                or bound[0].get("cross_database_identity")
+                                != identity_mapping.evidence
+                            ):
+                                raise ContractViolationError(
+                                    "Cross-database mapping differs from bound run"
+                                )
                     _write_coverage(conn, run_id, day, observed_at, coverage, verify_only=True)
                     written = 0
                 if receipt is not None:
