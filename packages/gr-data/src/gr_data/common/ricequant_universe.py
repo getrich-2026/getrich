@@ -114,13 +114,19 @@ def build_universe_provider(
     expected_mapping = "alias_v2" if is_temporal else MAPPING_VERSION
     if mapping_version is not None and mapping_version != expected_mapping:
         raise ContractViolationError("Universe and mapping version mismatch")
+    rules_version = SYMBOL_RULES_VERSION
     if is_temporal:
-        if symbol_rules is not None and symbol_rules != symbol_rule_evidence():
+        if symbol_rules is not None:
+            requested_version = symbol_rules.get("version")
+            if not isinstance(requested_version, str):
+                raise ContractViolationError("Unknown historical symbol interval rules")
+            rules_version = requested_version
+        if symbol_rules is not None and symbol_rules != symbol_rule_evidence(rules_version):
             raise ContractViolationError("Unknown historical symbol interval rules")
     elif symbol_rules is not None:
         raise ContractViolationError("Legacy universe must not contain temporal symbol rules")
     snapshot, reference = copy.deepcopy(snapshot), copy.deepcopy(reference)
-    temporal_rules = resolve_symbol_intervals(snapshot) if is_temporal else {}
+    temporal_rules = resolve_symbol_intervals(snapshot, rules_version) if is_temporal else {}
     all_stocks = {int(row["instrument_id"]): row for row in snapshot["instruments"]}
     if len(all_stocks) != len(snapshot["instruments"]):
         raise ContractViolationError("Duplicate canonical universe")
@@ -256,9 +262,9 @@ def build_universe_provider(
                 "tushare.list_date <= day < tushare.delist_date; null means no recorded end"
             ),
             alias_selection_rule="verified_effective_date_unique_code",
-            symbol_rules=symbol_rule_evidence(),
-            symbol_rules_version=SYMBOL_RULES_VERSION,
-            symbol_rules_hash=symbol_rule_hash(),
+            symbol_rules=symbol_rule_evidence(rules_version),
+            symbol_rules_version=rules_version,
+            symbol_rules_hash=symbol_rule_hash(rules_version),
         )
 
     def provider(day: str) -> dict[str, Any]:
