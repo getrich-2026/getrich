@@ -14,6 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from gr_data.common.ricequant_specs import semantic_hash
+from gr_data.common.ricequant_symbol_intervals import (
+    APPROVED_HISTORY_SYMBOL_RULES_VERSION,
+    approved_boundary_coverage,
+    symbol_rule_hash,
+)
 from gr_data.config.ricequant_risk import RiskOptions
 from gr_data.raw.ricequant.risk_dynamic import load_dynamic
 
@@ -34,6 +39,12 @@ POLICY = {
     "whole_interface_empty": "rejected",
 }
 POLICY_SHA256 = semantic_hash(POLICY)
+APPROVED_POLICY = {
+    **POLICY,
+    "id": "ipo_next_trading_day_included_and_approved_identity_v2",
+    "boundary_exception_rule_sha256": symbol_rule_hash(APPROVED_HISTORY_SYMBOL_RULES_VERSION),
+}
+APPROVED_POLICY_SHA256 = semantic_hash(APPROVED_POLICY)
 
 
 class DelayedEvidenceError(ValueError):
@@ -200,14 +211,19 @@ def evaluate_delayed_day(
     manifest = current.manifest
     day, model = manifest["day"], manifest["identity"]["model"]
     counts, coverage = manifest["coverage_counts"], manifest["coverage"]
+    approved_policy = (
+        manifest["identity"].get("symbol_rules_version") == APPROVED_HISTORY_SYMBOL_RULES_VERSION
+    )
+    policy = APPROVED_POLICY if approved_policy else POLICY
+    policy_sha = APPROVED_POLICY_SHA256 if approved_policy else POLICY_SHA256
     report = {
         "model": model,
         "day": day,
         "candidate": counts["candidate"],
         "complete": counts["complete"],
         "status": "accepted",
-        "policy": copy.deepcopy(POLICY),
-        "policy_sha256": POLICY_SHA256,
+        "policy": copy.deepcopy(policy),
+        "policy_sha256": policy_sha,
         "current_observation": current.evidence,
         "calendar": None,
         "next_observation": None,
@@ -236,9 +252,12 @@ def evaluate_delayed_day(
             continue
         pieces = row["pieces"]
         listed = row["evidence"]["canonical"].get("list_date")
+        boundary = approved_boundary_coverage(row, day, manifest["identity"])
         ipo = row["status"] == "partial_bundle" and ipo_first_day_conditions(day, listed, pieces)
         reason = "ipo_waiting_next_trading_day"
-        if not ipo:
+        if boundary:
+            reason = "approved_delist_boundary_uncertainty"
+        elif not ipo:
             if row["status"] in {"universe_boundary_unknown", "sdk_filtered", "unmapped_symbol"}:
                 reason = "identity_" + row["status"]
             elif listed != day:
@@ -256,17 +275,21 @@ def evaluate_delayed_day(
             "status": row["status"],
             "reason": reason,
             "next_included": None,
+            "requires_next_observation": ipo,
+            "identity_exception_evidence": row["evidence"].get("delist_boundary_exception")
+            if boundary
+            else None,
             "record_instrument_id": row["instrument_id"],
             "canonical_evidence_instrument_id": row["evidence"]["canonical"].get("instrument_id"),
             "source_record_sha256": semantic_hash(row),
         }
         report["missing"].append(item)
-        if not ipo:
+        if not ipo and not boundary:
             report["reject_reasons"].append("other_missing:" + symbol)
     if report["reject_reasons"]:
         report["status"] = "rejected"
         return report
-    if not report["missing"]:
+    if not any(item["requires_next_observation"] for item in report["missing"]):
         return report
     if calendar is None:
         report.update(status="pending", pending_reasons=["next_trading_calendar_evidence_absent"])
@@ -294,6 +317,8 @@ def evaluate_delayed_day(
             raise DelayedEvidenceError("Duplicate canonical security in next coverage")
         next_rows[symbol] = row
     for item in report["missing"]:
+        if not item["requires_next_observation"]:
+            continue
         row = next_rows.get(item["symbol"])
         included = (
             row is not None
@@ -334,7 +359,10 @@ def monthly_summary(reports: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
             {
                 "model": model,
                 "month": month,
-                "policy_sha256": POLICY_SHA256,
+                "policy_sha256": rows[0]["policy_sha256"]
+                if len({row["policy_sha256"] for row in rows}) == 1
+                else None,
+                "policy_sha256s": sorted({row["policy_sha256"] for row in rows}),
                 "model_days_by_status": dict(counts),
                 "missing_by_status": {
                     status: {

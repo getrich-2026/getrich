@@ -20,6 +20,7 @@ from gr_data.common.ricequant_delayed_gate import (
     monthly_summary,
 )
 from gr_data.common.ricequant_symbol_intervals import (
+    APPROVED_HISTORY_SYMBOL_RULES_VERSION,
     HISTORY_SYMBOL_RULES_VERSION,
     symbol_rule_evidence,
 )
@@ -44,6 +45,7 @@ def setup(
     not_recovered=False,
     following=NEXT,
     model="v1",
+    approved=False,
 ):
     codes = [f"{index:06d}.XSHG" for index in range(1, 7)]
     absent = set(codes[:4])
@@ -72,7 +74,9 @@ def setup(
         metadata,
         reference,
         universe_policy="listed_cn_a_v2",
-        symbol_rules=symbol_rule_evidence(HISTORY_SYMBOL_RULES_VERSION),
+        symbol_rules=symbol_rule_evidence(
+            APPROVED_HISTORY_SYMBOL_RULES_VERSION if approved else HISTORY_SYMBOL_RULES_VERSION
+        ),
     )
     options = parse_risk_options(
         {
@@ -92,7 +96,8 @@ def setup(
             },
             "units_evidence": "synthetic-test-only",
         },
-        historical_probe=True,
+        historical_probe=not approved,
+        approved_history_raw=approved,
     )
 
     class Client:
@@ -168,8 +173,9 @@ def setup(
     return observations[0], observations[1], calendar
 
 
-def test_four_ipo_first_day_missing_returns_are_allowed_without_count_cap(tmp_path):
-    current, next_day, calendar = setup(tmp_path)
+@pytest.mark.parametrize("approved", [False, True])
+def test_four_ipo_first_day_missing_returns_are_allowed_without_count_cap(tmp_path, approved):
+    current, next_day, calendar = setup(tmp_path, approved=approved)
     result = evaluate_delayed_day(current, calendar=calendar, next_observation=next_day)
     assert result["status"] == "accepted" and len(result["missing"]) == 4
     assert result["policy"]["uses_count_cap"] is False
@@ -180,45 +186,51 @@ def test_four_ipo_first_day_missing_returns_are_allowed_without_count_cap(tmp_pa
     )
 
 
-def test_missing_exposure_is_rejected_even_on_listing_day(tmp_path):
-    current, next_day, calendar = setup(tmp_path, absent_piece="exposure")
+@pytest.mark.parametrize("approved", [False, True])
+def test_missing_exposure_is_rejected_even_on_listing_day(tmp_path, approved):
+    current, next_day, calendar = setup(tmp_path, approved=approved, absent_piece="exposure")
     result = evaluate_delayed_day(current, calendar=calendar, next_observation=next_day)
     assert result["status"] == "rejected"
     assert all(row["reason"] == "exposure_missing" for row in result["missing"])
 
 
-def test_next_trading_day_not_recovered_is_rejected(tmp_path):
-    current, next_day, calendar = setup(tmp_path, not_recovered=True)
+@pytest.mark.parametrize("approved", [False, True])
+def test_next_trading_day_not_recovered_is_rejected(tmp_path, approved):
+    current, next_day, calendar = setup(tmp_path, approved=approved, not_recovered=True)
     result = evaluate_delayed_day(current, calendar=calendar, next_observation=next_day)
     assert result["status"] == "rejected" and result["reject_reasons"]
     assert result["next_observation"]["file_sha256"] == next_day.file_sha256
 
 
-def test_missing_on_non_listing_day_is_rejected(tmp_path):
-    current, next_day, calendar = setup(tmp_path, listed="2010-01-07")
+@pytest.mark.parametrize("approved", [False, True])
+def test_missing_on_non_listing_day_is_rejected(tmp_path, approved):
+    current, next_day, calendar = setup(tmp_path, approved=approved, listed="2010-01-07")
     result = evaluate_delayed_day(current, calendar=calendar, next_observation=next_day)
     assert result["status"] == "rejected"
     assert all(row["reason"] == "non_listing_day_missing" for row in result["missing"])
 
 
-def test_next_day_absent_is_pending_and_weekend_is_not_a_trading_day(tmp_path):
-    current, next_day, calendar = setup(tmp_path)
+@pytest.mark.parametrize("approved", [False, True])
+def test_next_day_absent_is_pending_and_weekend_is_not_a_trading_day(tmp_path, approved):
+    current, next_day, calendar = setup(tmp_path, approved=approved)
     result = evaluate_delayed_day(current, calendar=calendar)
     assert result["status"] == "pending" and result["expected_next_trading_day"] == NEXT
     assert result["expected_next_trading_day"] != "2010-01-09"
     assert evaluate_delayed_day(current)["status"] == "pending"
 
 
-def test_wrong_next_day_is_rejected(tmp_path):
-    current, wrong, calendar = setup(tmp_path, following="2010-01-12")
+@pytest.mark.parametrize("approved", [False, True])
+def test_wrong_next_day_is_rejected(tmp_path, approved):
+    current, wrong, calendar = setup(tmp_path, approved=approved, following="2010-01-12")
     result = evaluate_delayed_day(current, calendar=calendar, next_observation=wrong)
     assert result["status"] == "rejected" and result["reject_reasons"] == [
         "next_observation_day_or_variant_differs"
     ]
 
 
-def test_manifest_sha_and_postload_drift_are_rejected(tmp_path):
-    current, next_day, calendar = setup(tmp_path)
+@pytest.mark.parametrize("approved", [False, True])
+def test_manifest_sha_and_postload_drift_are_rejected(tmp_path, approved):
+    current, next_day, calendar = setup(tmp_path, approved=approved)
     with pytest.raises(DelayedEvidenceError, match="SHA-256 differs"):
         VerifiedRiskObservation.load(next_day.path, "a" * 64, next_day.options)
     next_day.path.write_text(next_day.path.read_text() + " ")
@@ -226,8 +238,9 @@ def test_manifest_sha_and_postload_drift_are_rejected(tmp_path):
         evaluate_delayed_day(current, calendar=calendar, next_observation=next_day)
 
 
-def test_incomplete_or_wrong_calendar_evidence_is_rejected(tmp_path):
-    current, next_day, calendar = setup(tmp_path)
+@pytest.mark.parametrize("approved", [False, True])
+def test_incomplete_or_wrong_calendar_evidence_is_rejected(tmp_path, approved):
+    current, next_day, calendar = setup(tmp_path, approved=approved)
     payload = dict(calendar.payload)
     payload["complete_query"] = False
     path = tmp_path / "sparse-calendar.json"
