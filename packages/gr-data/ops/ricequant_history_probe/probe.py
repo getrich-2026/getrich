@@ -19,10 +19,16 @@ from pathlib import Path
 from typing import Any, TypedDict
 from uuid import uuid4
 
+import pandas as pd
 import psycopg
 import yaml
 from gr_data.common.paths import RawPaths
 from gr_data.common.retry import PermanentError
+from gr_data.common.ricequant_coverage_guard import (
+    ValidatedCoverageBaseline,
+    evaluate_day,
+    monthly_summary,
+)
 from gr_data.common.ricequant_specs import (
     BudgetDeferredError,
     ContractViolationError,
@@ -77,6 +83,30 @@ class CaptureEvidenceError(RuntimeError):
     """raw 已存在但数据库 capture 证据失败，必须整批停止。"""
 
 
+class CoverageGateRejectedError(RuntimeError):
+    """观察保留为 validation raw，未通过当日门禁不得进入认可回补账本。"""
+
+    def __init__(self, audit: dict[str, Any]) -> None:
+        self.audit = audit
+        super().__init__(
+            "RiceQuant daily coverage gate rejected: " + ",".join(audit["reject_reasons"])
+        )
+
+
+def verified_baseline(
+    gate: dict[str, Any], path: Path | None, expected_sha256: str | None
+) -> ValidatedCoverageBaseline:
+    """执行入口必须显式给出批准基线；缺失／哈希漂移在 SDK／PG 前拒绝。"""
+    if path is None or expected_sha256 is None:
+        raise ValueError("Explicit coverage baseline path and approved SHA-256 are required")
+    baseline = ValidatedCoverageBaseline.load(path, expected_sha256)
+    if str(baseline.path) != gate.get("coverage_baseline_path") or expected_sha256 != gate.get(
+        "coverage_baseline_sha256"
+    ):
+        raise ValueError("Coverage baseline differs from gate")
+    return baseline
+
+
 class QuotaSnapshot(TypedDict):
     observed_at: str
     bytes_used: int | float
@@ -97,7 +127,14 @@ def stopped_on_failure(path: Path, state: dict[str, Any]) -> Generator[None]:
     try:
         yield
     except Exception as exc:
-        state.update(status="stopped", error_type=type(exc).__name__)
+        state.update(
+            status="stopped_by_coverage_gate"
+            if isinstance(exc, CoverageGateRejectedError)
+            else "stopped",
+            error_type=type(exc).__name__,
+        )
+        if isinstance(exc, CoverageGateRejectedError):
+            state["coverage_rejection"] = exc.audit
         save(path, state)
         raise
 
@@ -404,6 +441,148 @@ def summarize_observation(manifest: dict[str, Any], frames: dict[str, Any]) -> d
     }
 
 
+def guard_observation(
+    ctx: RawContext,
+    options: RiskOptions,
+    manifest: dict[str, Any],
+    baseline: ValidatedCoverageBaseline,
+) -> dict[str, Any]:
+    """严格读回已发布观察；在 DB capture 前核对当日经验包络，raw 原样保留。"""
+    baseline.verify()
+    loaded, frames = next(
+        read_bundles(ctx.paths, options, observation_id=manifest["observation_id"])
+    )
+    if loaded != manifest:
+        raise RawIntegrityError("Coverage guard observation differs from published raw")
+    coverage = manifest["coverage"]
+    missing = [
+        {**row, "day": manifest["day"], "model": options.model}
+        for row in coverage
+        if row["status"] != "included"
+    ]
+    counts = manifest["coverage_counts"]
+    audit = evaluate_day(
+        baseline.payload["models"][options.model],
+        {
+            "model": options.model,
+            "day": manifest["day"],
+            "candidate": counts["candidate"],
+            "complete": counts["complete"],
+        },
+        missing,
+        {piece: not frame.empty for piece, frame in frames.items()},
+    )
+    audit.update(
+        coverage_baseline=baseline.evidence,
+        observation_id=manifest["observation_id"],
+        manifest_hash=semantic_hash(manifest),
+        raw_retained=True,
+        recognized_batch_completion=False,
+    )
+    return audit
+
+
+def strict_failure_audit(
+    ctx: RawContext,
+    options: RiskOptions,
+    day: str,
+    new_receipts: list[Path],
+    baseline: ValidatedCoverageBaseline,
+) -> dict[str, Any]:
+    """既有 raw 契约失败也停止；全接口空返回单列，不当作普通个股缺失。"""
+    empty_interfaces = set()
+    for path in new_receipts:
+        receipt = json.loads(path.read_text())
+        requests = receipt.get("requests", [])
+        for piece in (
+            "factor_return",
+            "covariance",
+            "exposure",
+            "specific_return",
+            "specific_risk",
+        ):
+            rows = [row for row in requests if row["piece"] == piece]
+            expected = (
+                1
+                if piece in {"factor_return", "covariance"}
+                else (
+                    sum(
+                        row["request_code"] is not None
+                        for row in receipt.get("universe", {}).get("candidates", [])
+                    )
+                    + options.batch_size
+                    - 1
+                )
+                // options.batch_size
+            )
+            if not rows or len(rows) != expected:
+                continue
+            empties = []
+            for row in rows:
+                if row.get("response_kind") == "none":
+                    empties.append(True)
+                elif row.get("response_kind") == "dataframe":
+                    response = (path.parent / row["file"]).resolve()
+                    if (
+                        not response.is_relative_to(path.parent.resolve())
+                        or digest(response) != row["sha256"]
+                    ):
+                        raise RawIntegrityError("Failed response evidence hash differs")
+                    empties.append(pd.read_parquet(response).empty)
+                else:
+                    empties.append(False)
+            if all(empties):
+                empty_interfaces.add(piece)
+    reasons = ["interface_empty:" + piece for piece in sorted(empty_interfaces)]
+    if not reasons:
+        reasons = ["existing_strict_raw_contract_failed"]
+    return {
+        "model": options.model,
+        "day": day,
+        "passes_coverage_guard": False,
+        "reject_reasons": reasons,
+        "coverage_baseline": baseline.evidence,
+        "raw_retained": True,
+        "recognized_batch_completion": False,
+        "raw_evidence": failure_evidence(ctx, options),
+    }
+
+
+def persist_coverage_audit(root: Path, audit: dict[str, Any]) -> None:
+    """逐日留证并按月归因汇总；审计通过不替代主账本完成或正式发布。"""
+    directory = root / "coverage-audits"
+    save(directory / f"{audit['day']}-{audit['model']}.json", audit)
+    month = audit["day"][:7]
+    checks = [
+        json.loads(path.read_text()) for path in directory.glob(f"{month}-??-{audit['model']}.json")
+    ]
+    if any(row["coverage_baseline"] != audit["coverage_baseline"] for row in checks):
+        raise ValueError("Monthly coverage audit mixes baseline identities")
+    passed = [row for row in checks if row["passes_coverage_guard"]]
+    rejected_with_counts = [
+        row for row in checks if not row["passes_coverage_guard"] and "attributions" in row
+    ]
+    save(
+        root / "coverage-monthly" / f"{month}-{audit['model']}.json",
+        {
+            "coverage_baseline": audit["coverage_baseline"],
+            "scope": "coverage checks only; recognized completion remains in the main ledger",
+            "monthly": monthly_summary(
+                passed, [item for row in passed for item in row["attributions"]]
+            ),
+            "rejected_coverage_statistics": monthly_summary(
+                rejected_with_counts,
+                [item for row in rejected_with_counts for item in row["attributions"]],
+            ),
+            "rejected_days": [
+                {"day": row["day"], "reject_reasons": row["reject_reasons"]}
+                for row in checks
+                if not row["passes_coverage_guard"]
+            ],
+        },
+    )
+
+
 def execute_job(
     client: RqdatacClient,
     ctx: RawContext,
@@ -411,8 +590,15 @@ def execute_job(
     shared: RicequantImportOptions,
     provider: Callable[[str], dict[str, Any]],
     capture: Callable[[dict], None],
+    *,
+    coverage_baseline: ValidatedCoverageBaseline | None = None,
+    audit_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """仅走现有严格 raw writer；失败不发布假完整观察，不写五件套业务表。"""
+    if coverage_baseline is None:
+        raise ValueError("Validated coverage baseline is required before SDK access")
+    coverage_baseline.verify()
+    guard_results = []
     _check_quota(client, shared.quota_reserve_fraction)
     before = quota_snapshot(client)
     days = [
@@ -429,6 +615,19 @@ def execute_job(
         raise RawIntegrityError("Probe calendar is empty, duplicated or out of scope")
 
     def capture_evidence(manifest: dict[str, Any]) -> None:
+        audit = guard_observation(ctx, options, manifest, coverage_baseline)
+        guard_results.append(audit)
+        if audit_callback is not None:
+            audit_callback(audit)
+        if not audit["passes_coverage_guard"]:
+            raise CoverageGateRejectedError(audit)
+        if audit["unknown_reason_rows"]:
+            log.warning(
+                "Coverage missing reason unknown model=%s day=%s count=%s",
+                options.model,
+                manifest["day"],
+                len(audit["unknown_reason_rows"]),
+            )
         try:
             capture(manifest)
         except Exception as exc:
@@ -441,6 +640,10 @@ def execute_job(
         daily = replace(
             options, start_date=date.fromisoformat(day), end_date=date.fromisoformat(day)
         )
+        raw_root = ctx.paths.ricequant_variant(
+            "rq_risk_model", daily.contract_version, daily.variant_id
+        )
+        before_failed = set(raw_root.glob(f"_failed/{day}/*/receipt.json"))
         try:
             written = run_risk_raw(
                 client,
@@ -458,23 +661,11 @@ def execute_job(
             if written > 0:
                 newly_fetched_days.append(day)
         except (ContractViolationError, RawIntegrityError) as exc:
-            root = ctx.paths.ricequant_variant(
-                "rq_risk_model", daily.contract_version, daily.variant_id
-            )
-            receipts = sorted(root.glob(f"_failed/{day}/*/receipt.json"))
-            failures.append(
-                {
-                    "day": day,
-                    "error_type": type(exc).__name__,
-                    "receipts": [{"path": str(path), "sha256": digest(path)} for path in receipts],
-                }
-            )
-            log.warning(
-                "Probe day failed model=%s day=%s error_type=%s",
-                options.model,
-                day,
-                type(exc).__name__,
-            )
+            receipts = sorted(set(raw_root.glob(f"_failed/{day}/*/receipt.json")) - before_failed)
+            audit = strict_failure_audit(ctx, daily, day, receipts, coverage_baseline)
+            if audit_callback is not None:
+                audit_callback(audit)
+            raise CoverageGateRejectedError(audit) from exc
         # 权限、额度、网络等请求边界失败交由整批停止，不伪装成历史缺口。
     after = quota_snapshot(client)
     same_counter_window = (
@@ -485,6 +676,8 @@ def execute_job(
         "model": options.model,
         "range": [str(options.start_date), str(options.end_date)],
         "variant_id": options.variant_id,
+        "coverage_baseline": coverage_baseline.evidence,
+        "coverage_guard_results": guard_results,
         "expected_days": days,
         "newly_fetched_days": newly_fetched_days,
         "newly_fetched_candidate_days": sum(
@@ -647,6 +840,8 @@ def main() -> None:
     parser.add_argument("--gate", type=Path)
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--template-root", type=Path)
+    parser.add_argument("--coverage-baseline", type=Path)
+    parser.add_argument("--coverage-baseline-sha256")
     args = parser.parse_args()
     root = args.run_root.resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -672,6 +867,9 @@ def main() -> None:
         parser.error("execute requires gate, env-file and template-root")
     version = get_importer_version(require_clean=True)
     gate = json.loads(args.gate.read_text())
+    coverage_baseline = verified_baseline(
+        gate, args.coverage_baseline, args.coverage_baseline_sha256
+    )
     verify_start_gate(gate, digest(plan_path), version)
     verify_source_gate(gate, Path(__file__).resolve().parents[4], Path(__file__).resolve())
     env = load_environment(env_file=args.env_file)
@@ -709,6 +907,7 @@ def main() -> None:
         "evidence_database_oid": gate["evidence_database_oid"],
         "source_head_commit": gate["source_head_commit"],
         "probe_sha256": gate["probe_sha256"],
+        "coverage_baseline": coverage_baseline.evidence,
     }
     if state.get("runtime_identity", runtime_identity) != runtime_identity:
         raise ValueError("Probe runtime target or source identity changed")
@@ -716,6 +915,7 @@ def main() -> None:
     with (root / ".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         bind_input(plan_path, state)
+        bind_input(coverage_baseline.path, state, expected=coverage_baseline.sha256)
         for path in template_paths.values():
             bind_input(path, state)
         save(state_path, state)
@@ -843,8 +1043,15 @@ def main() -> None:
                             shared,
                             provider,
                             partial(record_capture, conn, options),
+                            coverage_baseline=coverage_baseline,
+                            audit_callback=partial(persist_coverage_audit, root),
                         )
-                    except (BudgetDeferredError, PermanentError, ConnectionError) as exc:
+                    except (
+                        BudgetDeferredError,
+                        PermanentError,
+                        ConnectionError,
+                        CoverageGateRejectedError,
+                    ) as exc:
                         state.update(
                             status="stopped",
                             active_job=key,

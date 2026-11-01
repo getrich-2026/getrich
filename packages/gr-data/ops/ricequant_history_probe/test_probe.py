@@ -34,6 +34,31 @@ sys.modules[spec.name] = probe
 spec.loader.exec_module(probe)
 
 
+def coverage_baseline(root):
+    payload = {
+        "schema_version": 1,
+        "formula": "min(max_missing_count,ceil(candidate*max_missing_fraction))",
+        "unknown_reason_is_rejection_threshold": False,
+        "models": {
+            model: {
+                "model": model,
+                "max_missing_count": 3,
+                "max_missing_fraction": {"numerator": 3, "denominator": 5164},
+            }
+            for model in ("v1", "v2", "v2trd")
+        },
+    }
+    path = root / "coverage-baseline.json"
+    path.write_text(json.dumps(payload))
+    return probe.ValidatedCoverageBaseline.load(path, probe.digest(path))
+
+
+def execute_job(client, ctx, *args, **kwargs):
+    return probe.execute_job(
+        client, ctx, *args, coverage_baseline=coverage_baseline(ctx.paths.root), **kwargs
+    )
+
+
 def template():
     return {
         "selected": True,
@@ -249,7 +274,7 @@ class ProbeClient:
     def get_trading_dates(self, start, end):
         return list(pd.bdate_range(start, end).date)
 
-    def risk_piece(self, piece, day, codes, *, model, industry_mapping):
+    def risk_piece(self, piece, day, codes, *, model, industry_mapping) -> pd.DataFrame | None:
         import numpy as np
         from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
 
@@ -313,7 +338,7 @@ def test_real_raw_path_hashes_calendar_coverage_and_idempotence(tmp_path):
     client = ProbeClient()
     ctx = RawContext(RawPaths(tmp_path), {"sleep_between_requests_sec": 0})
     captures = []
-    report = probe.execute_job(
+    report = execute_job(
         client, ctx, options, RicequantImportOptions({}), probe_provider(), captures.append
     )
     assert report["calendar_complete"] and report["all_candidates_complete"]
@@ -322,7 +347,7 @@ def test_real_raw_path_hashes_calendar_coverage_and_idempotence(tmp_path):
     for row in report["observations"]:
         assert row["coverage_counts"]["candidate"] == row["coverage_counts"]["complete"] == 2
         assert len(row["files"]) == 5 and len(row["manifest_hash"]) == 64
-    replay = probe.execute_job(
+    replay = execute_job(
         client, ctx, options, RicequantImportOptions({}), probe_provider(), captures.append
     )
     assert replay["calendar_complete"] and len(client.calls) == 15
@@ -334,7 +359,7 @@ def test_missing_candidate_is_not_removed_to_claim_full_coverage(tmp_path):
         template(), {"model": "v1", "start": "2010-01-04", "end": "2010-01-04"}
     )
     ctx = RawContext(RawPaths(tmp_path), {"sleep_between_requests_sec": 0})
-    report = probe.execute_job(
+    report = execute_job(
         ProbeClient(missing_symbol="000002.XSHE"),
         ctx,
         options,
@@ -352,19 +377,20 @@ def test_invalid_numeric_data_retains_failed_receipt_and_never_publishes(tmp_pat
         template(), {"model": "v1", "start": "2010-01-04", "end": "2010-01-04"}
     )
     ctx = RawContext(RawPaths(tmp_path), {"sleep_between_requests_sec": 0})
-    report = probe.execute_job(
-        ProbeClient(invalid_covariance=True),
-        ctx,
-        options,
-        RicequantImportOptions({}),
-        probe_provider(),
-        lambda manifest: None,
-    )
-    assert not report["calendar_complete"] and not report["observations"]
-    receipt = report["failures"][0]["receipts"][0]
+    with pytest.raises(probe.CoverageGateRejectedError) as rejected:
+        execute_job(
+            ProbeClient(invalid_covariance=True),
+            ctx,
+            options,
+            RicequantImportOptions({}),
+            probe_provider(),
+            lambda manifest: None,
+        )
+    receipt = rejected.value.audit["raw_evidence"]["failed_receipts"][0]
     assert (
         Path(receipt["path"]).is_file() and probe.digest(Path(receipt["path"])) == receipt["sha256"]
     )
+    assert rejected.value.audit["reject_reasons"] == ["existing_strict_raw_contract_failed"]
     assert not list(tmp_path.glob("ricequant/rq_risk_model/v2/*/2010-01-04/*/manifest.json"))
 
 
@@ -489,7 +515,7 @@ def test_request_boundary_failures_stop_batch_and_do_not_become_missing_days(tmp
     state = {"status": "running"}
     state_path = tmp_path / "state.json"
     with pytest.raises(error), probe.stopped_on_failure(state_path, state):
-        probe.execute_job(
+        execute_job(
             FailedClient(),
             ctx,
             options,
@@ -512,7 +538,7 @@ def test_capture_evidence_failure_stops_instead_of_claiming_historical_gap(tmp_p
     )
     ctx = RawContext(RawPaths(tmp_path), {"sleep_between_requests_sec": 0})
     with pytest.raises(probe.CaptureEvidenceError):
-        probe.execute_job(
+        execute_job(
             ProbeClient(),
             ctx,
             options,
@@ -660,7 +686,7 @@ def test_budget_stop_resume_reuses_completed_raw_days_and_indexes_partial_eviden
     ctx = RawContext(RawPaths(tmp_path), {"sleep_between_requests_sec": 0, "max_retries": 1})
     client = BudgetClient()
     with pytest.raises(BudgetDeferredError):
-        probe.execute_job(
+        execute_job(
             client,
             ctx,
             options,
@@ -676,7 +702,7 @@ def test_budget_stop_resume_reuses_completed_raw_days_and_indexes_partial_eviden
     assert failed["quota_observation"]["before"]["bytes_used"] == 5000
     assert len(client.calls) == 5
     client.exhausted = False
-    resumed = probe.execute_job(
+    resumed = execute_job(
         client, ctx, options, RicequantImportOptions({}), probe_provider(), lambda manifest: None
     )
     assert resumed["calendar_complete"] and len(client.calls) == 15
