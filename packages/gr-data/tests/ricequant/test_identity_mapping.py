@@ -5,7 +5,9 @@ from __future__ import annotations
 import copy
 import json
 from contextlib import contextmanager
+from typing import cast
 
+import psycopg
 import pytest
 from gr_data.common.ricequant_specs import ContractViolationError, semantic_hash
 from gr_data.ingest.ricequant.identity_mapping import IdentityMapping, build_mapping
@@ -72,7 +74,9 @@ def test_reordered_ids_and_collision_preserve_raw_and_dates(tmp_path):
     path = tmp_path / "map.json"
     path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False))
     mapping = IdentityMapping(path, semantic_hash(payload))
-    translated = mapping.translate(Connection(target), manifest, manifest["coverage"])
+    translated = mapping.translate(
+        cast(psycopg.Connection, Connection(target)), manifest, manifest["coverage"]
+    )
     assert [r["instrument_id"] for r in translated] == [2, 1]
     assert manifest == original
     assert len(payload["date_differences"]) == 1
@@ -81,7 +85,9 @@ def test_reordered_ids_and_collision_preserve_raw_and_dates(tmp_path):
     changed = copy.deepcopy(target)
     changed["stocks"][0]["symbol"] = "600999.SH"
     with pytest.raises(ContractViolationError, match="target identity"):
-        mapping.translate(Connection(changed), manifest, manifest["coverage"])
+        mapping.translate(
+            cast(psycopg.Connection, Connection(changed)), manifest, manifest["coverage"]
+        )
     with pytest.raises(ContractViolationError, match="hash"):
         IdentityMapping(path, "0" * 64)
 
