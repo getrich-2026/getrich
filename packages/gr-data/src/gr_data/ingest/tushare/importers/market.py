@@ -31,7 +31,7 @@ from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.bj_pending import BJPendingImporter
 from gr_data.ingest.tushare.importers.reference import _require, parse_date
 from gr_data.ingest.tushare.limit_sentinels import (
-    EXACT_NO_LIMIT_EVIDENCE_URLS,
+    EXACT_NO_LIMIT_EVIDENCE_BY_OBSERVATION,
     EXACT_NO_LIMIT_PROCESSING_RULE,
     EXACT_NO_LIMIT_RULE,
     exact_no_limit_mask,
@@ -384,6 +384,24 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
 
     BJ_SOURCE_DATASET = "daily"
 
+    def build(self) -> pd.DataFrame:
+        """先拦截其他市场的 10000 组合，不能由 BJ 行级待处理吸收此门禁。"""
+        adapter = self._adapter()
+        months = adapter.selected_months("daily")
+        adapter.require_months("stk_limit", months)
+        for month in months:
+            limits = adapter.read_month("stk_limit", month)
+            if limits is None:
+                continue  # 原严格 builder 仍会拒绝缺失或不可用的配套源。
+            _require(limits, {"ts_code", "trade_date", "up_limit", "down_limit"}, "stk_limit")
+            foreign = limits["ts_code"].astype("string").str.endswith((".SZ", ".BJ"), na=False)
+            if (foreign & pd.to_numeric(limits["up_limit"], errors="coerce").eq(10000.0)).any():
+                raise IngestGateError(
+                    "Unreviewed non-Shanghai up_limit=10000 sentinel; "
+                    "stop before BJ pending isolation"
+                )
+        return super().build()
+
     def _build_strict(self) -> pd.DataFrame:
         adapter = self._adapter()
         months = adapter.selected_months("daily")
@@ -512,7 +530,9 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
         has_row = merged["has_limit_row"].eq(True).to_numpy()
 
         # 在浮点转换前按原始数值精确匹配，禁止近似文本因转换舍入而获准。
-        exact_sentinel = has_row & exact_no_limit_mask(merged["up_limit"], merged["down_limit"])
+        exact_sentinel = has_row & exact_no_limit_mask(
+            merged["up_limit"], merged["down_limit"], merged["ts_code"]
+        )
         self._record_exact_no_limit(merged.loc[exact_sentinel])
         _to_numeric_strict(merged, ["up_limit", "down_limit"], "stk_limit")
         up = merged["up_limit"].to_numpy(dtype=float)
@@ -619,7 +639,11 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
                 "price_limit_status": "NO_LIMIT",
                 "limit_up": None,
                 "limit_down": None,
-                "evidence_urls": list(EXACT_NO_LIMIT_EVIDENCE_URLS),
+                "evidence_urls": list(
+                    EXACT_NO_LIMIT_EVIDENCE_BY_OBSERVATION.get(
+                        (str(row.ts_code), day.isoformat()), ()
+                    )
+                ),
             }
             self.conn.execute(
                 "INSERT INTO ops.data_quality_check(rule,severity,detail) VALUES (%s,%s,%s)",
