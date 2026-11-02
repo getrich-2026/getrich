@@ -117,7 +117,7 @@ def _daily_df():
                 "ts_code": "600000.SH",
                 "trade_date": "20240102",
                 "open": 10.0,
-                "high": 10.8,
+                "high": 10.75,  # 正常样本须落在配套涨停价 10.78 以内。
                 "low": 9.9,
                 "close": 10.5,
                 "pre_close": 9.8,

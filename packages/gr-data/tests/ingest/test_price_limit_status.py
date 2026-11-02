@@ -29,9 +29,9 @@ def _daily(rows):
                 "ts_code": c,
                 "trade_date": DAY,
                 "open": 10.0,
-                "high": 12.0,
+                "high": 10.7,
                 "low": 9.0,
-                "close": 11.0,
+                "close": 10.5,
                 "pre_close": pc,
                 "vol": 1000.0,
                 "amount": 10500.0,
@@ -41,7 +41,7 @@ def _daily(rows):
     )
 
 
-def _build(paths, daily_rows, limit_rows):
+def _build(paths, daily_rows, limit_rows, *, listing_dates=None):
     """limit_rows: [(ts_code, pre_close, up_limit, down_limit)]"""
     from gr_data.ingest.tushare.importers.market import StockBars1dImporter
 
@@ -65,6 +65,7 @@ def _build(paths, daily_rows, limit_rows):
     )
     imp = StockBars1dImporter(conn=None, ctx=IngestContext(paths=paths))
     imp._id_map = lambda: {c: i + 1 for i, c in enumerate(codes)}
+    imp._stock_listing_dates = lambda codes: listing_dates or {}
     df = imp.build().set_index("instrument_id")
     return df, imp.collect_soft_warnings()
 
@@ -108,11 +109,53 @@ def test_missing_limit_row_is_unknown_and_soft(tmp_raw_root):
 
 
 def test_first_day_without_limit_row_is_unknown_not_soft(tmp_raw_root):
-    """首日无前收盘且无 stk_limit 行：不按上市规则推断为 NO_LIMIT（DS05），也不计软告警。"""
+    """主数据确认首日且无 stk_limit 行：保留 UNKNOWN，不计软告警。"""
     daily = [("600000.SH", 9.8), ("920001.BJ", float("nan"))]
-    df, warnings = _build(tmp_raw_root, daily, [("600000.SH", 9.8, 10.78, 8.82)])
+    df, warnings = _build(
+        tmp_raw_root,
+        daily,
+        [("600000.SH", 9.8, 10.78, 8.82)],
+        listing_dates={"920001.BJ": date(2024, 1, 2)},
+    )
     assert df.loc[2, "price_limit_status"] == "UNKNOWN"
     assert warnings == []
+
+
+@pytest.mark.parametrize(
+    "listing_day,blocks", [(date(2024, 1, 2), False), (date(2024, 1, 1), True), (None, True)]
+)
+def test_missing_whole_limit_row_requires_exact_master_listing_day(
+    tmp_raw_root, listing_day, blocks
+):
+    """即使有有限前收盘，首日不阻塞；上市次日／缺主数据仍待复核。"""
+    frame, warnings = _build(
+        tmp_raw_root,
+        [("688033.SH", 9.8)],
+        [],
+        listing_dates={"688033.SH": listing_day} if listing_day else {},
+    )
+    assert frame.loc[1, "price_limit_status"] == "UNKNOWN"
+    assert pd.isna(frame.loc[1, "limit_up"]) and pd.isna(frame.loc[1, "limit_down"])
+    assert bool(warnings) is blocks
+
+
+@pytest.mark.parametrize("up,down", [(99999.99, 8.82), (None, None), (10.6, 8.82)])
+def test_listing_day_does_not_exempt_present_invalid_or_contradictory_limit_row(
+    tmp_raw_root, up, down
+):
+    frame, warnings = _build(
+        tmp_raw_root,
+        [("688033.SH", 9.8)],
+        [("688033.SH", 9.8, up, down)],
+        listing_dates={"688033.SH": date(2024, 1, 2)},
+    )
+    assert warnings
+    assert frame.loc[1, "price_limit_status"] == "UNKNOWN"
+
+
+def test_missing_pre_close_does_not_prove_listing_day(tmp_raw_root):
+    frame, warnings = _build(tmp_raw_root, [("688033.SH", float("nan"))], [])
+    assert warnings and frame.loc[1, "price_limit_status"] == "UNKNOWN"
 
 
 def test_pre_close_mismatch_is_unknown_and_soft(tmp_raw_root):
@@ -276,3 +319,88 @@ def test_import_writes_price_limit_status(pg_conn, tmp_raw_root):
         (date(2024, 1, 2),),
     ).fetchone()
     assert row == ("NO_LIMIT", None, None)
+
+
+@pytest.mark.integration
+def test_listing_day_missing_row_audit_is_transactional_and_preserves_unknown(
+    pg_conn, tmp_raw_root, monkeypatch
+):
+    from pathlib import Path
+
+    from gr_data.config.pipeline import Config
+    from gr_data.ingest import IngestRunError, run_provider
+    from gr_data.raw.tushare.suspension_store import publish_coverage
+    from gr_tools.config import Environment
+
+    iid = _seed(pg_conn)
+    pg_conn.execute(
+        "UPDATE meta.instruments SET list_date=%s WHERE instrument_id=%s", (date(2024, 1, 2), iid)
+    )
+    pg_conn.execute(
+        "INSERT INTO meta.symbol_map(instrument_id,source,source_symbol) "
+        "VALUES (%s,'tushare','600000.SH')",
+        (iid,),
+    )
+    pg_conn.commit()
+    _write(tmp_raw_root, "daily", _daily([("600000.SH", 9.8)]))
+    _write(
+        tmp_raw_root,
+        "adj_factor",
+        pd.DataFrame([{"ts_code": "600000.SH", "trade_date": DAY, "adj_factor": 1.0}]),
+    )
+    _write(
+        tmp_raw_root,
+        "stk_limit",
+        pd.DataFrame(columns=["ts_code", "trade_date", "pre_close", "up_limit", "down_limit"]),
+    )
+    _write(
+        tmp_raw_root,
+        "suspend_d",
+        pd.DataFrame(columns=["ts_code", "trade_date", "suspend_type", "suspend_timing"]),
+    )
+    publish_coverage(tmp_raw_root.dataset_file("tushare", "suspend_d", MONTH), [date(2024, 1, 2)])
+    cfg = Config({}, Environment(Path.cwd(), {"RAW_PARQUET_ROOT": str(tmp_raw_root.root)}))
+    run_provider("tushare", pg_conn, cfg, only=["suspend_d"], months=(MONTH,))
+    for _ in range(2):
+        result = run_provider(
+            "tushare",
+            pg_conn,
+            cfg,
+            only=["stock_bar_1d"],
+            months=(MONTH,),
+            batch_id="listing-day-test:2024-01",
+        )
+        assert not result[0].warnings
+        assert pg_conn.execute(
+            "SELECT price_limit_status,limit_up,limit_down FROM market.stock_bar_1d"
+        ).fetchall() == [("UNKNOWN", None, None)]
+        pg_conn.commit()
+    audits = pg_conn.execute(
+        "SELECT detail FROM ops.data_quality_check "
+        "WHERE rule='tushare_stk_limit_listing_day_missing'"
+    ).fetchall()
+    assert len(audits) == 2
+    assert all(
+        a[0]["source_code"] == "600000.SH"
+        and a[0]["list_date"] == "2024-01-02"
+        and a[0]["trading_day"] == "2024-01-02"
+        for a in audits
+    )
+    pg_conn.commit()
+
+    def fail_copy(*args, **kwargs):
+        raise ValueError("forced listing-day COPY failure")
+
+    monkeypatch.setattr("gr_data.ingest.base.upsert_rows", fail_copy)
+    with pytest.raises(IngestRunError, match="forced listing-day COPY failure"):
+        run_provider("tushare", pg_conn, cfg, only=["stock_bar_1d"], months=(MONTH,))
+    assert (
+        pg_conn.execute(
+            "SELECT count(*) FROM ops.data_quality_check "
+            "WHERE rule='tushare_stk_limit_listing_day_missing'"
+        ).fetchone()[0]
+        == 2
+    )
+    assert pg_conn.execute(
+        "SELECT price_limit_status,limit_up,limit_down FROM market.stock_bar_1d"
+    ).fetchall() == [("UNKNOWN", None, None)]

@@ -437,6 +437,15 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
         market["dt"] = market["trade_date"]
         market = self._merge_limits(market, adapter)
         market = self._attach_ids(market, self._id_map())
+        # 先按 D-012 对账，允许已授权换码对的旧缺新有限；最终因子仍须有限且为正。
+        missing = int(market["adj_factor"].isna().sum())
+        if missing:
+            raise RowValidationError(f"daily 有 {missing} 行缺少 adj_factor")
+        market["adj_factor"] = pd.to_numeric(market["adj_factor"], errors="coerce")
+        if not np.isfinite(market["adj_factor"].to_numpy(dtype=float)).all():
+            raise RowValidationError("adj_factor 含非有限值")
+        if (market["adj_factor"] <= 0).any():
+            raise RowValidationError("adj_factor 含非正值")
         trading_status = self._trading_status(market, months)
 
         out = pd.DataFrame(
@@ -474,16 +483,7 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
         adj = expand_stock_auxiliary_aliases(_daily_rows(adj, "adj_factor"))[
             ["ts_code", "trade_date", "adj_factor"]
         ]
-        merged = market.merge(adj, on=["ts_code", "trade_date"], how="left", validate="one_to_one")
-        missing = int(merged["adj_factor"].isna().sum())
-        if missing:
-            raise RowValidationError(f"daily 有 {missing} 行缺少 adj_factor")
-        merged["adj_factor"] = pd.to_numeric(merged["adj_factor"], errors="coerce")
-        if not np.isfinite(merged["adj_factor"].to_numpy(dtype=float)).all():
-            raise RowValidationError("adj_factor 含非有限值")
-        if (merged["adj_factor"] <= 0).any():
-            raise RowValidationError("adj_factor 含非正值")
-        return merged
+        return market.merge(adj, on=["ts_code", "trade_date"], how="left", validate="one_to_one")
 
     def _merge_limits(self, market: pd.DataFrame, adapter: TushareAdapter) -> pd.DataFrame:
         """合并涨跌停价并标 ``price_limit_status``（045，D-024）。
@@ -491,25 +491,18 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
         - 哨兵值（当日不设涨跌幅）：写 NULL，状态 ``NO_LIMIT``，不计软告警。
         - 有效涨跌停价：``LIMITED``。
         - 缺行、非法、pre_close 对不上（价格基准不同，涨跌停不可信）：``UNKNOWN``，记软告警；
-          首日上市无前收盘且无可用涨跌停价的行例外，只记 info，不按上市规则推断为 NO_LIMIT。
+          仅主数据 list_date 等于交易日且整行缺失时例外，保持 UNKNOWN 并审计汇总。
 
         ``limit_up`` / ``limit_down`` 在目标表可为 NULL，以上情形都不阻断整批入库。
         """
         dp = market["pre_close"].to_numpy(dtype=float)
-        # 首日上市无前收盘（_validate_prices 已记 info 与 data_quality_check）；
-        # 不计入软告警，否则常规全量导入几乎必然退出码 3。
-        first_day = ~np.isfinite(dp)
         limits = adapter.read_all_months("stk_limit")
         if limits.empty:
             # 分区存在（build 已校验）但为空：涨跌停整体缺失，留 NULL 并要求复核。
-            count = len(market)
-            if self._bj_scope and any(
-                len(frame)
-                for (dataset, _), frame in self._bj_sources.items()
-                if dataset == "stk_limit"
-            ):
-                # BJ 子集无匹配限价不代表原分区为空；首日无前收的合法缺失仍保留。
-                count = int((~first_day).sum())
+            listing_missing = self._listing_day_missing_limits(
+                market, np.ones(len(market), dtype=bool)
+            )
+            count = int((~listing_missing).sum())
             if count:
                 self._soft(f"stk_limit partitions are empty; {count} rows keep NULL limits")
             market["limit_up"] = None
@@ -528,6 +521,7 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
             lim[keep], on=["ts_code", "trade_date"], how="left", validate="one_to_one"
         )
         has_row = merged["has_limit_row"].eq(True).to_numpy()
+        listing_missing = self._listing_day_missing_limits(merged, ~has_row)
 
         # 在浮点转换前按原始数值精确匹配，禁止近似文本因转换舍入而获准。
         exact_sentinel = has_row & exact_no_limit_mask(
@@ -577,12 +571,22 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
                 merged.loc[mismatch, ["up_limit", "down_limit"]] = np.nan
 
         both = merged["up_limit"].notna().to_numpy() & merged["down_limit"].notna().to_numpy()
+        outside = both & (
+            (merged["high"] > merged["up_limit"]).to_numpy()
+            | (merged["low"] < merged["down_limit"]).to_numpy()
+        )
+        if outside.any():
+            self._soft(
+                f"OHLC outside price limits on {int(outside.sum())} rows; limits set to NULL"
+            )
+            merged.loc[outside, ["up_limit", "down_limit"]] = np.nan
+            both &= ~outside
         status = np.where(no_limit, "NO_LIMIT", np.where(both, "LIMITED", "UNKNOWN"))
         unknown = status == "UNKNOWN"
-        missing = int((unknown & ~first_day).sum())
+        missing = int((unknown & ~listing_missing).sum())
         if missing:
             self._soft(f"{missing} rows have no usable price limit and keep NULL")
-        first_day_unknown = int((unknown & first_day).sum())
+        first_day_unknown = int((unknown & listing_missing).sum())
         if first_day_unknown:
             self.log.info(
                 "First listing day rows keep NULL price limits rows=%d", first_day_unknown
@@ -596,6 +600,52 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
         merged["price_limit_status"] = status
         # 诊断关联列已用于验证，不属于最终行情；避免缺失诊断值造成虚假的别名冲突。
         return merged.drop(columns=["has_limit_row", "limit_pre_close"], errors="ignore")
+
+    def _stock_listing_dates(self, codes: list[str]) -> dict[str, date]:
+        """从持久化身份映射读取上市日；无连接／缺主数据不推断首日。"""
+        if self.conn is None or not codes:
+            return {}
+        rows = self.conn.execute(
+            "SELECT sm.source_symbol,i.list_date FROM meta.symbol_map AS sm "
+            "JOIN meta.instruments AS i ON i.instrument_id=sm.instrument_id "
+            "WHERE sm.source='tushare' AND sm.source_symbol=ANY(%s) "
+            "AND i.asset='stock' AND i.list_date IS NOT NULL",
+            (codes,),
+        ).fetchall()
+        return dict(rows)
+
+    def _listing_day_missing_limits(self, frame: pd.DataFrame, absent: np.ndarray) -> np.ndarray:
+        """仅对上市首日整行缺失计正常未知；审计与主表写入同事务。"""
+        candidates = frame.loc[absent]
+        listing_dates = self._stock_listing_dates(sorted(set(candidates["ts_code"])))
+        listed = frame["ts_code"].map(listing_dates)
+        allowed = absent & listed.notna().to_numpy() & frame["trade_date"].eq(listed).to_numpy()
+        if self.conn is not None:
+            for row in frame.loc[allowed, ["ts_code", "trade_date"]].itertuples(index=False):
+                code = str(row.ts_code)
+                day = pd.Timestamp(str(row.trade_date)).date()
+                detail = {
+                    "provider": PROVIDER,
+                    "dataset": self.DATASET,
+                    "source_code": code,
+                    "trading_day": day.isoformat(),
+                    "list_date": listing_dates[code].isoformat(),
+                    "batch_id": self.ctx.batch_id,
+                    "raw_partition": day.strftime("%Y-%m"),
+                    "price_limit_status": "UNKNOWN",
+                    "limit_up": None,
+                    "limit_down": None,
+                    "processing_rule": "listing_day_stk_limit_row_missing",
+                }
+                self.conn.execute(
+                    "INSERT INTO ops.data_quality_check(rule,severity,detail) VALUES (%s,%s,%s)",
+                    (
+                        "tushare_stk_limit_listing_day_missing",
+                        "info",
+                        json.dumps(detail, ensure_ascii=False),
+                    ),
+                )
+        return allowed
 
     def _record_no_limit(self, rows: int) -> None:
         """留痕：哨兵值写 NULL 属正常语义，但需要能追溯本次识别了多少行。"""
@@ -1122,13 +1172,14 @@ class AdjFactorTsImporter(BJPendingImporter, _SymbolResolvingImporter):
         df = raw.copy()
         df["ts_code"] = df["ts_code"].astype(str).str.strip()
         df["trading_day"] = _parse_trade_date(df, "adj_factor")
+        # 缺失策略仅作用于授权别名的同日重复观察，不放宽最终 NOT NULL／正值契约。
+        df = self._attach_ids(df, self._id_map())
         df["adj_factor"] = pd.to_numeric(df["adj_factor"], errors="coerce")
 
         bad = ~np.isfinite(df["adj_factor"].to_numpy(dtype=float)) | (df["adj_factor"] <= 0)
         if bad.any():
             raise RowValidationError(f"adj_factor 含 {int(bad.sum())} 行非正或非有限的复权因子")
 
-        df = self._attach_ids(df, self._id_map())
         if df.empty:
             return pd.DataFrame(columns=list(self.contract.columns))
 

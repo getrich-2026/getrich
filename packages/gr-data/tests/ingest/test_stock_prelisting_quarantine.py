@@ -271,6 +271,8 @@ def test_invalid_bj_date_keeps_original_text_and_partition(bj_case):
 
 def test_valid_first_day_bj_without_pre_close_and_limits_is_kept(bj_case):
     conn, _, write = bj_case
+    conn.execute("UPDATE meta.instruments SET list_date='2010-04-22' WHERE symbol='920047.BJ'")
+    conn.commit()
     write("daily", [_daily("600000.SH"), _daily("920047.BJ", pre_close=None)])
     write(
         "stk_limit",

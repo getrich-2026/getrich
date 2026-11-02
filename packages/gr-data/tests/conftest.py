@@ -317,7 +317,7 @@ class FakeTushareClient:
                 "ts_code": c,
                 "trade_date": d,
                 "open": 10.0,
-                "high": 10.8,
+                "high": 10.75,  # 与 stk_limit 的涨停价 10.78 保持一致。
                 "low": 9.9,
                 "close": 10.5,
                 "pre_close": 9.8,

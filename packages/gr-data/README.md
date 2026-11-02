@@ -375,8 +375,9 @@ Tushare importer 严格校验，下列情况**硬失败**：本 importer 不写�
 配置里写了不存在的 importer 名属于配置问题：在连接数据库之前报错，退出码 2，不写流水。
 
 **软告警**照常写库，运行记为 `partial`：个别代码缺涨跌停价、`pre_close` 不一致
-导致丢弃涨跌停价、非法涨跌停价、残留 `*.tmp-*` 文件（不读入）、指数或期货标的缺失。
-首日上市无前收盘、因而无涨跌停价的行不算软告警，只记 info 与 `ops.data_quality_check`；
+导致丢弃涨跌停价、非法涨跌停价或与 OHLC 矛盾、残留 `*.tmp-*` 文件（不读入）、指数或期货标的缺失。
+仅交易日等于持久化主数据 `list_date` 且整条 `stk_limit` 行缺失时不算软告警，
+保留 `UNKNOWN`／NULL 并逐代码／日期记入 `ops.data_quality_check`；缺前收盘不能代替上市日证据。
 供应商哨兵值表示的「当日不设涨跌幅」也不算软告警（见下节）。
 
 ### 本轮 B 股范围（D-029）
@@ -405,13 +406,15 @@ Tushare importer 严格校验，下列情况**硬失败**：本 importer 不写�
 
 | 状态 | 判定（Tushare `stk_limit`） | `limit_up`／`limit_down` | 软告警 |
 |---|---|---|---|
-| `LIMITED` | 两侧涨跌停价有效；`stk_limit` 带 `pre_close` 时还须与日线一致（缺该值则不比较） | 原值 | 否 |
+| `LIMITED` | 两侧涨跌停价有效，OHLC 在限价内；`stk_limit` 带 `pre_close` 时还须与日线一致（缺该值则不比较） | 原值 | 否 |
 | `NO_LIMIT` | 哨兵值：`up_limit ≥ 99999` **且** `0 ≤ down_limit ≤ 0.01` | NULL | 否（记 info 与 `ops.data_quality_check`） |
-| `UNKNOWN` | 缺行、非法值（含只有一边像哨兵、无穷值）、`pre_close` 不一致 | NULL，单边缺失时保留另一边 | 是；首日无前收盘且只是缺可用涨跌停价的行不计，非法值仍计 |
+| `UNKNOWN` | 缺行、非法值（含只有一边像哨兵、无穷值）、`pre_close` 不一致或 OHLC 越限 | NULL，单边缺失时保留另一边 | 是；仅主数据确认的上市首日整行缺失不计，已有行但缺值仍计 |
 | NULL | 未评估：045 之前写入，或其他供应商写入 | 不约束 | — |
 
 哨兵取值依据 2026-09 真实样本 63 行（北交所 `99999.99/0.0`，沪市 `99999.999/0.01`，
-深市 `999999.999/0.01`）；历史回补时须复核更早年份。首日无 `stk_limit` 行时记 `UNKNOWN`，
+深市 `999999.999/0.01`）；2019-07 科创板样本复核通过（`100000.0/0.01`），更早年份仍须复核。
+历史回补逐月在 `state.json` 各月的 `listing_day_missing_limits` 与 `listing-day-missing-limit-months.json`
+汇总代码／日期，区分唯一观察和重导产生的审计事件。首日无 `stk_limit` 行时记 `UNKNOWN`，
 不按上市规则推断为 `NO_LIMIT`。数据库约束保证 `LIMITED` 两侧有值、`NO_LIMIT` 两侧为 NULL。
 
 | 退出码 | 含义 |

@@ -25,7 +25,7 @@ def _daily(codes=("600000.SH",), day=DAY):
                 "ts_code": c,
                 "trade_date": day,
                 "open": 10.0,
-                "high": 10.8,
+                "high": 10.75,
                 "low": 9.9,
                 "close": 10.5,
                 "pre_close": 9.8,
@@ -161,8 +161,8 @@ def test_partial_limit_keys_are_soft_warning(tmp_raw_root):
 
 
 @pytest.mark.parametrize("with_limit_row", [True, False])
-def test_first_listing_day_without_pre_close_is_not_soft_warning(tmp_raw_root, with_limit_row):
-    """首日无前收盘是真实语义（info + data_quality_check），不能绕道变成软告警、退出码 3。"""
+def test_first_listing_day_exempts_only_missing_whole_limit_row(tmp_raw_root, with_limit_row):
+    """上市日须有主数据证据；整行存在但值缺失仍触发复核。"""
     codes = ("600000.SH", "920001.BJ")  # 后者为首日上市
     daily = _daily(codes)
     daily.loc[daily["ts_code"] == "920001.BJ", "pre_close"] = float("nan")
@@ -175,10 +175,11 @@ def test_first_listing_day_without_pre_close_is_not_soft_warning(tmp_raw_root, w
         )
     _write(tmp_raw_root, "stk_limit", limits)
     imp = _stock_importer(tmp_raw_root, id_map={"600000.SH": 1, "920001.BJ": 2})
+    imp._stock_listing_dates = lambda codes: {"920001.BJ": date(2024, 1, 2)}
     imp._record_missing_price = lambda *a: None
     df = imp.build().set_index("instrument_id")
     assert pd.isna(df.loc[2, "limit_up"]) and df.loc[1, "limit_up"] == 10.78
-    assert imp.collect_soft_warnings() == []
+    assert bool(imp.collect_soft_warnings()) is with_limit_row
 
 
 # --------------------------------------------------------------------------- #

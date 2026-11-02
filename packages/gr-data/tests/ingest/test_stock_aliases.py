@@ -295,7 +295,7 @@ def test_legacy_both_missing_keeps_null_and_audits_rule_without_mutating_input(o
     pd.testing.assert_frame_equal(frame, original)
 
 
-@pytest.mark.parametrize("field", ["close", "volume", "amount", "adj_factor", "pb"])
+@pytest.mark.parametrize("field", ["close", "volume", "amount", "pb"])
 def test_legacy_reconciliation_cannot_hide_other_field_conflicts(field):
     from gr_data.ingest.tushare.symbols import collapse_alias_rows
 
@@ -591,3 +591,197 @@ def test_legacy_limit_status_must_match_recomputed_enum_and_audit_nothing(status
             audit=audits.append,
         )
     assert audits == []
+
+
+@pytest.mark.parametrize("old,new", [(8.333, 8.334), (8.334, 8.333)])
+def test_only_reviewed_factor_pair_accepts_last_decimal_and_audits(old, new):
+    from gr_data.ingest.tushare.symbols import collapse_alias_rows
+
+    audits = []
+    original = _legacy_pair_frame(adj_factor=[old, new])
+    result = collapse_alias_rows(original, {17: "001914.SZ"}, audit=audits.append)
+    assert result.ts_code.tolist() == ["001914.SZ"]
+    assert result.adj_factor.tolist() == [new]
+    assert original.adj_factor.tolist() == [old, new]
+    assert len(audits) == 1
+    assert audits[0]["processing_rule"] == "adj_factor_rounding_use_new"
+    assert audits[0]["old_value"] == str(old)
+    assert audits[0]["new_value"] == str(new)
+    assert audits[0]["trading_day"] == "2010-01-04"
+
+
+@pytest.mark.parametrize("old,new", [(8.333, 8.335), (8.333, 8.33401)])
+def test_factor_above_absolute_tolerance_stops_without_audit(old, new):
+    from gr_data.ingest.tushare.symbols import collapse_alias_rows
+
+    audits = []
+    with pytest.raises(ValueError, match="adj_factor_tolerance_stop"):
+        collapse_alias_rows(
+            _legacy_pair_frame(adj_factor=[old, new]), {17: "001914.SZ"}, audit=audits.append
+        )
+    assert audits == []
+
+
+@pytest.mark.parametrize(
+    "old,new", [("000022.SZ", "001872.SZ"), ("300114.SZ", "302132.SZ"), ("831396.BJ", "920496.BJ")]
+)
+def test_factor_rounding_is_not_generalized_to_any_other_pair(old, new):
+    from gr_data.ingest.tushare.symbols import collapse_alias_rows
+
+    with pytest.raises(ValueError, match="Conflicting alias observations"):
+        collapse_alias_rows(
+            _legacy_pair_frame(old, new, adj_factor=[8.333, 8.334]),
+            {17: new},
+            audit=lambda detail: None,
+        )
+
+
+@pytest.mark.parametrize("missing", [None, float("nan"), float("inf"), -float("inf")])
+def test_factor_missing_direction_and_both_missing_follow_existing_rules(missing):
+    from gr_data.ingest.tushare.symbols import collapse_alias_rows
+
+    audits = []
+    result = collapse_alias_rows(
+        _legacy_pair_frame(adj_factor=[missing, 8.334]), {17: "001914.SZ"}, audit=audits.append
+    )
+    assert result.adj_factor.tolist() == [8.334]
+    assert audits[0]["processing_rule"] == "old_missing_use_new"
+    audits.clear()
+    with pytest.raises(ValueError, match="new_missing_stop"):
+        collapse_alias_rows(
+            _legacy_pair_frame(adj_factor=[8.333, missing]),
+            {17: "001914.SZ"},
+            audit=audits.append,
+        )
+    assert audits == []
+    result = collapse_alias_rows(
+        _legacy_pair_frame(adj_factor=[missing, missing]), {17: "001914.SZ"}, audit=audits.append
+    )
+    assert pd.isna(result.iloc[0].adj_factor)
+    assert audits[0]["processing_rule"] == "both_missing_keep_null"
+
+
+def test_factor_rounding_still_requires_audit_and_cannot_hide_price_conflict():
+    from gr_data.ingest.tushare.symbols import collapse_alias_rows
+
+    frame = _legacy_pair_frame(adj_factor=[8.333, 8.334])
+    with pytest.raises(ValueError, match="requires audit"):
+        collapse_alias_rows(frame, {17: "001914.SZ"})
+    frame.loc[0, "close"] = 14.93
+    audits = []
+    with pytest.raises(ValueError, match="Conflicting alias observations"):
+        collapse_alias_rows(frame, {17: "001914.SZ"}, audit=audits.append)
+    assert audits == []
+
+
+@pytest.mark.parametrize("dataset", ["stock_bar_1d", "adj_factor_ts"])
+@pytest.mark.parametrize("old_factor", [8.333, float("nan"), float("inf")])
+def test_factor_override_import_and_transactional_audit(
+    pg_conn, tmp_raw_root, monkeypatch, dataset, old_factor
+):
+    from datetime import date
+    from decimal import Decimal
+    from pathlib import Path
+
+    from gr_data.config.pipeline import Config
+    from gr_data.ingest import IngestRunError, run_provider
+    from gr_data.raw.tushare.suspension_store import publish_coverage
+    from gr_tools.config import Environment
+
+    codes = ["000043.SZ", "001914.SZ"]
+    instrument = pg_conn.execute(
+        "INSERT INTO meta.instruments(symbol,asset,exchange,list_date) "
+        "VALUES ('001914.SZ','stock','XSHE','19900101') RETURNING instrument_id"
+    ).fetchone()[0]
+    for code in codes:
+        pg_conn.execute(
+            "INSERT INTO meta.symbol_map(instrument_id,source,source_symbol) "
+            "VALUES (%s,'tushare',%s)",
+            (instrument, code),
+        )
+    pg_conn.commit()
+
+    def write(name, records):
+        path = tmp_raw_root.dataset_file("tushare", name, "2019-06")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(records).to_parquet(path, compression="zstd")
+        return path
+
+    write(
+        "adj_factor",
+        [
+            {"ts_code": code, "trade_date": "20190606", "adj_factor": factor}
+            for code, factor in zip(codes, [old_factor, 8.334], strict=True)
+        ],
+    )
+    write(
+        "daily",
+        [
+            {
+                "ts_code": code,
+                "trade_date": "20190606",
+                "open": 10.5,
+                "high": 10.8,
+                "low": 10.4,
+                "close": 10.5,
+                "pre_close": 10.5,
+                "vol": 100,
+                "amount": 105,
+            }
+            for code in codes
+        ],
+    )
+    write(
+        "stk_limit",
+        [
+            {
+                "ts_code": code,
+                "trade_date": "20190606",
+                "pre_close": 10.5,
+                "up_limit": 11.55,
+                "down_limit": 9.45,
+            }
+            for code in codes
+        ],
+    )
+    suspension = write("suspend_d", [])
+    pd.DataFrame(columns=["ts_code", "trade_date", "suspend_type", "suspend_timing"]).to_parquet(
+        suspension, compression="zstd"
+    )
+    publish_coverage(suspension, [date(2019, 6, 6)])
+    cfg = Config({}, Environment(Path.cwd(), {"RAW_PARQUET_ROOT": str(tmp_raw_root.root)}))
+    if dataset == "stock_bar_1d":
+        run_provider("tushare", pg_conn, cfg, only=["suspend_d"], months=("2019-06",))
+    kwargs = {"only": [dataset], "months": ("2019-06",), "requested_days": (date(2019, 6, 6),)}
+    table = "market.stock_bar_1d" if dataset == "stock_bar_1d" else "market.adj_factor_ts"
+    for attempt in range(2):
+        results = run_provider("tushare", pg_conn, cfg, **kwargs)
+        assert results[0].rows_written == 1 and not results[0].warnings
+        assert pg_conn.execute(f"SELECT adj_factor FROM {table}").fetchall() == [
+            (Decimal("8.334"),)
+        ]
+        details = [
+            r[0]
+            for r in pg_conn.execute(
+                "SELECT detail FROM ops.data_quality_check WHERE rule=%s",
+                ("tushare_stock_alias_metadata_override",),
+            ).fetchall()
+        ]
+        assert len(details) == attempt + 1
+        assert all(d["field"] == "adj_factor" and d["trading_day"] == "2019-06-06" for d in details)
+        pg_conn.commit()
+
+    def fail_copy(*args, **kwargs):
+        raise ValueError("forced factor COPY failure after audit staging")
+
+    monkeypatch.setattr("gr_data.ingest.base.upsert_rows", fail_copy)
+    with pytest.raises(IngestRunError, match="forced factor COPY failure"):
+        run_provider("tushare", pg_conn, cfg, **kwargs)
+    assert (
+        pg_conn.execute(
+            "SELECT count(*) FROM ops.data_quality_check WHERE rule=%s",
+            ("tushare_stock_alias_metadata_override",),
+        ).fetchone()[0]
+        == 2
+    )
+    assert pg_conn.execute(f"SELECT adj_factor FROM {table}").fetchall() == [(Decimal("8.334"),)]

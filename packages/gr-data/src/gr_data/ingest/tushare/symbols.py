@@ -75,6 +75,8 @@ _TOLERATED_METADATA_PAIRS = {
     frozenset(("000043.SZ", "001914.SZ")),
 }
 _TOLERATED_METADATA_FIELDS = {"dv_ratio", "dv_ttm", "limit_status"}
+# 2026-11-01 用户核实除息舍入差异后授权，仅此方向／字段，禁止推广。
+_ADJ_FACTOR_ROUNDING_PAIR = frozenset(("000043.SZ", "001914.SZ"))
 
 
 def _optional_decimal(value: object, field: str) -> Decimal | None:
@@ -198,7 +200,8 @@ def collapse_alias_rows(
 
     仅处理跨 source_symbol 的重复。300114 的 limit_status 沿用已核实规则。
     000022／000043 两对按显式授权处理缺失、股息率容差和价格反证，
-    并要求审计回调逐字段留痕；相对差以新代码绝对值为基准。其余冲突拒绝。
+    并要求审计回调逐字段留痕；相对差以新代码绝对值为基准。
+    仅 000043 → 001914 的 adj_factor 允许有限值绝对差 ≤ 0.001；其余冲突拒绝。
 
     Args:
         df: 已解析标的 ID、日期和源代码的观察；不就地改写。
@@ -234,6 +237,8 @@ def collapse_alias_rows(
         reviewed_metadata = codes in _TOLERATED_METADATA_PAIRS
         if reviewed_metadata:
             permitted = _TOLERATED_METADATA_FIELDS
+        if codes == _ADJ_FACTOR_ROUNDING_PAIR and preferred.iloc[0].ts_code == "001914.SZ":
+            permitted = permitted | {"adj_factor"}
         if differences - permitted:
             raise ValueError(f"Conflicting alias observations: {key}, fields={sorted(differences)}")
         if reviewed_metadata:
@@ -244,6 +249,8 @@ def collapse_alias_rows(
             for field in sorted(permitted.intersection(group.columns)):
                 old_value = _optional_decimal(previous[field], field)
                 new_value = _optional_decimal(current[field], field)
+                if field == "adj_factor" and old_value is not None and old_value == new_value:
+                    continue
                 if field == "limit_status" and old_value is not None and old_value == new_value:
                     continue
                 if audit is None:
@@ -265,6 +272,10 @@ def collapse_alias_rows(
                     rule = "both_missing_keep_null"
                 elif old_value is None:
                     rule = "old_missing_use_new"
+                elif field == "adj_factor":
+                    if abs(old_value - new_value) > Decimal("0.001"):
+                        _reject_alias_metadata(detail, "adj_factor_tolerance_stop")
+                    rule = "adj_factor_rounding_use_new"
                 elif field in {"dv_ratio", "dv_ttm"}:
                     distance = abs(old_value - new_value)
                     if distance > max(Decimal("0.01"), abs(new_value) * Decimal("0.01")):
