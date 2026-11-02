@@ -1,26 +1,23 @@
 name: CI
 
 on:
+  # PR 不加 paths：工作流被路径过滤跳过时，必需检查会一直 pending 卡住合并。
+  # 改由 changes job 决定跑什么，纯文档 PR 只跑 changes 与 CI OK，不跑任何测试。
   pull_request:
     branches: [dev, main]
-    paths:
-      - "packages/**"
-      - "scripts/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".python-version"
-      - ".basedpyright/**"
-      - ".github/workflows/ci.yml"
+  # push 没有必需检查的问题，直接过滤。这里的范围必须与 changes job 的正则一致。
   push:
     branches: [dev, main]
     paths:
       - "packages/**"
       - "scripts/**"
+      - "apps/web/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
       - ".basedpyright/**"
       - ".github/workflows/ci.yml"
+      - "!**/*.md"
   workflow_dispatch:
     inputs:
       extra_services:
@@ -31,17 +28,66 @@ on:
 permissions:
   contents: read
 
+# PR 只保留最新一次推送；dev / main 每次运行独占一个并发组，
+# 否则排队中的旧运行仍会被新运行顶掉，无法保证每个提交都完整跑过。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   UV_PYTHON: "3.12"
   UV_VERSION: "0.12.3"
+  TIMESCALE_IMAGE: timescale/timescaledb:2.30.1-pg18
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Classify changed files
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          # 拿不到文件列表（手动运行、新分支、强推）时一律全跑，宁多勿漏。
+          files=""
+          known=false
+          if [ "$EVENT" = "pull_request" ]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename') && known=true
+          elif [ "$EVENT" = "push" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            files=$(gh api --paginate "repos/$REPO/compare/$BEFORE...$AFTER" --jq '.files[].filename') && known=true
+          fi
+          if [ "$known" != true ]; then
+            echo "python=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code=$(printf '%s\n' "$files" | grep -Ev '\.md$' || true)
+          printf 'Changed files excluding Markdown:\n%s\n' "$code"
+          workflow='\.github/workflows/ci\.yml$'
+          python="^(packages/|scripts/|pyproject\.toml$|uv\.lock$|\.python-version$|\.basedpyright/|$workflow)"
+          web="^(apps/web/|$workflow)"
+          printf '%s\n' "$code" | grep -Eq "$python" && py=true || py=false
+          printf '%s\n' "$code" | grep -Eq "$web" && wb=true || wb=false
+          echo "python=$py" >> "$GITHUB_OUTPUT"
+          echo "web=$wb" >> "$GITHUB_OUTPUT"
+
   python-quality:
     name: Python quality
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -53,15 +99,8 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            pyproject.toml
-            packages/*/pyproject.toml
-          cache-suffix: quality
-
-      - name: Install Python
-        run: uv python install ${{ env.UV_PYTHON }}
+          # 实测恢复约 340 MB 缓存与直接从 PyPI 下载耗时相同，不值得占 10 GB 配额。
+          enable-cache: false
 
       - name: Install workspace
         run: uv sync --locked --all-packages
@@ -97,53 +136,45 @@ jobs:
             --base-ref "$BASE_REF"
 
   python-tests:
-    name: Python tests (${{ matrix.python-version }})
+    name: Python tests (${{ matrix.python-version }}, ${{ matrix.shard }})
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # 分片用路径切分，每组都是互补关系：新增的测试文件总会落进某个分片，不会漏跑。
+      # testpaths 里的目录属于 pytest 的初始路径，--ignore 对它无效，只能写 --ignore-glob。
+      # 带覆盖率的 3.12 慢约一半，且后面还要合并覆盖率，因此多拆一片。
       matrix:
         include:
           - python-version: "3.11"
             coverage: false
+            shard: gr-data
+            pytest-args: packages/gr-data/tests
+          - python-version: "3.11"
+            coverage: false
+            shard: others
+            pytest-args: --ignore-glob=packages/gr-data/tests/*
           - python-version: "3.12"
             coverage: true
-
-    services:
-      postgres:
-        image: timescale/timescaledb:2.30.1-pg18
-        env:
-          POSTGRES_USER: quant
-          POSTGRES_PASSWORD: testpass
-          POSTGRES_DB: getrich
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      clickhouse:
-        image: ${{ inputs.extra_services && matrix.coverage && 'clickhouse/clickhouse-server:26.8.6.5' || '' }}
-        ports:
-          - 8123:8123
-          - 9000:9000
-        options: >-
-          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      redis:
-        image: ${{ inputs.extra_services && matrix.coverage && 'redis:8.10.1' || '' }}
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+            shard: gr-data-assets
+            pytest-args: >-
+              packages/gr-data/tests/test_tushare_etf_options.py
+              packages/gr-data/tests/ricequant
+              packages/gr-data/tests/raw
+          - python-version: "3.12"
+            coverage: true
+            shard: gr-data-others
+            pytest-args: >-
+              packages/gr-data/tests
+              --ignore=packages/gr-data/tests/test_tushare_etf_options.py
+              --ignore=packages/gr-data/tests/ricequant
+              --ignore=packages/gr-data/tests/raw
+          - python-version: "3.12"
+            coverage: true
+            shard: others
+            pytest-args: --ignore-glob=packages/gr-data/tests/*
 
     env:
       # uv 默认读取根 .python-version；只安装解释器不会切换测试版本。
@@ -164,39 +195,84 @@ jobs:
       GETRICH_RESULT_BACKEND: redis://localhost:6379/1
 
     steps:
+      # gr-data 用例由 pg_dsn fixture 各自起容器，这里只提前拉镜像。
+      - name: Pull PostgreSQL image
+        if: matrix.shard != 'others'
+        run: docker pull -q "$TIMESCALE_IMAGE" > /dev/null &
+
+      # 不用 services：它要等镜像拉取和健康检查结束才开始第一步，也无法传 postgres 参数。
+      # 放到后台后，拉镜像与依赖安装同时进行。库用完即弃，关闭刷盘不影响 SQL 语义。
+      - name: Start PostgreSQL
+        if: matrix.shard == 'others'
+        run: |
+          docker run -d --name postgres \
+            --mount type=tmpfs,destination=/var/lib/postgresql \
+            -e POSTGRES_USER=quant -e POSTGRES_PASSWORD=testpass -e POSTGRES_DB=getrich \
+            -p 5432:5432 "$TIMESCALE_IMAGE" \
+            -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+            > "$RUNNER_TEMP/postgres.log" 2>&1 &
+
+      - name: Start ClickHouse and Redis
+        if: inputs.extra_services && matrix.coverage
+        run: |
+          # 新版镜像默认禁止 default 用户空密码访问网络，一次性实例跳过这一设置。
+          docker run -d --name clickhouse -e CLICKHOUSE_SKIP_USER_SETUP=1 -p 8123:8123 -p 9000:9000 \
+            clickhouse/clickhouse-server:26.8.6.5 > "$RUNNER_TEMP/clickhouse.log" 2>&1 &
+          docker run -d --name redis -p 6379:6379 redis:8.10.1 > "$RUNNER_TEMP/redis.log" 2>&1 &
+
       - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            pyproject.toml
-            packages/*/pyproject.toml
-          cache-suffix: py${{ matrix.python-version }}
-
-      - name: Install Python
-        run: uv python install ${{ matrix.python-version }}
+          # 实测恢复约 340 MB 缓存与直接从 PyPI 下载耗时相同，不值得占 10 GB 配额。
+          enable-cache: false
 
       - name: Install workspace
         run: uv sync --locked --all-packages
 
+      # 用 TCP 探测：镜像初始化期间的临时服务只监听 unix socket，不会被误判为就绪。
+      - name: Wait for PostgreSQL
+        if: matrix.shard == 'others'
+        run: |
+          timeout 120 bash -c 'until docker exec postgres pg_isready -h 127.0.0.1 -U quant -d getrich -q 2>/dev/null; do sleep 0.5; done' || {
+            cat "$RUNNER_TEMP/postgres.log"
+            docker logs postgres || true
+            exit 1
+          }
+
+      - name: Wait for ClickHouse and Redis
+        if: inputs.extra_services && matrix.coverage
+        run: |
+          timeout 120 bash -c 'until curl -fs http://localhost:8123/ping >/dev/null; do sleep 0.5; done' || {
+            cat "$RUNNER_TEMP/clickhouse.log"
+            docker logs clickhouse || true
+            exit 1
+          }
+          timeout 120 bash -c 'until docker exec redis redis-cli ping >/dev/null 2>&1; do sleep 0.5; done' || {
+            cat "$RUNNER_TEMP/redis.log"
+            docker logs redis || true
+            exit 1
+          }
+
       - name: Apply PostgreSQL migrations
+        if: matrix.shard == 'others'
         run: uv run --frozen gr-db migrate --target pg
 
       - name: Apply ClickHouse migrations
-        if: inputs.extra_services && matrix.coverage
+        if: inputs.extra_services && matrix.shard == 'others' && matrix.coverage
         run: uv run --frozen gr-db migrate --target ch
 
       - name: Data dictionary smoke
-        if: matrix.coverage
+        if: matrix.shard == 'others' && matrix.coverage
         run: uv run --frozen gr-db docs --target ${{ inputs.extra_services && 'all' || 'pg' }} --out /tmp/dd.html --fail-on-drift
 
+      # loadgroup：共用真库的集成用例按 xdist_group 留在同一 worker，其余自由分发。
+      # basetemp 放内存盘：用例大量写临时 parquet，runner 磁盘是最慢的一环。
       - name: Run tests
         if: ${{ !matrix.coverage }}
-        run: uv run --frozen pytest
+        run: uv run --frozen pytest -n auto --dist loadgroup --basetemp=/dev/shm/pytest ${{ matrix.pytest-args }}
 
       - name: Run tests with coverage
         if: matrix.coverage
@@ -204,16 +280,103 @@ jobs:
           # 在 CI 的临时数据库中启用选股与持仓诊断的端到端测试。
           GETRICH_TEST_PG: "1"
         run: |
-          uv run --frozen pytest --cov \
-            --cov-report=term-missing \
-            --cov-report=xml \
-            --cov-fail-under=75
+          uv run --frozen pytest -n auto --dist loadgroup --basetemp=/dev/shm/pytest --cov \
+            --cov-report= ${{ matrix.pytest-args }}
+          mv .coverage ".coverage.${{ matrix.shard }}"
+
+      - name: Upload coverage data
+        if: matrix.coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-data-${{ matrix.shard }}
+          path: .coverage.${{ matrix.shard }}
+          include-hidden-files: true
+          retention-days: 1
+
+  # 覆盖率阈值针对全量，只能在合并各分片后判断。
+  coverage:
+    name: Coverage
+    needs: python-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # coverage 按绝对路径记录，报告时要读源码。
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          # 只下载 coverage 一个包，不需要缓存。
+          enable-cache: false
+
+      - name: Download coverage data
+        uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-data-*
+          merge-multiple: true
+
+      - name: Combine and check coverage
+        run: |
+          version=$(grep -A1 '^name = "coverage"$' uv.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          coverage() { uvx --from "coverage==$version" coverage "$@"; }
+          coverage combine .coverage.*
+          coverage xml
+          coverage report --fail-under=75
 
       - name: Upload coverage XML
-        if: always() && matrix.coverage
         uses: actions/upload-artifact@v7
         with:
           name: coverage-python
           path: coverage.xml
           retention-days: 3
-          if-no-files-found: warn
+
+  web:
+    name: Web lint and build
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          # Vite 8 要求 ^20.19.0 || >=22.12.0；钉 24 与本地开发环境一致
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  # 分支保护只需要把这一个检查设为必需：矩阵 job 被跳过时，
+  # 检查名里的变量不会展开，直接设为必需同样会卡住合并。
+  ci-ok:
+    name: CI OK
+    needs: [changes, python-quality, python-tests, coverage, web]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check required jobs
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

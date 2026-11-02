@@ -164,17 +164,15 @@ class AssetClient:
         if api_name in self.override:
             return self.override[api_name](params)
         if api_name in ("trade_cal", "fut_trade_cal"):
-            days = pd.date_range(params["start_date"], params["end_date"])
+            # 日历跨度长达数十年且每个用例都要生成多次，逐日循环会成为测试热点。
+            days = pd.date_range(params["start_date"], params["end_date"]).strftime("%Y%m%d")
             return pd.DataFrame(
-                [
-                    dict(
-                        exchange=params["exchange"],
-                        cal_date=d.strftime("%Y%m%d"),
-                        is_open=int(d.strftime("%Y%m%d") in ("20240102", "20240103")),
-                        pretrade_date="20231229",
-                    )
-                    for d in days
-                ]
+                {
+                    "exchange": params["exchange"],
+                    "cal_date": days,
+                    "is_open": days.isin(["20240102", "20240103"]).astype(int),
+                    "pretrade_date": "20231229",
+                }
             )
         if api_name == "etf_basic":
             exchange, status = params["exchange"], params["list_status"]

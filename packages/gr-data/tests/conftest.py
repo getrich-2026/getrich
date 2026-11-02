@@ -598,7 +598,6 @@ def fake_datayes():
 # --------------------------------------------------------------------------- #
 PG_IMAGE = os.environ.get("GETRICH_TEST_PG_IMAGE", "timescale/timescaledb:2.30.1-pg18")
 _CONTAINER = f"getrich-test-pg-{uuid.uuid4().hex[:8]}"
-_PG_VOLUME = f"{_CONTAINER}-data"
 
 
 def _docker_available() -> bool:
@@ -623,13 +622,24 @@ def _docker_available() -> bool:
         return False
 
 
+def _published_port(container: str) -> int:
+    """读取 docker 为容器 5432 端口分配的宿主机端口。"""
+    output = subprocess.run(
+        ["docker", "port", container, "5432/tcp"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return int(output.splitlines()[0].rsplit(":", 1)[1])
+
+
 @pytest.fixture(scope="session")
 def pg_dsn():
     """启动一次性 PG 容器，返回 dsn dict；docker 不可用则 skip。"""
     if not _docker_available():
         pytest.skip("docker 不可用，跳过 PostgreSQL 集成测试")
 
-    port = 55432
+    # 端口交给 docker 分配：pytest-xdist 下每个 worker 各起一个容器，固定端口会冲突。
     proc = subprocess.run(
         [
             "docker",
@@ -638,23 +648,31 @@ def pg_dsn():
             "--rm",
             "--name",
             _CONTAINER,
+            # 一次性测试库放内存，initdb 和 TRUNCATE 不受磁盘速度影响。
             "--mount",
-            f"type=volume,source={_PG_VOLUME},target=/var/lib/postgresql",
+            "type=tmpfs,destination=/var/lib/postgresql",
             "-e",
             "POSTGRES_PASSWORD=test",
             "-e",
             "POSTGRES_DB=getrich",
             "-p",
-            f"{port}:5432",
+            "127.0.0.1:0:5432",
             PG_IMAGE,
+            # 容器用完即弃，不需要崩溃恢复；关闭刷盘只影响耐久性，不影响 SQL 语义。
+            "-c",
+            "fsync=off",
+            "-c",
+            "synchronous_commit=off",
+            "-c",
+            "full_page_writes=off",
         ],
         capture_output=True,
         text=True,
     )
     if proc.returncode != 0:
-        subprocess.run(["docker", "volume", "rm", _PG_VOLUME], capture_output=True)
         pytest.skip(f"无法启动 PG 容器: {proc.stderr.strip()}")
 
+    port = _published_port(_CONTAINER)
     dsn = {
         "host": "localhost",
         "port": port,
@@ -682,8 +700,8 @@ def pg_dsn():
             pytest.skip(f"PG 容器未就绪: {last_err}")
         yield dsn
     finally:
-        subprocess.run(["docker", "stop", _CONTAINER], capture_output=True)
-        subprocess.run(["docker", "volume", "rm", _PG_VOLUME], capture_output=True)
+        # 容器用完即弃，不等 PG 优雅退出。
+        subprocess.run(["docker", "rm", "-f", _CONTAINER], capture_output=True)
 
 
 @pytest.fixture
