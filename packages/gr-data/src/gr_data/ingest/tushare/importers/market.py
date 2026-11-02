@@ -30,6 +30,12 @@ from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.bj_pending import BJPendingImporter
 from gr_data.ingest.tushare.importers.reference import _require, parse_date
+from gr_data.ingest.tushare.limit_sentinels import (
+    EXACT_NO_LIMIT_EVIDENCE_URLS,
+    EXACT_NO_LIMIT_PROCESSING_RULE,
+    EXACT_NO_LIMIT_RULE,
+    exact_no_limit_mask,
+)
 from gr_data.ingest.tushare.symbols import collapse_alias_rows, expand_stock_auxiliary_aliases
 from gr_data.raw.tushare.quote_rules import tas_code_mask
 from gr_data.raw.tushare.suspension_store import read_coverage
@@ -504,12 +510,15 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
         )
         has_row = merged["has_limit_row"].eq(True).to_numpy()
 
+        # 在浮点转换前按原始数值精确匹配，禁止近似文本因转换舍入而获准。
+        exact_sentinel = has_row & exact_no_limit_mask(merged["up_limit"], merged["down_limit"])
+        self._record_exact_no_limit(merged.loc[exact_sentinel])
         _to_numeric_strict(merged, ["up_limit", "down_limit"], "stk_limit")
         up = merged["up_limit"].to_numpy(dtype=float)
         down = merged["down_limit"].to_numpy(dtype=float)
         # 两侧同时满足才认定为哨兵；只有一边像哨兵时无法确认不设涨跌幅，按非法处理。
         with np.errstate(invalid="ignore"):
-            no_limit = (
+            no_limit = exact_sentinel | (
                 has_row
                 & np.isfinite(up)  # +Inf 是坏值，不是哨兵
                 & (up >= NO_LIMIT_UP_MIN)
@@ -525,6 +534,7 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
             | (merged["up_limit"] < merged["down_limit"]).to_numpy()
             # 只有一边出现哨兵量级：既不能认定不设涨跌幅，也不是可信价格。
             | (merged["up_limit"] >= NO_LIMIT_UP_MIN).to_numpy()
+            | (merged["up_limit"] == 10000.0).to_numpy()
             | (merged["down_limit"] <= NO_LIMIT_DOWN_MAX).to_numpy()
         )
         if bad.any():
@@ -585,6 +595,34 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
                         ensure_ascii=False,
                     ),
                 ),
+            )
+
+    def _record_exact_no_limit(self, frame: pd.DataFrame) -> None:
+        """精确哨兵逐条审计与股票写入同事务；重导事件由月报按代码日期去重。"""
+        if self.conn is None:
+            return
+        for row in frame[["ts_code", "trade_date", "up_limit", "down_limit"]].itertuples(
+            index=False
+        ):
+            day = pd.Timestamp(str(row.trade_date)).date()
+            detail = {
+                "provider": PROVIDER,
+                "dataset": self.DATASET,
+                "source_code": str(row.ts_code),
+                "trading_day": day.isoformat(),
+                "raw_partition": day.strftime("%Y-%m"),
+                "batch_id": self.ctx.batch_id,
+                "raw_up_limit": str(row.up_limit),
+                "raw_down_limit": str(row.down_limit),
+                "processing_rule": EXACT_NO_LIMIT_PROCESSING_RULE,
+                "price_limit_status": "NO_LIMIT",
+                "limit_up": None,
+                "limit_down": None,
+                "evidence_urls": list(EXACT_NO_LIMIT_EVIDENCE_URLS),
+            }
+            self.conn.execute(
+                "INSERT INTO ops.data_quality_check(rule,severity,detail) VALUES (%s,%s,%s)",
+                (EXACT_NO_LIMIT_RULE, "info", json.dumps(detail, ensure_ascii=False)),
             )
 
     def _trading_status(self, market: pd.DataFrame, months: list[str]) -> pd.Series:

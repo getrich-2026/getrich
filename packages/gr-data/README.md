@@ -384,6 +384,12 @@ Tushare importer 严格校验，下列情况**硬失败**：本 importer 不写�
 `stock_bar_1d.price_limit_status` 区分「当日不设涨跌幅」与「涨跌停价未知」，组合回放据此
 判断开盘是否达到涨停价。先执行 `uv run gr-db migrate --target pg` 应用 045，再重导受影响月份。
 
+除下表原阈值外，D-024 还授权源数值两侧**精确等于 `(10000.0, 0.001)`** 时记 `NO_LIMIT`／NULL；
+不降低原阈值，不接受近似值或单侧命中。每次命中用 `tushare_stk_limit_exact_no_limit_sentinel`
+在 `ops.data_quality_check` 记录代码、日期和原始值，与股票写入同事务；历史回补每月在
+`state.json` 各月的 `exact_no_limit_sentinels` 和 `exact-no-limit-sentinel-months.json`
+汇总唯一代码日期、审计事件与规则名。其他未知组合仍停止待复核，不自动扩展。
+
 | 状态 | 判定（Tushare `stk_limit`） | `limit_up`／`limit_down` | 软告警 |
 |---|---|---|---|
 | `LIMITED` | 两侧涨跌停价有效；`stk_limit` 带 `pre_close` 时还须与日线一致（缺该值则不比较） | 原值 | 否 |
