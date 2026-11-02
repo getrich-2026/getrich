@@ -41,12 +41,15 @@ def _daily(rows):
     )
 
 
-def _build(paths, daily_rows, limit_rows, *, listing_dates=None):
+def _build(paths, daily_rows, limit_rows, *, listing_dates=None, prices=None):
     """limit_rows: [(ts_code, pre_close, up_limit, down_limit)]"""
     from gr_data.ingest.tushare.importers.market import StockBars1dImporter
 
     codes = [c for c, _ in daily_rows]
-    _write(paths, "daily", _daily(daily_rows))
+    daily = _daily(daily_rows)
+    for field, value in (prices or {}).items():
+        daily[field] = value
+    _write(paths, "daily", daily)
     _write(
         paths,
         "adj_factor",
@@ -90,6 +93,38 @@ def test_normal_limits_are_limited(tmp_raw_root):
     df, warnings = _build(tmp_raw_root, [("600000.SH", 9.8)], [("600000.SH", 9.8, 10.78, 8.82)])
     assert df.loc[1, "price_limit_status"] == "LIMITED"
     assert df.loc[1, "limit_up"] == 10.78
+    assert warnings == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("open", 11.0), ("open", 8.0), ("high", 11.0), ("low", 8.0), ("close", 11.0), ("close", 8.0)],
+)
+def test_any_ohlc_outside_limits_preserves_price_but_marks_limits_unknown(
+    tmp_raw_root, field, value
+):
+    """open／close 不一定被 high／low 包含，也必须逐价核验限价矛盾。"""
+    frame, warnings = _build(
+        tmp_raw_root,
+        [("600000.SH", 9.8)],
+        [("600000.SH", 9.8, 10.78, 8.82)],
+        prices={field: value},
+    )
+    assert frame.loc[1, field] == value
+    assert frame.loc[1, "price_limit_status"] == "UNKNOWN"
+    assert pd.isna(frame.loc[1, "limit_up"]) and pd.isna(frame.loc[1, "limit_down"])
+    assert any("OHLC outside price limits" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize("prices", [{"open": 10.78, "high": 10.78}, {"close": 8.82, "low": 8.82}])
+def test_prices_exactly_at_limit_are_kept(tmp_raw_root, prices):
+    frame, warnings = _build(
+        tmp_raw_root,
+        [("600000.SH", 9.8)],
+        [("600000.SH", 9.8, 10.78, 8.82)],
+        prices=prices,
+    )
+    assert frame.loc[1, "price_limit_status"] == "LIMITED"
     assert warnings == []
 
 

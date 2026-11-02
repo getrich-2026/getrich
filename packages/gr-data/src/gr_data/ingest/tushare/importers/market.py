@@ -571,9 +571,13 @@ class StockBars1dImporter(BJPendingImporter, _BaseBarsImporter):
                 merged.loc[mismatch, ["up_limit", "down_limit"]] = np.nan
 
         both = merged["up_limit"].notna().to_numpy() & merged["down_limit"].notna().to_numpy()
-        outside = both & (
-            (merged["high"] > merged["up_limit"]).to_numpy()
-            | (merged["low"] < merged["down_limit"]).to_numpy()
+        prices = merged[["open", "high", "low", "close"]]
+        outside = (
+            both
+            & (
+                prices.gt(merged["up_limit"], axis=0).any(axis=1)
+                | prices.lt(merged["down_limit"], axis=0).any(axis=1)
+            ).to_numpy()
         )
         if outside.any():
             self._soft(

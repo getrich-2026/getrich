@@ -11,6 +11,8 @@
 
 ## 当前方向与阻塞
 
+- 四价限价复核（2026-11-02，提交前独立审查补漏）：股票 open／high／low／close 分别与源上下限核对，任一越界沿既有口径保留行情原值、限价置 NULL、状态 UNKNOWN 并告警；精确等于边界仍 LIMITED，哨兵／B 股规则不变。仅修开发主仓，后台继续固定来源副本，未切换运行源码。
+
 - Tushare 导入归档（2026-11-02 16:14 上海时间实查）：本轮将已授权且已用于回补的复权舍入例外、上市首日缺限价及对应测试/文档归档到本地 dev；提交候选的全部 gr-data/gr-tools/gr-db 生产 Python 逐文件匹配已审核运行快照，不切换运行源码或重写完成账本。2010～2023 已 complete、168/168 月；2024～2026-10-29 已 complete、34/34 月。多品种控制器当前 running、阶段 index；按原顺序接续8核心指数→ETF→期货→期权，期权仍只raw/隔离验证。米筐及诊断未提交工作保留，实时后续进度以运行账本为准。
 
 - 沪市双精确哨兵（2026-11-02，用户授权，D-024）：以沪市六位 .SH、源上限精确10000、下限精确0.001或0.01取代原单一组合，原≥99999阈值不变；深市/BJ的10000在BJ行级分流前整批停止，未知/近似/单侧组合不类推。规则独立提交 `0acd712453d1ef44c5dd74ae0b102cd3b060b0d4`，未 push，其他原有修改保留；公告原件及原值库盘点在 `/Volumes/myssd/data/getrich-validation/tushare-sh-exact-sentinel-evidence-20261102/`。2020-08四表canonical/价格/幂等及所有业务值不变、90条创业板原哨兵全保留；2022-03四表重验通过，仅600145.SH/03-30 UNKNOWN→NO_LIMIT，03-03～29共19交易日HALTED且无补造bar，03-30/31 NORMAL、03-31限价0.31/0.25。月报逐条列代码日期、原值、处理规则、公告及重放事件，兼容旧审计但不重写历史。原146月（含2020-08）及近期34月账本保持，现147/168月至2022-03、从2022-04续跑；后续品种等全部股票。审核 `approved-source-change-sh-exact-sentinel-20261102.json`，双月验收 `sh-exact-sentinel-reacceptance-20261102.json`，注册/备份 `sh-exact-sentinel-source-registration-20261102.json`，启动 `sh-exact-sentinel-background-process-20261102.json`，运行源 `/Volumes/myssd/data/getrich-validation/tushare-sh-exact-sentinel-source-20261102T062404Z`。 隔离预检首次SZSE只返5000行已被完整性门禁拦截；失败响应/队列保存在 `sh-exact-sentinel-calendar-first-launch-20261102/`，一次重试完整通过，正式日历与包源码未改；若再现需按短日期窗口修复供应商采集，不可跳过日历完整性检查。
