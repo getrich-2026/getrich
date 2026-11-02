@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import date, datetime
-from decimal import Decimal
 from uuid import uuid4
 
 import numpy as np
@@ -18,29 +15,12 @@ import psycopg
 from gr_data.common.ownership import OwnershipManager
 from gr_data.common.quality import RowValidationError
 from gr_data.db.copy import upsert_rows
-from gr_data.ingest.base import BaseImporter
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
+from gr_data.ingest.tushare.stock_scope import StockScopeAdapter, StockScopeImporter, raw_json
 
 
-def raw_json(value: object) -> object:
-    """保留源值，非有限值用文字表示，避免 JSONB 把 NaN／Inf 吞成 NULL。"""
-    if value is None or value is pd.NA or value is pd.NaT:
-        return None
-    if isinstance(value, np.generic):
-        return raw_json(value.item())
-    if isinstance(value, float) and not math.isfinite(value):
-        return str(value)
-    if isinstance(value, (date, datetime, Decimal)):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(k): raw_json(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [raw_json(v) for v in value]
-    return value
-
-
-class BJPendingImporter(BaseImporter):
+class BJPendingImporter(StockScopeImporter):
     """共享严格 builder，仅对 BJ 定位行级错误后继续。
 
     正常批次按向量校验；残余失败按证券／日期组二分定位，避免全表逐行重建。
@@ -55,7 +35,7 @@ class BJPendingImporter(BaseImporter):
 
     def _adapter(self) -> TushareAdapter:
         if self._tushare_adapter is None:
-            self._tushare_adapter = TushareAdapter(self.paths, self.ctx.months)
+            self._tushare_adapter = StockScopeAdapter(self)
         return self._tushare_adapter
 
     def _id_map(self) -> dict[str, int]:

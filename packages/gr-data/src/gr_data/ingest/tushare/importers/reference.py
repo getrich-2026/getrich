@@ -14,6 +14,7 @@ from gr_data.ingest.tushare.adapter import (
     CALENDAR_EXCHANGES,
     TushareAdapter,
 )
+from gr_data.ingest.tushare.stock_scope import StockScopeAdapter, StockScopeImporter
 from gr_data.ingest.tushare.symbols import split_ts_code, stock_alias_ids
 from gr_data.raw.tushare.fetchers.reference import read_open_days
 
@@ -55,7 +56,7 @@ def _clean_codes(df: pd.DataFrame, source: str) -> pd.DataFrame:
     return out.drop_duplicates(subset=["ts_code"], keep="last")
 
 
-class InstrumentsImporter(BaseImporter):
+class InstrumentsImporter(StockScopeImporter):
     """股票 + 指数 + 期货标的 → meta.instruments。"""
 
     PROVIDER = PROVIDER
@@ -65,12 +66,14 @@ class InstrumentsImporter(BaseImporter):
     STRICT_QUALITY = True
 
     def build(self) -> pd.DataFrame:
-        adapter = TushareAdapter(self.paths)
+        adapter = StockScopeAdapter(self)
         frames = []
         for asset in ASSETS:
             raw = adapter.read_instruments(asset)
             if raw is None or raw.empty:
                 if asset == "stock":
+                    if self._stock_scope_all_excluded:
+                        continue
                     # 股票标的是一期全部按月数据的映射前提，缺失时后续导入都会落空。
                     raise IngestGateError("instruments[stock] raw is missing or empty")
                 self._soft(f"instruments[{asset}] raw is missing or empty; skipped")
@@ -138,7 +141,7 @@ class InstrumentsImporter(BaseImporter):
         )[list(self.contract.columns)]
 
 
-class SymbolMapImporter(BaseImporter):
+class SymbolMapImporter(StockScopeImporter):
     """meta.instruments → meta.symbol_map，供 bars importer 解析 instrument_id。"""
 
     PROVIDER = PROVIDER
@@ -174,9 +177,10 @@ class SymbolMapImporter(BaseImporter):
                 if old in existing and existing[old] != iid:
                     raise ValueError(f"Stock alias conflicts with existing source mapping: {old}")
                 rows.append({"instrument_id": iid, "source": PROVIDER, "source_symbol": old})
-        return pd.DataFrame(rows, columns=list(self.contract.columns)).drop_duplicates(
-            subset=["source", "source_symbol"]
-        )
+        frame = pd.DataFrame(rows, columns=list(self.contract.columns))
+        return self.exclude_b_shares(
+            frame, "symbol_map", "snapshot", code_column="source_symbol"
+        ).drop_duplicates(subset=["source", "source_symbol"])
 
 
 class CalendarImporter(BaseImporter):

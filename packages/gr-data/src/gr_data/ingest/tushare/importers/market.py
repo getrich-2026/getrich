@@ -25,7 +25,7 @@ from gr_data.common import contracts
 from gr_data.common.quality import RowValidationError
 from gr_data.common.trading_status import event_flags, resolve_trading_status
 from gr_data.ingest import pit
-from gr_data.ingest.base import BaseImporter, IngestGateError
+from gr_data.ingest.base import IngestGateError
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.bj_pending import BJPendingImporter
@@ -36,6 +36,7 @@ from gr_data.ingest.tushare.limit_sentinels import (
     EXACT_NO_LIMIT_RULE,
     exact_no_limit_mask,
 )
+from gr_data.ingest.tushare.stock_scope import StockScopeAdapter, StockScopeImporter
 from gr_data.ingest.tushare.symbols import collapse_alias_rows, expand_stock_auxiliary_aliases
 from gr_data.raw.tushare.quote_rules import tas_code_mask
 from gr_data.raw.tushare.suspension_store import read_coverage
@@ -145,7 +146,7 @@ def _amount_in_yuan(series: pd.Series, multiplier: int) -> pd.Series:
     return series.map(lambda v: None if pd.isna(v) else Decimal(str(v)) * multiplier)
 
 
-class _SymbolResolvingImporter(BaseImporter):
+class _SymbolResolvingImporter(StockScopeImporter):
     """把 ``ts_code`` 解析成 ``instrument_id`` 的公共部分。
 
     行情 importer 与参考 importer（valuation_1d / adj_factor_ts）都要做这件事，
@@ -158,7 +159,7 @@ class _SymbolResolvingImporter(BaseImporter):
     def _adapter(self) -> TushareAdapter:
         # 同一 importer 共用一个适配器，残留文件等软告警才能汇总到运行结果。
         if getattr(self, "_tushare_adapter", None) is None:
-            self._tushare_adapter = TushareAdapter(self.paths, self.ctx.months)
+            self._tushare_adapter = StockScopeAdapter(self)
         return self._tushare_adapter
 
     def collect_soft_warnings(self) -> list[str]:

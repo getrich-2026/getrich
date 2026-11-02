@@ -20,10 +20,10 @@ from typing import ClassVar
 import pandas as pd
 
 from gr_data.common import contracts
-from gr_data.ingest.base import BaseImporter, IngestGateError
+from gr_data.ingest.base import IngestGateError
 from gr_data.ingest.resolve import resolve_by_instrument
-from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.importers.reference import _clean_codes, parse_date
+from gr_data.ingest.tushare.stock_scope import StockScopeAdapter, StockScopeImporter
 
 
 PROVIDER = "tushare"
@@ -46,7 +46,7 @@ def _number(series: pd.Series, field: str) -> pd.Series:
     return parsed.astype(object).where(parsed.notna(), None)
 
 
-class _ProfileImporter(BaseImporter):
+class _ProfileImporter(StockScopeImporter):
     """档案 importer 的公共流程：读主数据快照 → 解析身份 → 按字段映射输出。"""
 
     PROVIDER = PROVIDER
@@ -64,8 +64,10 @@ class _ProfileImporter(BaseImporter):
 
     def build(self) -> pd.DataFrame:
         self._snapshot_missing = False
-        raw = TushareAdapter(self.paths).read_instruments(self.ASSET)
+        raw = StockScopeAdapter(self).read_instruments(self.ASSET)
         if raw is None or raw.empty:
+            if self._stock_scope_all_excluded:
+                return pd.DataFrame(columns=list(self.contract.columns))
             message = f"instruments[{self.ASSET}] raw is missing or empty"
             if self.REQUIRED:
                 raise IngestGateError(message)
