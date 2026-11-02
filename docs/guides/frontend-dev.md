@@ -33,7 +33,7 @@ curl --fail --silent --show-error http://127.0.0.1:8001/health
 
 ## 2. 安装并配置前端
 
-使用 Node 24，与 [前端 CI](../../.github/workflows/web.yml) 一致。当前锁文件中的 Vite 与 React 插件要求 Node `^20.19.0 || >=22.12.0`。
+使用 Node 24，与 [前端 CI](../../.github/workflows/ci.yml) 一致。当前锁文件中的 Vite 与 React 插件要求 Node `^20.19.0 || >=22.12.0`。
 
 新终端从仓库根目录执行，后续 npm 命令均在 `apps/web` 下运行：
 

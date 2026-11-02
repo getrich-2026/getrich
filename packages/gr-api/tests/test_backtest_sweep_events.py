@@ -212,17 +212,13 @@ async def _consume_until(
 
 @pytest.fixture(autouse=True)
 def _fast_poll(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Speed up the SSE generator for tests.
+    """加快 SSE 生成器的轮询与心跳，避免用例真实等待。
 
-    The stream reads the sweep from the store and the parent job from
-    ``_JOB_STORE``. Both modules re-import the cadence constants from
-    ``sse.py`` as private aliases — patching the originals makes the
-    aliases pick up the test values transitively.
+    业务模块用 ``from sse import X as _X`` 按值绑定常量，运行时读的是模块内
+    别名，所以必须 patch 这些别名；只改 ``sse.X`` 不生效。
     """
-    from gr_api.services import sse
-
-    monkeypatch.setattr(sse, "POLL_INTERVAL_S", 0.05)
-    monkeypatch.setattr(sse, "HEARTBEAT_INTERVAL_S", 0.15)
+    monkeypatch.setattr(sweep_svc, "_POLL_INTERVAL_S", 0.05)
+    monkeypatch.setattr(sweep_svc, "_HEARTBEAT_INTERVAL_S", 0.15)
 
 
 # ---------------------------------------------------------------- direct generator tests

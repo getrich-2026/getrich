@@ -28,6 +28,8 @@ from gr_tools.config import load_environment
 # natively supported" and, because the whole module is normally skipped, nobody
 # ever sees it. These cases silently never ran until 2026-08-17.
 pytestmark = [
+    # 这些用例共用同一个真库并按业务键清理，在 xdist 下必须串行到同一 worker。
+    pytest.mark.xdist_group("shared_pg"),
     pytest.mark.anyio,
     pytest.mark.skipif(
         os.environ.get("GETRICH_TEST_PG") is None

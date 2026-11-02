@@ -215,6 +215,7 @@ uv run uvicorn gr_api.main:app --reload --host 0.0.0.0 --port 8001
 
 # 全量测试（testpaths 覆盖全部七个有源码的包）
 uv run pytest -v
+uv run pytest -n auto --dist loadgroup   # 与 CI 相同的并行方式；共用真库的用例标 xdist_group
 
 # 打真库的集成用例（默认跳过）。选股模块用 30 天模拟数据跑「导入 → 读接口」全链路，
 # 模拟数据见 packages/gr-api/tests/fixture_picks.py，跑完自己清理。
@@ -240,7 +241,7 @@ npm run build    # tsc -b && vite build
 npm run lint     # ESLint
 ```
 
-前端**没有测试框架**，`lint` + `build` 就是 CI 的全部门禁（`.github/workflows/web.yml`）。
+前端**没有测试框架**，`lint` + `build` 就是 CI 的全部门禁（`.github/workflows/ci.yml` 的 `web` job）。
 CI 默认只启动 PG；手动 workflow_dispatch 勾选 `extra_services` 可启用 CH／Redis 及 CH 迁移冒烟。
 
 ## 7. 文档与跨会话状态

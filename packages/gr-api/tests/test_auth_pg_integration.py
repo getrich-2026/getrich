@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 
 pytestmark = [
+    # 这些用例共用同一个真库并按业务键清理，在 xdist 下必须串行到同一 worker。
+    pytest.mark.xdist_group("shared_pg"),
     pytest.mark.anyio,
     pytest.mark.integration,
     pytest.mark.skipif(
