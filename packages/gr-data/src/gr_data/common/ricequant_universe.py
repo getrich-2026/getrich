@@ -12,8 +12,12 @@ import psycopg
 
 from gr_data.common.ricequant_specs import ContractViolationError, semantic_hash
 from gr_data.common.ricequant_symbol_intervals import (
+    APPROVED_HISTORY_SYMBOL_RULES_VERSION,
     SYMBOL_RULES_VERSION,
+    approved_delist_boundary_exception,
+    approved_provider_request_override,
     interval_source_symbol,
+    matches_approved_delist_sources,
     resolve_symbol_intervals,
     symbol_rule_evidence,
     symbol_rule_hash,
@@ -114,13 +118,20 @@ def build_universe_provider(
     expected_mapping = "alias_v2" if is_temporal else MAPPING_VERSION
     if mapping_version is not None and mapping_version != expected_mapping:
         raise ContractViolationError("Universe and mapping version mismatch")
+    rules_version = SYMBOL_RULES_VERSION
     if is_temporal:
-        if symbol_rules is not None and symbol_rules != symbol_rule_evidence():
+        if symbol_rules is not None:
+            requested_version = symbol_rules.get("version")
+            if not isinstance(requested_version, str):
+                raise ContractViolationError("Unknown historical symbol interval rules")
+            rules_version = requested_version
+        if symbol_rules is not None and symbol_rules != symbol_rule_evidence(rules_version):
             raise ContractViolationError("Unknown historical symbol interval rules")
     elif symbol_rules is not None:
         raise ContractViolationError("Legacy universe must not contain temporal symbol rules")
+    approved_history = is_temporal and rules_version == APPROVED_HISTORY_SYMBOL_RULES_VERSION
     snapshot, reference = copy.deepcopy(snapshot), copy.deepcopy(reference)
-    temporal_rules = resolve_symbol_intervals(snapshot) if is_temporal else {}
+    temporal_rules = resolve_symbol_intervals(snapshot, rules_version) if is_temporal else {}
     all_stocks = {int(row["instrument_id"]): row for row in snapshot["instruments"]}
     if len(all_stocks) != len(snapshot["instruments"]):
         raise ContractViolationError("Duplicate canonical universe")
@@ -256,9 +267,9 @@ def build_universe_provider(
                 "tushare.list_date <= day < tushare.delist_date; null means no recorded end"
             ),
             alias_selection_rule="verified_effective_date_unique_code",
-            symbol_rules=symbol_rule_evidence(),
-            symbol_rules_version=SYMBOL_RULES_VERSION,
-            symbol_rules_hash=symbol_rule_hash(),
+            symbol_rules=symbol_rule_evidence(rules_version),
+            symbol_rules_version=rules_version,
+            symbol_rules_hash=symbol_rule_hash(rules_version),
         )
 
     def provider(day: str) -> dict[str, Any]:
@@ -285,14 +296,43 @@ def build_universe_provider(
                 else (stock["symbol"], None)
             )
             selected_code = _obid(selected_symbol)
+            request_override = (
+                approved_provider_request_override()
+                if approved_history and stock["symbol"] == "601607.SH" and iid in temporal_rules
+                else None
+            )
+            # 法律旧代码仍保留；provider 明确仅此已登记同一身份允许请求新码。
+            if request_override is not None:
+                selected_code = request_override["request_code"]
+            boundary_exception = (
+                approved_delist_boundary_exception()
+                if approved_history and matches_approved_delist_sources(stock, refs)
+                else None
+            )
             if is_temporal:
                 valid_dates = ts_listed is not None and (
                     stock.get("delist_date") is None
                     or (ts_delisted is not None and ts_listed < ts_delisted)
                 )
-                if valid_dates and (
-                    current < ts_listed or (ts_delisted is not None and current >= ts_delisted)
-                ):
+                outside_canonical = (
+                    valid_dates
+                    and ts_listed is not None
+                    and (
+                        current < ts_listed or (ts_delisted is not None and current >= ts_delisted)
+                    )
+                )
+                # 新政策保留双源在市判断冲突的日期，不把不匹配结束日静默过滤。
+                supplier_may_be_listed = approved_history and any(
+                    (rq_start := _day(ref.get("listed_date"))) is not None
+                    and current >= rq_start
+                    and (
+                        ref.get("de_listed_date") == "0000-00-00"
+                        or (rq_end := _day(ref.get("de_listed_date"))) is None
+                        or current < rq_end
+                    )
+                    for ref in refs
+                )
+                if outside_canonical and not supplier_may_be_listed:
                     continue
                 if iid in unrequestable:
                     status = "unmapped_symbol"
@@ -314,11 +354,15 @@ def build_universe_provider(
                             and selected_symbol == interval_rule["old_source_symbol"]
                         )
                         end_matches = rq_delisted == ts_delisted
-                        if old_code_end:
+                        if old_code_end and request_override is None and interval_rule is not None:
                             end_matches = ref.get("de_listed_date") in (
                                 "0000-00-00",
                                 interval_rule["old_valid_to_exclusive"],
                             )
+                        if boundary_exception is not None:
+                            end_matches = True
+                            if day == boundary_exception["boundary_day"]:
+                                status = "universe_boundary_unknown"
                         if (
                             rq_listed != ts_listed
                             or not end_matches
@@ -331,8 +375,10 @@ def build_universe_provider(
                     stock.get("delist_date") is None
                     or (ts_delisted is not None and ts_listed <= ts_delisted)
                 )
-                if valid_dates and (
-                    current < ts_listed or (ts_delisted is not None and current > ts_delisted)
+                if (
+                    valid_dates
+                    and ts_listed is not None
+                    and (current < ts_listed or (ts_delisted is not None and current > ts_delisted))
                 ):
                     continue
                 status = "unmapped_symbol"
@@ -349,7 +395,12 @@ def build_universe_provider(
                     and (delisted is None or listed < delisted)
                 )
                 conflict = ts_listed is None or listed != ts_listed or delisted != ts_delisted
-                if valid and ts_listed is not None and current < min(listed, ts_listed):
+                if (
+                    valid
+                    and listed is not None
+                    and ts_listed is not None
+                    and current < min(listed, ts_listed)
+                ):
                     continue
                 if (
                     valid
@@ -358,7 +409,7 @@ def build_universe_provider(
                     and current > max(delisted, ts_delisted)
                 ):
                     continue
-                if valid and not conflict:
+                if valid and listed is not None and not conflict:
                     if current < listed or (delisted is not None and current >= delisted):
                         continue
                 else:
@@ -400,6 +451,16 @@ def build_universe_provider(
                                 }
                             }
                             if is_temporal and interval_rule is not None
+                            else {}
+                        ),
+                        **(
+                            {"provider_request_override": request_override}
+                            if request_override
+                            else {}
+                        ),
+                        **(
+                            {"delist_boundary_exception": boundary_exception}
+                            if boundary_exception
                             else {}
                         ),
                         "canonical": stock,

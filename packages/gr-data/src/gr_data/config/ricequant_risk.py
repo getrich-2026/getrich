@@ -30,6 +30,8 @@ class RiskOptions:
     enable_bjse: bool = False
     universe_policy: str = "fixed"
     purpose: str = "validation"
+    historical_probe: bool = False
+    approved_history_raw: bool = False
 
     @property
     def mapping_version(self) -> str:
@@ -39,9 +41,15 @@ class RiskOptions:
     def symbol_rules_version(self) -> str | None:
         if self.universe_policy != TUSHARE_UNIVERSE_POLICY:
             return None
-        from gr_data.common.ricequant_symbol_intervals import SYMBOL_RULES_VERSION
+        from gr_data.common.ricequant_symbol_intervals import (
+            APPROVED_HISTORY_SYMBOL_RULES_VERSION,
+            HISTORY_SYMBOL_RULES_VERSION,
+            SYMBOL_RULES_VERSION,
+        )
 
-        return SYMBOL_RULES_VERSION
+        if self.approved_history_raw:
+            return APPROVED_HISTORY_SYMBOL_RULES_VERSION
+        return HISTORY_SYMBOL_RULES_VERSION if self.historical_probe else SYMBOL_RULES_VERSION
 
     @property
     def symbol_rules_hash(self) -> str | None:
@@ -49,7 +57,9 @@ class RiskOptions:
             return None
         from gr_data.common.ricequant_symbol_intervals import symbol_rule_hash
 
-        return symbol_rule_hash()
+        version = self.symbol_rules_version
+        assert version is not None
+        return symbol_rule_hash(version)
 
     @property
     def contract_version(self) -> str:
@@ -86,11 +96,44 @@ class RiskOptions:
                 symbol_rules_version=self.symbol_rules_version,
                 symbol_rules_hash=self.symbol_rules_hash,
             )
+        if self.historical_probe:
+            identity["historical_probe"] = "pre2024_v1"
+        if self.approved_history_raw:
+            identity["approved_history_raw"] = "pre2024_v3"
         return identity
 
 
-def parse_risk_options(data: Any) -> RiskOptions:
-    """拒绝缺失、猜测单位和未确认权限；真实值不从样例自动填充。"""
+def parse_risk_options(
+    data: Any,
+    *,
+    historical_probe: bool = False,
+    approved_history_raw: bool = False,
+    approved_history_lookahead: bool = False,
+) -> RiskOptions:
+    """拒绝缺失、猜测单位和未确认权限；真实值不从样例自动填充。
+
+    Args:
+        data: 显式日期、名单策略、用途和源单位配置。
+        historical_probe: 只供独立探测器显式开启，允许 2010-01-04 起的 validation；
+            生成独立探测身份，不扩大普通 CLI 或 production 的日期范围。
+        approved_history_raw: 用户批准的独立历史 raw 入口，绑定 v3 身份；
+            v2/v2trd production 须由调用方冻结的逐月验收账本先行准入，
+            此参数不授权业务入库或模型发布。
+        approved_history_lookahead: 仅配合已批准入口取 2024-01-02 单日末端恢复证据；
+            不改变 variant，不授权该日成为历史正式目标。
+
+    Returns:
+        已校验且日期为闭区间的不可变风险采集选项。
+
+    Raises:
+        RqConfigurationError: 用途、日期、身份或单位声明超出获批边界。
+    """
+    if type(approved_history_raw) is not bool or (historical_probe and approved_history_raw):
+        raise RqConfigurationError("历史探测与已批准历史 raw 入口不能混用")
+    if type(approved_history_lookahead) is not bool or (
+        approved_history_lookahead and not approved_history_raw
+    ):
+        raise RqConfigurationError("历史末端恢复证据必须显式启用已批准历史 raw 入口")
     keys = {
         "selected",
         "model",
@@ -129,8 +172,24 @@ def parse_risk_options(data: Any) -> RiskOptions:
         raise RqConfigurationError(
             "risk_model production 仅支持 listed_cn_a_v2；旧策略仅可用于 validation"
         )
-    if policy != "fixed" and ("order_book_ids" in data or start < date(2024, 1, 1)):
-        raise RqConfigurationError("动态名单禁止固定代码且起点不得早于 2024-01-01")
+    if historical_probe and (
+        purpose != "validation"
+        or policy != TUSHARE_UNIVERSE_POLICY
+        or start < date(2010, 1, 4)
+        or end >= date(2024, 1, 1)
+    ):
+        raise RqConfigurationError("历史探测仅允许 2010-01-04 至 2023-12-31 的动态 validation")
+    if approved_history_lookahead and not (start == end == date(2024, 1, 2)):
+        raise RqConfigurationError("历史末端恢复证据仅允许 2024-01-02 单日")
+    if approved_history_raw and (
+        policy != TUSHARE_UNIVERSE_POLICY
+        or start < (date(2010, 1, 4) if data["model"] == "v1" else date(2011, 4, 28))
+        or (end >= date(2024, 1, 1) and not approved_history_lookahead)
+    ):
+        raise RqConfigurationError("已批准历史 raw 超出模型候选起点或 2023 年末")
+    lower_bound = date(2010, 1, 4) if historical_probe or approved_history_raw else date(2024, 1, 1)
+    if policy != "fixed" and ("order_book_ids" in data or start < lower_bound):
+        raise RqConfigurationError("动态名单禁止固定代码且起点不得早于已授权范围")
     codes = data.get("order_book_ids") if policy == "fixed" else []
     if policy == "fixed" and (
         not isinstance(codes, list)
@@ -161,6 +220,7 @@ def parse_risk_options(data: Any) -> RiskOptions:
     batch = data.get("batch_size", 200)
     if type(batch) is not int or not 1 <= batch <= 1000:
         raise RqConfigurationError("risk_model batch_size 必须在 1–1000 内")
+    assert isinstance(codes, list)
     return RiskOptions(
         data["model"],
         data["industry_mapping"],
@@ -172,4 +232,6 @@ def parse_risk_options(data: Any) -> RiskOptions:
         batch,
         universe_policy=policy,
         purpose=purpose,
+        historical_probe=historical_probe,
+        approved_history_raw=approved_history_raw,
     )

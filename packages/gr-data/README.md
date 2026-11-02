@@ -592,6 +592,17 @@ evidence 的平均字节数；动态导入在同日事务中登记、检查覆�
 最大采集时间或同模型最新 run 代替正式发布清单。全市场回补与覆盖阈值须依据独立样本
 再次确认；当前没有自动批准全量回补。
 
+跨库重放必须先按 [D-030](../../.agents/brain/DECISIONS.md#d-030) 生成独立映射。
+`ops/ricequant_replay/generate_mapping.py` 接受 `--ledger-root`、`--raw-root`、
+`--env-file`、`--output` 和可选 `--source-env-file`，只读账本／原始观察／数据库，
+输出按完整代码解析的一一映射、原始 manifest 哈希、日期差异及源库核对状态。
+输出文件的 SHA-256 与标准化 JSON 哈希一致；外部冻结该哈希，禁止在导入时自动接受新哈希。
+`IdentityMapping(path, expected_hash)` 验证文件后，通过
+`run_risk_ingest(..., identity_mapping=mapping)` 显式传入；不改变原有 CLI 的默认行为。
+映射只转换写库 ID，现有身份检查全部保留，且此模式不新增代码别名。
+run 的 `units.cross_database_identity` 和 ETL request 保留文件哈希、路径及源库核对状态，
+重复导入还会核对绑定 run 的映射证据。先通过恢复演练和隔离验收，再经确认写工作库。
+
 ### 米筐特色指数补充（R1–R3，待真实样本准入）
 
 已实现 `rq_index_daily`、`rq_index_components`、`rq_index_weights` 的离线契约、
