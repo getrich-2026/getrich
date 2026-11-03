@@ -23,8 +23,9 @@ from datetime import date
 
 import pandas as pd
 
+from gr_data.common.dates import int_to_date, today_int
 from gr_data.common.parquet import read_parquet_if_exists, write_parquet
-from gr_data.common.retry import int_to_date, retry_call, today_int
+from gr_data.common.retry import retry_call
 from gr_data.raw.base import BaseFetcher, month_range
 from gr_data.raw.datayes.client import NotAuthorizedError, QuotaExhaustedError
 

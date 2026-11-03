@@ -5,16 +5,11 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from gr_data.common import contracts
-from gr_data.common.parquet import last_index_date, read_parquet_if_exists, write_parquet
+from gr_data.common.dates import chunk_date_range, last_index_date, to_int_date, today_int
+from gr_data.common.iterables import chunk_list
+from gr_data.common.parquet import read_parquet_if_exists, write_parquet
 from gr_data.common.quality import check_dataframe
-from gr_data.common.retry import (
-    PermanentError,
-    chunk_date_range,
-    chunk_list,
-    retry_call,
-    to_int_date,
-    today_int,
-)
+from gr_data.common.retry import PermanentError, retry_call
 
 
 def test_contracts_assets():
@@ -114,3 +109,18 @@ def test_retry_call_still_retries_transient_error() -> None:
 
     assert retry_call(flaky, max_retries=5, backoff_base=0) == "ok"
     assert calls["n"] == 3
+
+
+@pytest.mark.parametrize("step_days", [0, -1])
+def test_date_chunks_reject_nonpositive_step(step_days: int) -> None:
+    with pytest.raises(ValueError, match="step_days must be > 0"):
+        list(chunk_date_range(20240101, 20240103, step_days))
+
+
+def test_date_chunks_cross_leap_day() -> None:
+    assert list(chunk_date_range(20240228, 20240302, 2)) == [
+        (20240228, 20240229),
+        (20240301, 20240302),
+    ]
+    assert list(chunk_date_range(20240302, 20240301, 2)) == []
+    assert list(chunk_date_range(20240301, 20240301, 2)) == [(20240301, 20240301)]

@@ -19,8 +19,9 @@ import re
 
 import pandas as pd
 
+from gr_data.common.iterables import chunk_list
 from gr_data.common.parquet import write_parquet
-from gr_data.common.retry import chunk_list, retry_call, sleep_s
+from gr_data.common.retry import retry_call, sleep_s
 from gr_data.raw.base import BaseFetcher
 from gr_data.raw.ricequant.client import RQ_TYPE_MAP
 

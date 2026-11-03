@@ -78,19 +78,3 @@ def write_parquet(df: pd.DataFrame, path: Path, *, append: bool = False) -> None
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
-
-
-def last_index_date(df: pd.DataFrame | None) -> int | None:
-    """取索引最大值并转 int8（K 线水位用）。"""
-    if df is None or df.empty:
-        return None
-    try:
-        mx = df.index.max()
-    except (TypeError, ValueError):
-        return None
-    if hasattr(mx, "strftime"):
-        return int(mx.strftime("%Y%m%d"))
-    try:
-        return int(mx)
-    except (TypeError, ValueError):
-        return None

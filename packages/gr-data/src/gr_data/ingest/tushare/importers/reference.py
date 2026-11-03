@@ -5,8 +5,8 @@ from __future__ import annotations
 import pandas as pd
 
 from gr_data.common import contracts
+from gr_data.common.dates import int_to_date, today_int
 from gr_data.common.parquet import read_parquet_strict
-from gr_data.common.retry import int_to_date, today_int
 from gr_data.ingest.base import BaseImporter, IngestGateError
 from gr_data.ingest.tushare.adapter import (
     ASSETS,

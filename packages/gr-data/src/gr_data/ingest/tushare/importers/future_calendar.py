@@ -11,8 +11,8 @@ import pandas as pd
 import psycopg
 from psycopg.types.json import Jsonb
 
+from gr_data.common.dates import int_to_date, today_int
 from gr_data.common.parquet import read_parquet_strict
-from gr_data.common.retry import int_to_date, today_int
 from gr_data.ingest.base import IngestContext
 from gr_data.ingest.tushare.importers.reference import CalendarImporter
 from gr_data.raw.tushare.calendar_rules import (

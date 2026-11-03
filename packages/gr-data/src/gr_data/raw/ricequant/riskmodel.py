@@ -15,8 +15,9 @@ from uuid import uuid4
 
 import pandas as pd
 
+from gr_data.common.iterables import chunk_list
 from gr_data.common.paths import RawPaths
-from gr_data.common.retry import chunk_list, sleep_s
+from gr_data.common.retry import sleep_s
 from gr_data.common.ricequant_specs import ContractViolationError, RawIntegrityError, semantic_hash
 from gr_data.config.ricequant import RicequantImportOptions
 from gr_data.config.ricequant_risk import RiskOptions

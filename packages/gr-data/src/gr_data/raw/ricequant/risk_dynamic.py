@@ -17,7 +17,8 @@ from uuid import uuid4
 import numpy as np
 import pandas as pd
 
-from gr_data.common.retry import chunk_list, sleep_s
+from gr_data.common.iterables import chunk_list
+from gr_data.common.retry import sleep_s
 from gr_data.common.ricequant_risk_quality import validate_covariance
 from gr_data.common.ricequant_specs import ContractViolationError, RawIntegrityError, semantic_hash
 from gr_data.common.ricequant_universe import build_universe_provider

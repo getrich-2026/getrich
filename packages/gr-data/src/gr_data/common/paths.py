@@ -1,6 +1,6 @@
 """raw parquet 路径约定。
 
-所有 raw 层落地路径集中在此定义，杜绝散落硬编码（见 docs/conventions/parquet-layout.md）。
+所有 raw 层落地路径集中在此定义，杜绝散落硬编码（见 AGENTS.md §3.4）。
 
 布局::
 

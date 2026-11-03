@@ -11,8 +11,8 @@ import pandas as pd
 import psycopg
 
 from gr_data.common import contracts
+from gr_data.common.dates import int_to_date, today_int
 from gr_data.common.paths import RawPaths
-from gr_data.common.retry import int_to_date, today_int
 from gr_data.ingest.base import BaseImporter, IngestContext, IngestGateError, IngestResult
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.etf_scope import (

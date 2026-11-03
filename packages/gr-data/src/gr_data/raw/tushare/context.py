@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from gr_data.common.retry import int_to_date
+from gr_data.common.dates import int_to_date
 from gr_data.config.pipeline import Config
 from gr_data.raw.base import RawContext
 

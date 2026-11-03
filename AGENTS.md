@@ -108,7 +108,7 @@ gr-backtest 与 gr-tools 各有一份 `test_package_boundaries.py` 静态守卫�
 **时间语义**：列名必须能区分三类时间，否则下游 join 会引入前视泄漏。
 `dt`（bar 事件时间）／`trading_day`（交易日）是 event time；供应商发布时间若有需
 显式另行命名；`updated_at` 是写库时间。raw 层保留源字段原义，ingest 层显式映射，
-绝不静默改写。供应商常用 int8 日期（`20240102`），统一走 `gr_data.common.retry`
+绝不静默改写。供应商常用 int8 日期（`20240102`），统一走 `gr_data.common.dates`
 的 `to_int_date` / `int_to_date` 转换。
 
 **代码归一化**：`meta.instruments.symbol` 存带交易所后缀的完整代码（`600000.SH`），
