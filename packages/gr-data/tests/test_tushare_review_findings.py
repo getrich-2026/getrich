@@ -135,7 +135,7 @@ def test_new_month_past_empty_trading_day_rejected(tmp_raw_root, fake_tushare, m
     _set_today(monkeypatch, 20240131)
     fetcher = _daily_fetcher(tmp_raw_root, fake_tushare, monkeypatch, {"20240103"})
 
-    with pytest.raises(ValueError, match="过去的交易日返回空响应"):
+    with pytest.raises(ValueError, match="Unexplained empty"):
         fetcher.fetch("init")
     assert not _daily_path(tmp_raw_root).exists()
 
@@ -169,7 +169,7 @@ def test_existing_partition_missing_past_day_rejected(tmp_raw_root, fake_tushare
     before = _daily_path(tmp_raw_root).read_bytes()
 
     _set_today(monkeypatch, 20240104)
-    with pytest.raises(ValueError, match="过去的交易日返回空响应"):
+    with pytest.raises(ValueError, match="Unexplained empty"):
         fetcher.fetch("update")
     assert _daily_path(tmp_raw_root).read_bytes() == before
 

@@ -942,6 +942,36 @@ def test_past_empty_open_day_still_fails(tmp_raw_root, monkeypatch, cls):
         cls(client, ctx).fetch("update")
 
 
+@pytest.mark.parametrize("cls", [FundDailyFetcher, FundAdjFetcher])
+def test_fund_second_empty_requery_recovers_and_keeps_full_validation(
+    tmp_raw_root, monkeypatch, cls
+):
+    from gr_data.common.empty_response_retry import capture_empty_response_recoveries
+
+    ctx, client = _two_day_setup(tmp_raw_root)
+    original = client.query_all
+    attempts = 0
+
+    def query(api, **params):
+        nonlocal attempts
+        if api == cls.API_NAME and params.get("trade_date") == "20240103":
+            attempts += 1
+            if attempts < 3:
+                return pd.DataFrame()
+        return original(api, **params)
+
+    monkeypatch.setattr(client, "query_all", query)
+    monkeypatch.setattr(raw_asset_markets, "today_int", lambda: 20240104)
+    with capture_empty_response_recoveries() as events:
+        assert cls(client, ctx).fetch("update") == 1
+    assert attempts == 3
+    assert events == [
+        {"provider": "tushare", "dataset": cls.DATASET, "date": "2024-01-03", "extra_queries": 2}
+    ]
+    frame = read_parquet_strict(tmp_raw_root.dataset_file("tushare", cls.DATASET, "2024-01"))
+    assert frame is not None and set(frame.trade_date) == {"20240102", "20240103"}
+
+
 @pytest.mark.parametrize("names", [["option_instruments"], ["option_symbol_map"]])
 def test_option_identity_writes_are_gated_before_connection(tmp_path, names):
     """P0-2：期权身份写入同属正式期权写入，未开验证开关时在连库前拒绝。"""

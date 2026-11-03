@@ -7,6 +7,7 @@ import json
 import os
 import uuid
 from datetime import date, datetime
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -14,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from gr_data.common.empty_response_retry import retry_empty_historical_response
 from gr_data.common.parquet import read_parquet_strict, write_parquet
 from gr_data.common.retry import PermanentError, int_to_date, retry_call, today_int
 from gr_data.raw.base import BaseFetcher, RawContext, month_range
@@ -426,12 +428,26 @@ class AssetDailyFetcher(_AssetFetcher):
                 markets = [e for e, values in calendars.items() if day in values]
                 queries = [{"exchange": e} for e in markets] if self.OPTION else [{}]
                 for params in queries:
-                    frame = self._query(
+                    query = partial(
+                        self._query,
                         self.API_NAME,
                         trade_date=day.strftime("%Y%m%d"),
                         fields=",".join(self.FIELDS),
                         **params,
                     )
+
+                    frame = query()
+                    if not self.OPTION:
+                        frame = retry_empty_historical_response(
+                            frame,
+                            query,
+                            is_empty=lambda value: value.empty,
+                            day=day,
+                            today=today,
+                            calendar_is_open=bool(markets),
+                            logger=self.log,
+                            context={"provider": self.PROVIDER, "dataset": self.DATASET},
+                        )
                     if frame.empty:
                         market = params.get("exchange", "fund")
                         if day >= today:

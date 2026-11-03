@@ -33,6 +33,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from gr_data.common.empty_response_retry import retry_empty_historical_response
 from gr_data.common.parquet import read_parquet_if_exists, write_parquet
 from gr_data.common.retry import int_to_date, retry_call, sleep_s, today_int
 from gr_data.raw.base import BaseFetcher, RawContext, month_range
@@ -157,14 +158,31 @@ class _DailyFetcher(BaseFetcher):
 
     # ---- 抓取 ----
     def _fetch_day(self, day: date) -> pd.DataFrame | None:
-        return retry_call(
-            self.client.query_all,
-            self.API_NAME,
-            max_retries=self.ctx.max_retries,
-            backoff_base=self.ctx.backoff_base,
+        def query() -> pd.DataFrame | None:
+            return retry_call(
+                self.client.query_all,
+                self.API_NAME,
+                max_retries=self.ctx.max_retries,
+                backoff_base=self.ctx.backoff_base,
+                logger=self.log,
+                trade_date=day.strftime("%Y%m%d"),
+                fields=self.FIELDS,
+            )
+
+        result = query()
+        if self.DATASET == "suspend_d":
+            return result  # 稀疏事件接口的空表合法，不属于缺行情的同类检查。
+        if result is not None and not result.empty:
+            return result
+        return retry_empty_historical_response(
+            result,
+            query,
+            is_empty=lambda frame: frame is None or frame.empty,
+            day=day,
+            today=int_to_date(today_int()),
+            calendar_is_open=day in self._trading_days(),
             logger=self.log,
-            trade_date=day.strftime("%Y%m%d"),
-            fields=self.FIELDS,
+            context={"provider": self.PROVIDER, "dataset": self.DATASET},
         )
 
     def _fetch_month(
@@ -631,15 +649,28 @@ class FutureBars1dFetcher(_DailyFetcher):
         for exchange, days in self._exchange_days.items():
             if day not in days:
                 continue
-            df = retry_call(
-                self.client.query_all,
-                self.API_NAME,
-                trade_date=day.strftime("%Y%m%d"),
-                exchange=exchange,
-                fields=self.FIELDS,
-                max_retries=self.ctx.max_retries,
-                backoff_base=self.ctx.backoff_base,
+
+            def query(exchange: str = exchange) -> pd.DataFrame | None:
+                return retry_call(
+                    self.client.query_all,
+                    self.API_NAME,
+                    trade_date=day.strftime("%Y%m%d"),
+                    exchange=exchange,
+                    fields=self.FIELDS,
+                    max_retries=self.ctx.max_retries,
+                    backoff_base=self.ctx.backoff_base,
+                    logger=self.log,
+                )
+
+            df = retry_empty_historical_response(
+                query(),
+                query,
+                is_empty=lambda frame: frame is None or frame.empty,
+                day=day,
+                today=int_to_date(today_int()),
+                calendar_is_open=day in days,
                 logger=self.log,
+                context={"provider": self.PROVIDER, "dataset": self.DATASET, "exchange": exchange},
             )
             sleep_s(self.ctx.sleep_between_requests)
             if df is None or df.empty:

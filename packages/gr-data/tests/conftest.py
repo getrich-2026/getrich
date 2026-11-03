@@ -27,6 +27,12 @@ from gr_data.ingest.datayes.factors import (
 DY_INDUSTRY_SET = set(_DY_INDUSTRIES)
 
 
+@pytest.fixture(autouse=True)
+def no_empty_response_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """空响应策略固定退避由专门用例验证；离线测试不真实等待65秒。"""
+    monkeypatch.setattr("gr_data.common.empty_response_retry.sleep_s", lambda seconds: None)
+
+
 @pytest.fixture
 def tmp_raw_root(tmp_path: Path) -> RawPaths:
     return RawPaths(tmp_path / "raw")

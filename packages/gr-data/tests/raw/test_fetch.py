@@ -578,7 +578,7 @@ def test_tushare_empty_daily_cannot_erase_existing_bars(tmp_raw_root, fake_tusha
     path = tmp_raw_root.dataset_file("tushare", "daily", "2024-01")
     before = path.read_bytes()
     monkeypatch.setattr(fake_tushare, "query_all", lambda *a, **k: pd.DataFrame())
-    with pytest.raises(ValueError, match="拒绝覆盖"):
+    with pytest.raises(ValueError, match="Unexplained empty"):
         fetcher.fetch("update")
     assert path.read_bytes() == before
 
