@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from datetime import date
@@ -20,6 +21,7 @@ from decimal import Decimal
 
 import numpy as np
 import pandas as pd
+from psycopg.types.json import Jsonb
 
 from gr_data.common import contracts
 from gr_data.common.quality import RowValidationError
@@ -29,6 +31,11 @@ from gr_data.ingest.base import IngestGateError
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.bj_pending import BJPendingImporter
+from gr_data.ingest.tushare.future_placeholders import (
+    FUTURE_PLACEHOLDER_NOTICE,
+    FUTURE_PLACEHOLDER_RULE,
+    classify_pre_listing_placeholders,
+)
 from gr_data.ingest.tushare.importers.reference import _require, parse_date
 from gr_data.ingest.tushare.limit_sentinels import (
     EXACT_NO_LIMIT_EVIDENCE_BY_OBSERVATION,
@@ -881,6 +888,7 @@ class FutureBars1dImporter(_BaseBarsImporter):
     CONTRACT = contracts.bar_1d("future")
 
     def build(self) -> pd.DataFrame:
+        self.pre_listing_placeholders = []
         required = {
             "ts_code",
             "trade_date",
@@ -935,6 +943,8 @@ class FutureBars1dImporter(_BaseBarsImporter):
             m = m.loc[~tas]
             if m.empty:
                 return pd.DataFrame(columns=list(self.contract.columns))
+        # 分类必须查看价格清洗前的源值，负数／Inf不得被转NULL后冒充全缺失。
+        self.pre_listing_placeholders = classify_pre_listing_placeholders(m, self.paths)
         _validate_activity(m, ["vol", "amount", "oi"], "fut_daily")
         amounts = _amount_in_yuan(m["amount"], 10000)
         for column in ("vol", "oi"):
@@ -962,8 +972,17 @@ class FutureBars1dImporter(_BaseBarsImporter):
         usable = m["close"].notna() | m["settle"].notna()
         dropped = int((~usable).sum())
         if dropped:
-            self._soft(f"fut_daily skipped rows with invalid close and settle: {dropped}")
-            self.log.warning("fut_daily 有 %d 行收盘价与结算价均无效或缺失，已跳过", dropped)
+            for detail in self.pre_listing_placeholders:
+                self._soft(FUTURE_PLACEHOLDER_NOTICE + json.dumps(detail, sort_keys=True))
+            unreviewed = dropped - len(self.pre_listing_placeholders)
+            if unreviewed:
+                self._soft(f"fut_daily skipped rows with invalid close and settle: {unreviewed}")
+            self.log.warning(
+                "Skipped unusable future prices rows=%d pre_listing=%d unreviewed=%d",
+                dropped,
+                len(self.pre_listing_placeholders),
+                unreviewed,
+            )
         settle_only = int((usable & m["close"].isna()).sum())
         if settle_only:
             self.log.info("fut_daily 有 %d 行当日无成交，仅结算价入库", settle_only)
@@ -1001,6 +1020,41 @@ class FutureBars1dImporter(_BaseBarsImporter):
             }
         )
         return out[list(self.contract.columns)].reset_index(drop=True)
+
+    def _record_run(self, rows_written: int, warnings: list[str]) -> None:
+        """占位行审计和行情沿用同一事务；重放按规则／代码／日期幂等留证。"""
+        if self.pre_listing_placeholders:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (FUTURE_PLACEHOLDER_RULE,),
+                )
+                cur.execute(
+                    "SELECT detail->>'observation_id' FROM ops.data_quality_check WHERE rule=%s",
+                    (FUTURE_PLACEHOLDER_RULE,),
+                )
+                existing = {row[0] for row in cur.fetchall()}
+                pending = []
+                for detail in self.pre_listing_placeholders:
+                    identity = hashlib.sha256(
+                        f"{FUTURE_PLACEHOLDER_RULE}:{detail['ts_code']}:{detail['date']}".encode()
+                    ).hexdigest()
+                    if identity not in existing:
+                        pending.append(
+                            (
+                                FUTURE_PLACEHOLDER_RULE,
+                                "info",
+                                Jsonb({**detail, "observation_id": identity}),
+                            )
+                        )
+                        existing.add(identity)
+                if pending:
+                    cur.executemany(
+                        "INSERT INTO ops.data_quality_check(rule,severity,detail) "
+                        "VALUES (%s,%s,%s)",
+                        pending,
+                    )
+        super()._record_run(rows_written, warnings)
 
 
 #: daily_basic 源字段 → valuation_1d 列的换算倍率。未列出的字段原值入库。
