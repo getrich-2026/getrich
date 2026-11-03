@@ -36,3 +36,4 @@ include = ["gr_data*"]
 
 [tool.setuptools.package-data]
 gr_data = ["py.typed"]
+"gr_data.ingest.tushare" = ["evidence/*.json"]

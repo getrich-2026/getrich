@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "registry_version": "2026-11-03.v1",
+  "status": "approved",
+  "approved_at": "2026-11-03",
+  "scope": "Only four explicitly approved transformations; rename/manager changes never admit earlier history",
+  "events": [
+    {
+      "event_id": "159908.SZ:transformation:2018-12-10",
+      "ts_code": "159908.SZ",
+      "event_type": "transformation",
+      "official_first_listing_date": "2011-07-13",
+      "effective_date": "2018-12-10",
+      "previous_target": "深证基本面200指数",
+      "new_target": "创业板指数",
+      "scope_policy": "exclude_pre_event_from_current_product",
+      "evidence": [
+        {
+          "url": "https://paper.cnstock.com/html/2011-07/08/content_122133.htm",
+          "sha256": "497842f0adf9200f0c71681a3d361645048fbef8255ec2518a8b00431a298a04",
+          "artifact_kind": "fund_manager_disclosure_document"
+        },
+        {
+          "url": "https://static.cninfo.com.cn/finalpage/2025-09-30/1224688307.PDF",
+          "sha256": "205375096dd2b9c739cd5a7bc2937d37c4485df72c52b1bd057c81d40492f1a2",
+          "artifact_kind": "fund_manager_disclosure_document"
+        }
+      ]
+    },
+    {
+      "event_id": "510680.SH:transformation:2015-12-15",
+      "ts_code": "510680.SH",
+      "event_type": "transformation",
+      "official_first_listing_date": "2013-12-02",
+      "effective_date": "2015-12-15",
+      "previous_target": "上证380指数",
+      "new_target": "上证50指数",
+      "scope_policy": "exclude_pre_event_from_current_product",
+      "evidence": [
+        {
+          "url": "http://www.sse.com.cn/disclosure/fund/announcement/c/new/2025-03-20/510680_20250320_SI7F.pdf",
+          "sha256": "aeb36cbbde02c01d78c026bbd562641065490cad1a814ba413c009c0c81d5d85",
+          "artifact_kind": "fund_manager_disclosure_document"
+        },
+        {
+          "url": "https://www.wjasset.com/upload/pdf/1768908959349-wjsz50jyxkfszszqtzjjjjcpzlgy(gx).pdf",
+          "sha256": "06411815af73728f6681500d00d7879aacbb821c16845c21dd7ba9e3a1981a5c",
+          "artifact_kind": "fund_manager_disclosure_document"
+        },
+        {
+          "url": "https://www.sse.com.cn/disclosure/fund/announcement/c/2015-04-21/510680_2015_1.pdf",
+          "sha256": "1c5dd3790cb5b8e047f7216299f9dbcd70ef1e033fce7555c228976117919d57",
+          "artifact_kind": "fund_manager_disclosure_document"
+        }
+      ]
+    },
+    {
+      "event_id": "512990.SH:transformation:2018-09-17",
+      "ts_code": "512990.SH",
+      "event_type": "transformation",
+      "official_first_listing_date": "2015-03-25",
+      "effective_date": "2018-09-17",
+      "previous_target": "MSCI中国A股在岸指数",
+      "new_target": "MSCI中国A股国际通指数",
+      "scope_policy": "exclude_pre_event_from_current_product",
+      "evidence": [
+        {
+          "url": "https://www.sse.com.cn/disclosure/fund/announcement/c/new/2024-08-30/512990_20240830_P39M.pdf",
+          "sha256": "75a418a4935f1579f2a57c67c820c46dd4dad548f6633cba1c1307c84afc13fb",
+          "artifact_kind": "fund_manager_disclosure_document"
+        },
+        {
+          "url": "http://static.cninfo.com.cn/finalpage/2019-03-26/1205940445.PDF",
+          "sha256": "558833dbd6d24d3274bb6b854d2449c3b2c176afe5aeb46c5f219af4700673f2",
+          "artifact_kind": "fund_manager_disclosure_document"
+        }
+      ]
+    },
+    {
+      "event_id": "511220.SH:transformation:2019-04-24",
+      "ts_code": "511220.SH",
+      "event_type": "transformation",
+      "official_first_listing_date": "2014-12-16",
+      "effective_date": "2019-04-24",
+      "previous_target": "上证可质押城投债指数",
+      "new_target": "上证城投债指数",
+      "scope_policy": "exclude_pre_event_from_current_product",
+      "evidence": [
+        {
+          "url": "http://www.sse.com.cn/disclosure/fund/announcement/c/new/2023-12-22/511220_20231222_TV87.pdf",
+          "sha256": "3bdbf2d9bc9bc89fcd99f93a129514b075c9b3a9a597ec18a559dc63758e919c",
+          "artifact_kind": "fund_manager_disclosure_document"
+        },
+        {
+          "url": "https://www.sse.com.cn/disclosure/fund/announcement/c/new/2025-07-31/511220_20250731_XJAM.pdf",
+          "sha256": "f356ff4a1cbc4dcbb400c11defa385818e74149e676775520fe4ab200f750606",
+          "artifact_kind": "fund_manager_disclosure_document"
+        },
+        {
+          "url": "https://pdf.dfcfw.com/pdf/H2_AN201806251158833729_1.pdf",
+          "sha256": "fac0c8fd80fd6f7c4fffe860a7aa40d50bd9363e97572a51343e919121756ee2",
+          "artifact_kind": "fund_manager_disclosure_document"
+        }
+      ]
+    }
+  ]
+}

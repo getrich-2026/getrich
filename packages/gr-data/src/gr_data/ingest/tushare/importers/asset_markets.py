@@ -15,7 +15,13 @@ from gr_data.common.paths import RawPaths
 from gr_data.common.retry import int_to_date, today_int
 from gr_data.ingest.base import BaseImporter, IngestContext, IngestGateError, IngestResult
 from gr_data.ingest.tushare.adapter import TushareAdapter
-from gr_data.ingest.tushare.etf_scope import ETF_TRANSITION_NOTICE, exclude_etf_pre_transition
+from gr_data.ingest.tushare.etf_scope import (
+    ETF_TRANSITION_NOTICE,
+    EtfIdentityRegistry,
+    exclude_etf_pre_transition,
+    load_etf_identity_registry,
+    validate_etf_identity_metadata,
+)
 from gr_data.ingest.tushare.importers.profile import _number, _text
 from gr_data.ingest.tushare.importers.reference import parse_date
 from gr_data.ingest.tushare.symbols import split_ts_code
@@ -485,9 +491,17 @@ class _AssetBarsImporter(_AssetImporter):
     RAW_DATASET = ""
     NOT_NULL_COLUMNS = ("instrument_id", "dt", "trading_day", "source")
 
-    def _etf_product_scope(self, raw: pd.DataFrame, dataset: str) -> pd.DataFrame:
-        kept, detail = exclude_etf_pre_transition(raw, dataset)
-        if detail is not None:
+    def _etf_product_scope(
+        self,
+        raw: pd.DataFrame,
+        dataset: str,
+        metadata: pd.DataFrame,
+        registry: EtfIdentityRegistry,
+    ) -> pd.DataFrame:
+        kept, details = exclude_etf_pre_transition(
+            raw, dataset, metadata=metadata.reset_index(), registry=registry
+        )
+        for detail in details:
             # 结构化明细随 IngestResult.warnings 进入月度运行账本；不静默排除。
             self._soft(
                 ETF_TRANSITION_NOTICE + json.dumps(detail, ensure_ascii=False, sort_keys=True)
@@ -510,6 +524,7 @@ class _AssetBarsImporter(_AssetImporter):
         return raw
 
     def build(self) -> pd.DataFrame:
+        registry = load_etf_identity_registry() if self.ASSET == "etf" else None
         metadata = self._metadata().set_index("ts_code")
         raw = validate_bars(
             self._read(self.RAW_DATASET),
@@ -534,7 +549,8 @@ class _AssetBarsImporter(_AssetImporter):
             raw = raw.loc[selected].reset_index(drop=True)
             if raw.empty:
                 raise IngestGateError("No ETF rows identified by authoritative metadata")
-            raw = self._etf_product_scope(raw, self.RAW_DATASET)
+            assert registry is not None
+            raw = self._etf_product_scope(raw, self.RAW_DATASET, metadata, registry)
         elif not raw["ts_code"].isin(metadata.index).all():
             raise IngestGateError("Missing option metadata for daily codes")
         days = source_dates(raw["trade_date"])
@@ -606,7 +622,8 @@ class _AssetBarsImporter(_AssetImporter):
             factors = self._read("fund_adj")
             require_columns(factors, ("ts_code", "trade_date", "adj_factor"), "fund_adj")
             source_codes(factors)
-            factors = self._etf_product_scope(factors, "fund_adj")
+            assert registry is not None
+            factors = self._etf_product_scope(factors, "fund_adj", metadata, registry)
             factors = factors.copy()
             factors["trade_date"] = source_dates(factors["trade_date"])
             factors = unique_rows(factors, ("ts_code", "trade_date"))
@@ -633,6 +650,13 @@ class EtfBars1dImporter(_AssetBarsImporter):
     ASSET = "etf"
     RAW_DATASET = "fund_daily"
     CONTRACT = contracts.bar_1d("etf")
+
+    def run(self) -> IngestResult:
+        """登记与主数据先预检，再进入归属登记及业务写库事务。"""
+        registry = load_etf_identity_registry()
+        # 无notice回调，避免把正式build的身份隔离告警重复计数。
+        validate_etf_identity_metadata(asset_metadata(self.paths, self.ASSET), registry)
+        return super().run()
 
 
 class OptionBars1dImporter(_OptionValidation, _AssetBarsImporter):
