@@ -11,6 +11,7 @@ from gr_data.ingest.tushare.importers.asset_markets import (
     OptionSymbolMapImporter,
 )
 from gr_data.ingest.tushare.importers.classify import InstrumentCategoryImporter
+from gr_data.ingest.tushare.importers.future_calendar import FutureCalendarImporter
 from gr_data.ingest.tushare.importers.market import (
     AdjFactorTsImporter,
     FutureBars1dImporter,
@@ -58,11 +59,17 @@ REGISTRY.update(
         "option_bar_1d": OptionBars1dImporter,
         # 注册顺序即执行顺序：分类读 meta.etf_profile，必须排在 etf_profile 之后。
         "instrument_category": InstrumentCategoryImporter,
+        # 仅显式调用，避免股票／ETF导入隐式写期货日历。
+        "future_calendar": FutureCalendarImporter,
     }
 )
 
 # 新资产必须显式启用，默认集合不含 ETF／期权。
-DEFAULT_DATASETS = tuple(name for name in REGISTRY if not name.startswith(("etf_", "option_")))
+DEFAULT_DATASETS = tuple(
+    name
+    for name in REGISTRY
+    if not name.startswith(("etf_", "option_")) and name != "future_calendar"
+)
 
 # 组别快捷方式。注意 instruments → symbol_map → bars 有严格先后依赖：
 # bars 需要 symbol_map 解析 instrument_id。

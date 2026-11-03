@@ -401,6 +401,10 @@ class AssetDailyFetcher(_AssetFetcher):
             cal = read_parquet_strict(self.paths.dataset_file(self.PROVIDER, dataset, exchange))
             if cal is None:
                 raise ValueError(f"Missing asset calendar exchange={exchange}")
+            if dataset == "future_calendar":
+                from gr_data.raw.tushare.calendar_rules import complete_future_calendar
+
+                cal = complete_future_calendar(self.paths, exchange, first, last, frame=cal).frame
             days = read_open_days(cal, exchange)
             require_calendar_range(cal, first, last, exchange)
             result[exchange] = set(days)

@@ -206,3 +206,37 @@ class FutureCalendarFetcher(CalendarFetcher):
 
     def _exchanges(self) -> tuple[str, ...]:
         return self.ctx.future_exchanges
+
+    def fetch(self, mode: str = "update") -> int:
+        """先保留全部原始响应，再对整个请求区间一次性检查缺口。"""
+        from gr_data.raw.tushare.calendar_rules import (
+            FutureCalendarGapError,
+            complete_future_calendar,
+            future_calendar_start,
+        )
+
+        written = super().fetch(mode)
+        first = int_to_date(self.ctx.start_date or CALENDAR_INIT_START)
+        last = min(int_to_date(self.ctx.end_date or today_int()), int_to_date(today_int()))
+        failures = []
+        for exchange in self._exchanges():
+            start = future_calendar_start(self.paths, exchange, first)
+            if start > last:
+                continue
+            try:
+                completed = complete_future_calendar(self.paths, exchange, start, last)
+                self.log.info(
+                    "Future calendar range verified exchange=%s start=%s end=%s inferred_closed=%d",
+                    exchange,
+                    start,
+                    last,
+                    len(completed.inferred),
+                )
+            except FutureCalendarGapError as exc:
+                failures.extend(exc.failures)
+        if failures:
+            self.log.error("Unresolved future calendar gaps detail=%s", failures)
+            raise ValueError(
+                f"Unresolved future calendar gaps count={len(failures)} detail={failures}"
+            )
+        return written

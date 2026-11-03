@@ -599,6 +599,11 @@ class FutureBars1dFetcher(_DailyFetcher):
             if effective > end:
                 self._exchange_days[exchange] = set()
                 continue
+            from gr_data.raw.tushare.calendar_rules import complete_future_calendar
+
+            frame = complete_future_calendar(
+                self.paths, exchange, effective, end, frame=frame
+            ).frame
             require_calendar_range(frame, effective, end, exchange)
             self._exchange_days[exchange] = {d for d in open_days if d >= effective}
         return sorted(set().union(*self._exchange_days.values()))
