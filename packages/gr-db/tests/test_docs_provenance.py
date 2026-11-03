@@ -144,3 +144,19 @@ def test_discover_datasets_counts_only_regular_files(tmp_path: Path) -> None:
 
     assert (present.file_count, present.total_bytes, present.targets) == (2, 15, ("market.bars",))
     assert (absent.file_count, absent.total_bytes, absent.targets) == (None, None, ())
+
+
+def test_discover_datasets_without_raw_root_keeps_entries_and_skips_stats(caplog) -> None:
+    """raw 根未配置时不退回默认目录：仍列出数据集，路径用占位、统计为未知，并告警。"""
+    from gr_data.config.pipeline import Config
+    from gr_tools.config import Environment
+
+    registry = (("tushare", "daily", object()),)
+    unconfigured = Config({}, Environment(root=Path("/nonexistent"), values={}))
+
+    with patch("gr_db.docs.provenance.load_config", return_value=unconfigured):
+        (doc,) = discover_datasets(registry=registry)
+
+    assert doc.path == "$RAW_PARQUET_ROOT/tushare/daily"
+    assert (doc.file_count, doc.total_bytes) == (None, None)
+    assert "RAW_PARQUET_ROOT is not configured" in caplog.text

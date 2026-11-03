@@ -1,4 +1,4 @@
-"""米筐 ingest 层：/opt/raw_parquet/ricequant/ → PostgreSQL。"""
+"""米筐 ingest 层：$RAW_PARQUET_ROOT/ricequant/ → PostgreSQL。"""
 
 from gr_data.ingest.ricequant.importers import GROUPS, REGISTRY
 

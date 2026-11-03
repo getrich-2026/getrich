@@ -6254,16 +6254,6 @@
                 }
             }
         ],
-        "./packages/gr-data/src/gr_data/common/parquet.py": [
-            {
-                "code": "reportReturnType",
-                "range": {
-                    "startColumn": 11,
-                    "endColumn": 63,
-                    "lineCount": 1
-                }
-            }
-        ],
         "./packages/gr-data/src/gr_data/config/ricequant.py": [
             {
                 "code": "reportArgumentType",

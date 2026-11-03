@@ -107,6 +107,7 @@
 ## 运行模式与公共工具
 
 - 配置：gr-tools 提供无导入副作用的环境快照与日志能力（`gr_tools.config.setup_logging`），gr-data 保留数据模型，gr-api 组装 API／worker 配置，其他 CLI 按需加载；旧全量 Settings 已移除（D-002）。布尔环境键统一走 `parse_bool`，未知值直接报配置错误。
+- raw 根与原子写残留（2026-11-03）：`Config.raw_root` 只取 `RAW_PARQUET_ROOT` 或本机 `config.yaml` 的 `paths.raw_root`，都未配置时抛 `SettingsError`，不再退回 `/opt/raw_parquet`（`DEFAULT_RAW_ROOT` 与 example 中的路径已删，D-028）；没有 `.env` 的入口（新机器、未加载 `.env` 的定时任务）会直接报错。`gr-db docs` 缺 raw 根时只跳过 raw 统计并告警。`write_parquet` 临时名改为 `<name>.tmp-<hex>`，硬杀残留不再被 `*.parquet` glob 命中；yinhe／insight 读取与水位只认 `YYYY-MM.parquet`、`<st>_chunk<NNNN>.parquet`。待办：datayes `list_months`、ricequant `list_bar_codes` 仍不过滤旧名残留；同日扫描正式 raw 根、neoimac 原 raw 及两个验证根均无 `*.tmp-*`。
 - 默认 worker backend 为 inproc；CI 默认仅 PG，手动 `extra_services` 可启用 CH／Redis。本地 `.env` 只存连接与凭证，未迁入源码或 YAML。
 - Python 最低 3.11，开发默认 3.12；CI 跑 3.11／3.12，3.12 开启选股／诊断 PG 集成测试与 75% 覆盖率检查。
 - 类型检查用 basedpyright（standard，全仓唯一，配置在根 pyproject）；存量错误记在 `.basedpyright/baseline.json`，CI 只拦新增。gr-tools 是否启用 strict 待定。

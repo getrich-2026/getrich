@@ -12,6 +12,7 @@ from typing import Any
 
 from gr_data.common.paths import RawPaths
 from gr_data.config.pipeline import load_config
+from gr_tools.config import SettingsError
 from psycopg import errors as pg_errors
 
 from gr_db.ddl_lint import SELF_EXPLANATORY_COLUMNS
@@ -73,24 +74,36 @@ def discover_datasets(
     """从真实 ingest 注册表推导 raw 数据集路径及文件统计。
 
     Args:
-        raw_root: raw parquet 根目录；缺省读 ``gr_data`` 配置。
-        registry: 预先加载的注册表；缺省调用 :func:`load_registry`。
+        raw_root: raw parquet 根目录；缺省读 ``gr_data`` 配置。配置里也没有时仍列出数据集，
+            路径显示为 ``$RAW_PARQUET_ROOT/...`` 占位、统计为空，并记 WARNING：
+            数据字典的主体来自数据库，raw 统计只是附加信息，不应让 PG-only 的文档生成失败，
+            也不能退回某个默认目录去统计。
 
     Time Complexity: O(r + f)，r 为注册项数、f 为可访问目录中的文件数。
     Space Complexity: O(r)。
     """
-    paths = RawPaths(raw_root or load_config().raw_root)
+    if raw_root is None:
+        try:
+            raw_root = load_config().raw_root
+        except SettingsError:
+            logger.warning("RAW_PARQUET_ROOT is not configured; raw dataset statistics skipped")
+    paths = RawPaths(raw_root) if raw_root is not None else None
     datasets: list[DatasetDoc] = []
     for provider, dataset, importer in registry if registry is not None else load_registry():
         contract = getattr(importer, "CONTRACT", None)
         target = contract.qualified if contract is not None else None
-        directory = paths.dataset_dir(provider, dataset)
-        file_count, total_bytes = _directory_stats(directory)
+        if paths is None:
+            path_text = f"$RAW_PARQUET_ROOT/{provider}/{dataset}"
+            file_count, total_bytes = None, None
+        else:
+            directory = paths.dataset_dir(provider, dataset)
+            path_text = str(directory)
+            file_count, total_bytes = _directory_stats(directory)
         datasets.append(
             DatasetDoc(
                 provider=provider,
                 dataset=dataset,
-                path=str(directory),
+                path=path_text,
                 file_count=file_count,
                 total_bytes=total_bytes,
                 targets=(target,) if target else (),

@@ -1,4 +1,4 @@
-"""银河 ingest 层：/opt/raw_parquet/yinhe/ → PostgreSQL。"""
+"""银河 ingest 层：$RAW_PARQUET_ROOT/yinhe/ → PostgreSQL。"""
 
 from gr_data.ingest.yinhe.importers import GROUPS, REGISTRY
 

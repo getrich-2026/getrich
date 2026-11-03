@@ -44,11 +44,8 @@ class _KlineFetcher(BaseFetcher):
         return list(dict.fromkeys(codes))
 
     def _local_last_date(self, code: str) -> int | None:
-        code_dir = self.paths.code_dir(self.PROVIDER, self.DATASET, code)
-        if not code_dir.exists():
-            return None
         latest: int | None = None
-        for f in sorted(code_dir.glob("*.parquet")):
+        for f in self.paths.code_month_files(self.PROVIDER, self.DATASET, code):
             d = last_index_date(read_parquet_if_exists(f))
             if d is not None and (latest is None or d > latest):
                 latest = d

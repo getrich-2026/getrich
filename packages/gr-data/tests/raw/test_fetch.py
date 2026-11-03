@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -73,6 +75,114 @@ def test_insight_fetch_flow(tmp_raw_root, fake_insight):
         tmp_raw_root.code_month_file("insight", "kline_day", "600000.SH", "2024-01")
     )
     assert kday is not None and len(kday) == 2
+
+
+def test_write_parquet_tmp_name_is_not_a_parquet_partition(tmp_raw_root, monkeypatch):
+    """临时文件与目标同目录（os.replace 才原子），且不以 .parquet 结尾，残留时不被 glob 读入。"""
+    from gr_data.common import parquet
+
+    seen = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        seen.append(Path(src))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy)
+    path = tmp_raw_root.code_month_file("yinhe", "kline_day", "600000.SH", "2024-01")
+    parquet.write_parquet(pd.DataFrame({"close": [10.0]}), path)
+
+    (tmp,) = seen
+    assert tmp.parent == path.parent
+    assert tmp.name.startswith("2024-01.parquet.tmp-")
+    assert tmp.suffix != ".parquet"
+    assert [f.name for f in path.parent.iterdir()] == ["2024-01.parquet"]
+
+
+def test_write_parquet_failed_replace_keeps_original(tmp_raw_root, monkeypatch):
+    """替换失败时原文件不变，临时文件被清理。"""
+    from gr_data.common import parquet
+
+    path = tmp_raw_root.code_month_file("yinhe", "kline_day", "600000.SH", "2024-01")
+    parquet.write_parquet(pd.DataFrame({"close": [10.0]}), path)
+
+    def fail(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", fail)
+    with pytest.raises(OSError, match="replace failed"):
+        parquet.write_parquet(pd.DataFrame({"close": [99.0]}), path)
+
+    assert pd.read_parquet(path)["close"].tolist() == [10.0]
+    assert [f.name for f in path.parent.iterdir()] == ["2024-01.parquet"]
+
+
+def _write_month_with_stray_tmp(tmp_raw_root, provider, index_name):
+    """写一个正式月分区，再造一个 kill 残留的完整临时文件：日期更晚、收盘价是旧值。"""
+    from gr_data.common.parquet import write_parquet
+
+    real = tmp_raw_root.code_month_file(provider, "kline_day", "600000.SH", "2024-01")
+    idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03"], name=index_name)
+    write_parquet(pd.DataFrame({"close": [10.0, 11.0]}, index=idx), real)
+    stray_idx = pd.DatetimeIndex(["2024-01-03", "2024-01-31"], name=index_name)
+    stray = pd.DataFrame({"close": [99.0, 99.0]}, index=stray_idx)
+    write_parquet(stray, real.with_name("2024-01.tmp-deadbeef.parquet"))
+
+
+@pytest.mark.parametrize(
+    ("provider", "index_name"),
+    [("yinhe", "kline_time"), ("insight", "time")],
+)
+def test_kline_day_ignores_stray_tmp_partition(tmp_raw_root, provider, index_name):
+    """残留 YYYY-MM.tmp-*.parquet 字典序排在正式分区后，不能在 keep='last' 去重时盖过正式数据。"""
+    from gr_data.ingest.insight.adapter import InsightAdapter
+    from gr_data.ingest.yinhe.adapter import YinheAdapter
+
+    _write_month_with_stray_tmp(tmp_raw_root, provider, index_name)
+    adapter = {"yinhe": YinheAdapter, "insight": InsightAdapter}[provider](tmp_raw_root)
+
+    out = adapter.read_kline_day("600000.SH")
+
+    assert out is not None
+    assert out["close"].tolist() == [10.0, 11.0]
+
+
+@pytest.mark.parametrize("provider", ["yinhe", "insight"])
+def test_kline_day_watermark_ignores_stray_tmp_partition(
+    tmp_raw_root, fake_yinhe, fake_insight, provider
+):
+    """水位只看正式月分区；残留临时文件里更晚的日期不能让增量跳过缺口。"""
+    from gr_data.raw.insight.fetchers.bars import KlineDayFetcher as InsightKlineDay
+    from gr_data.raw.yinhe.fetchers.kline import KlineDayFetcher as YinheKlineDay
+
+    index_name = {"yinhe": "kline_time", "insight": "time"}[provider]
+    _write_month_with_stray_tmp(tmp_raw_root, provider, index_name)
+    fetcher = (
+        YinheKlineDay(fake_yinhe, _ctx(tmp_raw_root))
+        if provider == "yinhe"
+        else InsightKlineDay(fake_insight, _ctx(tmp_raw_root))
+    )
+
+    assert fetcher._local_last_date("600000.SH") == 20240103
+    assert fetcher._local_last_date("000001.SZ") is None
+
+
+def test_yinhe_backward_factor_ignores_stray_tmp_chunk(tmp_raw_root):
+    """残留的 <st>_chunk<NNNN>.tmp-*.parquet 也匹配 chunk glob，不能被当成独立 chunk 读入。"""
+    from gr_data.common.parquet import write_parquet
+    from gr_data.ingest.yinhe.adapter import YinheAdapter
+
+    chunk = tmp_raw_root.dataset_file("yinhe", "backward_factor", "EXTRA_STOCK_A_SH_SZ_chunk0000")
+    idx = pd.Index(["2024-01-02"], name="date")
+    write_parquet(pd.DataFrame({"600000.SH": [1.5]}, index=idx), chunk)
+    stray = pd.DataFrame({"600000.SH": [9.9], "000001.SZ": [9.9]}, index=idx)
+    write_parquet(stray, chunk.with_name("EXTRA_STOCK_A_SH_SZ_chunk0000.tmp-deadbeef.parquet"))
+
+    wide = YinheAdapter(tmp_raw_root).read_backward_factor("stock")
+
+    assert wide is not None
+    assert wide.columns.tolist() == ["600000.SH"]
+    assert wide["600000.SH"].tolist() == [1.5]
 
 
 def test_tushare_fetch_flow(tmp_raw_root, fake_tushare):

@@ -8,7 +8,7 @@
 
   yinhe/calendar/calendar_<market>.parquet
   yinhe/hist_code_list/hist_code_list_<security_type>.parquet
-  yinhe/backward_factor/backward_factor_<security_type>_chunk<NNNN>.parquet
+  yinhe/backward_factor/<security_type>_chunk<NNNN>.parquet
   yinhe/kline_day/<code>/<YYYY-MM>.parquet
   yinhe/kline_min1/<code>/<YYYY-MM>.parquet
   ricequant/instruments/<asset>.parquet
@@ -24,16 +24,22 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 
 
-DEFAULT_RAW_ROOT = Path("/opt/raw_parquet")
+logger = logging.getLogger(__name__)
+
+# 月分区文件名；旧版原子写残留的 ``YYYY-MM.tmp-<hex>.parquet`` 也以 .parquet 结尾，必须排除。
+_MONTH_PARTITION_RE = re.compile(r"\d{4}-\d{2}\.parquet")
 
 
 class RawPaths:
     """以 raw_root 为基准解析各 provider/dataset 的落地路径。"""
 
-    def __init__(self, raw_root: str | Path = DEFAULT_RAW_ROOT):
+    def __init__(self, raw_root: str | Path):
+        """raw_root 必须显式传入（通常取 ``Config.raw_root``），不提供机器路径默认值（D-028）。"""
         self.root = Path(raw_root)
 
     # ---- 通用 ----
@@ -69,6 +75,29 @@ class RawPaths:
 
     def code_dir(self, provider: str, dataset: str, code: str) -> Path:
         return self.dataset_dir(provider, dataset) / code
+
+    def code_month_files(self, provider: str, dataset: str, code: str) -> list[Path]:
+        """列出 code 目录下的 ``YYYY-MM.parquet`` 月分区，按月份升序；目录不存在返回空列表。
+
+        旧版 ``write_parquet`` 的临时文件名是 ``YYYY-MM.tmp-<hex>.parquet``，进程被硬杀时
+        会残留下来；它按字典序排在正式分区之后，若被读入，``keep="last"`` 去重会让旧数据
+        盖过正式分区。现行临时名已不以 .parquet 结尾，这里仍只认严格的月分区名，挡住磁盘上
+        或拷回的旧残留，其余跳过并告警。
+        """
+        code_dir = self.code_dir(provider, dataset, code)
+        if not code_dir.is_dir():
+            return []
+        files = sorted(code_dir.glob("*.parquet"))
+        months = [f for f in files if _MONTH_PARTITION_RE.fullmatch(f.name)]
+        if len(months) != len(files):
+            logger.warning(
+                "Skipped non-partition parquet files: provider=%s dataset=%s code=%s count=%d",
+                provider,
+                dataset,
+                code,
+                len(files) - len(months),
+            )
+        return months
 
     # ---- 同步水位文件（增量 fetcher 用）----
     def sync_status_file(self, provider: str, dataset: str) -> Path:

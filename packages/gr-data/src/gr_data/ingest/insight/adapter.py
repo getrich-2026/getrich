@@ -36,10 +36,8 @@ class InsightAdapter:
         return read_parquet_if_exists(self.paths.dataset_file(PROVIDER, "trading_days", exchange))
 
     def read_kline_day(self, code: str) -> pd.DataFrame | None:
-        code_dir = self.paths.code_dir(PROVIDER, "kline_day", code)
-        if not code_dir.exists():
-            return None
-        frames = [read_parquet_if_exists(f) for f in sorted(code_dir.glob("*.parquet"))]
+        files = self.paths.code_month_files(PROVIDER, "kline_day", code)
+        frames = [read_parquet_if_exists(f) for f in files]
         frames = [f for f in frames if f is not None and not f.empty]
         if not frames:
             return None

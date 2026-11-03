@@ -1,4 +1,4 @@
-"""华泰 INSIGHT ingest 层：/opt/raw_parquet/insight/ → PostgreSQL。"""
+"""华泰 INSIGHT ingest 层：$RAW_PARQUET_ROOT/insight/ → PostgreSQL。"""
 
 from gr_data.ingest.insight.importers import GROUPS, REGISTRY
 

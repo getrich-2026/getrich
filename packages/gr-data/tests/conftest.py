@@ -1,6 +1,6 @@
 """pytest 共享 fixtures。
 
-- tmp_raw_root: 临时 raw_root，隔离 /opt/raw_parquet。
+- tmp_raw_root: 临时 raw_root，隔离本机 RAW_PARQUET_ROOT。
 - Fake SDK：实现各 provider client 协议，返回真实形状数据，无需真实 SDK/网络。
 - pg_conn: 基于 docker 的 PostgreSQL+TimescaleDB 连接；不可用时整组测试 skip。
 """

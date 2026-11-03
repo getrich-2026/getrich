@@ -8,9 +8,9 @@
 # 凭证一律只写「环境变量名」，不写明文密钥。
 
 # ---- 全局 ----
-paths:
-  # raw 层 parquet 落地根目录（仓库外）。
-  raw_root: /opt/raw_parquet
+# raw 层 parquet 落地根目录（仓库外）只取环境变量 RAW_PARQUET_ROOT（见根 .env.example），
+# 这里不给默认值：未配置时采集／入库直接报错，不退回任何目录（D-028）。
+# 本机 config.yaml 可另写 paths.raw_root，但环境变量优先。
 
 # ---- 数据源 ----
 providers:

@@ -1,6 +1,6 @@
 """raw 层基类。
 
-raw 层职责：调用供应商 SDK 抓取数据，原样落 parquet 到 /opt/raw_parquet，**不做归一化**。
+raw 层职责：调用供应商 SDK 抓取数据，原样落 parquet 到 $RAW_PARQUET_ROOT，**不做归一化**。
 归一化在 ingest 层完成（见 docs/layers/raw.md）。
 
 Fetcher 通过依赖注入接收一个「client」对象（封装 SDK 调用），便于测试时注入 Fake。

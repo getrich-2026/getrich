@@ -1,10 +1,12 @@
 """银河 raw parquet 读取适配器。
 
-把 /opt/raw_parquet/yinhe/ 下的 parquet 读成 DataFrame，供 transform 使用。
+把 $RAW_PARQUET_ROOT/yinhe/ 下的 parquet 读成 DataFrame，供 transform 使用。
 不做归一化，只负责定位与读取。
 """
 
 from __future__ import annotations
+
+import re
 
 import pandas as pd
 
@@ -38,10 +40,8 @@ class YinheAdapter:
         return [str(c) for c in df["code"].tolist()]
 
     def read_kline_day(self, code: str) -> pd.DataFrame | None:
-        code_dir = self.paths.code_dir(PROVIDER, "kline_day", code)
-        if not code_dir.exists():
-            return None
-        frames = [read_parquet_if_exists(f) for f in sorted(code_dir.glob("*.parquet"))]
+        files = self.paths.code_month_files(PROVIDER, "kline_day", code)
+        frames = [read_parquet_if_exists(f) for f in files]
         frames = [f for f in frames if f is not None and not f.empty]
         if not frames:
             return None
@@ -60,8 +60,11 @@ class YinheAdapter:
         st = SECURITY_TYPES.get(asset)
         if st is None:
             return None
+        # 只认 <st>_chunk<NNNN>.parquet；旧版原子写残留的 *.tmp-<hex>.parquet 也会被 glob 命中。
+        chunk_re = re.compile(rf"{re.escape(st)}_chunk\d{{4}}\.parquet")
+        factor_dir = self.paths.dataset_dir(PROVIDER, "backward_factor")
         chunk_files = sorted(
-            self.paths.dataset_dir(PROVIDER, "backward_factor").glob(f"{st}_chunk*.parquet")
+            f for f in factor_dir.glob(f"{st}_chunk*.parquet") if chunk_re.fullmatch(f.name)
         )
         frames = [read_parquet_if_exists(f) for f in chunk_files]
         frames = [f for f in frames if f is not None and not f.empty]

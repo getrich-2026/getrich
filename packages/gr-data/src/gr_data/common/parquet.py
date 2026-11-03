@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Hashable
 from pathlib import Path
 
 import pandas as pd
@@ -43,11 +44,11 @@ def read_parquet_if_exists(path: Path) -> pd.DataFrame | None:
         return None
 
 
-def _idx_names(df: pd.DataFrame) -> list[str]:
+def _idx_names(df: pd.DataFrame) -> list[Hashable]:
     return [n for n in (df.index.names or []) if n is not None]
 
 
-def _merge(old_path: Path, new_df: pd.DataFrame, idx_names: list[str]) -> pd.DataFrame:
+def _merge(old_path: Path, new_df: pd.DataFrame, idx_names: list[Hashable]) -> pd.DataFrame:
     """合并旧文件与新数据：按索引去重，冲突时取新数据（keep='last'）。
 
     新数据拼在末尾，``keep='last'`` 保证同键冲突时新数据胜出。``concat`` 按列名对齐，
@@ -69,7 +70,8 @@ def write_parquet(df: pd.DataFrame, path: Path, *, append: bool = False) -> None
     if append and path.exists():
         out_df = _merge(path, df, idx_names)
 
-    tmp = path.with_suffix(f".tmp-{uuid.uuid4().hex}.parquet")
+    # 临时名不以 .parquet 结尾：进程被硬杀时残留的文件不会被读取端的 *.parquet glob 当成数据。
+    tmp = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
     try:
         write_index = bool(idx_names)
         out_df.to_parquet(tmp, compression="zstd", index=write_index)

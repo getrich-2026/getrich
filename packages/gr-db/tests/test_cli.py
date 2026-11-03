@@ -108,6 +108,27 @@ def test_run_docs_clickhouse_only_strict_mode_skips_postgres_drift_checks(
     clickhouse_client.close.assert_called_once()
 
 
+def test_run_docs_without_output_or_raw_root_fails_cleanly(tmp_path: Path) -> None:
+    """没有 --out、GETRICH_DOCS_OUT 和 raw 根时返回 2，不退回默认目录写文件。"""
+    from gr_data.config.pipeline import Config
+    from gr_tools.config import Environment
+
+    env = Environment(root=tmp_path, values={})
+    args = cli._parse_args(["docs", "--target", "ch"])
+
+    with (
+        patch.object(cli, "_open_clickhouse_client", return_value=MagicMock()),
+        patch.object(cli, "load_config", return_value=Config({}, env)),
+        patch("gr_db.docs.introspect_clickhouse", return_value=()),
+        patch("gr_db.docs.discover_datasets", return_value=()),
+        patch("gr_db.docs.load_registry", return_value=()),
+    ):
+        rc = cli._run_docs(args, env)
+
+    assert rc == 2
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_parse_args_unknown_command_exits() -> None:
     """未知子命令触发 argparse 的 error → SystemExit(2)。"""
     with pytest.raises(SystemExit) as exc_info:

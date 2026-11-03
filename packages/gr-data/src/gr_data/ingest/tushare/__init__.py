@@ -1,4 +1,4 @@
-"""Tushare ingest 层：/opt/raw_parquet/tushare/ → PostgreSQL。"""
+"""Tushare ingest 层：$RAW_PARQUET_ROOT/tushare/ → PostgreSQL。"""
 
 from gr_data.ingest.tushare.importers import GROUPS, REGISTRY
 

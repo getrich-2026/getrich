@@ -137,7 +137,9 @@ def test_offset_limit_is_not_retried(monkeypatch):
     assert len(pro.calls) == 1
 
 
-def test_pipeline_passes_request_interval():
+def test_pipeline_passes_request_interval(tmp_path, monkeypatch):
+    # 构造上下文要解析 raw 根（未配置时报错，D-028）；显式给临时根，不依赖本机 .env。
+    monkeypatch.setenv("RAW_PARQUET_ROOT", str(tmp_path))
     from gr_data.config.pipeline import Config
     from gr_data.raw import _build_client
 

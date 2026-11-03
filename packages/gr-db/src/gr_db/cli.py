@@ -25,7 +25,13 @@ from uuid import uuid4
 
 from gr_data.config import load_clickhouse, load_postgres
 from gr_data.config.pipeline import load_config
-from gr_tools.config import Environment, LoggingConfig, load_environment, setup_logging
+from gr_tools.config import (
+    Environment,
+    LoggingConfig,
+    SettingsError,
+    load_environment,
+    setup_logging,
+)
 
 from .executors import (
     ClickHouseMigrationExecutor,
@@ -242,7 +248,10 @@ def _open_clickhouse_client(environment: Environment | None = None) -> object:
 
 
 def _default_docs_out(environment: Environment | None = None) -> Path:
-    """返回数据字典默认产物路径。
+    """返回数据字典默认产物路径：``GETRICH_DOCS_OUT``，否则 ``<raw 根>/_docs/``。
+
+    Raises:
+        SettingsError: 两者都未配置。
 
     Time Complexity: O(1)。
     Space Complexity: O(1)。
@@ -298,7 +307,11 @@ def _run_docs(args: argparse.Namespace, environment: Environment | None = None) 
             clickhouse_client.close()
 
     content = render_json(dictionary) if args.output_format == "json" else render_html(dictionary)
-    output = args.out or _default_docs_out(environment)
+    try:
+        output = args.out or _default_docs_out(environment)
+    except SettingsError as exc:
+        logger.error("cannot resolve docs output path (set --out or GETRICH_DOCS_OUT): %s", exc)
+        return 2
     if str(output) == "-":
         sys.stdout.write(content)
         if not content.endswith("\n"):

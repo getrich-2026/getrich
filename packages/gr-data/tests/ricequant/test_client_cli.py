@@ -93,7 +93,9 @@ def test_raw_preflight_before_client_or_files(only, monkeypatch):
 
 
 @pytest.mark.parametrize("only", ["", "bad", "rq_index_daily"])
-def test_ingest_preflight_before_pg_and_sdk(only, rq_config, monkeypatch):
+def test_ingest_preflight_before_pg_and_sdk(only, rq_config, monkeypatch, tmp_path):
+    # 构造上下文要解析 raw 根（未配置时报错，D-028）；显式给临时根，不依赖本机 .env。
+    monkeypatch.setenv("RAW_PARQUET_ROOT", str(tmp_path))
     monkeypatch.setattr(cli, "_pg", Mock(side_effect=AssertionError("PG config")))
     monkeypatch.setattr(cli, "connect", Mock(side_effect=AssertionError("PG connection")))
     monkeypatch.setattr(RqdatacClient, "_sdk", Mock(side_effect=AssertionError("SDK")))

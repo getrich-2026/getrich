@@ -490,7 +490,9 @@ def test_invalid_ranges_rejected_before_requests(end):
         _build_context("tushare", cfg)
 
 
-def test_scope_config_parsed():
+def test_scope_config_parsed(tmp_path, monkeypatch):
+    # 构造上下文要解析 raw 根（未配置时报错，D-028）；显式给临时根，不依赖本机 .env。
+    monkeypatch.setenv("RAW_PARQUET_ROOT", str(tmp_path))
     cfg = Config(
         {
             "providers": {
@@ -524,7 +526,9 @@ def test_scope_config_parsed():
         ("future_exchanges", ["SGX"]),
     ],
 )
-def test_invalid_scope_rejected(key, value):
+def test_invalid_scope_rejected(key, value, tmp_path, monkeypatch):
+    # 构造上下文要解析 raw 根（未配置时报错，D-028）；显式给临时根，不依赖本机 .env。
+    monkeypatch.setenv("RAW_PARQUET_ROOT", str(tmp_path))
     cfg = Config({"providers": {"tushare": {key: value}}})
     with pytest.raises(ValueError, match=key):
         _build_context("tushare", cfg)
