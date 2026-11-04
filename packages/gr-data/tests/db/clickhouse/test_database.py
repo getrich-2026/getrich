@@ -3,7 +3,7 @@
 The wrapper is responsible for:
 - Connection lifecycle (connect, ping, reconnect, close)
 - DDL/DML via `execute()` and `execute_sql_file()`
-- Read APIs (`query`, `query_sql`, `read_data`)
+- Read APIs (`query`, `read_data`)
 - Write APIs (`insert_data`, `upsert_data`)
 - Schema operations (`truncate_data`, `drop_table`)
 - Internal upsert routing (REPLACE INTO for
@@ -60,8 +60,7 @@ class _FakeClient:
         # side_effect — tests configure its `return_value`
         # directly, since the expected shape varies by
         # call site (e.g. `_support_replace_into` reads
-        # `.result_rows`, `query_sql(use_df=False)` does
-        # the same, etc.).
+        # `.result_rows`, etc.).
         def _command(sql, parameters=None):
             self.command_calls.append((sql, parameters))
 
@@ -499,7 +498,7 @@ def test_execute_sql_file_with_empty_file(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# query() / query_sql() / read_data()
+# query() / read_data()
 # ---------------------------------------------------------------------------
 
 
@@ -544,38 +543,6 @@ def test_query_forwards_params() -> None:
 
     sql, params = fake.query_df_calls[0]
     assert params == {"x": 42}
-
-
-def test_query_sql_dataframe_mode() -> None:
-    client, fake = _make_client()
-
-    result = client.query_sql("SELECT * FROM t", use_df=True)
-
-    assert isinstance(result, pd.DataFrame)
-    assert len(fake.query_df_calls) == 1
-
-
-def test_query_sql_list_mode() -> None:
-    """`use_df=False` returns `result.result_rows` (a
-    list-of-lists) instead of a DataFrame."""
-    client, fake = _make_client()
-    result_mock = MagicMock()
-    result_mock.result_rows = [["row1"], ["row2"]]
-    fake.query.return_value = result_mock
-
-    result = client.query_sql("SELECT * FROM t", use_df=False)
-
-    assert result == [["row1"], ["row2"]]
-    assert len(fake.query_df_calls) == 0
-
-
-def test_query_sql_returns_none_on_error() -> None:
-    client, fake = _make_client()
-    fake.query_df.side_effect = RuntimeError("fail")
-
-    result = client.query_sql("SELECT bogus", use_df=True)
-
-    assert result is None
 
 
 def test_read_data_builds_select_with_clauses() -> None:

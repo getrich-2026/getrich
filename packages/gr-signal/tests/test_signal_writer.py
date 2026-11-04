@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from gr_backtest import get_shanghai_tz
-from gr_data.db.pool import PgConnectionPool
+from gr_data.db.postgres.pool import PgConnectionPool
 from gr_signal import PgSignalWriter, SignalWriteError
 from gr_signal.live import Signal
 from gr_signal.signal_writer import _to_params

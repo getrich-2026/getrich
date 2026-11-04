@@ -10,7 +10,7 @@ from gr_data.common import contracts
 from gr_data.common.ownership import OwnershipManager
 from gr_data.common.quality import RowValidationError
 from gr_data.common.trading_status import event_flags, resolve_trading_status
-from gr_data.db.copy import upsert_rows
+from gr_data.db.postgres.copy import upsert_rows
 from gr_data.ingest.base import IngestResult
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.bj_pending import BJPendingImporter

@@ -28,7 +28,7 @@ from gr_data.common.contracts import TableContract
 from gr_data.common.ownership import OwnershipManager
 from gr_data.common.paths import RawPaths
 from gr_data.common.quality import check_dataframe
-from gr_data.db.copy import upsert_rows
+from gr_data.db.postgres.copy import upsert_rows
 
 
 def _json_safe(value: Any) -> Any:

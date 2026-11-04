@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from gr_data.db.pool import PgConnectionPool, pg_pool
+from gr_data.db.postgres.pool import PgConnectionPool, pg_pool
 
 from gr_signal.errors import SignalWriteError
 from gr_signal.live.signal import Signal

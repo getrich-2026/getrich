@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
-from gr_data.db.pool import PgConnectionPool, pg_pool
+from gr_data.db.postgres.pool import PgConnectionPool, pg_pool
 
 from gr_backtest.persistence import PgBacktestResultStore
 from gr_backtest.sweep import SweepResult, SweepTrialResult

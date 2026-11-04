@@ -20,7 +20,7 @@ from gr_tools.config import LoggingConfig, load_environment, setup_logging
 
 from gr_data.config import load_postgres
 from gr_data.config.pipeline import Config, load_config
-from gr_data.db.sync import PgConfig, connect
+from gr_data.db.postgres.sync import PgConfig, connect
 
 
 log = logging.getLogger(__name__)

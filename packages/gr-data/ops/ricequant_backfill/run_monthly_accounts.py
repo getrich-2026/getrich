@@ -244,7 +244,7 @@ class Runtime:
                 "-I",
                 "-c",
                 (
-                    "from gr_data.db.risk_receipts import get_importer_version; "
+                    "from gr_data.db.postgres.risk_receipts import get_importer_version; "
                     "print(get_importer_version(require_clean=True))"
                 ),
             ],

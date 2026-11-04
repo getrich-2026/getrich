@@ -220,8 +220,8 @@ def _risk_capture_callback(
     from gr_tools.config import load_environment
 
     from gr_data.config import load_postgres
-    from gr_data.db.risk_receipts import prepare_capture, record_capture
-    from gr_data.db.sync import PgConfig, connect
+    from gr_data.db.postgres.risk_receipts import prepare_capture, record_capture
+    from gr_data.db.postgres.sync import PgConfig, connect
 
     env = cfg.environment if cfg.environment is not None else load_environment()
     pg = load_postgres(env)
@@ -261,7 +261,7 @@ def _risk_universe_provider(
         reference_input_codes,
     )
     from gr_data.config import load_postgres
-    from gr_data.db.sync import PgConfig, connect
+    from gr_data.db.postgres.sync import PgConfig, connect
     from gr_data.raw.ricequant.fetchers.supplements import _check_quota
 
     env = cfg.environment if cfg.environment is not None else load_environment()

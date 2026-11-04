@@ -68,7 +68,7 @@ def test_conninfo_escapes_special_characters():
     手工拼 keyword=value 时：密码含空格会 ProgrammingError；含反斜杠会被
     **静默**改写成另一个值，只表现为认证失败，极难排查。
     """
-    from gr_data.db.sync import PgConfig
+    from gr_data.db.postgres.sync import PgConfig
     from psycopg.conninfo import conninfo_to_dict
 
     for pw in ("simple", "my pass", "it's", "a\\b", "p@ss:w/rd", ""):

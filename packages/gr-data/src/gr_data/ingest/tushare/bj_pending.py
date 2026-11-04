@@ -14,7 +14,7 @@ import psycopg
 
 from gr_data.common.ownership import OwnershipManager
 from gr_data.common.quality import RowValidationError
-from gr_data.db.copy import upsert_rows
+from gr_data.db.postgres.copy import upsert_rows
 from gr_data.ingest.resolve import resolve_by_symbol_map
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.stock_scope import StockScopeAdapter, StockScopeImporter, raw_json

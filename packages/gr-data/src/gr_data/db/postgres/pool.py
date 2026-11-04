@@ -1,6 +1,6 @@
 """基于 psycopg3 AsyncConnectionPool 的 PostgreSQL 连接池单例。
 
-设计目标对齐 ``libs/clickhouse/pool.py``：
+连接池约定：
 - 单例使用，应用启动时 ``init()``，关闭时 ``close()``
 - 通过 ``connection()`` 获取异步连接（async context manager）
 - 连接级强制 timezone='Asia/Shanghai'，与项目 AGENTS.md 时区规则一致

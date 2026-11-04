@@ -10,7 +10,7 @@ import logging
 from decimal import Decimal
 
 from gr_backtest.strategy.context import AccountView, PositionView
-from gr_data.db.pool import PgConnectionPool, pg_pool
+from gr_data.db.postgres.pool import PgConnectionPool, pg_pool
 
 
 logger = logging.getLogger(__name__)

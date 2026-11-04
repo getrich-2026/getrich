@@ -113,7 +113,7 @@ def test_events_outside_manifest_rejected(tmp_raw_root):
 
 @pytest.mark.integration
 def test_event_replay_empty_correction_and_missing_bar(pg_conn, tmp_raw_root):
-    from gr_data.db.trading_status import load_stock_trading_status
+    from gr_data.db.postgres.trading_status import load_stock_trading_status
 
     pg_conn.execute(
         "INSERT INTO meta.instruments (symbol,asset,exchange,list_date) "

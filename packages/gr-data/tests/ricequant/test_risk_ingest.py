@@ -187,7 +187,7 @@ def memory_upsert(conn, contract, rows):
 
 @pytest.fixture
 def risk_case(monkeypatch, tmp_path):
-    from gr_data.db import risk_receipts
+    from gr_data.db.postgres import risk_receipts
 
     monkeypatch.setattr(risk_receipts, "get_importer_version", lambda **kwargs: "1" * 40)
     day = date(2024, 1, 2)
@@ -273,7 +273,7 @@ def test_real_storage_rejects_invalid_or_underflow_values(value):
 
 
 def test_pg_real_midpoint_roundtrip_all_four_pieces(risk_case, pg_conn, monkeypatch):
-    from gr_data.db.copy import upsert_rows
+    from gr_data.db.postgres.copy import upsert_rows
 
     case = prepare_dynamic_pg(risk_case, pg_conn, monkeypatch)
     midpoint = 1.394935429096222
@@ -937,7 +937,7 @@ def test_dynamic_old_canonical_replay_requires_retained_alias(risk_case):
 
 def prepare_dynamic_pg(case, pg_conn, monkeypatch):
     """保留固定 raw fixture，但恢复真实 COPY/JSONB writer 与一次性 PostgreSQL。"""
-    from gr_data.db.copy import upsert_rows
+    from gr_data.db.postgres.copy import upsert_rows
 
     dynamic_case(case)
     with pg_conn.cursor() as cur:
@@ -1011,7 +1011,7 @@ def test_dynamic_pg_partial_coverage_copy_and_replay(risk_case, pg_conn, monkeyp
 def test_dynamic_pg_coverage_failure_rolls_back_five_tables_and_run(
     risk_case, pg_conn, monkeypatch
 ):
-    from gr_data.db.copy import upsert_rows
+    from gr_data.db.postgres.copy import upsert_rows
     from psycopg.errors import CheckViolation
 
     case = prepare_dynamic_pg(risk_case, pg_conn, monkeypatch)
@@ -1329,7 +1329,7 @@ def test_publication_coverage_integer_boundary(candidate, complete, boundary, un
 
 
 def test_variant_purpose_cannot_change_existing_registration(risk_case):
-    from gr_data.db.risk_receipts import prepare_capture
+    from gr_data.db.postgres.risk_receipts import prepare_capture
 
     case = dynamic_case(risk_case)
     prepare_capture(case.conn, case.options)
@@ -1389,7 +1389,7 @@ def test_production_cannot_use_legacy_path_without_receipts(risk_case):
 
 
 def test_capture_preflight_requires_migration_before_variant_registration(risk_case):
-    from gr_data.db.risk_receipts import prepare_capture
+    from gr_data.db.postgres.risk_receipts import prepare_capture
 
     case = dynamic_case(risk_case)
     case.conn.receipt_migration_applied = False
@@ -1522,7 +1522,7 @@ def test_commit_response_lost_reconciles_or_reports_unknown_and_replays_zero(
 
 
 def test_importer_version_change_fails_before_business_rewrite(risk_case, monkeypatch):
-    from gr_data.db import risk_receipts
+    from gr_data.db.postgres import risk_receipts
 
     case = dynamic_case(risk_case)
     writer.run_risk_ingest(case.conn, case.ctx, case.options)
@@ -1561,7 +1561,7 @@ def test_deferred_database_rejection_is_rollback_not_unknown_commit(risk_case, m
 
 
 def test_explicit_observation_new_version_preserves_old_binding(risk_case, monkeypatch):
-    from gr_data.db import risk_receipts
+    from gr_data.db.postgres import risk_receipts
 
     case = dynamic_case(risk_case)
     selected = []

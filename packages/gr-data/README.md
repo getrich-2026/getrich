@@ -36,6 +36,25 @@ INSIGHT(华泰)      → raw/insight   → parquet → ingest/insight   → Post
 
 ---
 
+## 数据库模块
+
+```text
+db/
+├── postgres/          # PostgreSQL
+│   ├── pool.py        # 异步连接池（API／异步服务）
+│   ├── sync.py        # 同步连接、连接池及 PgConfig（入库／CLI）
+│   ├── copy.py        # COPY 与批量 upsert
+│   ├── trading_status.py  # 交易状态查询
+│   └── risk_receipts.py   # 风险数据采集收据
+├── clickhouse/        # ClickHouse 客户端、连接池与表操作
+└── duckdb.py          # DuckDB 临时计算工具
+```
+
+环境变量配置模型仍在 `config/settings.py`。PostgreSQL 模块从 `gr_data.db.postgres.<module>`
+导入；`gr_data.db` 只导出常用接口（`DictConnection`、`pg_pool` 等），与 `gr_data.db.postgres`
+共用同一连接池实例。旧路径 `gr_data.db.pool`／`sync`／`copy`／`trading_status`／`risk_receipts` 已删除。
+`PostgresConfig` 负责环境配置，`PgConfig` 保留同步连接参数及原有默认值。
+
 ## 跑起来
 
 ```bash
@@ -455,7 +474,7 @@ Parquet 哈希及分区观察时间。缺凭据须重抓，哈希不符拒绝导
 | 缺覆盖、既无 bar 也无事件、无时段 S/R 同日、其他冲突 | `UNKNOWN` |
 
 全天停牌通常没有 bar，不插入无价格行。使用
-`gr_data.db.trading_status.load_stock_trading_status(conn, instrument_ids, start, end)`
+`gr_data.db.postgres.trading_status.load_stock_trading_status(conn, instrument_ids, start, end)`
 结合标的上市区间及开市日历读取完整日级状态；缺日历时报错，不将沪深日历套用于北交所。
 该函数和行情派生列共用状态规则，不跨日填充，不以日级状态推断开盘可买性。
 股票行情的 `trading_status` 只从库内事件与覆盖表推导（不再读 raw）。raw 有有效凭据时，

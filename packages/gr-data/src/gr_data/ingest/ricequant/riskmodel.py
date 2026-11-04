@@ -23,8 +23,8 @@ from gr_data.common.ownership import OwnershipError, OwnershipManager
 from gr_data.common.ricequant_risk_quality import validate_daily_risk
 from gr_data.common.ricequant_specs import ContractViolationError, semantic_hash
 from gr_data.config.ricequant_risk import RiskOptions
-from gr_data.db.copy import upsert_rows
-from gr_data.db.risk_receipts import (
+from gr_data.db.postgres.copy import upsert_rows
+from gr_data.db.postgres.risk_receipts import (
     commit_receipt,
     probe_receipt,
     record_capture,

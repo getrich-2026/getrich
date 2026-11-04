@@ -40,7 +40,7 @@ from gr_data.common.ricequant_universe import build_universe_provider
 from gr_data.config.ricequant import RicequantImportOptions
 from gr_data.config.ricequant_risk import RiskOptions, parse_risk_options
 from gr_data.config.settings import load_postgres, make_pg_dsn
-from gr_data.db.risk_receipts import get_importer_version, prepare_capture, record_capture
+from gr_data.db.postgres.risk_receipts import get_importer_version, prepare_capture, record_capture
 from gr_data.raw.base import RawContext
 from gr_data.raw.ricequant.client import RqdatacClient
 from gr_data.raw.ricequant.risk_dynamic import validate_universe

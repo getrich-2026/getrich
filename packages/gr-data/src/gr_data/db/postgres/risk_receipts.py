@@ -59,7 +59,7 @@ def _git(directory: Path, *args: str) -> str:
 def _checkout_root() -> Path:
     module = Path(__file__).resolve()
     root = Path(_git(module.parent, "rev-parse", "--show-toplevel"))
-    if module != root / _VERSION_PATHS[0] / "db/risk_receipts.py":
+    if module != root / _VERSION_PATHS[0] / "db/postgres/risk_receipts.py":
         raise ContractViolationError(
             "RiceQuant importer source is outside its expected Git checkout"
         )

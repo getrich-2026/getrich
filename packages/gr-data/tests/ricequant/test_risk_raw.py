@@ -447,9 +447,9 @@ def test_production_cli_preflights_before_sdk_and_wires_capture(
             host="fixture", port=1, database="fixture", user="fixture", password="fixture"
         ),
     )
-    monkeypatch.setattr("gr_data.db.sync.connect", connection)
-    monkeypatch.setattr("gr_data.db.risk_receipts.prepare_capture", prepare)
-    monkeypatch.setattr("gr_data.db.risk_receipts.record_capture", capture)
+    monkeypatch.setattr("gr_data.db.postgres.sync.connect", connection)
+    monkeypatch.setattr("gr_data.db.postgres.risk_receipts.prepare_capture", prepare)
+    monkeypatch.setattr("gr_data.db.postgres.risk_receipts.record_capture", capture)
     monkeypatch.setattr("gr_data.raw.ricequant.client.RqdatacClient", client)
     monkeypatch.setattr("gr_data.raw.ricequant.riskmodel.run_risk_raw", raw_run)
     monkeypatch.setattr(

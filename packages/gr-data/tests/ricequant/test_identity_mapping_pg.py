@@ -20,8 +20,8 @@ from gr_data.common.paths import RawPaths
 from gr_data.common.ricequant_specs import semantic_hash
 from gr_data.config.ricequant_risk import parse_risk_options
 from gr_data.config.settings import load_postgres, make_pg_dsn
-from gr_data.db import risk_receipts
-from gr_data.db.copy import upsert_rows
+from gr_data.db.postgres import risk_receipts
+from gr_data.db.postgres.copy import upsert_rows
 from gr_data.ingest.base import IngestContext
 from gr_data.ingest.ricequant import riskmodel as writer
 from gr_data.ingest.ricequant.identity_mapping import IdentityMapping

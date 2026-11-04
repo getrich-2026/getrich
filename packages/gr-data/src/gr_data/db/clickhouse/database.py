@@ -104,20 +104,13 @@ class ClickHouseClient:
         """关闭数据库连接。"""
         if self._connection:
             conn = self._connection
-            # Clear the slot FIRST so a later connect() never sees a
-            # half-closed connection. If close() raises we still want
-            # the wrapper to behave as "no connection" from this point
-            # on, otherwise the next connect() will ping() a known-dead
-            # object and waste a round-trip.
+            # 先清空引用，确保关闭失败后重连也不会复用旧连接。
             self._connection = None
             try:
                 conn.close()
                 log.info("ClickHouse connection closed")
-            # silent-fail-ok: close-time errors are best-effort.
-            # ``_connection`` is already None, so the next
-            # ``connect()`` builds a fresh client instead of reusing
-            # a half-closed handle. (Round #1056 fix.)
             except Exception as e:
+                # 关闭失败仅记录日志，不向外抛出。
                 log.error(f"Error closing ClickHouse connection: {e}")
 
     def configure(
@@ -283,48 +276,13 @@ class ClickHouseClient:
 
         try:
             assert self._connection is not None
-            result_df = cast(pd.DataFrame, self._connection.query_df(sql, parameters=params))
+            result_df = self._connection.query_df(sql, parameters=params)
             log.info(f"Query executed successfully, returned {len(result_df)} rows")
             return result_df
         except Exception as e:
             self._connection = None
             log.error(f"Error executing query: {e}\nSQL: {sql}")
             return pd.DataFrame()
-
-    def query_sql(
-        self, sql_query: str, params: dict[str, Any] | None = None, use_df: bool = True
-    ) -> pd.DataFrame | list[list[Any]] | None:
-        """
-        执行 SELECT SQL 查询并返回结果（向后兼容）。
-
-        Args:
-            sql_query: 要执行的SQL查询字符串
-            params: SQL参数化查询的参数字典
-            use_df: 是否将结果作为 DataFrame 返回
-
-        Returns:
-            包含查询结果的 DataFrame 或列表,如果出错则返回 None
-        """
-        if not self.ensure_connection():
-            return None
-
-        try:
-            assert self._connection is not None
-            if use_df:
-                res_df = cast(pd.DataFrame, self._connection.query_df(sql_query, parameters=params))
-                log.info(f"SQL query executed successfully, returned {len(res_df)} records")
-                return res_df
-            else:
-                res_list = cast(
-                    list[list[Any]],
-                    self._connection.query(sql_query, parameters=params).result_rows,
-                )
-                log.info(f"SQL query executed successfully, returned {len(res_list)} records")
-                return res_list
-        except Exception as e:
-            log.error(f"Error executing SQL query: {e}\nSQL: {sql_query}")
-            self._connection = None
-            return None
 
     def read_data(
         self,

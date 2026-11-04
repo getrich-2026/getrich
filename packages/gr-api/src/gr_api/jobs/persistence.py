@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from gr_data.db.pool import PgConnectionPool, pg_pool
+from gr_data.db.postgres.pool import PgConnectionPool, pg_pool
 
 
 if TYPE_CHECKING:

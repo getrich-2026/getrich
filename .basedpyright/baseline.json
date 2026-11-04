@@ -6264,7 +6264,7 @@
                 }
             }
         ],
-        "./packages/gr-data/src/gr_data/db/copy.py": [
+        "./packages/gr-data/src/gr_data/db/postgres/copy.py": [
             {
                 "code": "reportCallIssue",
                 "range": {
@@ -6306,7 +6306,7 @@
                 }
             }
         ],
-        "./packages/gr-data/src/gr_data/db/pool.py": [
+        "./packages/gr-data/src/gr_data/db/postgres/pool.py": [
             {
                 "code": "reportDeprecated",
                 "range": {
@@ -6316,7 +6316,7 @@
                 }
             }
         ],
-        "./packages/gr-data/src/gr_data/db/sync.py": [
+        "./packages/gr-data/src/gr_data/db/postgres/sync.py": [
             {
                 "code": "reportDeprecated",
                 "range": {
@@ -6350,7 +6350,7 @@
                 }
             }
         ],
-        "./packages/gr-data/src/gr_data/db/trading_status.py": [
+        "./packages/gr-data/src/gr_data/db/postgres/trading_status.py": [
             {
                 "code": "reportOptionalSubscript",
                 "range": {
@@ -6870,14 +6870,6 @@
                 "range": {
                     "startColumn": 25,
                     "endColumn": 29,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportGeneralTypeIssues",
-                "range": {
-                    "startColumn": 11,
-                    "endColumn": 41,
                     "lineCount": 1
                 }
             }

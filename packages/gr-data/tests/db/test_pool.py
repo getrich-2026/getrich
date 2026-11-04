@@ -1,4 +1,4 @@
-"""Tests for ``gr_data.db.pool.PgConnectionPool``.
+"""Tests for ``gr_data.db.postgres.pool.PgConnectionPool``.
 
 PgConnectionPool is a thin wrapper over
 ``psycopg_pool.AsyncConnectionPool``:
@@ -29,7 +29,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from gr_data.db.pool import PgConnectionPool
+from gr_data.db.postgres.pool import PgConnectionPool
 from psycopg.rows import dict_row
 
 
@@ -152,7 +152,7 @@ async def test_init_creates_pool_with_expected_dsn_and_kwargs() -> None:
     with (
         _config_context(fake_settings) as config,
         patch(
-            "gr_data.db.pool.AsyncConnectionPool",
+            "gr_data.db.postgres.pool.AsyncConnectionPool",
             return_value=fake_pool,
         ) as acp_cls,
     ):
@@ -194,7 +194,7 @@ async def test_init_stores_underlying_pool() -> None:
     with (
         _config_context() as config,
         patch(
-            "gr_data.db.pool.AsyncConnectionPool",
+            "gr_data.db.postgres.pool.AsyncConnectionPool",
             return_value=fake_pool,
         ),
     ):
@@ -219,7 +219,7 @@ async def test_init_is_idempotent() -> None:
     with (
         _config_context() as config,
         patch(
-            "gr_data.db.pool.AsyncConnectionPool",
+            "gr_data.db.postgres.pool.AsyncConnectionPool",
         ) as acp_cls,
     ):
         await pool.init(config)
@@ -312,7 +312,7 @@ async def test_full_lifecycle_init_connection_close() -> None:
     with (
         _config_context() as config,
         patch(
-            "gr_data.db.pool.AsyncConnectionPool",
+            "gr_data.db.postgres.pool.AsyncConnectionPool",
             return_value=fake_pool,
         ),
     ):

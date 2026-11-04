@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from gr_backtest.execution import Fill
 from gr_backtest.types import Side
-from gr_data.db.pool import PgConnectionPool, pg_pool
+from gr_data.db.postgres.pool import PgConnectionPool, pg_pool
 
 from gr_signal.errors import SignalWriteError
 

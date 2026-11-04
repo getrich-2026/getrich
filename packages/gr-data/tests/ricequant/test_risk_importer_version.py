@@ -8,11 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 from gr_data.common.ricequant_specs import ContractViolationError
-from gr_data.db import risk_receipts
+from gr_data.db.postgres import risk_receipts
 from psycopg.pq import TransactionStatus
 
 
-_SOURCE = "packages/gr-data/src/gr_data/db/risk_receipts.py"
+_SOURCE = "packages/gr-data/src/gr_data/db/postgres/risk_receipts.py"
 _DDL = "packages/gr-db/src/gr_db/ddl/postgres/001_fixture.sql"
 
 

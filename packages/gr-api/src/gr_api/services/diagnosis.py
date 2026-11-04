@@ -729,7 +729,7 @@ async def _fetch_daily_observations(
 ) -> tuple[dict[int, list[date]], dict[int, dict[date, DailyObservation]]]:
     """取 [start, end] 内各股每个开市日的 D-023 状态与复权收盘价。
 
-    状态判定与 ``gr_data.db.trading_status`` 相同（规则见
+    状态判定与 ``gr_data.db.postgres.trading_status`` 相同（规则见
     ``diagnosis_calc.history.trading_status``）：由有无 bar、停复牌覆盖与事件推导，
     交易日既无 bar 也无停牌事件记为 UNKNOWN，不推断为停牌。只读当前观察，不声称历史 PIT；
     上市日之前、退市日之后不出行。

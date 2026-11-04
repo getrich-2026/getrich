@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 from gr_api.worker import lifespan
-from gr_data.db.pool import pg_pool
+from gr_data.db.postgres.pool import pg_pool
 
 
 pytestmark = pytest.mark.anyio

@@ -28,7 +28,7 @@ from gr_backtest import get_shanghai_tz
 from gr_backtest.calendar import DEFAULT_FUTURES_SESSIONS
 from gr_backtest.registry import get_registry
 from gr_data.config import load_postgres
-from gr_data.db.pool import pg_pool
+from gr_data.db.postgres.pool import pg_pool
 from gr_tools.config import LoggingConfig, load_environment, setup_logging
 
 from gr_signal.account_loader import AccountStateLoader

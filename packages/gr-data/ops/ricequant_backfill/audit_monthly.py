@@ -22,7 +22,7 @@ from gr_data.common.ricequant_specs import semantic_hash
 from gr_data.config import load_postgres, make_pg_dsn
 from gr_data.config.pipeline import load_config
 from gr_data.config.ricequant_risk import parse_risk_options
-from gr_data.db.risk_receipts import get_importer_version
+from gr_data.db.postgres.risk_receipts import get_importer_version
 from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
 from gr_data.raw.ricequant.riskmodel import read_bundles
 from gr_tools.config import load_environment
