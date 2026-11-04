@@ -1,12 +1,17 @@
 # iMac 采集主端：当前状态与下一步
 
-面向采集环境维护者。2026-11-02 16:14 上海时间实查：Tushare 股票 2010～2023 的 168 个月、2024-01-01～2026-10-29 的 34 个月均已验收完成；多品种控制器已进入 index 阶段，后续按 8 核心指数 → ETF → 期货 → 期权接续。正式 raw 位于 myssd，本机数据库及运行账本继续留在 neoimac，期权仅 raw／隔离验证边界不变；实时状态及其他任务见 NOTES 和运行账本。
+面向采集环境维护者。2026-11-03 12:31 上海时间实查：股票及8核心指数均完成；ETF身份筛查1845只全完，4只转型候选已归类，统一登记提案待确认。ETF正式入库47/202月保持；raw已独立续跑，当前2014-05、共52/202月raw可用，不能当作正式验收。正式raw仍在myssd，数据库和Tushare运行账本在neoimac；用户确认机制后按月边界交接正式入库，后续期权仅raw／隔离验证。详情与证据见NOTES及运行账本。
 
 **米筐工作库重放（2026-11-01 全量验收完成）**：D-030 显式映射不改原 raw／名单／源账本；固定独立副本 `f2dddc9` 完成三个模型各 676 个交易日、合计 2,028 模型日重放。逐值、覆盖、收据／绑定／检查点及各表总行数独立对账通过；旧 2024-12-11 v2 run 的 publishable=false 保留，替代观察选择正确，未新增工作库别名，calibrated=false，正式读取关闭。锁冲突已由 PG 日志定位为 Tushare 长事务归属 RowExclusiveLock 与米筐全表 ShareRowExclusiveLock 冲突，本轮通过既有任务锁互斥完成，未修改 Tushare 源码或已绑定 importer；任务退出已释放锁，Tushare 状态文件前后哈希一致。全量验收、逐日审计与版本／输入指纹在 `/Volumes/neoimac/data/getrich-runs/ricequant-replay-20261101/` 的 `full-replay-acceptance.json`／`days/`／`version-policy.json`。代码已随 rq-history 合入本地 dev，后台仍使用原冻结副本，未 push。
 
 **2024 年前米筐 raw（2026-11-02，身份规则批准、七日重验通过、逐月探测进行中）**：新独立源码提交 `5598ed2` 已授权提交未 push，D-012 的上药实际请求码／普天单例边界及新 v3 variant 已生效，旧规则、raw 与账本不改。七个旧待审目标在新观察中全部通过，共同原数值逐接口一致；v2trd 的2011-04-28五件套及04-29四IPO恢复已确认。新运行目录 `/Volumes/myssd/data/getrich-runs/ricequant-history-20100104-20231231-20261102/` 的 `seven-reassessment.json`／`gate.json`／`state.json`／`run.log` 记录证据及实时状态，PID见 `background-process.json`；当前独立证据库仅capture。v2/v2trd须各完成2011-04～2023-12共153个月实际交易日样本，缺口或行业轴变化即停，不后移起点；全通过后已获用户授权自动按v2→v2trd→v1正式只采raw（候选起点2011-04-28／2011-04-28／2010-01-04），历史写工作库另授权且按月等Tushare及单位/数值验收。每天实查保留3%，首次次日续跑完成一个目标后保存 `first-next-day-resume.json` 并等待用户确认。行业轴一致未证明当时分类，可能为2021申万历史回套，回测须据此解读。169退市实体仅普天不一致，不推广+1；其公告PDF重试仍为HTML验证响应，上交所原页面／官方13条列表JSON／检索替代存档与SHA在 `/Volumes/myssd/data/getrich-validation/rq-history-identity-approved-evidence-20261102/archive-index.json`。原2024+2,028观察验收与正式读取关闭状态不变。
 
 ## 1. 已完成的准备
+
+**指数2017-11缺口恢复（2026-11-02 20:55上海时间）**：原白名单请求在000016.SH缺22个交易日时按完整性门禁停止，未放宽检查。两次独立重查均完整22条且逐值/Parquet SHA一致；以原冻结运行源恢复控制器后，2017-11全月154条归一化/PG canonical/四价和量额检查通过，缺口22条与独立重查逐值相同。原94月已完成账本及raw、股票两批账本保持，其他规则与计划不改。当前指数已验收122/202月至2020-02、后台2020-03；后续ETF、期货、期权顺序及期权隔离验证边界不变。两次重查证据 `/Volumes/myssd/data/getrich-validation/tushare-index-gap-201711-20261102T124632Z/probe.json`，备份/启动/运行验证收据 `/Volumes/neoimac/data/getrich-runs/tushare-assets-20100101-20261029/index-gap-resume-201711-20261102.json`。
+
+股票回补终态汇总 `/Volumes/neoimac/data/getrich-runs/tushare-stock-20100101-20231231/alias-rule-summary.json` 已标final，按原规则区分重放审计事件与唯一字段命中，含代码/日期分布。上市前隔离为0条；BJ待处理91177条/241个代码仍待单独核实，未因回补完成而转为正式合格记录。
+
 
 **沪市双精确哨兵与双月重验恢复（2026-11-02，用户授权，[D-024](../../.agents/brain/DECISIONS.md#d-024)）**：仅沪市六位 `.SH`、源上限精确 `10000.0`、源下限精确 `0.001` 或 `0.01` 三条件同时满足时 NO_LIMIT／NULL，取代原单一组合；原 `up≥99999` 阈值不降。深市／北交所的10000组合在BJ行级待处理之前整批停止，近似值、单侧及未知组合仍停，不类推深市退市整理首日。独立提交 `0acd712453d1ef44c5dd74ae0b102cd3b060b0d4`，未 push；仅两份授权运行源码更新，既有换码／IPO限价缺行／B股／米筐工作区修改保留。343项组合回归、隔离提交52项回归、改动文件类型／Ruff／格式及部署门禁通过。
 
