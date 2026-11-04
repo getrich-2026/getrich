@@ -7,7 +7,6 @@ import os
 import pytest
 from gr_data.config.settings import (
     ClickHouseConfig,
-    HdbConfig,
     InsightConfig,
     RiceQuantConfig,
     make_pg_dsn,
@@ -70,12 +69,6 @@ def test_clickhouse_default_host_is_localhost(monkeypatch: object) -> None:
 def test_invalid_ricequant_enabled_rejects_configuration() -> None:
     with pytest.raises(SettingsError, match="RICEQUANT_ENABLED") as error:
         RiceQuantConfig.from_env(strict=False, environ={"RICEQUANT_ENABLED": "tru"})
-    assert "tru" not in str(error.value)
-
-
-def test_invalid_hdb_enabled_rejects_configuration() -> None:
-    with pytest.raises(SettingsError, match="ENABLE_HDB") as error:
-        HdbConfig.from_env(environ={"ENABLE_HDB": "tru"})
     assert "tru" not in str(error.value)
 
 

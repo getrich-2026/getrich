@@ -5,7 +5,6 @@ from __future__ import annotations
 from .settings import (
     ClickHouseConfig,
     DuckDBConfig,
-    HdbConfig,
     InsightConfig,
     PostgresConfig,
     RiceQuantConfig,
@@ -19,7 +18,6 @@ from .settings import (
 __all__ = [
     "ClickHouseConfig",
     "DuckDBConfig",
-    "HdbConfig",
     "InsightConfig",
     "PostgresConfig",
     "RiceQuantConfig",

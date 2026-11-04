@@ -29,12 +29,7 @@ class ClickHouseConfig:
     @classmethod
     def from_env(cls, strict: bool, environ: Mapping[str, str] | None = None) -> ClickHouseConfig:
         source = os.environ if environ is None else environ
-        # Default to localhost — matches .env.example and the
-        # docker-compose.yml service name. The previous default of
-        # "192.168.1.60" was a dev's personal LAN IP that leaked
-        # into the committed code; a fresh clone without an
-        # .env.local would then fail to connect to a non-existent
-        # host with a confusing "connection reset" error.
+        # 默认连接本机，其他部署地址通过环境变量指定。
         host = source.get("CLICKHOUSE_HOST", "localhost")
         port_str = source.get("CLICKHOUSE_PORT", "8123")
         user = source.get("CLICKHOUSE_USER", "default")
@@ -109,19 +104,6 @@ class RiceQuantConfig:
 
 
 @dataclass(frozen=True)
-class HdbConfig:
-    """HDB Module Configuration"""
-
-    enabled: bool
-
-    @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> HdbConfig:
-        source = os.environ if environ is None else environ
-        enabled = parse_bool(source.get("ENABLE_HDB"), name="ENABLE_HDB")
-        return cls(enabled=enabled)
-
-
-@dataclass(frozen=True)
 class InsightConfig:
     """Insight Module Configuration"""
 
@@ -159,10 +141,7 @@ class PostgresConfig:
     @classmethod
     def from_env(cls, strict: bool, environ: Mapping[str, str] | None = None) -> PostgresConfig:
         source = os.environ if environ is None else environ
-        # 默认值必须是「本机可用」的中性值，与 .env.example 对齐。
-        # 这里原先写死的是某台机器的内网 IP（100.80.19.6）和库名 goldmine，
-        # 新克隆在没有 .env 时会去连别人的主机，报一个和真实原因无关的
-        # 连接错误。同类问题见 ClickHouseConfig 的 host 默认值。
+        # 默认连接本机，连接参数通过环境变量覆盖。
         host = source.get("PG_HOST", "localhost") or "localhost"
         port_str = source.get("PG_PORT", "5432")
         user = source.get("PG_USER", "quant") or "quant"
@@ -206,25 +185,7 @@ def load_clickhouse(environment: Environment) -> ClickHouseConfig:
 
 
 def make_pg_dsn(postgres: PostgresConfig) -> str:
-    """Build a libpq DSN string for synchronous psycopg connections.
-
-    Used by the worker pool's ``sync_is_cancelled_status`` probe, which
-    runs in a thread / worker process and needs a short-lived sync
-    connection rather than the async pool that ``PgBacktestJobStore``
-    borrows from. Mirrors the async pool's connection parameters so a
-    probe on a different connection observes the same writes.
-
-    Parameters
-    ----------
-    postgres : PostgresConfig
-        The application's Postgres config dataclass.
-
-    Returns
-    -------
-    str
-        A libpq-style DSN, e.g.
-        ``postgresql://quant:s3cr3t@100.80.19.6:5432/goldmine``.
-    """
+    """根据 PostgreSQL 配置生成同步连接使用的 URI。"""
     password = f":{postgres.password}" if postgres.password else ""
     user = postgres.user or "postgres"
     return f"postgresql://{user}{password}@{postgres.host}:{postgres.port}/{postgres.database}"

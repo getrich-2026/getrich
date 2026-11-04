@@ -735,7 +735,7 @@ uv run gr-data own release market.stock_bar_1d           # 解除
 
 `load_environment()` 显式读取一个环境快照，默认不修改 `os.environ`。真实环境变量优先于文件；显式传 `env_file` 时只使用该文件，否则依次选择 workspace `.env`、`~/.config/getrich/.env`。自动候选都不存在时仅使用进程环境；显式文件不存在则报错，不自动创建文件。首次运行仍执行 `cp .env.example .env`。
 
-布尔配置 `STRICT_MODE`、`RICEQUANT_ENABLED`、`ENABLE_HDB`、`ENABLE_INSIGHT`、`GETRICH_ALLOW_MOCK_AUTH` 和 `LOG_JSON` 统一接受 `true/1/yes/on` 与 `false/0/no/off`，不区分大小写；未设置或空串为 False，其他值抛出 `SettingsError`，错误消息不包含原值。`APP_ENV=prod` 启用严格模式的判断同样不区分大小写。
+布尔配置 `STRICT_MODE`、`RICEQUANT_ENABLED`、`ENABLE_INSIGHT`、`GETRICH_ALLOW_MOCK_AUTH` 和 `LOG_JSON` 统一接受 `true/1/yes/on` 与 `false/0/no/off`，不区分大小写；未设置或空串为 False，其他值抛出 `SettingsError`，错误消息不包含原值。`APP_ENV=prod` 启用严格模式的判断同样不区分大小写。
 
 YAML 不复制数据库与日志配置；`load_config(environment=env)` 的占位符、`*_env` 凭证字段、raw 路径与连接配置共用同一快照。数据／信号 CLI 在启动时显式安装环境，兼容直接读进程环境的 SDK；模型和库导入不做此操作。
 
