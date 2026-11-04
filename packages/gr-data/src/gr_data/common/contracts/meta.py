@@ -62,7 +62,7 @@ OPTION_CONTRACTS = TableContract(
 
 
 # ---- 标的档案（tushare 主数据快照里 meta.instruments 放不下的字段）----
-# 档案列多为可空文本，首行全 NULL 时 psycopg 的类型推断会退化，所以显式声明全部类型。
+# 档案契约统一声明全部列的 COPY 适配类型。
 def _profile(table: str, typed: tuple[tuple[str, str], ...]) -> TableContract:
     columns = ("instrument_id", *(name for name, _ in typed), "source")
     return TableContract(

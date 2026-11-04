@@ -17,13 +17,9 @@ class TableContract:
     schema: str
     table: str
     columns: tuple[str, ...]  # 规范列（不含 DB 自动维护的 updated_at）
-    conflict_keys: tuple[str, ...]  # ON CONFLICT 键（= 业务主键）
-    # 显式 PG 类型名，供 COPY 时 `cursor.copy().set_types()` 使用。
-    # 语义是**要么不填，要么把 columns 全部填齐**（见 db/copy.py::upsert_rows）：
-    # 只填一半会让 set_types 的位置参数与列错位，是比不填更糟的失败模式。
-    # 绝大多数表留空即可 —— psycopg 对 str/int/float/date 的类型推断没有问题，
-    # 只有 jsonb 与数组列必须显式声明（推断出的 float8[] 喂给 real[] 是隐式转换，
-    # 能跑但脆；全 NULL 的首行还会让推断直接退化）。
+    conflict_keys: tuple[str, ...]  # ON CONFLICT 使用的唯一键
+    # 可选的 PostgreSQL 类型声明；非空时须与 columns 同序、全量对应。
+    # upsert_rows 按实际写入列提取类型，传给 COPY 的 set_types()。
     column_types: tuple[tuple[str, str], ...] = field(default=())
 
     def __post_init__(self) -> None:

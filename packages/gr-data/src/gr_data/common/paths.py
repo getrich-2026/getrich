@@ -2,21 +2,14 @@
 
 所有 raw 层落地路径集中在此定义，杜绝散落硬编码（见 AGENTS.md §3.4）。
 
-布局::
+主要供应商的布局示例（非完整清单）::
 
     <raw_root>/<provider>/<dataset>/...
 
-  yinhe/calendar/calendar_<market>.parquet
-  yinhe/hist_code_list/hist_code_list_<security_type>.parquet
-  yinhe/backward_factor/<security_type>_chunk<NNNN>.parquet
-  yinhe/kline_day/<code>/<YYYY-MM>.parquet
-  yinhe/kline_min1/<code>/<YYYY-MM>.parquet
   ricequant/instruments/<asset>.parquet
   ricequant/calendar/<exchange>.parquet
   ricequant/bars_1d/<asset>/<code>.parquet
-  insight/basic_info/<security_type>.parquet
-  insight/trading_days/<exchange>.parquet
-  insight/kline_day/<code>/<YYYY-MM>.parquet
+
   tushare/instruments/<asset>.parquet
   tushare/calendar/<exchange>.parquet
   tushare/<daily|adj_factor|stk_limit|suspend_d|index_daily|fut_daily>/<YYYY-MM>.parquet

@@ -1,8 +1,7 @@
-"""`factor` 表契约。DDL 真源：gr-db 的 037_factor.sql / 048_factor_model_run_coverage.sql。
+"""`factor` 表契约。
 
-数组列与 JSONB 列必须声明 `column_types`：文本 COPY 下 psycopg 靠首行推断适配器，
-推断出的 `float8[]` 喂给 `real[]` 走隐式转换（能跑但脆），首行全 NULL 时还会退化。
-声明的是**发送端的线上类型**，所以 NUMERIC/REAL 目标列这里写 `float8`。
+DDL 真源：037_factor.sql、048_factor_model_run_coverage.sql、
+049_risk_import_receipts.sql。column_types 用于 COPY 的显式类型适配。
 """
 
 from __future__ import annotations

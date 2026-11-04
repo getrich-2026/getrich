@@ -1,7 +1,7 @@
 """`market` schema 的表契约。
 
-DDL 真源：gr-db `ddl/postgres/003_market.sql`（K 线）、`007_insight.sql`
-（复权因子等参考表）、`036_market_ext.sql`（复权因子明细）。
+DDL 真源：gr-db `ddl/postgres/003_market.sql`（K 线）、
+`036_market_ext.sql`（复权因子明细）、`044_stock_suspensions.sql`（停牌事件与覆盖）。
 """
 
 from __future__ import annotations
@@ -73,10 +73,10 @@ def bar_1d(asset: str) -> TableContract:
     """日线表契约。asset ∈ {stock, etf, index, future, option}。"""
     cols = _BAR_1D_BASE
     if asset in ("future", "option"):
-        # 衍生品无 adj_factor，但有持仓/结算列
+        # 衍生品契约不写 adj_factor，使用数据库默认值 1；补充持仓与结算列。
         cols = tuple(c for c in _BAR_1D_BASE if c != "adj_factor") + _DERIV_EXTRA
     elif asset == "stock":
-        # 045：区分「不设涨跌幅」与「涨跌停价未知」；其他资产表没有该列。
+        # 003：区分「不设涨跌幅」与「涨跌停价未知」；其他资产表没有该列。
         cols = _BAR_1D_BASE + ("price_limit_status",)
     return TableContract(
         schema="market",
