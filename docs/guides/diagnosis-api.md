@@ -2,7 +2,7 @@
 
 面向诊断页面开发者与接口使用者，说明当前调用流程与状态。字段以 `/openapi.json` 和后端模型为准，交互文档见 `/docs`；`packages/gr-api/diagnosis-design.openapi.json` 是设计契约，不是实现导出。
 
-代码核对：2026-10-31，单元、契约与一次性 PG18 集成测试通过；工作库只做过只读取数冒烟，未在工作库执行迁移 051 或启动服务。尚未落地的设计差异见[待决问题](../plans/backlog.md)。
+代码核对：2026-10-31，单元、契约与一次性 PG18 集成测试通过；工作库只做过只读取数冒烟（含 2024 年以来真实日线的历史相关性与波动率），未在工作库执行迁移或启动服务。尚未落地的设计差异见[待决问题](../plans/backlog.md)。
 
 ## 调用流程
 
@@ -37,7 +37,9 @@
 
 - **结果位置**：A–D 在各方案的 `section_a`–`section_d`，E 在顶层 `comparison`，压力测试在各方案的 `stress_scenarios`；实际使用的计算参数在顶层 `options`。
 - **可用性**：区块状态为 `ready/unavailable/failed`，指标状态为 `ok/degraded/unavailable`。不可用指标没有 `value`，不得按 0 展示。
-- **当前范围**：A 区出数；B、C、D 与压力测试为 `feature_not_available`；画像为 `spec_not_defined`，盲点均为「未能判断」。因此终态为 `partially_succeeded`。
+- **当前范围**：A 区出数；B 区只出逐股历史年化波动率（`instrument_betas[].historical_volatility`），D 区只出历史口径的相关矩阵、平均两两相关与高相关持仓对（`by_method.historical`）。模型口径（`forward`）指标为 `data_not_validated`，个股 Beta 与基准相关性为 `benchmark_missing`，C 区与压力测试为 `feature_not_available`；画像为 `spec_not_defined`，盲点均为「未能判断」。因此终态为 `partially_succeeded`。
+- **模型口径**：计算已实现但取数未开放，`forward` 指标当前均为 `data_not_validated`。开放后 `cov.forward_model` 回显模型身份、`cov.primary` 为 `forward`；L4 必须与 `l4_market_source_share`、`l4_largest_source` 同时展示，且不能解读为越大越分散；存在正份额未识别代码或任一持仓缺模型数据时，波动率、风险贡献、L3／L4 与风格暴露整体不可用（PA-13）。
+- **历史口径**：复权日简单收益，剔除全天停牌日、跨停牌的复牌收益与状态未知的缺口，日内停牌计入；相关性按全部持仓的共同有效日期对齐，个股波动率用各自有效日收益（Beta 区间）。少于 120 个样本不可用并回显 `sample_count`；收益恒定的股票从相关矩阵排除并降级披露，单只股票的相关指标为 `not_applicable`。`cov.computed` 含 `historical` 时 `cov.primary` 仍为 null，历史口径不顶替模型口径。
 - **A 区口径**：TopN 返回 Top1／Top3／Top5，以完整输入份额为分母；HHI、L1、L2 在已识别部分计算并按覆盖率降级（低于 0.95 降级、低于 0.80 不可用）。行业、市值、PB 分布保留 `unclassified`／`missing_or_invalid`／`non_positive` 档，只降级不判不可用。行业体系未验证时行业分布与最大行业为 `data_not_validated`；ROE 单位未核验，逐股为 `data_not_validated`。
 - **报告渲染**：百分比以小数返回，前端按 `format`、`decimals` 展示。逐股估值（`instrument_facts`）目前只在 `/result` 中。
 
