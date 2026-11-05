@@ -195,3 +195,84 @@ def test_structured_notice_gate_is_exact(tmp_raw_root):
             modified["changes"] = {**d["changes"], "open": 1}
         assert parse_official_notice(NOTICE + json.dumps(modified), sha) is None
     assert parse_official_notice(NOTICE + "not JSON", sha) is None
+
+
+def test_ingest_glue_missing_exchange_scope_stops(tmp_raw_root):
+    from gr_data.ingest.base import IngestGateError
+    from gr_data.ingest.tushare.czce_official import reconcile_czce_official
+
+    history = setup_history(tmp_raw_root, [row()])
+    with pytest.raises(IngestGateError, match="Missing CZCE exchange scope"):
+        reconcile_czce_official(
+            pd.DataFrame([row()]), "2017-08", {}, tmp_raw_root, history.manifest_sha256
+        )
+
+
+def test_ingest_glue_pending_stops_before_calendar(tmp_raw_root, monkeypatch):
+    from gr_data.ingest.base import IngestGateError
+    from gr_data.ingest.tushare import czce_official as glue
+
+    history = setup_history(tmp_raw_root, [row()])
+    monkeypatch.setattr(
+        glue,
+        "complete_future_calendar",
+        lambda *a: pytest.fail("pending must stop before calendar"),
+    )
+    scope = {
+        "exchange_scopes": {
+            "CZCE": {
+                "start": "2017-08-01",
+                "end": "2017-08-31",
+                "pending_days": [{"trade_date": "20170822", "exchange": "CZCE"}],
+            }
+        }
+    }
+    with pytest.raises(IngestGateError, match="Pending CZCE"):
+        glue.reconcile_czce_official(
+            pd.DataFrame([row()]), "2017-08", scope, tmp_raw_root, history.manifest_sha256
+        )
+
+
+def test_ingest_glue_prelaunch_month_skips_scope_calendar(tmp_raw_root, monkeypatch):
+    from gr_data.ingest.tushare import czce_official as glue
+
+    history = setup_history(tmp_raw_root, [row()])
+    monkeypatch.setattr(
+        glue, "complete_future_calendar", lambda *a: pytest.fail("prelaunch must skip calendar")
+    )
+    raw = pd.DataFrame([row("20170331", code="m1709-C-2000.DCE", exchange="DCE")])
+    out, reports, diffs = glue.reconcile_czce_official(
+        raw, "2017-03", {}, tmp_raw_root, history.manifest_sha256
+    )
+    pd.testing.assert_frame_equal(out, raw)
+    assert reports == [] and diffs.is_empty()
+
+
+def test_ingest_glue_2026_marks_unverified_without_covering(tmp_raw_root, monkeypatch):
+    from datetime import date
+    from types import SimpleNamespace
+
+    from gr_data.ingest.tushare import czce_official as glue
+
+    history = setup_history(tmp_raw_root, [row()])
+    monkeypatch.setattr(
+        glue, "complete_future_calendar", lambda *a: SimpleNamespace(frame=pd.DataFrame())
+    )
+    monkeypatch.setattr(glue, "read_open_days", lambda *a: [date(2026, 1, 5)])
+    raw = pd.DataFrame([row("20260105")])
+    scope = {
+        "exchange_scopes": {
+            "CZCE": {"start": "2026-01-05", "end": "2026-01-05", "pending_days": []}
+        }
+    }
+    notices = []
+    out, reports, diffs = glue.reconcile_czce_official(
+        raw, "2026-01", scope, tmp_raw_root, history.manifest_sha256, soft_notice=notices.append
+    )
+    pd.testing.assert_frame_equal(out, raw)
+    assert reports[0]["status"] == "未经官方年度文件核对"
+    assert reports[0]["overridden_rows"] == 0 and diffs.is_empty()
+    assert notices == [
+        __import__("gr_data.raw.czce.options", fromlist=["NOTICE"]).NOTICE
+        + json.dumps(reports[0], ensure_ascii=False, sort_keys=True)
+    ]
