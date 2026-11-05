@@ -1921,3 +1921,84 @@ def test_official_raw_validation_uses_copy_and_publishes_source_values(asset_set
     saved = pd.read_parquet(paths.dataset_file("tushare", "opt_daily", "2024-01"))
     assert saved.settle.iloc[0] == 1.22
     assert original.settle.iloc[0] == 1.22
+
+
+def test_option_exchange_scopes_survive_later_midmonth_exchange(asset_setup):
+    _, ctx, client = asset_setup
+    ctx.option_exchanges = tuple(e for e in OPTIONS if e != "SHFE")
+    paths = prepare_assets(asset_setup)
+    days = pd.date_range("2024-01-01", "2024-01-31")
+    for exchange in ("CZCE", "SHFE"):
+        write_parquet(
+            pd.DataFrame(
+                {
+                    "exchange": exchange,
+                    "cal_date": days.strftime("%Y%m%d"),
+                    "is_open": days.isin(pd.to_datetime(["2024-01-02", "2024-01-16"])).astype(int),
+                    "pretrade_date": "20231229",
+                }
+            ),
+            paths.dataset_file("tushare", "future_calendar", exchange),
+        )
+    ctx.option_exchanges = ("CZCE",)
+    ctx.start_date, ctx.end_date = 20240101, 20240131
+    OptionDailyFetcher(client, ctx).fetch("update")
+    ctx.option_exchanges = ("SHFE",)
+    ctx.start_date = 20240116
+    OptionDailyFetcher(client, ctx).fetch("update")
+    OptionInstrumentsFetcher(client, ctx).fetch("update")
+    path = paths.dataset_file("tushare", "opt_daily", "2024-01")
+    raw, receipt = read_asset_observation(path)
+    scopes = receipt["scope"]["exchange_scopes"]
+    assert scopes["CZCE"] == {"start": "2024-01-01", "end": "2024-01-31", "pending_days": []}
+    assert scopes["SHFE"] == {"start": "2024-01-16", "end": "2024-01-31", "pending_days": []}
+    assert receipt["scope"]["start"] == "2024-01-16"
+    sha = _official_fixture_manifest(paths, raw.loc[raw.exchange.eq("CZCE")])
+    obj = importer(OptionBars1dImporter, paths)
+    obj.czce_official_manifest_sha256 = sha
+    obj.build()
+    assert {d["trade_date"] for d in obj.czce_official_reports} == {"20240102", "20240116"}
+
+
+def test_czce_uses_own_narrow_scope_not_legacy_whole_month(asset_setup):
+    paths = prepare_assets(asset_setup)
+    path = paths.dataset_file("tushare", "opt_daily", "2024-01")
+    raw, receipt = read_asset_observation(path)
+    receipt["scope"].update(start="2024-01-01", end="2024-01-31")
+    # fixture的CZCE本来只抓了01-02；若退回整月，会把开市的01-03误报为缺失。
+    path.with_suffix(".json").write_text(json.dumps(receipt))
+    sha = _official_fixture_manifest(paths, raw.loc[raw.exchange.eq("CZCE")])
+    obj = importer(OptionBars1dImporter, paths)
+    obj.czce_official_manifest_sha256 = sha
+    obj.build()
+    assert [d["trade_date"] for d in obj.czce_official_reports] == ["20240102"]
+
+
+def test_missing_czce_exchange_scope_stops_without_legacy_fallback(asset_setup):
+    paths = prepare_assets(asset_setup)
+    path = paths.dataset_file("tushare", "opt_daily", "2024-01")
+    raw, receipt = read_asset_observation(path)
+    receipt["scope"]["exchange_scopes"].pop("CZCE")
+    path.with_suffix(".json").write_text(json.dumps(receipt))
+    obj = importer(OptionBars1dImporter, paths)
+    obj.czce_official_manifest_sha256 = _official_fixture_manifest(
+        paths, raw.loc[raw.exchange.eq("CZCE")]
+    )
+    with pytest.raises(IngestGateError, match="Missing CZCE exchange scope"):
+        obj.build()
+
+
+def test_option_other_exchange_pending_days_survive_next_publish(asset_setup):
+    paths, ctx, client = asset_setup
+    ctx.option_exchanges = ("CZCE",)
+    OptionDailyFetcher(client, ctx).fetch("init")
+    path = paths.dataset_file("tushare", "opt_daily", "2024-01")
+    receipt = json.loads(path.with_suffix(".json").read_text())
+    pending = {"trade_date": "20240103", "exchange": "CZCE"}
+    receipt["scope"]["exchange_scopes"]["CZCE"]["pending_days"] = [pending]
+    receipt["scope"]["pending_days"] = [pending]
+    path.with_suffix(".json").write_text(json.dumps(receipt))
+    ctx.option_exchanges = ("SHFE",)
+    OptionDailyFetcher(client, ctx).fetch("update")
+    receipt = json.loads(path.with_suffix(".json").read_text())
+    assert receipt["scope"]["pending_days"] == [pending]

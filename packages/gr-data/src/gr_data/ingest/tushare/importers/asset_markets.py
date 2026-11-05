@@ -556,20 +556,20 @@ class _AssetBarsImporter(_AssetImporter):
                 if self.ctx.months
                 else source_dates(raw.trade_date).min().replace(day=1)
             )
-            start = max(
-                month,
-                date(2017, 4, 19),
-                date.fromisoformat(self._raw_asset_scope.get("start", str(month))),
-            )
             month_end = date(
                 month.year, month.month, calendar.monthrange(month.year, month.month)[1]
             )
-            end = min(
-                month_end, date.fromisoformat(self._raw_asset_scope.get("end", str(month_end)))
-            )
             selected = raw.loc[raw.exchange.eq("CZCE")]
             expected = None
-            if start <= end:
+            if month_end >= date(2017, 4, 19):
+                scope = self._raw_asset_scope.get("exchange_scopes", {}).get("CZCE")
+                if not isinstance(scope, dict) or not {"start", "end"} <= scope.keys():
+                    raise IngestGateError("Missing CZCE exchange scope in option receipt")
+                start, end = (date.fromisoformat(scope[k]) for k in ("start", "end"))
+                if not month <= start <= end <= month_end or start < date(2017, 4, 19):
+                    raise IngestGateError("Invalid CZCE exchange scope in option receipt")
+                if scope.get("pending_days"):
+                    raise IngestGateError("Pending CZCE option trading days")
                 cal = complete_future_calendar(self.paths, "CZCE", start, end).frame
                 expected = {
                     d.strftime("%Y%m%d") for d in read_open_days(cal, "CZCE") if start <= d <= end

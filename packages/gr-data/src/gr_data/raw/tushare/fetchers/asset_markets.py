@@ -216,6 +216,29 @@ class _AssetFetcher(BaseFetcher):
     ) -> None:
         """先保存不可变观察与旧文件，再发布兼容文件；不覆盖历史证据。"""
         previous, previous_receipt = self._previous_observation(out)
+        if self.DATASET == "opt_daily":
+            option_scope: dict[str, Any] = dict(scope)
+            # 月分区保留其他交易所的已有行，覆盖范围也必须逐交易所保留。
+            scopes = dict(previous_receipt.get("scope", {}).get("exchange_scopes", {}))
+            for exchange in option_scope["exchanges"]:
+                prior = scopes.get(exchange, {})
+                start = min(str(prior.get("start", scope["start"])), str(scope["start"]))
+                end = max(str(prior.get("end", scope["end"])), str(scope["end"]))
+                # 本次范围内的旧 pending 已重核；范围外继续保留，不能被别所清掉。
+                pending = [
+                    d
+                    for d in prior.get("pending_days", [])
+                    if not str(scope["start"]).replace("-", "")
+                    <= d["trade_date"]
+                    <= str(scope["end"]).replace("-", "")
+                ]
+                pending.extend(d for d in option_scope["pending_days"] if d["exchange"] == exchange)
+                scopes[exchange] = {"start": start, "end": end, "pending_days": pending}
+            scope = {
+                **scope,
+                "exchange_scopes": scopes,
+                "pending_days": [d for item in scopes.values() for d in item["pending_days"]],
+            }
         observation = uuid.uuid4().hex
         root = self.paths.dataset_dir(self.PROVIDER, "observations") / self.DATASET / observation
         root.mkdir(parents=True, exist_ok=False)
