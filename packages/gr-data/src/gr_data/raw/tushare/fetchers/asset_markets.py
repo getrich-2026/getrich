@@ -38,6 +38,7 @@ from gr_data.raw.tushare.asset_rules import (
     source_dates,
     standard_fund_codes,
     unique_rows,
+    untraded_zero_ohlc_counts,
     validate_bars,
     zero_settlement_candidate_counts,
 )
@@ -578,6 +579,7 @@ class AssetDailyFetcher(_AssetFetcher):
                         {
                             "ohl_zero_placeholder_rows": ohl_zero_placeholder_counts(incoming),
                             "czce_settlement_only_rows": czce_settlement_only_counts(incoming),
+                            "untraded_zero_ohlc_rows": untraded_zero_ohlc_counts(incoming),
                             "zero_settlement_pending_expiry": zero_settlement_candidate_counts(
                                 incoming
                             ),

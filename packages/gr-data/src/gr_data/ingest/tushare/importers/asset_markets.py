@@ -44,6 +44,8 @@ from gr_data.raw.tushare.asset_rules import (
     source_dates,
     standard_fund_codes,
     unique_rows,
+    untraded_zero_ohlc_counts,
+    untraded_zero_ohlc_mask,
     validate_bars,
     zero_settlement_candidate_counts,
     zero_settlement_candidate_mask,
@@ -603,6 +605,14 @@ class _AssetBarsImporter(_AssetImporter):
             out.loc[placeholders, ["open", "high", "low"]] = None
             settlement_only = czce_settlement_only_mask(raw)
             out.loc[settlement_only, ["open", "high", "low", "close"]] = None
+            untraded = untraded_zero_ohlc_mask(raw)
+            out.loc[untraded, ["open", "high", "low", "close"]] = None
+            for exchange, days in untraded_zero_ohlc_counts(raw).items():
+                for day, counts in days.items():
+                    self._soft(
+                        f"Mapped untraded zero OHLC to NULL exchange={exchange} "
+                        f"trade_date={day} rows={counts['rows']} samples={counts['samples']}"
+                    )
             for exchange, counts in czce_settlement_only_counts(raw).items():
                 self._soft(
                     f"Mapped settlement-only OHLC to NULL exchange={exchange} "

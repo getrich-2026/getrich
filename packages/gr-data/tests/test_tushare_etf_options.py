@@ -2002,3 +2002,179 @@ def test_option_other_exchange_pending_days_survive_next_publish(asset_setup):
     OptionDailyFetcher(client, ctx).fetch("update")
     receipt = json.loads(path.with_suffix(".json").read_text())
     assert receipt["scope"]["pending_days"] == [pending]
+
+
+@pytest.mark.parametrize("exchange,code", [("SSE", "10004451.SH"), ("SZSE", "90001362.SZ")])
+def test_20230117_untraded_zero_ohlc_allowed_without_changing_source(exchange, code):
+    from gr_data.raw.tushare.asset_rules import untraded_zero_ohlc_counts
+
+    raw = pd.DataFrame(
+        [
+            bar(
+                code,
+                exchange=exchange,
+                trade_date="20230117",
+                open=0,
+                high=0,
+                low=0,
+                close=0,
+                vol=0,
+                amount=0,
+                settle=1.22,
+                pre_settle=1.2,
+                oi=10,
+            )
+        ]
+    )
+    before = raw.copy(deep=True)
+    validated = validate_bars(raw, option=True)
+    pd.testing.assert_frame_equal(raw, before)
+    assert validated[["open", "high", "low", "close"]].eq(0).all().all()
+    assert untraded_zero_ohlc_counts(raw) == {
+        exchange: {"20230117": {"rows": 1, "samples": [code]}}
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"vol": 1},
+        {"amount": 0.0001},
+        {"settle": 0},
+        {"settle": None},
+        {"exchange": "DCE", "ts_code": "M2305-C-3000.DCE"},
+    ],
+)
+def test_untraded_zero_ohlc_boundaries_still_stop(change):
+    raw = pd.DataFrame(
+        [
+            bar(
+                "10004451.SH",
+                exchange="SSE",
+                trade_date="20230117",
+                open=0,
+                high=0,
+                low=0,
+                close=0,
+                vol=0,
+                amount=0,
+                settle=1.22,
+                pre_settle=1.2,
+                oi=10,
+            )
+        ]
+    )
+    for key, value in change.items():
+        raw[key] = value
+    with pytest.raises(ValueError, match="Invalid OHLC zero placeholder") as caught:
+        validate_bars(raw, option=True)
+    message = str(caught.value)
+    assert str(raw.exchange.iloc[0]) in message and "20230117" in message
+    assert str(raw.ts_code.iloc[0]) in message and "rows=1" in message
+
+
+def test_untraded_nan_and_zero_can_mix_same_exchange_day():
+    base = dict(
+        exchange="SSE", trade_date="20230117", vol=0, amount=0, settle=1.22, pre_settle=1.2, oi=10
+    )
+    raw = pd.DataFrame(
+        [
+            bar("10004451.SH", **base, open=0, high=0, low=0, close=0),
+            bar(
+                "10004739.SH",
+                **base,
+                open=float("nan"),
+                high=float("nan"),
+                low=float("nan"),
+                close=float("nan"),
+            ),
+        ]
+    )
+    assert len(validate_bars(raw, option=True)) == 2
+
+
+def test_untraded_zero_pipeline_raw_receipt_and_ingest_day_warnings(asset_setup, monkeypatch):
+    paths, ctx, client = asset_setup
+    ctx.start_date = ctx.end_date = 20230117
+    ctx.option_exchanges = ("SSE", "SZSE")
+    for exchange in ctx.option_exchanges:
+        write_parquet(
+            pd.DataFrame(
+                {
+                    "exchange": [exchange],
+                    "cal_date": ["20230117"],
+                    "is_open": [1],
+                    "pretrade_date": ["20230116"],
+                }
+            ),
+            paths.dataset_file("tushare", "calendar", exchange),
+        )
+    original = client.query_all
+
+    def query(api, **params):
+        frame = original(api, **params)
+        if api == "opt_daily":
+            frame[["open", "high", "low", "close", "vol", "amount"]] = 0
+        return frame
+
+    monkeypatch.setattr(client, "query_all", query)
+    prepare_assets(asset_setup)
+    path = paths.dataset_file("tushare", "opt_daily", "2023-01")
+    before = path.read_bytes()
+    raw, receipt = read_asset_observation(path)
+    assert raw[["open", "high", "low", "close"]].eq(0).all().all()
+    assert {
+        ex: item["20230117"]["rows"]
+        for ex, item in receipt["scope"]["untraded_zero_ohlc_rows"].items()
+    } == {"SSE": 1, "SZSE": 1}
+    obj = importer(OptionBars1dImporter, paths)
+    obj.ctx.months = ("2023-01",)
+    out = obj.build()
+    assert out[["open", "high", "low", "close"]].isna().all().all()
+    assert (
+        len(
+            [
+                w
+                for w in obj.soft_warnings
+                if "Mapped untraded zero OHLC" in w and "trade_date=20230117" in w
+            ]
+        )
+        == 2
+    )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ({"high": 0.5}, "high < low"),
+        ({"close": 1.5}, "bounds column=close"),
+        ({"open": 1.5}, "bounds column=open"),
+        ({"open": -1}, "Invalid numeric column=open"),
+        ({"open": float("inf")}, "Invalid numeric column=open"),
+    ],
+)
+def test_ohlc_errors_include_exchange_date_count_and_at_most_five_codes(change, expected):
+    raw = pd.DataFrame(
+        [
+            bar(
+                f"{10004451 + i}.SH",
+                exchange="SSE",
+                trade_date="20230117",
+                vol=0,
+                amount=0,
+                settle=1.22,
+                pre_settle=1.2,
+                oi=10,
+                **change,
+            )
+            for i in range(7)
+        ]
+    )
+    with pytest.raises(ValueError) as caught:
+        validate_bars(raw, option=True)
+    message = str(caught.value)
+    assert (
+        expected in message and "SSE" in message and "20230117" in message and "rows=7" in message
+    )
+    assert "10004455.SH" in message and "10004456.SH" not in message

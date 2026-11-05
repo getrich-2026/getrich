@@ -93,6 +93,71 @@ def czce_settlement_only_counts(frame: pd.DataFrame) -> dict[str, dict[str, Any]
     }
 
 
+def untraded_zero_ohlc_mask(frame: pd.DataFrame) -> pd.Series:
+    """沪深未成交缺失占位：OHLC 严格全零、量额全零且结算价为正。
+
+    仅接受 SSE／SZSE 及其原后缀；NULL 不等于零，不影响 CZCE 或 OHL 零而
+    close 正的既有规则。只识别源形态；raw 不映射价格，ingest 才映射 NULL。
+    """
+    selected = frame.loc[
+        frame["exchange"].isin(["SSE", "SZSE"])
+        & frame["ts_code"].str.rsplit(".", n=1).str[-1].eq(frame["exchange"].map(OPTION_SUFFIXES))
+    ]
+    matched = (
+        pd.concat(
+            [numeric_values(selected[c], c).eq(0) for c in ("open", "high", "low", "close")],
+            axis=1,
+        ).all(axis=1)
+        & numeric_values(selected["vol"], "vol", integer=True).eq(0)
+        & numeric_values(selected["amount"], "amount", precision=30, scale=10).eq(0)
+        & numeric_values(selected["settle"], "settle").gt(0)
+    )
+    return matched.reindex(frame.index, fill_value=False)
+
+
+def untraded_zero_ohlc_counts(frame: pd.DataFrame) -> dict[str, dict[str, dict[str, Any]]]:
+    """按交易所日记录命中数和至多五个代码，日期保留供应商 YYYYMMDD。"""
+    selected = frame.loc[untraded_zero_ohlc_mask(frame)]
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for (exchange, day), rows in selected.groupby(["exchange", "trade_date"], sort=True):
+        result.setdefault(str(exchange), {})[str(day)] = {
+            "rows": len(rows),
+            "samples": rows["ts_code"].head(5).tolist(),
+        }
+    return result
+
+
+def _bar_error(message: str, frame: pd.DataFrame, mask: pd.Series) -> ValueError:
+    """错误只附命中行上下文和最多五个代码，不输出完整响应。"""
+    selected = frame.loc[mask, ["ts_code", "trade_date"]].copy()
+    selected["exchange"] = (
+        frame.loc[mask, "exchange"]
+        if "exchange" in frame
+        else selected["ts_code"].str.rsplit(".", n=1).str[-1].map({"SH": "SSE", "SZ": "SZSE"})
+    )
+    contexts = (
+        selected.groupby(["exchange", "trade_date"], dropna=False).size().reset_index(name="rows")
+    )
+    return ValueError(
+        f"{message} rows={len(selected)} contexts={contexts.head(5).to_dict('records')} "
+        f"samples={selected.head(5).to_dict('records')}"
+    )
+
+
+def _bar_price_values(frame: pd.DataFrame, column: str) -> pd.Series:
+    """沿用精确数值门禁，仅在失败路径补定位；正常路径不逐行重复转换。"""
+    try:
+        return numeric_values(frame[column], column)
+    except ValueError as exc:
+        invalid = pd.Series(False, index=frame.index)
+        for position, value in enumerate(frame[column]):
+            try:
+                numeric_values(pd.Series([value]), column)
+            except ValueError:
+                invalid.iloc[position] = True
+        raise _bar_error(str(exc), frame, invalid) from exc
+
+
 def zero_settlement_candidate_mask(frame: pd.DataFrame) -> pd.Series:
     """识别 CZCE／GFEX 的 OHLC／settle 全零候选；形态本身不证明到期。"""
     return (
@@ -274,13 +339,13 @@ def validate_bars(
         ):
             raise ValueError("Option exchange and suffix mismatch")
     prices = [*PRICE_COLUMNS, *(("settle", "pre_settle") if option else ())]
-    normalized = {c: numeric_values(out[c], c) for c in prices}
+    normalized = {c: _bar_price_values(out, c) for c in prices}
     close = normalized["close"]
     usable = close.notna()
     if option:
         usable |= normalized["settle"].notna()
     if not usable.all():
-        raise ValueError("No usable close or settle")
+        raise _bar_error("No usable close or settle", out, ~usable)
     high, low = normalized["high"], normalized["low"]
     placeholder = pd.Series(False, index=out.index)
     if option:
@@ -291,18 +356,33 @@ def validate_bars(
             expiration = out["ts_code"].map(expiry_dates or {})
             verified = source_dates(out["trade_date"]).eq(expiration) & expiration.notna()
             if (expiry_zero & ~verified).any():
-                raise ValueError("Unverified zero settlement expiry date")
-        if (zero_ohl & ~placeholder & ~czce_settlement_only_mask(out) & ~expiry_zero).any():
-            raise ValueError("Invalid OHLC zero placeholder without positive close")
+                raise _bar_error(
+                    "Unverified zero settlement expiry date", out, expiry_zero & ~verified
+                )
+        invalid_zero = (
+            zero_ohl
+            & ~placeholder
+            & ~czce_settlement_only_mask(out)
+            & ~expiry_zero
+            & ~untraded_zero_ohlc_mask(out)
+        )
+        if invalid_zero.any():
+            raise _bar_error(
+                "Invalid OHLC zero placeholder without positive close", out, invalid_zero
+            )
     both = high.notna() & low.notna()
     if high.loc[both].lt(low.loc[both]).any():
-        raise ValueError("Invalid OHLC high < low")
+        raise _bar_error("Invalid OHLC high < low", out, both & high.lt(low))
     for col in ("open", "close"):
         value = normalized[col]
         above = value.notna() & high.notna() & ~placeholder
         below = value.notna() & low.notna() & ~placeholder
         if value.loc[above].gt(high.loc[above]).any() or value.loc[below].lt(low.loc[below]).any():
-            raise ValueError(f"Invalid OHLC bounds column={col}")
+            raise _bar_error(
+                f"Invalid OHLC bounds column={col}",
+                out,
+                (above & value.gt(high)) | (below & value.lt(low)),
+            )
     numeric_values(out["vol"], "vol", integer=option, precision=30, scale=8)
     numeric_values(out["amount"], "amount", precision=30, scale=10)
     if option:
