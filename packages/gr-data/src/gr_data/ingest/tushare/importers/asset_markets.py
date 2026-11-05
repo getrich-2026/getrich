@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import calendar
+import hashlib
 import json
 from collections.abc import Callable
 from datetime import date
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
+import polars as pl
 import psycopg
+from psycopg.types.json import Jsonb
 
 from gr_data.common import contracts
 from gr_data.common.dates import int_to_date, today_int
@@ -25,6 +29,13 @@ from gr_data.ingest.tushare.etf_scope import (
 from gr_data.ingest.tushare.importers.profile import _number, _text
 from gr_data.ingest.tushare.importers.reference import parse_date
 from gr_data.ingest.tushare.symbols import split_ts_code
+from gr_data.raw.czce.options import (
+    NOTICE as CZCE_OFFICIAL_NOTICE,
+    RULE as CZCE_OFFICIAL_RULE,
+    OfficialOptionHistory,
+    atomic_parquet,
+    digest,
+)
 from gr_data.raw.tushare.asset_rules import (
     OPTION_SUFFIXES,
     conflicting_etf_code_mask,
@@ -490,6 +501,9 @@ class OptionContractsImporter(_OptionValidation, _AssetImporter):
 class _AssetBarsImporter(_AssetImporter):
     RAW_DATASET = ""
     NOT_NULL_COLUMNS = ("instrument_id", "dt", "trading_day", "source")
+    czce_official_manifest_sha256: str | None = None
+    czce_official_reports: list[dict[str, Any]]
+    czce_official_diffs: pl.DataFrame | None
 
     def _etf_product_scope(
         self,
@@ -513,7 +527,10 @@ class _AssetBarsImporter(_AssetImporter):
         months = adapter.selected_months(dataset)
         if len(months) != 1:
             raise IngestGateError("ETF/options ingest requires exactly one month per invocation")
-        raw, _ = read_asset_observation(self.paths.dataset_file(self.PROVIDER, dataset, months[0]))
+        raw, receipt = read_asset_observation(
+            self.paths.dataset_file(self.PROVIDER, dataset, months[0])
+        )
+        self._raw_asset_scope = receipt.get("scope", {})
         if raw is None or raw.empty:
             raise IngestGateError(f"Missing or empty {dataset} month={months[0]}")
         dates = source_dates(raw["trade_date"])
@@ -526,8 +543,48 @@ class _AssetBarsImporter(_AssetImporter):
     def build(self) -> pd.DataFrame:
         registry = load_etf_identity_registry() if self.ASSET == "etf" else None
         metadata = self._metadata().set_index("ts_code")
+        raw = self._read(self.RAW_DATASET)
+        if self.ASSET == "option" and getattr(self, "czce_official_manifest_sha256", None):
+            from gr_data.raw.tushare.calendar_rules import complete_future_calendar
+            from gr_data.raw.tushare.fetchers.reference import read_open_days
+
+            official_sha = self.czce_official_manifest_sha256
+            assert official_sha is not None
+            history = OfficialOptionHistory(self.paths, official_sha)
+            month = (
+                date.fromisoformat(self.ctx.months[0] + "-01")
+                if self.ctx.months
+                else source_dates(raw.trade_date).min().replace(day=1)
+            )
+            start = max(
+                month,
+                date(2017, 4, 19),
+                date.fromisoformat(self._raw_asset_scope.get("start", str(month))),
+            )
+            month_end = date(
+                month.year, month.month, calendar.monthrange(month.year, month.month)[1]
+            )
+            end = min(
+                month_end, date.fromisoformat(self._raw_asset_scope.get("end", str(month_end)))
+            )
+            selected = raw.loc[raw.exchange.eq("CZCE")]
+            expected = None
+            if start <= end:
+                cal = complete_future_calendar(self.paths, "CZCE", start, end).frame
+                expected = {
+                    d.strftime("%Y%m%d") for d in read_open_days(cal, "CZCE") if start <= d <= end
+                }
+                if expected and selected.empty:
+                    raise IngestGateError("Missing CZCE option trading days")
+            raw, self.czce_official_reports, self.czce_official_diffs = history.reconcile(
+                raw, expected
+            )
+            for detail in self.czce_official_reports:
+                self._soft(
+                    CZCE_OFFICIAL_NOTICE + json.dumps(detail, ensure_ascii=False, sort_keys=True)
+                )
         raw = validate_bars(
-            self._read(self.RAW_DATASET),
+            raw,
             option=self.ASSET == "option",
             expiry_dates=(
                 # 源代码已校验为 str，parse_date 只产出 date／None；收窄 pandas 泛型。
@@ -674,9 +731,13 @@ class OptionBars1dImporter(_OptionValidation, _AssetBarsImporter):
         client: object = None,
         *,
         validation_only: bool = False,
+        czce_official_manifest_sha256: str | None = None,
     ) -> None:
         super().__init__(conn, ctx, client)
         self.validation_only = validation_only
+        self.czce_official_manifest_sha256 = czce_official_manifest_sha256
+        self.czce_official_reports = []
+        self.czce_official_diffs = None
 
     def run(self) -> IngestResult:
         self._require_validation()
@@ -685,3 +746,59 @@ class OptionBars1dImporter(_OptionValidation, _AssetBarsImporter):
             "not published"
         )
         return super().run()
+
+    def _record_run(self, rows_written: int, warnings: list[str]) -> None:
+        """交易所日审计与业务同事务；差异证据按年分区，重复导入不重复计数。"""
+        if self.czce_official_reports:
+            official_sha = self.czce_official_manifest_sha256
+            assert official_sha is not None
+            history = OfficialOptionHistory(self.paths, official_sha)
+            diff_info = {}
+            if self.czce_official_diffs is not None and not self.czce_official_diffs.is_empty():
+                for key, part in (
+                    self.czce_official_diffs.with_columns(
+                        pl.col("trade_date").str.slice(0, 4).alias("_year")
+                    )
+                    .partition_by("_year", as_dict=True)
+                    .items()
+                ):
+                    part = part.drop("_year")
+                    # 文件是输入观察证据；是否提交以同事务的PG审计为准。
+                    identity = hashlib.sha256(part.write_json().encode()).hexdigest()
+                    path = history.root / "differences" / str(key[0]) / (identity + ".parquet")
+                    if not path.exists():
+                        atomic_parquet(path, part)
+                    diff_info[str(key[0])] = {
+                        "path": str(path.relative_to(history.root)),
+                        "sha256": digest(path),
+                        "rows": part.height,
+                    }
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (CZCE_OFFICIAL_RULE,)
+                )
+                for detail in self.czce_official_reports:
+                    value = {
+                        **detail,
+                        "difference_evidence": diff_info.get(detail["trade_date"][:4]),
+                        "target": self.contract.qualified,
+                    }
+                    identity = hashlib.sha256(
+                        json.dumps(value, sort_keys=True).encode()
+                    ).hexdigest()
+                    cur.execute(
+                        "SELECT 1 FROM ops.data_quality_check WHERE rule=%s "
+                        "AND detail->>'observation_id'=%s",
+                        (CZCE_OFFICIAL_RULE, identity),
+                    )
+                    if cur.fetchone() is None:
+                        cur.execute(
+                            "INSERT INTO ops.data_quality_check(rule,severity,detail) "
+                            "VALUES(%s,%s,%s)",
+                            (
+                                CZCE_OFFICIAL_RULE,
+                                "info",
+                                Jsonb({**value, "observation_id": identity}),
+                            ),
+                        )
+        super()._record_run(rows_written, warnings)

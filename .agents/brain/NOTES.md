@@ -11,6 +11,10 @@
 
 ## 当前方向与阻塞
 
+- 郑商所期权官方年度字段覆盖已实施并续跑（2026-11-04 23:18 上海时间实查，D-012）：用户后续授权已解除暂停，原 2017-08-21 全日排除方案由官方年度覆盖取代。冻结批准源 `eea6871+czce-official-v1-40d8f49cc47c` 已登记，尚未 commit／push；仅覆盖授权的 CZCE 字段，其他价格与合约集合仍严格断言，Tushare raw 原值、表归属和 schema 保持。2017-04～07 已重导复验，其他交易所全部列不变；2017-08 整月验收及审计幂等通过，300 条特殊日记录完整保留。2026-11-05 接续实查：期权已验收到 2018-08，2018-09 因最后一次 SHFE 收据范围被误用于 CZCE 而停止；用户已授权按交易所记录独立 scope、补回归并修复后续跑，尚未实施该修复。此前监管器／锁及源码哈希验收为历史快照；D-026 仍仅 raw／隔离验证，正式期权日线为 0。opt_daily 现已接入共用历史开市日有界空响应重查，DCE 2017-05-26 和 CZCE 2022-06-10 的真实响应故障注入重放通过，共用接口间隔仍为 1.5 秒。年度原件、SHA 与逐行差异在 `/Volumes/myssd/data/raw_parquet/czce/option_official_annual`；全量复算、双版本测试、原子回滚、四月重导、八月验收及运行证据在 `/Volumes/myssd/data/getrich-validation/tushare-czce-official-v1-20261104T144525Z`，源码登记为任务根的 `czce-official-v1-source-registration-20261104.json`。复算纠正了“2020-09 后金额全相同”的初步结论，2021-01～04 另有金额差异，仍在授权范围内并留逐行证据；2026 明确标记未经官方年度核对。后续实时进度查 option/state.json 和 queue.json。
+
+- 期权 2017-05 空响应中断已重启恢复（2026-11-04 17:49 上海时间实查）：期货已完整 202/202 月，指数／ETF 各 202/202 月。期权原在 2017-05-26／DCE／opt_daily 空表停止，独立双重查各 204 行逐值／哈希相同；用户授权重启后沿原 `eea6871` 冻结副本、校验及共用 1.5 秒限速整月重采。2017-05 raw／隔离库日线各 9,490 行，合约 1,356 条 canonical 通过；三市场各 20 交易日，故障日全部字段匹配双探针，价格／量额／持仓异常 0、400 项独立单位值和幂等通过，正式库期权日线仍 0 行。当前期权已验收 28 月、上市前 not_listed 61 月，2017-06 collecting；监管器 PPID=1、控制器／worker 存活持锁已实查。原 27 个期权月、61 个上市前记录、其他三类各 202 月及 raw／股票账本保持；5 月原 SSE 1,452 行部分 raw 和失败证据已备份。该次恢复未改源码／规则／commit；当时 opt_daily 空表仍直接门禁，现已由上方官方年度覆盖任务接入共用有界重查策略。期权继续仅 raw／隔离验证，正式发布未开放。恢复收据 `/Volumes/neoimac/data/getrich-runs/tushare-assets-20100101-20261029/option/empty-dce-20170526-recovery-20261104.json`；备份、验收及进程证据在 `/Volumes/myssd/data/getrich-validation/tushare-option-empty-dce-20170526-recovery-20261104T094533Z`，以后进度以 state／queue 为准。
+
 - 数据库目录整理（2026-11-04）：PostgreSQL 实现集中到 `gr_data.db.postgres`，与 `clickhouse` 并列；`gr_data.db` 顶层导出常用接口并与 `postgres` 共用连接池；旧模块路径（pool／sync／copy／trading_status／risk_receipts）及 ClickHouse `query_sql` 已删除，调用方全部改用 `gr_data.db.postgres.<module>`，配置和 SQL 行为不变。仓库外冻结快照和运行目录脚本仍自带旧路径，下次从仓库取快照时一并迁移。风险收据源码位置校验及类型基线路径已同步；相关测试通过，当前环境跳过的真库集成验证尚未覆盖。
 
 - HDB 配置已移除（2026-11-04）：删除 `HdbConfig`、导出及 `ENABLE_HDB` 示例和说明；保留其他供应商配置，PostgreSQL 默认值与 DSN 行为不变。

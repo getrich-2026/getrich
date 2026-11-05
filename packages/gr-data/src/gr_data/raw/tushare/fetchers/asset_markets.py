@@ -20,6 +20,7 @@ from gr_data.common.empty_response_retry import retry_empty_historical_response
 from gr_data.common.parquet import read_parquet_strict, write_parquet
 from gr_data.common.retry import PermanentError, retry_call
 from gr_data.raw.base import BaseFetcher, RawContext, month_range
+from gr_data.raw.czce.options import OfficialOptionHistory
 from gr_data.raw.tushare.asset_rules import (
     BAR_COLUMNS,
     OPTION_BAR_COLUMNS,
@@ -419,6 +420,11 @@ class AssetDailyFetcher(_AssetFetcher):
         first, last = self._range()
         today = int_to_date(today_int())
         calendars = self._calendars(first, last)
+        official = (
+            OfficialOptionHistory(self.paths, self.ctx.czce_official_manifest_sha256)
+            if self.OPTION and self.ctx.czce_official_manifest_sha256 is not None
+            else None
+        )
         written = 0
         for ym, start, end in month_range(first, last):
             frames = []
@@ -438,17 +444,20 @@ class AssetDailyFetcher(_AssetFetcher):
                     )
 
                     frame = query()
-                    if not self.OPTION:
-                        frame = retry_empty_historical_response(
-                            frame,
-                            query,
-                            is_empty=lambda value: value.empty,
-                            day=day,
-                            today=today,
-                            calendar_is_open=bool(markets),
-                            logger=self.log,
-                            context={"provider": self.PROVIDER, "dataset": self.DATASET},
-                        )
+                    frame = retry_empty_historical_response(
+                        frame,
+                        query,
+                        is_empty=lambda value: value.empty,
+                        day=day,
+                        today=today,
+                        calendar_is_open=bool(markets),
+                        logger=self.log,
+                        context={
+                            "provider": self.PROVIDER,
+                            "dataset": self.DATASET,
+                            **({"exchange": str(params["exchange"])} if self.OPTION else {}),
+                        },
+                    )
                     if frame.empty:
                         market = params.get("exchange", "fund")
                         if day >= today:
@@ -485,11 +494,19 @@ class AssetDailyFetcher(_AssetFetcher):
                             raise ValueError("Missing fund adjustment factor")
                         frame = unique_rows(frame, ("ts_code", "trade_date"))
                     else:
-                        frame = validate_bars(
-                            frame,
+                        # 官方副本只用于完整校验；raw仍发布Tushare原值。
+                        validation_frame = (
+                            official.reconcile(frame, {day.strftime("%Y%m%d")})[0]
+                            if official is not None and params.get("exchange") == "CZCE"
+                            else frame
+                        )
+                        validated = validate_bars(
+                            validation_frame,
                             option=self.OPTION,
                             capture_unverified_expiry=self.OPTION,
                         )
+                        if validation_frame is frame:
+                            frame = validated
                         if not self.OPTION:
                             expected_market = (
                                 frame["ts_code"].str[-2:].map({"SH": "SSE", "SZ": "SZSE"})

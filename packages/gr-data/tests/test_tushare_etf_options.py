@@ -1809,3 +1809,115 @@ def test_missing_receipt_does_not_roll_back_to_superseded_observation(asset_setu
     with pytest.raises(ValueError, match="receipt"):
         FundDailyFetcher(client, ctx).fetch("update")
     assert path.read_bytes() == first
+
+
+@pytest.mark.parametrize("exchange", ["DCE", "CZCE"])
+def test_option_empty_response_requeries_then_validates(asset_setup, monkeypatch, exchange):
+    from gr_data.common.empty_response_retry import capture_empty_response_recoveries
+
+    paths, ctx, client = asset_setup
+    ctx.option_exchanges = (exchange,)
+    original = client.query_all
+    attempts = 0
+
+    def query(api, **params):
+        nonlocal attempts
+        if api == "opt_daily":
+            attempts += 1
+            if attempts < 3:
+                return pd.DataFrame()
+        return original(api, **params)
+
+    monkeypatch.setattr(client, "query_all", query)
+    with capture_empty_response_recoveries() as events:
+        assert OptionDailyFetcher(client, ctx).fetch("init") == 1
+    assert attempts == 3
+    assert events == [
+        {
+            "provider": "tushare",
+            "dataset": "opt_daily",
+            "exchange": exchange,
+            "date": "2024-01-02",
+            "extra_queries": 2,
+        }
+    ]
+    assert read_parquet_strict(paths.dataset_file("tushare", "opt_daily", "2024-01")) is not None
+
+
+def _official_fixture_manifest(paths, raw):
+    import polars as pl
+    from gr_data.raw.czce.options import (
+        FIRST,
+        LAST,
+        NUMERIC,
+        RULE,
+        VALUE_FIELDS,
+        atomic_json,
+        atomic_parquet,
+        digest,
+    )
+
+    root = paths.dataset_dir("czce", "option_official_annual")
+    frame = pl.from_pandas(raw).select(
+        "ts_code", "trade_date", "exchange", *[pl.col(k).cast(NUMERIC) for k in VALUE_FIELDS]
+    )
+    path = root / "2024.parquet"
+    atomic_parquet(path, frame)
+    atomic_json(
+        root / "manifest.json",
+        {
+            "rule": RULE,
+            "coverage": [FIRST, LAST],
+            "years": {
+                "2024": {
+                    "rows": len(raw),
+                    "sources": [],
+                    "parquet": {"path": path.name, "sha256": digest(path)},
+                }
+            },
+        },
+    )
+    return digest(root / "manifest.json")
+
+
+def test_czce_overlay_changes_ingest_only_and_preserves_other_exchanges(asset_setup):
+    paths = prepare_assets(asset_setup)
+    raw_path = paths.dataset_file("tushare", "opt_daily", "2024-01")
+    before = raw_path.read_bytes()
+    raw = pd.read_parquet(raw_path)
+    official = raw.loc[raw.exchange.eq("CZCE")].copy()
+    official["vol"] = 21
+    official["oi"] = 31
+    official["amount"] = 0.55
+    official["settle"] = 1.23
+    sha = _official_fixture_manifest(paths, official)
+    base = importer(OptionBars1dImporter, paths).build()
+    obj = importer(OptionBars1dImporter, paths)
+    obj.czce_official_manifest_sha256 = sha
+    after = obj.build()
+    czce_id = obj._ids(official.ts_code.tolist(), "option")[official.ts_code.iloc[0]]
+    pd.testing.assert_frame_equal(
+        base.loc[base.instrument_id.ne(czce_id)].reset_index(drop=True),
+        after.loc[after.instrument_id.ne(czce_id)].reset_index(drop=True),
+    )
+    target = after.loc[after.instrument_id.eq(czce_id)].iloc[0]
+    assert (
+        target.volume == 21 and target.open_interest == 31 and target.amount == Decimal("5500.0000")
+    )
+    assert target.settle == Decimal("1.23")
+    assert obj.czce_official_reports[0]["overridden_rows"] == 1
+    assert raw_path.read_bytes() == before
+
+
+def test_official_raw_validation_uses_copy_and_publishes_source_values(asset_setup):
+    paths, ctx, client = asset_setup
+    ctx.option_exchanges = ("CZCE",)
+    original = client.query_all("opt_daily", exchange="CZCE", trade_date="20240102")
+    official = original.copy()
+    official["settle"] = 1.25
+    sha = _official_fixture_manifest(paths, official)
+    ctx.czce_official_manifest_sha256 = sha
+    assert OptionDailyFetcher(client, ctx).fetch("init") == 1
+    saved = pd.read_parquet(paths.dataset_file("tushare", "opt_daily", "2024-01"))
+    assert saved.settle.iloc[0] == 1.22
+    assert original.settle.iloc[0] == 1.22

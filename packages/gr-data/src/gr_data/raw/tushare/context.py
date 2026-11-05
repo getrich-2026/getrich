@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,6 +33,7 @@ class TushareRawContext(RawContext):
     index_markets: tuple[str, ...] = ()
     future_exchanges: tuple[str, ...] = DEFAULT_FUTURE_EXCHANGES
     option_exchanges: tuple[str, ...] = OPTION_EXCHANGES
+    czce_official_manifest_sha256: str | None = None
 
 
 def _names(
@@ -74,6 +76,11 @@ def build_context(cfg: Config) -> TushareRawContext:
     option_exchanges = _names(section, "option_exchanges", OPTION_EXCHANGES)
     if option_exchanges == ():
         raise ValueError("providers.tushare.option_exchanges must not be empty")
+    official_sha = section.get("czce_official_manifest_sha256")
+    if official_sha is not None and (
+        not isinstance(official_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", official_sha)
+    ):
+        raise ValueError("Invalid providers.tushare.czce_official_manifest_sha256")
     return TushareRawContext(
         paths=RawPaths(cfg.raw_root),
         rate_limit=section.get("rate_limit", {})
@@ -85,6 +92,7 @@ def build_context(cfg: Config) -> TushareRawContext:
         index_markets=_names(section, "index_markets", INDEX_DAILY_MARKETS) or (),
         future_exchanges=future_exchanges or DEFAULT_FUTURE_EXCHANGES,
         option_exchanges=option_exchanges or OPTION_EXCHANGES,
+        czce_official_manifest_sha256=official_sha,
     )
 
 

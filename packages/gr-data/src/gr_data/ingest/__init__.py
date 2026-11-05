@@ -233,6 +233,10 @@ def run_provider(
         try:
             if provider == "tushare" and name in TUSHARE_OPTION_WRITERS:
                 kwargs = {"validation_only": _tushare_option_validation_only(cfg)}
+                if name == "option_bar_1d":
+                    kwargs["czce_official_manifest_sha256"] = cfg.get(
+                        "providers", "tushare", "czce_official_manifest_sha256"
+                    )
             elif provider == "tushare":
                 kwargs = {}
             if provider == "ricequant" and name == "rq_risk_model":
