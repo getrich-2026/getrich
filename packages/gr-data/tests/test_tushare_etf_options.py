@@ -2178,3 +2178,118 @@ def test_ohlc_errors_include_exchange_date_count_and_at_most_five_codes(change, 
         expected in message and "SSE" in message and "20230117" in message and "rows=7" in message
     )
     assert "10004455.SH" in message and "10004456.SH" not in message
+
+
+def test_czce_metadata_duplicate_alias_is_archived_and_reported(asset_setup):
+    paths, ctx, client = _prepare_option_daily(asset_setup)
+    ctx.option_exchanges = ("CZCE",)
+    standard = dict(option_meta("CZCE"), vendor_extra=None)
+    aliases = [dict(standard, ts_code=standard["ts_code"] + str(i)) for i in range(2, 9)]
+    response = pd.DataFrame([standard, *aliases])
+    before = response.copy(deep=True)
+    client.override["opt_basic"] = lambda params: (
+        pd.DataFrame([standard]) if "ts_code" in params else response.copy(deep=True)
+    )
+    OptionInstrumentsFetcher(client, ctx).fetch("init")
+    pd.testing.assert_frame_equal(response, before)
+    raw, receipt = read_asset_observation(paths.dataset_file("tushare", "instruments", "option"))
+    assert raw is not None and raw.ts_code.tolist() == [standard["ts_code"]]
+    assert receipt["scope"]["duplicate_metadata_rows"] == [
+        {
+            "exchange": "CZCE",
+            "opt_code": standard["opt_code"],
+            "rows": 7,
+            "samples": sorted(row["ts_code"] for row in aliases)[:5],
+        }
+    ]
+    root = (
+        paths.dataset_dir("tushare", "observations")
+        / "option_instruments"
+        / receipt["observation_id"]
+    )
+    source = receipt["source_responses"][1]
+    archived = root / source["file"]
+    assert hashlib.sha256(archived.read_bytes()).hexdigest() == source["sha256"]
+    pd.testing.assert_frame_equal(pd.read_parquet(archived), before)
+
+
+@pytest.mark.parametrize(
+    "damage", ["missing", "name", "vendor_extra", "null", "exchange", "underlying"]
+)
+def test_czce_metadata_duplicate_requires_every_field_and_standard(damage):
+    standard = dict(option_meta("CZCE"), vendor_extra="original")
+    alias = dict(standard, ts_code=standard["ts_code"] + "2")
+    if damage == "name":
+        alias["name"] = "different"
+    elif damage == "vendor_extra":
+        alias["vendor_extra"] = "different"
+    elif damage == "null":
+        alias["vendor_extra"] = None
+    elif damage == "exchange":
+        alias["exchange"] = "DCE"
+    elif damage == "underlying":
+        alias["opt_code"] = "OPSA2701.ZCE"
+    frame = pd.DataFrame([alias] if damage == "missing" else [standard, alias])
+    with pytest.raises(ValueError, match=r"scope mismatch exchange=CZCE opt_code=.*samples=.*ZCE2"):
+        OptionInstrumentsFetcher._metadata_scope(frame, "CZCE", underlying=standard["opt_code"])
+
+
+@pytest.mark.parametrize("exchange", ["DCE", "SHFE", "SSE"])
+def test_metadata_duplicate_other_exchange_still_stops(exchange):
+    standard = option_meta(exchange)
+    alias = dict(standard, ts_code=standard["ts_code"] + "2")
+    with pytest.raises(ValueError, match="scope mismatch.*suffix"):
+        OptionInstrumentsFetcher._metadata_scope(
+            pd.DataFrame([standard, alias]), exchange, underlying=standard["opt_code"]
+        )
+
+
+def test_czce_metadata_duplicate_exact_query_still_stops():
+    standard = option_meta("CZCE")
+    alias = dict(standard, ts_code=standard["ts_code"] + "2")
+    with pytest.raises(raw_asset_markets.PermanentError, match="Unresolved.*exchange=CZCE.*suffix"):
+        OptionInstrumentsFetcher._metadata_scope(
+            pd.DataFrame([standard, alias]),
+            "CZCE",
+            code=standard["ts_code"],
+            underlying=standard["opt_code"],
+        )
+
+
+def test_czce_metadata_failure_page_survives_temporary_cleanup(asset_setup):
+    paths, ctx, client = _prepare_option_daily(asset_setup)
+    ctx.option_exchanges = ("CZCE",)
+    standard = option_meta("CZCE")
+    alias = dict(standard, ts_code=standard["ts_code"] + "2", list_date="20261016")
+    response = pd.DataFrame([standard, alias])
+    client.override["opt_basic"] = lambda params: (
+        pd.DataFrame([standard]) if "ts_code" in params else response.copy(deep=True)
+    )
+    with pytest.raises(ValueError, match="duplicate_field_mismatch.*evidence=") as error:
+        OptionInstrumentsFetcher(client, ctx).fetch("init")
+    roots = list((paths.dataset_dir("tushare", "validation") / "option_instruments").glob("*"))
+    assert len(roots) == 1
+    page = roots[0] / "response.parquet"
+    assert str(page) in str(error.value)
+    manifest = json.loads((roots[0] / "manifest.json").read_text())
+    assert manifest["exchange"] == "CZCE" and manifest["opt_code"] == standard["opt_code"]
+    assert manifest["response_sha256"] == hashlib.sha256(page.read_bytes()).hexdigest()
+    pd.testing.assert_frame_equal(pd.read_parquet(page), response)
+    assert list(paths.dataset_dir("tushare", "metadata_requests").iterdir()) == []
+    assert not paths.dataset_file("tushare", "instruments", "option").exists()
+
+
+def test_czce_metadata_duplicate_in_daily_still_stops(asset_setup):
+    _, ctx, client = asset_setup
+    ctx.option_exchanges = ("CZCE",)
+    original = client.query_all
+
+    def query(api, **params):
+        frame = original(api, **params)
+        if api == "opt_daily":
+            frame["ts_code"] = frame["ts_code"] + "2"
+        return frame
+
+    client.query_all = query
+    with pytest.raises(ValueError, match="exchange and suffix mismatch"):
+        OptionDailyFetcher(client, ctx).fetch("init")

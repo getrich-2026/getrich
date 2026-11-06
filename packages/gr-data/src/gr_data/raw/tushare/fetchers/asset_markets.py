@@ -626,30 +626,102 @@ class OptionInstrumentsFetcher(_AssetFetcher):
         *,
         code: str | None = None,
         underlying: str | None = None,
+        duplicate_notices: list[dict[str, object]] | None = None,
     ) -> pd.DataFrame:
-        """校验精确查询或标的查询的完整响应，禁止借过滤掩盖错市场／错标的。"""
+        """校验完整 opt_basic 响应，仅核销已授权且逐字段相同的 CZCE 别名。
+
+        Args:
+            frame: 未过滤的完整查询响应，缺失值仅在双方均缺失时视为相等。
+            exchange: 请求交易所。
+            code: 精确查询代码；指定时禁止核销别名。
+            underlying: 标的查询范围或精确查询的附加标的约束。
+            duplicate_notices: 可选收据列表，接收按交易所和标的统计的核销记录。
+
+        Returns:
+            核销后仍通过原范围及主键校验的响应，不修改输入。
+
+        Raises:
+            ValueError: 响应字段、交易所、后缀或标的范围不合法。
+            PermanentError: 精确查询返回了范围外代码。
+        """
         require_columns(
             frame,
             ("ts_code", "exchange", "opt_code", "call_put", "list_date", "delist_date"),
             "opt_basic",
         )
         codes = source_codes(frame)
-        if (
-            not frame["exchange"].eq(exchange).all()
-            or not codes.str.endswith(f".{OPTION_SUFFIXES[exchange]}").all()
-            or (code is not None and not codes.eq(code).all())
-            or (underlying is not None and not frame["opt_code"].eq(underlying).all())
-        ):
+        duplicate_failures: dict[str, list[str]] = {}
+        if exchange == "CZCE" and underlying is not None and code is None:
+            # 只核销同一完整响应内、除源代码外逐字段相等的供应商别名；不能猜测合约身份。
+            aliases = codes.str.fullmatch(r"[^.]+\.ZCE[0-9]+")
+            dropped: list[int] = []
+            for position in range(len(frame)):
+                if not aliases.iloc[position]:
+                    continue
+                alias = frame.iloc[position]
+                alias_code = codes.iloc[position]
+                standard_code = alias_code.rsplit(".ZCE", 1)[0] + ".ZCE"
+                standard = frame.loc[codes.eq(standard_code)].drop(columns="ts_code")
+                if standard.empty:
+                    duplicate_failures.setdefault("duplicate_missing_standard", []).append(
+                        alias_code
+                    )
+                elif (
+                    not (
+                        standard.eq(alias.drop(labels="ts_code")).fillna(False)
+                        | (standard.isna() & alias.drop(labels="ts_code").isna())
+                    )
+                    .all()
+                    .all()
+                ):
+                    duplicate_failures.setdefault("duplicate_field_mismatch", []).append(alias_code)
+                else:
+                    dropped.append(position)
+            if dropped:
+                samples = sorted(codes.take(dropped).tolist())[:5]
+                if duplicate_notices is not None:
+                    duplicate_notices.append(
+                        {
+                            "exchange": exchange,
+                            "opt_code": underlying,
+                            "rows": len(dropped),
+                            "samples": samples,
+                        }
+                    )
+                keep = pd.Series(True, index=range(len(frame)))
+                keep.iloc[dropped] = False
+                frame = frame.iloc[keep.to_numpy()]
+                codes = source_codes(frame)
+        mismatches = {
+            "exchange": ~frame["exchange"].eq(exchange),
+            "suffix": ~codes.str.endswith(f".{OPTION_SUFFIXES[exchange]}"),
+        }
+        if code is not None:
+            mismatches["ts_code"] = ~codes.eq(code)
+        if underlying is not None:
+            mismatches["opt_code"] = ~frame["opt_code"].eq(underlying)
+        failures = {
+            kind: sorted(codes.loc[mask].tolist())[:5]
+            for kind, mask in mismatches.items()
+            if mask.any()
+        }
+        failures.update({kind: sorted(values)[:5] for kind, values in duplicate_failures.items()})
+        if failures:
+            samples = sorted({value for values in failures.values() for value in values})[:5]
+            detail = (
+                f"exchange={exchange} opt_code={underlying} "
+                f"mismatch_types={sorted(failures)} samples={samples}"
+            )
             if code is not None:
-                raise PermanentError(f"Unresolved option metadata code={code}")
-            raise ValueError("Option metadata response scope mismatch")
+                raise PermanentError(f"Unresolved option metadata code={code} {detail}")
+            raise ValueError(f"Option metadata response scope mismatch {detail}")
         for value in frame["opt_code"]:
             option_underlying(value)
         return unique_rows(frame, ("ts_code",))
 
     def _batches(
         self, codes: list[str], existing: pd.DataFrame, folder: Path
-    ) -> tuple[pd.DataFrame, dict[str, int], list[Path]]:
+    ) -> tuple[pd.DataFrame, dict[str, object], list[Path]]:
         """按显式标的覆盖目标代码；完整响应分批落临时文件，峰值为单标的响应加目标行。
 
         不解析期权字符串推测标的。未知代码先精确查询，已覆盖代码不再引导；
@@ -659,6 +731,7 @@ class OptionInstrumentsFetcher(_AssetFetcher):
         frames = []
         responses: list[Path] = []
         queried: set[tuple[str, str]] = set()
+        duplicate_notices: list[dict[str, object]] = []
         stats = {
             "underlying_queries": 0,
             "bootstrap_queries": 0,
@@ -673,11 +746,54 @@ class OptionInstrumentsFetcher(_AssetFetcher):
             responses.append(path)
             return frame
 
+        def checked(
+            frame: pd.DataFrame,
+            exchange: str,
+            *,
+            code: str | None = None,
+            underlying: str | None = None,
+        ) -> pd.DataFrame:
+            try:
+                return self._metadata_scope(
+                    frame,
+                    exchange,
+                    code=code,
+                    underlying=underlying,
+                    duplicate_notices=duplicate_notices,
+                )
+            except (ValueError, PermanentError) as exc:
+                # 失败页必须先独立存证，再由 TemporaryDirectory 清理本轮临时响应。
+                root = (
+                    self.paths.dataset_dir(self.PROVIDER, "validation")
+                    / self.DATASET
+                    / uuid.uuid4().hex
+                )
+                root.mkdir(parents=True, exist_ok=False)
+                page = root / "response.parquet"
+                write_parquet(frame, page)
+                (root / "manifest.json").write_text(
+                    json.dumps(
+                        {
+                            "api": "opt_basic",
+                            "exchange": exchange,
+                            "opt_code": underlying,
+                            "ts_code": code,
+                            "rows": len(frame),
+                            "error": str(exc),
+                            "observed_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
+                            "response_sha256": hashlib.sha256(page.read_bytes()).hexdigest(),
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                raise type(exc)(f"{exc} evidence={page}") from exc
+
         def exact(code: str, exchange: str, underlying: str | None = None) -> pd.DataFrame:
             frame = query(exchange, ts_code=code)
             if frame.empty:
                 raise PermanentError(f"Unresolved option metadata code={code}")
-            return self._metadata_scope(frame, exchange, code=code, underlying=underlying)
+            return checked(frame, exchange, code=code, underlying=underlying)
 
         while pending:
             code = min(pending)
@@ -711,7 +827,7 @@ class OptionInstrumentsFetcher(_AssetFetcher):
                 queried.add(key)
                 stats["underlying_queries"] += 1
                 if not batch.empty:
-                    batch = self._metadata_scope(batch, exchange, underlying=underlying)
+                    batch = checked(batch, exchange, underlying=underlying)
                 else:
                     batch = pd.DataFrame(columns=OPTION_FIELDS.split(","))
             available = set(batch["ts_code"]) & pending
@@ -735,7 +851,11 @@ class OptionInstrumentsFetcher(_AssetFetcher):
                     stats["fallback_queries"] += 1
                 frames.append(frame)
             pending.difference_update(available | missing)
-        return unique_rows(pd.concat(frames, ignore_index=True), ("ts_code",)), stats, responses
+        return (
+            unique_rows(pd.concat(frames, ignore_index=True), ("ts_code",)),
+            {**stats, "duplicate_metadata_rows": duplicate_notices},
+            responses,
+        )
 
     def _observation_dates(self, receipt: dict[str, Any]) -> dict[str, int]:
         """读取独立、带哈希的观察日文件；缺失或损坏只意味着必须重查。"""
