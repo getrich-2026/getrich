@@ -32,6 +32,7 @@ class RiskOptions:
     purpose: str = "validation"
     historical_probe: bool = False
     approved_history_raw: bool = False
+    production_symbol_rules_version: str | None = None
 
     @property
     def mapping_version(self) -> str:
@@ -49,6 +50,8 @@ class RiskOptions:
 
         if self.approved_history_raw:
             return APPROVED_HISTORY_SYMBOL_RULES_VERSION
+        if self.production_symbol_rules_version is not None:
+            return self.production_symbol_rules_version
         return HISTORY_SYMBOL_RULES_VERSION if self.historical_probe else SYMBOL_RULES_VERSION
 
     @property
@@ -147,6 +150,7 @@ def parse_risk_options(
         "batch_size",
         "universe_policy",
         "purpose",
+        "symbol_rules_version",
     }
     if not isinstance(data, dict) or set(data) - keys:
         raise RqConfigurationError("risk_model 配置字段错误")
@@ -179,6 +183,18 @@ def parse_risk_options(
         or end >= date(2024, 1, 1)
     ):
         raise RqConfigurationError("历史探测仅允许 2010-01-04 至 2023-12-31 的动态 validation")
+    production_rules = data.get("symbol_rules_version")
+    if "symbol_rules_version" in data:
+        from gr_data.common.ricequant_symbol_intervals import PRODUCTION_SYMBOL_RULES_VERSION
+
+        if (
+            production_rules != PRODUCTION_SYMBOL_RULES_VERSION
+            or purpose != "production"
+            or policy != TUSHARE_UNIVERSE_POLICY
+            or historical_probe
+            or approved_history_raw
+        ):
+            raise RqConfigurationError("生产代码区间升级仅允许显式 v4 的普通 production 入口")
     if approved_history_lookahead and not (start == end == date(2024, 1, 2)):
         raise RqConfigurationError("历史末端恢复证据仅允许 2024-01-02 单日")
     if approved_history_raw and (
@@ -234,4 +250,5 @@ def parse_risk_options(
         purpose=purpose,
         historical_probe=historical_probe,
         approved_history_raw=approved_history_raw,
+        production_symbol_rules_version=production_rules,
     )

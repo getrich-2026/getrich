@@ -125,6 +125,23 @@ _APPROVED_HISTORY_RULES = {
     "delist_boundary_exceptions": [_DELIST_BOUNDARY_EXCEPTION],
 }
 
+# 2026-11-06 用户批准生产补数；只纳入原规则与两个已核实深圳换码。
+# 不借此启用历史探测的上海请求码覆盖或退市边界例外。
+PRODUCTION_SYMBOL_RULES_VERSION = "cn_stock_code_intervals_v4"
+_PRODUCTION_RULES = {
+    "version": PRODUCTION_SYMBOL_RULES_VERSION,
+    "rules": copy.deepcopy(
+        [
+            *_RULES["rules"],
+            *[
+                rule
+                for rule in _HISTORY_RULES["rules"]
+                if rule["new_source_symbol"] in {"001872.SZ", "001914.SZ"}
+            ],
+        ]
+    ),
+}
+
 
 def approved_provider_request_override() -> dict[str, Any]:
     """已批准的唯一请求码覆盖；不得推导其他代码或其他证券。"""
@@ -184,6 +201,8 @@ def _rules(version: str) -> dict[str, Any]:
         return _HISTORY_RULES
     if version == APPROVED_HISTORY_SYMBOL_RULES_VERSION:
         return _APPROVED_HISTORY_RULES
+    if version == PRODUCTION_SYMBOL_RULES_VERSION:
+        return _PRODUCTION_RULES
     raise ContractViolationError("Unknown historical symbol interval rules")
 
 

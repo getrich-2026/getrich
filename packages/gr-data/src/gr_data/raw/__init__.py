@@ -255,6 +255,7 @@ def _risk_universe_provider(
     """动态名单只读冻结元数据；固定名单 raw 不依赖数据库。"""
     from gr_tools.config import load_environment
 
+    from gr_data.common.ricequant_symbol_intervals import symbol_rule_evidence
     from gr_data.common.ricequant_universe import (
         build_universe_provider,
         load_metadata_snapshot,
@@ -282,4 +283,7 @@ def _risk_universe_provider(
         reference,
         universe_policy=risk_options.universe_policy,
         mapping_version=risk_options.mapping_version,
+        symbol_rules=symbol_rule_evidence(risk_options.symbol_rules_version)
+        if risk_options.symbol_rules_version is not None
+        else None,
     )
