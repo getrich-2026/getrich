@@ -16,6 +16,7 @@ from gr_data.common.dates import int_to_date, today_int
 from gr_data.common.paths import RawPaths
 from gr_data.ingest.base import BaseImporter, IngestContext, IngestGateError, IngestResult
 from gr_data.ingest.tushare.adapter import TushareAdapter
+from gr_data.ingest.tushare.czce_metadata import merge_metadata, monthly_reports, record_audit
 from gr_data.ingest.tushare.czce_official import reconcile_czce_official, record_czce_official_audit
 from gr_data.ingest.tushare.etf_scope import (
     ETF_TRANSITION_NOTICE,
@@ -27,6 +28,7 @@ from gr_data.ingest.tushare.etf_scope import (
 from gr_data.ingest.tushare.importers.profile import _number, _text
 from gr_data.ingest.tushare.importers.reference import parse_date
 from gr_data.ingest.tushare.symbols import split_ts_code
+from gr_data.raw.czce.metadata import NOTICE as CZCE_METADATA_NOTICE
 from gr_data.raw.tushare.asset_rules import (
     OPTION_SUFFIXES,
     conflicting_etf_code_mask,
@@ -95,6 +97,7 @@ def asset_metadata(
             )
         frame = frame.loc[~quarantined].copy()
     else:
+        frame = merge_metadata(paths, frame)
         require_columns(
             frame,
             (
@@ -497,6 +500,7 @@ class _AssetBarsImporter(_AssetImporter):
     czce_official_manifest_sha256: str | None = None
     czce_official_reports: list[dict[str, Any]]
     czce_official_diffs: pl.DataFrame | None
+    czce_metadata_reports: list[dict[str, Any]]
 
     def _etf_product_scope(
         self,
@@ -537,6 +541,21 @@ class _AssetBarsImporter(_AssetImporter):
         registry = load_etf_identity_registry() if self.ASSET == "etf" else None
         metadata = self._metadata().set_index("ts_code")
         raw = self._read(self.RAW_DATASET)
+        self.czce_metadata_reports = (
+            monthly_reports(
+                self.paths,
+                raw,
+                self.ctx.months[0]
+                if self.ctx.months
+                else source_dates(raw["trade_date"]).iloc[0].strftime("%Y-%m"),
+            )
+            if self.ASSET == "option"
+            else []
+        )
+        for report in self.czce_metadata_reports:
+            self._soft(
+                CZCE_METADATA_NOTICE + json.dumps(report, ensure_ascii=False, sort_keys=True)
+            )
         if self.ASSET == "option" and (official_sha := self.czce_official_manifest_sha256):
             raw, self.czce_official_reports, self.czce_official_diffs = reconcile_czce_official(
                 raw,
@@ -709,6 +728,7 @@ class OptionBars1dImporter(_OptionValidation, _AssetBarsImporter):
         self.czce_official_manifest_sha256 = czce_official_manifest_sha256
         self.czce_official_reports = []
         self.czce_official_diffs = None
+        self.czce_metadata_reports = []
 
     def run(self) -> IngestResult:
         self._require_validation()
@@ -730,4 +750,5 @@ class OptionBars1dImporter(_OptionValidation, _AssetBarsImporter):
                 self.czce_official_diffs,
                 self.contract.qualified,
             )
+        record_audit(self.conn, self.czce_metadata_reports, self.contract.qualified)
         super()._record_run(rows_written, warnings)

@@ -11,6 +11,8 @@
 
 ## 当前方向与阻塞
 
+- CZCE 2026-05-29 的 40 合约主数据补充已实现（2026-11-06，D-012）：精确清单／官方原件／字段来源及哈希独立归档；代码解析、130 条基准价、三组生命周期与字段一致性已独立复核，name 可为空、三个标的映射实库预检通过。42 项核心边界及追加证据／别名边界测试覆盖恢复比对、清单外停止、MS／跨十年排除及原 .ZCE2 门禁；真实 CZCE 五月 88,472 行离线构建通过。按用户授权提交 dev、不 push，登记新批准源码后从 2026-05 连续续跑；此前 135 个验收月不重导，正式期权发布保持关闭。证据：`/Volumes/myssd/data/getrich-validation/tushare-czce-metadata-gap-20261106T063902Z`；实时进度以 option/state.json／queue.json 为准。
+
 - CZCE 期权主数据重复别名规则已实现（2026-11-06，D-026）：仅标的查询中 .ZCE<数字> 与同响应标准 .ZCE 行除代码外全部字段相等才核销；原始响应归档、收据留 exchange／opt_code 数量及样本，范围错误补上下文并独立保留失败页。真实 OPSA2701.ZCE 96→92 行、四别名及两日行情复核通过，其他边界继续停止；主仓／批准候选副本回归与静态检查通过。按用户授权单独提交 dev、不 push，登记新源码后从 2026-03 整月续跑；此前 133 个期权验收月及其他品种记录／raw 不重写，期权正式发布保持关闭。证据在 `/Volumes/myssd/data/getrich-validation/tushare-option-metadata-duplicates-20261106T013409Z`，实时状态见 option/state.json／queue.json。
 
 - 沪深期权未成交零价规则已实现（2026-11-05，D-026）：仅 SSE／SZSE、OHLC 严格全零、vol／amount 为零、settle 正时在 ingest 映射 OHLC 为 NULL；raw 原值保留，收据和软告警按交易所日留数量及样本。真实六份探针复核 2023-01-17 的 SSE 10／SZSE 19 条及同日 NaN，前后两日无该形态；其他边界继续停止，价格错误已补上下文。主仓／候选副本回归及静态检查通过；本项单独提交 dev、不 push，待登记批准源码后整月重跑 2023-01。此前已验收至 2022-12（95 个期权月）的账本及 raw 受哈希保护，不重导；正式期权发布仍关闭。登记、探针与恢复验收证据在 `/Volumes/myssd/data/getrich-validation/tushare-option-untraded-zero-20261105T105409Z`；实时进度查 option/state.json／queue.json。

@@ -20,6 +20,11 @@ from gr_data.common.empty_response_retry import retry_empty_historical_response
 from gr_data.common.parquet import read_parquet_strict, write_parquet
 from gr_data.common.retry import PermanentError, retry_call
 from gr_data.raw.base import BaseFetcher, RawContext, month_range
+from gr_data.raw.czce.metadata import (
+    FIELDS as CZCE_METADATA_FIELDS,
+    MetadataSupplement,
+    approved_codes,
+)
 from gr_data.raw.czce.options import OfficialOptionHistory
 from gr_data.raw.tushare.asset_rules import (
     BAR_COLUMNS,
@@ -618,6 +623,7 @@ class OptionInstrumentsFetcher(_AssetFetcher):
     """
 
     DATASET = "option_instruments"
+    _metadata_supplement: MetadataSupplement | None = None
 
     @staticmethod
     def _metadata_scope(
@@ -732,6 +738,11 @@ class OptionInstrumentsFetcher(_AssetFetcher):
         responses: list[Path] = []
         queried: set[tuple[str, str]] = set()
         duplicate_notices: list[dict[str, object]] = []
+        supplemental_codes: set[str] = set()
+        self._metadata_supplement = (
+            MetadataSupplement(self.paths) if set(codes) & approved_codes() else None
+        )
+        supplement = self._metadata_supplement
         stats = {
             "underlying_queries": 0,
             "bootstrap_queries": 0,
@@ -746,6 +757,41 @@ class OptionInstrumentsFetcher(_AssetFetcher):
             responses.append(path)
             return frame
 
+        def failure(
+            frame: pd.DataFrame,
+            exchange: str,
+            error: ValueError | PermanentError,
+            *,
+            code: str | None = None,
+            underlying: str | None = None,
+        ) -> ValueError | PermanentError:
+            # 失败页必须先独立存证，再由 TemporaryDirectory 清理本轮临时响应。
+            root = (
+                self.paths.dataset_dir(self.PROVIDER, "validation")
+                / self.DATASET
+                / uuid.uuid4().hex
+            )
+            root.mkdir(parents=True, exist_ok=False)
+            page = root / "response.parquet"
+            write_parquet(frame, page)
+            (root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "api": "opt_basic",
+                        "exchange": exchange,
+                        "opt_code": underlying,
+                        "ts_code": code,
+                        "rows": len(frame),
+                        "error": str(error),
+                        "observed_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
+                        "response_sha256": hashlib.sha256(page.read_bytes()).hexdigest(),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return type(error)(f"{error} exchange={exchange} opt_code={underlying} evidence={page}")
+
         def checked(
             frame: pd.DataFrame,
             exchange: str,
@@ -754,45 +800,29 @@ class OptionInstrumentsFetcher(_AssetFetcher):
             underlying: str | None = None,
         ) -> pd.DataFrame:
             try:
-                return self._metadata_scope(
+                checked_frame = self._metadata_scope(
                     frame,
                     exchange,
                     code=code,
                     underlying=underlying,
                     duplicate_notices=duplicate_notices,
                 )
+                if supplement is not None:
+                    supplement.compare_tushare(checked_frame)
+                supplemental_codes.difference_update(checked_frame["ts_code"])
+                return checked_frame
             except (ValueError, PermanentError) as exc:
-                # 失败页必须先独立存证，再由 TemporaryDirectory 清理本轮临时响应。
-                root = (
-                    self.paths.dataset_dir(self.PROVIDER, "validation")
-                    / self.DATASET
-                    / uuid.uuid4().hex
-                )
-                root.mkdir(parents=True, exist_ok=False)
-                page = root / "response.parquet"
-                write_parquet(frame, page)
-                (root / "manifest.json").write_text(
-                    json.dumps(
-                        {
-                            "api": "opt_basic",
-                            "exchange": exchange,
-                            "opt_code": underlying,
-                            "ts_code": code,
-                            "rows": len(frame),
-                            "error": str(exc),
-                            "observed_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
-                            "response_sha256": hashlib.sha256(page.read_bytes()).hexdigest(),
-                        },
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
-                raise type(exc)(f"{exc} evidence={page}") from exc
+                raise failure(frame, exchange, exc, code=code, underlying=underlying) from exc
 
         def exact(code: str, exchange: str, underlying: str | None = None) -> pd.DataFrame:
             frame = query(exchange, ts_code=code)
             if frame.empty:
-                raise PermanentError(f"Unresolved option metadata code={code}")
+                if supplement is not None and code in supplement.by_code.index:
+                    supplemental_codes.add(code)
+                    # 仅内部引导和显式 fallback 使用，返回前剥离，不写 Tushare 兼容文件。
+                    return supplement.by_code.loc[[code], list(CZCE_METADATA_FIELDS)].copy()
+                error = PermanentError(f"Unresolved option metadata code={code}")
+                raise failure(frame, exchange, error, code=code, underlying=underlying) from error
             return checked(frame, exchange, code=code, underlying=underlying)
 
         while pending:
@@ -814,6 +844,13 @@ class OptionInstrumentsFetcher(_AssetFetcher):
             option_underlying(raw_underlying)
             underlying = raw_underlying
             required = {code}
+            if supplement is not None:
+                required.update(
+                    set(
+                        supplement.frame.loc[supplement.frame["opt_code"].eq(underlying), "ts_code"]
+                    )
+                    & pending
+                )
             if not existing.empty:
                 required.update(
                     existing.index[
@@ -830,6 +867,14 @@ class OptionInstrumentsFetcher(_AssetFetcher):
                     batch = checked(batch, exchange, underlying=underlying)
                 else:
                     batch = pd.DataFrame(columns=OPTION_FIELDS.split(","))
+                if supplement is not None:
+                    for member in sorted(required & set(supplement.by_code.index))[:1]:
+                        try:
+                            supplement.assert_siblings(batch, member)
+                        except ValueError as exc:
+                            raise failure(
+                                batch, exchange, exc, code=member, underlying=underlying
+                            ) from exc
             available = set(batch["ts_code"]) & pending
             if available:
                 frames.append(batch.loc[batch["ts_code"].isin(available)])
@@ -851,9 +896,17 @@ class OptionInstrumentsFetcher(_AssetFetcher):
                     stats["fallback_queries"] += 1
                 frames.append(frame)
             pending.difference_update(available | missing)
+        combined = unique_rows(pd.concat(frames, ignore_index=True), ("ts_code",))
+        combined = combined.loc[~combined["ts_code"].isin(supplemental_codes)].reset_index(
+            drop=True
+        )
         return (
-            unique_rows(pd.concat(frames, ignore_index=True), ("ts_code",)),
-            {**stats, "duplicate_metadata_rows": duplicate_notices},
+            combined,
+            {
+                **stats,
+                "duplicate_metadata_rows": duplicate_notices,
+                "official_metadata_supplement_codes": sorted(supplemental_codes),
+            },
             responses,
         )
 
@@ -926,10 +979,13 @@ class OptionInstrumentsFetcher(_AssetFetcher):
         old, receipt = self._previous_observation(out)
         observed_dates = self._observation_dates(receipt)
         existing = old.set_index("ts_code") if old is not None else pd.DataFrame()
+        registered = approved_codes()
         to_query = sorted(
             code
             for code in codes
-            if mode == "init" or self._needs_observation(code, existing, observed_dates)
+            if mode == "init"
+            or code in registered
+            or self._needs_observation(code, existing, observed_dates)
         )
         self.log.info(
             "Option metadata observation scope_codes=%d query_codes=%d skipped_codes=%d mode=%s",
@@ -946,7 +1002,8 @@ class OptionInstrumentsFetcher(_AssetFetcher):
         staging.mkdir(parents=True, exist_ok=True)
         with TemporaryDirectory(dir=staging) as folder:
             combined, stats, responses = self._batches(to_query, existing, Path(folder))
-            observed_dates.update({code: today for code in to_query})
+            observed_codes = set(combined["ts_code"])
+            observed_dates.update({code: today for code in to_query if code in observed_codes})
             if old is not None:
                 combined = pd.concat(
                     [old.loc[~old["ts_code"].isin(to_query)], combined], ignore_index=True
@@ -963,6 +1020,19 @@ class OptionInstrumentsFetcher(_AssetFetcher):
                 observed_dates=observed_dates,
                 source_responses=responses,
             )
+            if self._metadata_supplement is not None:
+                for ym, _, _ in month_range(first, last):
+                    daily, _ = read_asset_observation(
+                        self.paths.dataset_file(self.PROVIDER, "opt_daily", ym)
+                    )
+                    assert daily is not None
+                    dates = source_dates(daily["trade_date"])
+                    selected = daily.loc[
+                        dates.between(first, last)
+                        & daily["exchange"].isin(self.ctx.option_exchanges)
+                    ]
+                    reports = self._metadata_supplement.reports(selected, combined, ym)
+                    self._metadata_supplement.write_receipt(ym, reports)
         self.log.info(
             "Option metadata batches underlying_queries=%d bootstrap_queries=%d "
             "fallback_queries=%d fallback_rows=%d",
