@@ -96,3 +96,22 @@ def test_managed_risk_import_requires_outer_transaction(monkeypatch, tmp_path):
         run_risk_ingest(conn, IngestContext(RawPaths(tmp_path)), options, transaction_managed=True)
     conn.commit.assert_not_called()
     conn.rollback.assert_not_called()
+
+
+def test_expired_verified_alias_is_not_a_production_history_override():
+    from gr_data.diagnosis_daily.collect import current_alias_snapshot
+
+    metadata = {
+        "instruments": [{"instrument_id": 1, "symbol": "601607.SH"}],
+        "aliases": [
+            {"instrument_id": 1, "source": "tushare", "source_symbol": "600849.SH"},
+            {"instrument_id": 1, "source": "tushare", "source_symbol": "601607.SH"},
+            {"instrument_id": 1, "source": "tushare", "source_symbol": "unknown.SH"},
+        ],
+    }
+    snapshot, evidence = current_alias_snapshot(metadata, date(2026, 11, 6))
+    assert [r["source_symbol"] for r in snapshot["aliases"]] == ["601607.SH", "unknown.SH"]
+    assert evidence["expired_aliases"][0]["source_symbol"] == "600849.SH"
+    assert len(metadata["aliases"]) == 3
+    old, _ = current_alias_snapshot(metadata, date(2010, 3, 4))
+    assert len(old["aliases"]) == 3

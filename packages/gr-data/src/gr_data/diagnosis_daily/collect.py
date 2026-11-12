@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, LiteralString, cast
 
@@ -15,7 +16,12 @@ from gr_data.common import contracts
 from gr_data.common.parquet import write_parquet
 from gr_data.common.paths import RawPaths
 from gr_data.common.ricequant_risk_quality import validate_daily_risk
-from gr_data.common.ricequant_symbol_intervals import symbol_rule_evidence
+from gr_data.common.ricequant_symbol_intervals import (
+    HISTORY_SYMBOL_RULES_VERSION,
+    resolve_symbol_intervals,
+    symbol_rule_evidence,
+    symbol_rule_hash,
+)
 from gr_data.common.ricequant_universe import (
     build_universe_provider,
     load_metadata_snapshot,
@@ -351,10 +357,40 @@ def normalize_tushare(
     return frames, metadata, symbol_ids, history_start
 
 
+def current_alias_snapshot(metadata: dict, day: date) -> tuple[dict, dict]:
+    """只排除已验证且早已过期的非v4别名；未知别名继续交严格门禁拒绝。"""
+    rules = resolve_symbol_intervals(metadata, HISTORY_SYMBOL_RULES_VERSION)
+    production = symbol_rule_evidence("cn_stock_code_intervals_v4")
+    retained_old = {r["old_source_symbol"] for r in production["rules"]}
+    excluded = []
+    snapshot = deepcopy(metadata)
+    aliases = []
+    for row in snapshot["aliases"]:
+        rule = rules.get(row["instrument_id"])
+        if (
+            rule is not None
+            and row["source"] == "tushare"
+            and row["source_symbol"] == rule["old_source_symbol"]
+            and row["source_symbol"] not in retained_old
+            and day >= date.fromisoformat(rule["old_valid_to_exclusive"])
+        ):
+            excluded.append({**row, "rule": rule})
+        else:
+            aliases.append(row)
+    snapshot["aliases"] = aliases
+    return snapshot, {
+        "target_day": str(day),
+        "expired_aliases": excluded,
+        "rules_hash": symbol_rule_hash(HISTORY_SYMBOL_RULES_VERSION),
+    }
+
+
 def collect_risk(
     client: Any, paths: RawPaths, day: date, options: RiskOptions, metadata: dict
 ) -> dict:
     """SDK 3.8.1 的命名轴由既有 raw v2 校验器显式对齐；此处不登记PG检查点。"""
+    metadata, alias_scope = current_alias_snapshot(metadata, day)
+    write_json(paths.dataset_dir("ricequant", "daily_capture") / "alias-scope.json", alias_scope)
     reference = client.risk_reference(
         reference_input_codes(metadata), quota_guard=lambda: _check_quota(client, 0.1)
     )

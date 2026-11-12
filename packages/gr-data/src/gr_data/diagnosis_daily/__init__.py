@@ -377,6 +377,8 @@ async def _apply(
     owner = OwnershipManager(conn)
     for table in _CONTRACTS:
         owner.check(table, "tushare")
+        if table != "meta.symbol_map" and data["owners"].get(table) is None:
+            owner.claim(table, "tushare")
     written = 0
     master = frames["meta.instruments"]
     existing_ids = {
@@ -462,7 +464,7 @@ async def _apply(
     fp = fingerprints(conn, data["baseline_ids"], start, day)
     components = []
     for table in ENHANCED_BASIC_DATASETS:
-        providers = [data["owners"][table]]
+        providers = [data["owners"].get(table, "tushare")]
         if table == "meta.symbol_map":
             providers = [
                 r[0]
