@@ -55,6 +55,42 @@ db/
 共用同一连接池实例。旧路径 `gr_data.db.pool`／`sync`／`copy`／`trading_status`／`risk_receipts` 已删除。
 `PostgresConfig` 负责环境配置，`PgConfig` 保留同步连接参数及原有默认值。
 
+### ClickHouse 写入语义
+
+`insert_data()` 用于批量追加，`batch_size` 只能是正整数或 `None`。
+`factors_long` 继续使用现有 MergeTree 和批量插入，不通过 upsert 写入。
+
+`upsert_data()` 保留原签名和布尔返回值，但写入前只接受 `ReplacingMergeTree`、
+`ReplicatedReplacingMergeTree`，并要求非空、无重复的 `key_columns` 按顺序与完整
+`ORDER BY` 列一致。支持简单列名组成的排序键；表达式键、无法解析的名称、元数据查询失败、
+表不存在、引擎或键不匹配均记录原因并返回 `False`，不执行任何写入。
+不再按主键推断去重能力，也不再执行 DELETE + INSERT 回退。
+
+返回 `True` 仅表示所有批次插入已被接受。重复版本在后台合并时处理，查询不能依赖写入后
+立即唯一；需要去重结果时，调用方应明确使用 `FINAL` 或等效查询逻辑，并考虑查询成本。
+批次中途失败返回 `False`，之前已接受的批次不会回滚，不应盲目整体重试。
+此语义与 [ClickHouse 替换引擎说明](https://clickhouse.com/docs/guides/replacing-merge-tree) 一致。
+
+兼容性影响：原来依赖普通 MergeTree upsert 或删除回退的调用方会得到 `False`；
+普通追加改用 `insert_data()`，事务更新应在 PostgreSQL 完成。2026-11-07 仓内检查未发现
+该方法的业务调用方，仓外脚本需按上述契约核查。
+
+连接池借用通过 `with pool.connection()` 自动归还；`connect_timeout` 只控制等待借用的
+时间，不是底层网络超时。`cleanup()`、`health_check()` 仍需调用方主动执行，
+`health_check_interval` 暂未驱动自动调度。
+
+### PostgreSQL 连接与批量写入
+
+异步 `PgConnectionPool.init()` 在连接预热成功后才就绪；失败会关闭候选池，允许重试。
+同步 `connect(PgConfig)` 和 `PgPool` 均通过连接参数设置上海时区及 `statement_timeout_ms`。
+`connect()` 退出只关闭连接，调用方须自行提交或回滚；`PgPool.connection()` 正常退出
+自动提交，异常退出回滚。
+
+`upsert_rows()` 保留调用方已有事务的提交权；在 autocommit 连接上单次操作自行提交。
+每次调用使用独立临时表并在合并后删除，因此同一事务可以多次写入同一目标表。
+写入列必须是契约列、包含全部冲突键，每行宽度须一致。失败会回滚本次事务或保存点，
+此前已完成的外层事务内容仍由调用方控制。返回值仍是数据库报告的写入／更新行数。
+
 ## 跑起来
 
 ```bash
@@ -250,14 +286,45 @@ P 名单允许非交易代码（如 `.OF`）、空上市日和空简称；raw �
 其余缺收据，或文件与全部合法观察均不匹配时仍拒绝覆盖，不能靠手工改文件绕过门禁。
 源列与原单位留在 raw，机器根路径只取 `RAW_PARQUET_ROOT`，不新增共享默认数据目录。
 
-**期权正式写入仍关闭。** `opt_basic` 给出的调整后行权价和乘数没有历史生效区间，
-`meta.option_contracts` 只能承载当前观察。本轮不新增历史参数表，也不允许把该快照当作历史参数。
+**期权按用途显式准入（D-026）。** `opt_basic` 给出的调整后行权价和乘数没有历史生效区间，
+`meta.option_contracts` 只能承载当前观察，不允许把该快照当作历史参数。
 默认在连接数据库前拒绝包含 `option_instruments`／`option_symbol_map`／
 `option_contracts`／`option_bar_1d` 任一期权 writer 的 CLI 计划；
 库调用 `.run()` 也在 claim／写入前检查。只有在隔离验证库上显式设置
 `TUSHARE_OPTION_VALIDATION_ONLY=1`（库调用 `validation_only=True`）才能验证，
 且 `APP_ENV=prod` 拒绝该开关。该开关不验证连接是否为临时库，执行者必须先核对 PG_*；
 验证写入明确记录软告警，CLI 返回 3，不可当作已发布成功。
+
+2026-11-07 用户批准：在独立试跑、正式身份重解析和逐月对账通过后，
+显式 `TUSHARE_OPTION_ADMISSION=quote_history_current_snapshot_v1`
+（库调用 `admission="quote_history_current_snapshot_v1"`）可将上述四个 writer
+用于正式库的**源报价历史与当前合约快照**。默认仍拒绝；该开关不能与
+`TUSHARE_OPTION_VALIDATION_ONLY` 混用，不能放进采集 YAML。现行字段、单位、
+生命周期、哈希、完整性及一表一源门禁不变，不通过搬运隔离库 ID 关联正式行情。
+`meta.option_contracts.strike/multiplier/per_unit/trading_code` 等只代表此次当前观察，
+没有历史有效期；`updated_at` 也不是参数生效日。`option_bar_1d.adj_factor=1`
+是未复权的默认值，不代表历史调整已经处理。行情源没有提供的限价／状态保持 NULL。
+
+该批准不提供历史行权价／乘数、期权收益回放、定价或交易资格。
+`PgBarLoader` 的期权历史回测入口在访问数据库前拒绝；行情研究只可按源报价口径
+显式读取，不把当前快照 join 成历史参数。未新增期权查询 API 或自动交易消费。
+历史参数、IV／Greeks 多方法及分钟线须按各自证据单独准入；本开关不开放它们。
+
+2026-11-08 用户另行批准米筐历史参数与固定方法指标入库：迁移 053 新建
+`meta.option_terms_1d`，按 `(instrument_id, trading_day, observation_id)` 保存
+行权价、乘数及交易代码观察，不更新当前合约快照。来源为 `ricequant`，
+`observed_at` 记录真实观察时间；历史可获得时间未证实时 `available_at` 保持 NULL。
+公开 SDK 对参数变更事件按交易日展开并前向填充，raw 收据保留 SDK 版本和源码哈希；
+ingest 仅接收已归档的返回日期，不自行延长区间，不能把这些事后观察当作 PIT 数据。
+首批三事件为五个调整合约加一个未调整对照，共 24 个合约日。
+
+`ingest.ricequant.option_history` 先逐字段核实米筐自身主数据与正式身份，再重解析
+目标库 ID。历史回补按交易所和月份处理，固定 `BS / implied_forward / close / 1d`；
+IV 为年化小数，Vega／Rho 分别按波动率／利率绝对变化 1，Theta 按年。
+原始观察、方法、单位及业务写入在同一事务留审计；已有方法不明或字段冲突不能覆盖。
+缺失、非有限值、身份未核实或精度溢出的记录单列待处理，不通用置空、截断或猜映射。
+Theta／Vega／Rho 的扩精度 SQL 目前只在 `gr-db/ddl/proposals/`，不随正式迁移执行。
+研究准入不等于历史回测或交易准入；仍须独立证明参数生效日及当时可获得时间。
 
 ETF／期权日线一次只导入一个月，防止隐式拼接全历史。下面为独立 raw 根及临时 PG 的
 样本命令；最新真实复验范围、结果及阻塞见[迁移盘点第二节](../../docs/plans/imac-collector-migration.md#2-现在先做测试与-tushare-受限下载)：
@@ -848,3 +915,31 @@ ETL request 保留 `selected_observation_id` 与实际 observation／run／收�
 选择器不改变 raw 身份或不可变绑定。同一 observation、同一 importer 的成功收据重放不写业务行；
 同一 observation 换 importer 仍拒绝。修复已绑定数据须保留旧证据，另行批准新采集观察，
 由新 importer 生成独立 run 和收据；不能重新绑定旧 observation。
+
+### 离线风险库存与持仓预检
+
+`gr_data.common.risk_availability` 的 `RiskDay`／`RiskCoverage` 保存精确模型、日期、run、
+因子轴、预测期限、声明的方差单位及带时区的观测时间。`assess_day` 要求同模型日/run 的
+真实覆盖，回显实际使用的模型、数据日期和逐只缺项；缺日不会退回最近日期或换模型。
+`assess_range` 的 `expected_days` 必须来自完整市场开市日历，不能从已有风险行推导；
+结果逐日列出缺口。无交易日与缺持仓证据均不代表已算得零风险。
+
+`gr_data.db.postgres.risk_availability.assess_postgres_day` 是同步、只读的离线预检入口：
+先核库存清单中的模型、日期、原子收据、因子轴、两种方差单位及校准状态，再查同一 run
+的实际暴露／特异风险／included 覆盖交集。输入为完整 canonical 代码与有限 Decimal
+有符号 NAV 权重；所有非零持仓都必须覆盖，覆盖率按绝对权重计算，不删除缺项或重新归一化。
+`known_at` 可显式限定历史可知时间，晚采集快照不能用于更早的决策。
+
+库存事实须从已核封存登记及哈希的清单构造，不把当前数据库存在一行当成原验收证据。
+库存 accepted 保留原验收范围，不表示每个日期都重新通过逐日 RF；取数预检不运行该单位检验。
+新复核未覆盖的日期不能记为逐日 RF 已通过，历史按月证据与逐日重验须分别保留。
+`diagnostic_inputs_ready` 仅是事后研究取数预检；`formal_ready` 始终为 false，不输出风险值，
+不替代供应商单位认证、模型校准或历史 PIT。`forecast_horizon=daily` 与年化方差是两个
+独立字段，不能因 daily 再擅自乘除 252。D-022 的正式读取入口继续关闭。
+
+定向回归：
+
+```bash
+uv run --frozen pytest packages/gr-data/tests/test_risk_availability.py \
+  packages/gr-data/tests/db/test_risk_availability_pg_reader.py -q --override-ini addopts=''
+```

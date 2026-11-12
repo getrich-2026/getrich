@@ -1,61 +1,130 @@
 # 持仓诊断 API 调用指南
 
-面向诊断页面开发者与接口使用者，说明当前调用流程与状态。字段以 `/openapi.json` 和后端模型为准，交互文档见 `/docs`；`packages/gr-api/diagnosis-design.openapi.json` 是设计契约，不是实现导出。
+面向后端接口使用者，说明独立于网页的调用方式、响应和启停。字段真源为 `/openapi.json`、[请求模型](../../packages/gr-api/src/gr_api/schemas/diagnosis.py)和[响应模型](../../packages/gr-api/src/gr_api/schemas/diagnosis_response.py)；设计 OpenAPI 不能替代实现。
 
-代码核对：2026-10-31，单元、契约与一次性 PG18 集成测试通过；工作库只做过只读取数冒烟（含 2024 年以来真实日线的历史相关性与波动率），未在工作库执行迁移或启动服务。尚未落地的设计差异见[待决问题](../plans/backlog.md)。
+状态（2026-11-10）：工作库定向055、新证券范围发布、新连接读回及真实TCP HTTP多用户验收通过。本轮交付仅后端API、迁移及数据发布；浏览器测试仅补充证据，现有apps/web改动保留待另审，未部署网页。用户已批准正式后端部署与启用；当前正式部署主机、服务进程和对外地址待明确，正式地址复验待此信息到位后执行，常规 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 未改。
 
-## 调用流程
+## 已验收范围
 
-统一前缀为 `/v1/diagnosis`，成功响应使用 `{code, message, data, timestamp, request_id}` 信封。
+- 日期 **2026-11-05**，米筐v2，原run `da212baf-9bfc-5014-8bff-0b574e8e7b9b`；不回退日期或模型。
+- 发布版本 `diag-v2-20261105-ashare5224-20261110-v1`，5224只沪深A股（上交所2318、深交所2906）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
+- 仅三项模型指标：`annual_variance`、`volatility.by_method.forward`（年化预测波动率）、`daily_prediction_volatility`。后两者都是小数，显示百分比时乘100；年化方差保持小数平方。
+- `calibrated=false`，指标状态为 `degraded/not_calibrated`：指定单日证券清单及三指标的源值、单位和数值验收通过，全区间校准及P6尚未完成。不能解释为历史PIT或其他风险指标已验收。
+- 清单内可自由组合与调权，无需逐组合发布。每个方案最多100原始行（含重复和零权重），每次1～5个独立方案。
 
-1. `POST /snapshots` 提交 `plans`（1～5 个，每个最多 100 行原始输入），每项含唯一 `plan_id` 与 `holdings: [{symbol, weight?}]`。方案内权重须全填或全省略，省略时去重后等权。可选 `options` 选择行业体系、基准与统计区间，缺省取口径版本默认值。
-2. 按 `data.links.result` 读取数值，按 `data.links.report` 读取报告。查询参数 `user_level=retail|pro` 控制展示，默认 `retail`，切换不重算。
-3. 按 `data.links.data_quality` 查看方案级缺失原因与覆盖率。可选 SSE 使用 `data.links.stream`，当前只发 `meta → complete`；`complete` 携带与 `/result` 相同的完整终态，收到后关闭连接。
-4. `POST /snapshots/{id}/recompute` 以 `{options, reset_to_default}` 基于原快照创建新快照，原快照不变。当前原数据版本无法证明未被修订，固定返回 `409 BASE_DATA_VERSION_UNAVAILABLE`（`retryable=false`），见下文限制。
+## 认证和调用
 
-每次新提交创建新快照；网络重试复用 `Idempotency-Key: <UUIDv4>` 请求头，同键异体返回 `409`。`user_level` 和 `idempotency_key` 不放在请求体中。
+所有诊断路径前缀为 `/v1/diagnosis`。成功信封是 `{code,message,data,timestamp,request_id}`。使用已有账号向 `POST /v1/auth/login` 提交 `email/password`，把返回的 `data.access_token` 作为 `Authorization: Bearer ...`。不同用户分别使用自己的token；正式使用保持 `GETRICH_ALLOW_MOCK_AUTH=false`。
 
-## 输入校验
+下例需要curl和jq。把 `BASE_URL` 改为获准启用的服务地址，把 `TOKEN_A` 设为本人有效token。本轮临时验收地址127.0.0.1:18011已停止，不作为正式地址。
 
-| 情形 | 处理 |
+```bash
+export BASE_URL='https://YOUR_API_HOST'
+export TOKEN_A='YOUR_ACCESS_TOKEN'
+
+cat > portfolio.json <<'JSON'
+{
+  "as_of_date": "2026-11-05",
+  "plans": [{
+    "plan_id": "regression",
+    "holdings": [
+      {"symbol": "600519.SH", "weight": "0.4"},
+      {"symbol": "600036.SH", "weight": "0.35"},
+      {"symbol": "000333.SZ", "weight": "0.25"}
+    ]
+  }]
+}
+JSON
+
+curl --fail-with-body --silent --show-error \
+  "$BASE_URL/v1/diagnosis/snapshots" \
+  -H "Authorization: Bearer $TOKEN_A" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
+  --data-binary @portfolio.json > created.json
+
+SNAPSHOT_ID=$(jq -r '.data.snapshot_id' created.json)
+curl --fail-with-body --silent --show-error \
+  "$BASE_URL/v1/diagnosis/snapshots/$SNAPSHOT_ID/result" \
+  -H "Authorization: Bearer $TOKEN_A" > result.json
+
+jq '.data | {as_of_date,data_fingerprint,publication,
+  plans:[.plans[] | {plan_id,risk:.section_b.value}]}' result.json
+```
+
+POST新建返回201和 `data.links.result/report/data_quality`。按返回的links读取结果、报告或缺失原因；结果已经同步计算。下列是本次三股工作库GET响应的字段摘录，保留实际层级，省略其他诊断字段：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "as_of_date": "2026-11-05",
+    "data_fingerprint": "diag-v2-20261105-ashare5224-20261110-v1",
+    "publication": {
+      "scope_type": "security_universe",
+      "status": "available",
+      "recomputable": true,
+      "model_run_id": "da212baf-9bfc-5014-8bff-0b574e8e7b9b",
+      "calibrated": false
+    },
+    "plans": [{
+      "plan_id": "regression",
+      "section_b": {
+        "status": "ready",
+        "value": {
+          "annual_variance": {"status":"degraded","value":0.04532912929206873,"reason_code":"not_calibrated"},
+          "volatility": {"by_method":{"forward":{"status":"degraded","value":0.21290638621720281,"reason_code":"not_calibrated"}}},
+          "daily_prediction_volatility": {"status":"degraded","value":0.01341184167781401,"reason_code":"not_calibrated"},
+          "model_id": "rq_423b18dfe38ab26a51659adc19796",
+          "model_date": "2026-11-05",
+          "model_run_id": "da212baf-9bfc-5014-8bff-0b574e8e7b9b",
+          "calibrated": false,
+          "model_coverage": {"status":"complete","total_count":3,"covered_count":3,"total_weight":"1","covered_weight":"1","missing":[]}
+        }
+      }
+    }]
+  }
+}
+```
+
+对应年化预测波动率21.2906386217%，单日预测波动率1.3411841678%。用独立资产协方差路线复算，rtol=1e-12/atol=1e-15通过。最终F和特异方差从库内pct2_annual各除10000恢复年化小数方差，再仅除252一次取得日方差；不再次平方特异方差。
+
+## 修改权重、多个方案与重算
+
+修改股票或权重后，向同一个 `POST /snapshots` 提交新的**完整组合**及新的Idempotency-Key。例如三股改为20%/30%/50%，三项实际结果为0.0410145604591487、0.20252051861267958和0.012757593515166138。
+
+需要同一版本的两套权重时，在一个请求的 `plans` 中提交两个不同plan_id的完整方案；一次请求固定同一发布版本，各方案独立返回结果。不同时间的两个POST可能遇到版本更新，应核对返回的data_fingerprint。V1不输出调仓建议或自动建议权重。
+
+`POST /snapshots/{id}/recompute` 仅复制原快照组合并按新options创建新快照，不能用于替换持仓。版本有效且归属匹配时201；原版本失效时409 `BASE_DATA_VERSION_UNAVAILABLE`，旧报告仍可读取，不能用最新数据冒充原版本。
+
+幂等键须为UUIDv4：同用户、同键、同体重放200并返回原snapshot；同键异体409。新的计算或调权使用新键；纯计算缓存不改变快照归属。GET报告可带 `user_level=retail|pro`，不影响计算或权限。
+
+## 缺失数据与状态
+
+| 情况 | 契约 |
 | --- | --- |
-| 已识别的北交所、已退市股票及 ETF 等非个股 | `422`，`issues[].path` 指向 `/plans/{i}/holdings/{j}/symbol`，`code=unsupported_asset`，需移除或修正 |
-| 无法识别的代码 | 保留原始份额并计入覆盖率；方案没有可计算的已识别正权重标的时 `422` |
-| 历史代码 | 当前代码查不到时按 `meta.symbol_map` 解析；新旧代码同时输入视为重复并合并 |
-| 零权重或量化到 8 位小数后为 0 | 回显 `zero_weight`，不计入名义持仓数，也不参与计算 |
-| `as_of_date` 早于最新发布数据日 | `422 feature_not_available`；晚于发布日时取最新发布日并回显 |
-| `intent` 为 `rebalance_amount`／`rebalance_holding` | `422 feature_not_available`（调仓比较第二期开放） |
-| `options` 选择未验证的行业体系或基准、选择回放起点或回放统计区间、区间晚于诊断日 | `422`，路径为 `/options/<字段>` |
+| 负权重、非有限数、全零、部分填写、超过100行/5方案 | 422，按issues定位；全部省略时对唯一标的等权，重复项合并 |
+| 已识别的ETF、北交所、退市或其他范围外资产 | 422，要求修正后提交，不静默删除 |
+| 日期与发布日不同或请求越界指标 | 422，不回退；请求 `metrics` 只能选annual_variance/volatility/daily_prediction_volatility |
+| 正权重证券无法解析、未在清单或缺同run风险输入 | 保留证券、原份额及原因，完整组合三项模型风险unavailable；不对覆盖子集重新归一化。没有可解析正权重标的时输入422 |
+| 他人或匿名读取有归属的结果、报告、数据质量或重算 | 403；使用另一个token不能取得原快照 |
+| 最新发布失效/无可用发布 | 新诊断503，不自动回退旧日期；历史产物仍可读，重算409 |
 
-## 状态与展示
+例如80%茅台加20%无法解析的888888.SH，实际返回 `model_coverage.covered_weight="0.8"`、`data_quality.plans[0].coverage_summary.risk_model=0.8`，缺失项 `{"symbol":"888888.SH","weight":"0.2","reason":"unresolved_symbol"}`，三项完整模型风险均不可用且无value。不能把该请求解读为茅台100%的风险。
 
-| 场景 | HTTP 状态与处理 |
-| --- | --- |
-| 提交快照或重算 | 当前同步计算，新建返回 `201`，幂等重放返回 `200` |
-| 读取结果、报告或数据质量 | 处理中返回 `202` 与 `Retry-After: 1`；终态返回 `200`，计算失败由 `run_status` 表达 |
-| 请求错误 | 返回 `{request_id, error: {code, message, retryable, issues}}`；校验错误的 `issues[].path` 使用 JSON Pointer |
+区块状态与指标状态分别判断：`ready/unavailable/failed` 与 `ok/degraded/unavailable`。`run_status=partially_succeeded` 可由未开放的C区等产生，不表示已验收的三项风险计算失败；只消费本次准入的指标及其status，不把其他字段推断为新增准入。不可用指标没有value，不能显示为0。
 
-- **结果位置**：A–D 在各方案的 `section_a`–`section_d`，E 在顶层 `comparison`，压力测试在各方案的 `stress_scenarios`；实际使用的计算参数在顶层 `options`。
-- **可用性**：区块状态为 `ready/unavailable/failed`，指标状态为 `ok/degraded/unavailable`。不可用指标没有 `value`，不得按 0 展示。
-- **当前范围**：A 区出数；B 区只出逐股历史年化波动率（`instrument_betas[].historical_volatility`），D 区只出历史口径的相关矩阵、平均两两相关与高相关持仓对（`by_method.historical`）。模型口径（`forward`）指标为 `data_not_validated`，个股 Beta 与基准相关性为 `benchmark_missing`，C 区与压力测试为 `feature_not_available`；画像为 `spec_not_defined`，盲点均为「未能判断」。因此终态为 `partially_succeeded`。
-- **模型口径**：计算已实现但取数未开放，`forward` 指标当前均为 `data_not_validated`。开放后 `cov.forward_model` 回显模型身份、`cov.primary` 为 `forward`；L4 必须与 `l4_market_source_share`、`l4_largest_source` 同时展示，且不能解读为越大越分散；存在正份额未识别代码或任一持仓缺模型数据时，波动率、风险贡献、L3／L4 与风格暴露整体不可用（PA-13）。
-- **历史口径**：复权日简单收益，剔除全天停牌日、跨停牌的复牌收益与状态未知的缺口，日内停牌计入；相关性按全部持仓的共同有效日期对齐，个股波动率用各自有效日收益（Beta 区间）。少于 120 个样本不可用并回显 `sample_count`；收益恒定的股票从相关矩阵排除并降级披露，单只股票的相关指标为 `not_applicable`。`cov.computed` 含 `historical` 时 `cov.primary` 仍为 null，历史口径不顶替模型口径。
-- **A 区口径**：TopN 返回 Top1／Top3／Top5，以完整输入份额为分母；HHI、L1、L2 在已识别部分计算并按覆盖率降级（低于 0.95 降级、低于 0.80 不可用）。行业、市值、PB 分布保留 `unclassified`／`missing_or_invalid`／`non_positive` 档，只降级不判不可用。行业体系未验证时行业分布与最大行业为 `data_not_validated`；ROE 单位未核验，逐股为 `data_not_validated`。
-- **报告渲染**：百分比以小数返回，前端按 `format`、`decimals` 展示。逐股估值（`instrument_facts`）目前只在 `/result` 中。
+## 正式启用与回退
 
-## 已知限制
+工作库055及本版发布已验收，用户已批准仅后端正式部署与启用。当前正式服务目标未明确，发布候选准备完成但尚未部署/改开关，未部署网页。收到部署目标后按下列步骤直接继续，保留原授权。
 
-- 诊断日期取 `diag.data_version` 最新一行的发布日；该表尚无自动发布流程（D-022），需人工推进。
-- `diag.data_version.available_options` 尚无写入流程，行业体系与基准默认都按未验证处理。
-- 重算在 D-022 2b 发布清单落地前一律拒绝。
-- 部署前须执行迁移 051；它依赖 050，二者须一并提交。
+正式部署时：
 
-## 实现与限制的入口
+1. 发布仅已验收后端及依赖，包含注册必填列修复和gr-api显式依赖gr-signal的声明；后者在独立安装时验证为必需。使用锁定依赖的非editable安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），不携带apps/web部署。先核对055唯一账本和新版本可用性，不再跑全目录迁移。
+2. 在现有API运行环境设置 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`，保持 `GETRICH_ALLOW_MOCK_AUTH=false` 及既有JWT配置，优雅重启既有API进程。
+3. 用真实登录账号读options，确认日期、版本、5224清单和三指标；调用三股样本复现1.3411841678%，验证不同用户的403及缺失持仓提示后再放通流量。
+4. 运行中发布失效应返回503，先核查真实数据和收据，不为恢复出数而回退日期或放宽coverage。
 
-- [请求模型](../../packages/gr-api/src/gr_api/schemas/diagnosis.py)、[响应模型](../../packages/gr-api/src/gr_api/schemas/diagnosis_response.py)
-- [HTTP 行为](../../packages/gr-api/src/gr_api/routers/diagnosis.py)
-- [报告组装](../../packages/gr-api/src/gr_api/services/diagnosis_presentation.py)
-- [取数、解析与幂等](../../packages/gr-api/src/gr_api/services/diagnosis.py)
-- [纯计算模块](../../packages/gr-api/src/gr_api/diagnosis_calc/)
+回退：撤下诊断新请求入口，将 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 并优雅重启；如需应用版本回退，选兼容现有schema的后端版本。保留055、全部账本、新旧publication/receipt、已保存报告和验收证据，不自动删表/逆改账本/恢复覆盖当前库。需要数据库恢复时，先从逻辑备份恢复全新隔离库核对，再另审切换方案。
 
-设计取舍见[决策记录](../../.agents/brain/DECISIONS.md)：D-010（因子口径）、D-017（缺数据处理）、D-018（幂等与缓存）、D-021（纯计算模块）。
+实现入口：[HTTP](../../packages/gr-api/src/gr_api/routers/diagnosis.py)、[读取与幂等](../../packages/gr-api/src/gr_api/services/diagnosis.py)、[固定版本读取](../../packages/gr-api/src/gr_api/services/diagnosis_publication.py)、[范围门禁](../../packages/gr-api/src/gr_api/services/diagnosis_scope.py)、[发布与收据](../../packages/gr-data/src/gr_data/diagnostic_publication.py)。迁移和工作验收见[实施计划](../plans/gr-data-reliability-implementation-plan.md#多用户-v1证券清单准入与工作库执行门槛2026-11-10)。
