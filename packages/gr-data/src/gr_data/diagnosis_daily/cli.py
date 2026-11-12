@@ -85,6 +85,13 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                     previous = latest_publication(conn)
                     first = args.start or previous["as_of_date"] + timedelta(days=1)
                     last = args.end or last_closed
+                    if not previous["valid"]:
+                        raise ValueError("Latest publication is invalid")
+                    if args.start is None and first > last and last <= last_closed:
+                        result = {"status": "up_to_date", "as_of_date": str(previous["as_of_date"])}
+                        write_json(state, result)
+                        print(json.dumps(result))
+                        return 0
                     if first > last or last > last_closed:
                         raise ValueError("Invalid completed trading-day range")
                     dates = conn.execute(

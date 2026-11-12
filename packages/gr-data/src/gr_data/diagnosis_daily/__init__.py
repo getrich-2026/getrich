@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -132,6 +133,10 @@ def prepare(
     artifact.mkdir(parents=True, exist_ok=True)
     phase = "initial_state"
     try:
+        if (artifact / "prepared.json").exists():
+            raise ValueError(
+                "Prepared artifacts are immutable; use apply or a new artifact directory"
+            )
         version = get_importer_version(require_clean=True)
         with connect(pg) as conn, conn.transaction():
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
@@ -141,7 +146,11 @@ def prepare(
             raise ValueError(
                 "Target must follow the latest publication; replay an existing artifact with apply"
             )
-        paths = RawPaths(reuse_raw or artifact / "raw")
+        paths = RawPaths(artifact / "raw")
+        if reuse_raw is not None:
+            if reuse_raw.resolve() == paths.root.resolve():
+                raise ValueError("Reused raw must be outside the new artifact raw directory")
+            shutil.copytree(reuse_raw, paths.root, dirs_exist_ok=True)
         phase = "tushare_capture"
         if reuse_raw is None:
             observed = collect_tushare(tushare, paths, day, previous["as_of_date"])
@@ -483,6 +492,10 @@ async def _apply(
                 "artifact_hash": data["artifact_hash"],
                 "row_fingerprint": fp[table],
                 "source_partition": provider,
+                "ownership_evidence": {
+                    "provider": data["owners"].get(table),
+                    "D012_source_partition": table == "meta.symbol_map",
+                },
                 "security_hash": security_universe_hash(ids),
                 "observed_not_historical_pit": True,
             }
