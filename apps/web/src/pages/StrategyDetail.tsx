@@ -9,6 +9,7 @@ import MonthlyHeatmap from '@/components/MonthlyHeatmap'
 import SignalCard from '@/components/SignalCard'
 import { StrategyActionBar } from '@/components/BottomActionBar'
 import { getStrategyDetail, getStrategySignals, getStrategyTrades } from '@/api/strategies'
+import { sanitizeHtml } from '@/lib/sanitize'
 import type { StrategyDetail as StrategyDetailData, TradeRecord, SignalRecord } from '@/types/strategy'
 
 const tabs = ['策略说明', '回测报告', '历史交易', '最近信号']
@@ -265,7 +266,7 @@ function StrategyDescTab({ detailHtml }: { detailHtml: string }) {
     <div
       className="prose prose-sm max-w-none"
       style={{ color: 'var(--gr-text-secondary)', lineHeight: 1.7 }}
-      dangerouslySetInnerHTML={{ __html: detailHtml }}
+      dangerouslySetInnerHTML={{ __html: sanitizeHtml(detailHtml) }}
     />
   )
 }
