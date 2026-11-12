@@ -452,6 +452,14 @@ A–E 显式区分 ready／unavailable／failed，报告与数值基于同一组
 SW2021一级分类用Tushare index_classify与index_member_all，后者2000行分页并取Y/N，原件保留历史；本次canonical只接纳目标日有效区间，源in/out日期不改，按既有排他out_date读取。available_at保守用整批采集完成时间，不以生效日冒充历史可得时间。
 三张行业表实际为空且未登记owner，按授权首次登记tushare，不虚构datayes释放操作。ownership写入会全局标脏，需在同一外层发布事务重签全部11项基础组成及风险头，再发布；失败整体回滚，不能分步提交或关闭保护触发器。新发布使旧输入版本失效，旧报告保留并标invalidated，重算409。分类接入不扩大风险指标准入；ROE、RC/L3与日更仍属后续批次。
 
+#### Batch 3 v3增强协议与单位（2026-11-12）
+
+v3加入fundamental.indicator_q的输入保护、收据及发布必需组成；BASIC_DATASETS按协议分派，v1/v2保留原11项依赖，新v3要求12项。风险清单唯一键扩为run/证券hash/协议，旧v2头和成员不改写；迁移元数据不使旧版失效，新增数据和准入按原机制使旧版失效。历史计算产物保留，不能用新数据冒充旧版重算。
+
+RC沿用PA-10波动率贡献：RC_i=w_i(Σw)_i/σ，sum(RC)=σ，不等于annual_variance；ratio=RC/σ，MRC=(Σw)/σ，L3=1/sum(ratio²)。保留负贡献和零波动不可用规则；L4、风格及模型相关性不随此批开放，RC路径不执行L4正交化。ROE取最近已披露完整年度roe_waa，源百分数仅在ingest除100；真实零和负值保留，源缺失NULL，按end_date/ann_date降序及发布观察截止读取，不补零或换单季/TTM，不计算组合平均。source_revision仅追溯update_flag，不代表历史可得时间；本次导入不认证历史PIT。
+
+行业日更保留已校验的源闭区间，用真实out_date先收口旧开放行再插入新行，不猜调出日；源重叠拒绝，无变化成员保留首次观察及更新时间。工作/隔离指纹比较须区分各自插入生成的updated_at差异：若基线不一致先停止并逐列验证，不能直接忽略差异；工作执行仍核对其原始完整指纹与已验收基线。
+
 ## 文档与材料边界
 
 <a id="d-019"></a>

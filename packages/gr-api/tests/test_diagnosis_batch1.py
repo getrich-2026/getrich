@@ -210,7 +210,7 @@ def test_template_jwt_refused(tmp_path: Path, secret: str) -> None:
 
 
 def test_prod_rejects_local_only_cors(tmp_path: Path) -> None:
-    with pytest.raises(SettingsError, match="non-local"):
+    with pytest.raises(SettingsError, match="local origins"):
         load_api_settings(
             Environment(
                 tmp_path,
@@ -221,3 +221,41 @@ def test_prod_rejects_local_only_cors(tmp_path: Path) -> None:
                 },
             )
         )
+
+
+@pytest.mark.parametrize("origin", ["localhost:3000", "http://", "file:///tmp/test"])
+def test_staging_refuses_malformed_origins(tmp_path: Path, origin: str) -> None:
+    with pytest.raises(SettingsError, match="hostname"):
+        load_api_settings(
+            Environment(
+                tmp_path,
+                {"APP_ENV": "staging", "JWT_SECRET": "fixture-secret", "WEB_CORS_ORIGINS": origin},
+            )
+        )
+
+
+def test_prod_refuses_mixed_local_origins(tmp_path: Path) -> None:
+    with pytest.raises(SettingsError, match="local origins"):
+        load_api_settings(
+            Environment(
+                tmp_path,
+                {
+                    "APP_ENV": "prod",
+                    "JWT_SECRET": "fixture-secret",
+                    "WEB_CORS_ORIGINS": "https://api.example,http://[::1]:3000",
+                },
+            )
+        )
+
+
+def test_success_request_id_matches_header(client: TestClient) -> None:
+    from fastapi import Depends
+    from gr_api.deps import request_id
+
+    @client.app.get("/request-id-probe")  # type: ignore[attr-defined]
+    async def probe(rid: str = Depends(request_id)):
+        return {"request_id": rid}
+
+    response = client.get("/request-id-probe")
+    assert response.status_code == 200
+    assert response.json()["request_id"] == response.headers["X-Request-Id"]

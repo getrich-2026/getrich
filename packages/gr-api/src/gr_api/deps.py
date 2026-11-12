@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from fastapi import Depends, Header, Query, Request
 from gr_api.config import ApiSettings
+from gr_api.logging_middleware import get_current_request_id
 from gr_api.pagination import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
@@ -105,7 +106,8 @@ async def require_admin(
 
 async def request_id(x_request_id: str | None = Header(default=None)) -> str:
     """获取或生成本次请求的 request_id。"""
-    return x_request_id or uuid4().hex
+    current = get_current_request_id()
+    return current if current != "-" else x_request_id or uuid4().hex
 
 
 def page_dep(

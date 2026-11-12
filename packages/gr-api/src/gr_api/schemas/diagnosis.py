@@ -142,8 +142,19 @@ class SnapshotRequest(ApiModel):
     """
 
     metrics: (
-        list[Literal["annual_variance", "volatility", "daily_prediction_volatility"]] | None
-    ) = Field(default=None, min_length=1, max_length=3)
+        list[
+            Literal[
+                "annual_variance",
+                "volatility",
+                "daily_prediction_volatility",
+                "risk_contribution",
+                "risk_contribution_ratio",
+                "marginal_risk_contribution",
+                "l3_effective_count",
+            ]
+        ]
+        | None
+    ) = Field(default=None, min_length=1, max_length=7)
 
     plans: list[PortfolioPlan] = Field(min_length=1, max_length=5)
     intent: Intent | None = None  # 缺省 → 按方案数与解析结果判定

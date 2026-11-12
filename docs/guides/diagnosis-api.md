@@ -2,14 +2,15 @@
 
 面向后端接口使用者，说明独立于网页的调用方式、响应和启停。字段真源为 `/openapi.json`、[请求模型](../../packages/gr-api/src/gr_api/schemas/diagnosis.py)和[响应模型](../../packages/gr-api/src/gr_api/schemas/diagnosis_response.py)；设计 OpenAPI 不能替代实现。
 
-历史数据验收状态（2026-11-10）：工作库定向055、新证券范围发布、新连接读回及真实TCP HTTP多用户验收通过。本轮交付仅后端API、迁移及数据发布；浏览器测试仅补充证据，现有apps/web改动保留待另审，未部署网页。用户已批准正式后端部署与启用；当前正式部署主机、服务进程和对外地址待明确，正式地址复验待此信息到位后执行，常规 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 未改。
+状态（2026-11-12，Batch 3 本地增强批次）：新增056并按v3协议发布年度ROE及七项模型风险指标，日期仍为2026-11-05。仅后端与数据验收，常规诊断开关仍false；未部署远端、未修改前端。历史批次的说明以下文标注的协议边界为准。
 
 ## 已验收范围
 
 - 日期 **2026-11-05**，米筐v2，原run `da212baf-9bfc-5014-8bff-0b574e8e7b9b`；不回退日期或模型。
-- 发布版本 `diag-v2-20261105-ashare5224-20261110-v1`，5224只沪深A股（上交所2318、深交所2906）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
-- 仅三项模型指标：`annual_variance`、`volatility.by_method.forward`（年化预测波动率）、`daily_prediction_volatility`。后两者都是小数，显示百分比时乘100；年化方差保持小数平方。
-- `calibrated=false`，指标状态为 `degraded/not_calibrated`：指定单日证券清单及三指标的源值、单位和数值验收通过，全区间校准及P6尚未完成。不能解释为历史PIT或其他风险指标已验收。
+- 发布版本 `diag-v3-20261105-enhanced-20261112-v1`，5224只沪深A股（上交所2318、深交所2906）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
+- 三项基础模型指标：`annual_variance`、`volatility.by_method.forward`（年化预测波动率）、`daily_prediction_volatility`。后两者都是小数，显示百分比时乘100；年化方差保持小数平方。
+- v3另准入 `risk_contribution`、`risk_contribution_ratio`、`marginal_risk_contribution`、`l3_effective_count`。L4、模型相关性、风格暴露和回放仍不可用。年度ROE为个股辅助字段，不是模型风险指标。
+- `calibrated=false`，指标状态为 `degraded/not_calibrated`：指定单日证券清单及准入指标的源值、单位和数值验收通过，全区间校准及P6尚未完成。不能解释为历史PIT或未准入风险指标已验收。
 - 清单内可自由组合与调权，无需逐组合发布。每个方案最多100原始行（含重复和零权重），每次1～5个独立方案。
 
 ## 认证和调用
@@ -61,32 +62,162 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 ```json
 {
   "code": 0,
+  "message": "success",
   "data": {
     "as_of_date": "2026-11-05",
-    "data_fingerprint": "diag-v2-20261105-ashare5224-20261110-v1",
+    "data_fingerprint": "diag-v3-20261105-enhanced-20261112-v1",
     "publication": {
       "scope_type": "security_universe",
       "status": "available",
       "recomputable": true,
-      "model_run_id": "da212baf-9bfc-5014-8bff-0b574e8e7b9b",
+      "declared_metrics": [
+        "annual_variance",
+        "daily_prediction_volatility",
+        "l3_effective_count",
+        "marginal_risk_contribution",
+        "risk_contribution",
+        "risk_contribution_ratio",
+        "volatility"
+      ],
       "calibrated": false
     },
-    "plans": [{
-      "plan_id": "regression",
-      "section_b": {
-        "status": "ready",
-        "value": {
-          "annual_variance": {"status":"degraded","value":0.04532912929206873,"reason_code":"not_calibrated"},
-          "volatility": {"by_method":{"forward":{"status":"degraded","value":0.21290638621720281,"reason_code":"not_calibrated"}}},
-          "daily_prediction_volatility": {"status":"degraded","value":0.01341184167781401,"reason_code":"not_calibrated"},
-          "model_id": "rq_423b18dfe38ab26a51659adc19796",
-          "model_date": "2026-11-05",
-          "model_run_id": "da212baf-9bfc-5014-8bff-0b574e8e7b9b",
-          "calibrated": false,
-          "model_coverage": {"status":"complete","total_count":3,"covered_count":3,"total_weight":"1","covered_weight":"1","missing":[]}
+    "plans": [
+      {
+        "plan_id": "regression",
+        "section_a": {
+          "status": "ready",
+          "value": {
+            "industry_labels": {
+              "801110.SI": "家用电器",
+              "801120.SI": "食品饮料",
+              "801780.SI": "银行"
+            },
+            "instrument_facts": {
+              "status": "ok",
+              "method": "exact",
+              "value": {
+                "30322": {
+                  "industry_code": "801120.SI",
+                  "industry_name": "食品饮料",
+                  "roe": {
+                    "status": "ok",
+                    "value": 0.3253,
+                    "method": "annual_roe_waa",
+                    "confidence": "high"
+                  },
+                  "roe_report_year": 2025,
+                  "roe_ann_date": "2026-04-17"
+                },
+                "30670": {
+                  "industry_code": "801780.SI",
+                  "industry_name": "银行",
+                  "roe": {
+                    "status": "ok",
+                    "value": 0.1344,
+                    "method": "annual_roe_waa",
+                    "confidence": "high"
+                  },
+                  "roe_report_year": 2025,
+                  "roe_ann_date": "2026-03-28"
+                },
+                "33509": {
+                  "industry_code": "801110.SI",
+                  "industry_name": "家用电器",
+                  "roe": {
+                    "status": "ok",
+                    "value": 0.197,
+                    "method": "annual_roe_waa",
+                    "confidence": "high"
+                  },
+                  "roe_report_year": 2025,
+                  "roe_ann_date": "2026-03-31"
+                }
+              }
+            }
+          }
+        },
+        "section_b": {
+          "status": "ready",
+          "value": {
+            "annual_variance": {
+              "status": "degraded",
+              "value": 0.04532912929206873,
+              "method": "forward",
+              "reason_code": "not_calibrated",
+              "reason": "本次单日范围与指标已准入；全区间未校准。",
+              "confidence": "medium"
+            },
+            "volatility": {
+              "primary": "forward",
+              "by_method": {
+                "forward": {
+                  "status": "degraded",
+                  "value": 0.21290638621720281,
+                  "method": "forward",
+                  "reason_code": "not_calibrated",
+                  "reason": "本次单日范围与指标已准入；全区间未校准。",
+                  "confidence": "medium"
+                }
+              }
+            },
+            "daily_prediction_volatility": {
+              "status": "degraded",
+              "value": 0.01341184167781401,
+              "method": "forward",
+              "reason_code": "not_calibrated",
+              "reason": "本次单日范围与指标已准入；全区间未校准。",
+              "confidence": "medium"
+            },
+            "risk_contribution": {
+              "status": "degraded",
+              "value": {
+                "30322": 0.10786460518566776,
+                "30670": 0.06255495706476022,
+                "33509": 0.04248682396677483
+              },
+              "method": "forward",
+              "reason_code": "not_calibrated",
+              "reason": "本次单日增强指标已准入；全区间未校准。",
+              "confidence": "medium"
+            },
+            "risk_contribution_ratio": {
+              "status": "degraded",
+              "value": {
+                "30322": 0.5066292613488186,
+                "30670": 0.2938143762439465,
+                "33509": 0.1995563624072348
+              },
+              "method": "forward",
+              "reason_code": "not_calibrated",
+              "reason": "本次单日增强指标已准入；全区间未校准。",
+              "confidence": "medium"
+            },
+            "marginal_risk_contribution": {
+              "status": "degraded",
+              "value": {
+                "30322": 0.2696615129641694,
+                "30670": 0.17872844875645777,
+                "33509": 0.1699472958670993
+              },
+              "method": "forward",
+              "reason_code": "not_calibrated",
+              "reason": "本次单日增强指标已准入；全区间未校准。",
+              "confidence": "medium"
+            },
+            "l3_effective_count": {
+              "status": "degraded",
+              "value": 2.6121743557259216,
+              "method": "forward",
+              "reason_code": "not_calibrated",
+              "reason": "本次单日增强指标已准入；全区间未校准。",
+              "confidence": "medium"
+            },
+            "model_date": "2026-11-05",
+            "calibrated": false
+          }
         }
       }
-    }]
+    ]
   }
 }
 ```
@@ -109,7 +240,7 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 | --- | --- |
 | 负权重、非有限数、全零、部分填写、超过100行/5方案 | 422，按issues定位；全部省略时对唯一标的等权，重复项合并 |
 | 已识别的ETF、北交所、退市或其他范围外资产 | 422，要求修正后提交，不静默删除 |
-| 日期与发布日不同或请求越界指标 | 422，不回退；请求 `metrics` 只能选annual_variance/volatility/daily_prediction_volatility |
+| 日期与发布日不同或请求越界指标 | 422，不回退；请求 `metrics` 必须属于当前 `/options` 的 declared_metrics；旧v1/v2仅三项，v3为七项 |
 | 正权重证券无法解析、未在清单或缺同run风险输入 | 保留证券、原份额及原因，完整组合三项模型风险unavailable；不对覆盖子集重新归一化。没有可解析正权重标的时输入422 |
 | 无凭证、无效或过期凭证访问私有诊断接口 | 401 unauthorized，使用标准诊断错误结构 |
 | 已登录用户读取他人结果、报告、数据质量或重算 | 403 forbidden |
@@ -125,7 +256,7 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 
 正式部署时：
 
-1. 发布仅已验收后端及依赖，包含注册必填列修复和gr-api显式依赖gr-signal的声明；后者在独立安装时验证为必需。使用锁定依赖的非editable安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），不携带apps/web部署。先核对055唯一账本和新版本可用性，不再跑全目录迁移。
+1. 发布仅已验收后端及依赖，包含注册必填列修复和gr-api显式依赖gr-signal的声明；后者在独立安装时验证为必需。使用锁定依赖的非editable安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），不携带apps/web部署。先核对056唯一账本和新v3版本可用性，不再跑全目录迁移。
 2. 在现有API运行环境设置 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`，保持 `GETRICH_ALLOW_MOCK_AUTH=false` 及既有JWT配置，优雅重启既有API进程。
 3. 用真实登录账号读options，确认日期、版本、5224清单和三指标；调用三股样本复现1.3411841678%，验证不同用户的403及缺失持仓提示后再放通流量。
 4. 运行中发布失效应返回503，先核查真实数据和收据，不为恢复出数而回退日期或放宽coverage。
@@ -149,7 +280,7 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 
 非开发服务显式设置 `APP_ENV=staging` 或 `prod`，不得使用默认开发环境。
 这两种环境必须提供非默认、非空 `JWT_SECRET` 和非空、非通配的 `WEB_CORS_ORIGINS`，
-漏配即拒绝加载配置；mock 认证仅允许 dev。部署流程须检查 APP_ENV，库仍保留本地 dev 默认值。
+漏配即拒绝加载配置；各源必须为带hostname的http/https origin，prod拒绝包含任何本地源（localhost、127.0.0.1、::1），staging允许本地联调。mock认证仅允许dev。部署流程须检查 APP_ENV，库仍保留本地 dev 默认值。
 支付不作为诊断启动依赖，但任何环境下缺少支付验签密钥均返回 503，绝不跳过验签。
 以上错误与正常响应均保留 CSP、X-Frame-Options、X-Content-Type-Options、Referrer-Policy。
 
@@ -171,12 +302,12 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 | `A.lookthrough_coverage` | MetricValue，小数份额 | 当前个股输入的穿透覆盖 |
 | `A.instrument_facts.value.<id>.industry_code` / `industry_name` | string 或 null | 逐股归属；未分类或体系不可用时均为 null |
 | `A.instrument_facts.value.<id>.total_mv_yi` / `pb` | MetricValue，亿元 / 倍数 | 总市值已换算亿元，禁止再次换算；估值日期在 valuation_date |
-| `A.instrument_facts.value.<id>.roe` | MetricValue，小数 | 后续接入最近完整年度加权平均 ROE；报告年份 roe_report_year、公告日期 roe_ann_date；当前不可用 |
+| `A.instrument_facts.value.<id>.roe` | MetricValue，小数 | v3读取最近完整年度加权平均 ROE；报告年份 roe_report_year、公告日期 roe_ann_date；源缺失时不可用 |
 | `B.annual_variance` | MetricValue，年化小数方差 | 不作为百分比转换 |
 | `B.volatility.by_method.forward` / `daily_prediction_volatility` | MetricValue，小数波动率 | 前瞻年化 / 单日预测；百分比展示乘 100，年化天数见 annualization_days |
 | `B.instrument_betas.value[]` | instrument_id 与指标对象数组 | historical_volatility 为逐股历史年化小数波动率；beta 和 benchmark_correlation 当前不可用 |
-| `B.risk_contribution` / `risk_contribution_ratio` / `marginal_risk_contribution` | MetricValue，按 instrument_id 的字典 | 后续准入；分别为年化波动率贡献、贡献份额、边际贡献；前两项展示为百分点、百分比时乘 100 |
-| `B.l3_effective_count` | MetricValue，数值 | 后续准入；存在负贡献时不能直读为独立股票数 |
+| `B.risk_contribution` / `risk_contribution_ratio` / `marginal_risk_contribution` | MetricValue，按 instrument_id 的字典 | v3已准入；分别为年化波动率贡献、贡献份额、边际贡献；前两项展示为百分点、百分比时乘 100 |
+| `B.l3_effective_count` | MetricValue，数值 | v3已准入；存在负贡献时不能直读为独立股票数 |
 | `D.correlation.by_method.historical` | MetricValue，instrument_ids 与 matrix | 矩阵轴按 instrument_ids 对齐；系数不做百分比转换 |
 | `D.avg_pairwise_correlation.by_method.historical` / `high_correlation_pairs.by_method.historical` | MetricValue，数值 / 股票对数组 | 与历史相关矩阵同口径，阈值以 spec 为准 |
 | `publication.declared_metrics` / `B.model_coverage` | 指标数组 / 覆盖对象 | 只开放该快照实际准入指标；模型卡片按 declared_metrics 裁剪 |
@@ -254,3 +385,34 @@ canonical 本次只接纳覆盖诊断日期的归属区间，保留来源 `in_da
 
 本批新发布仍为 2026-11-05 数据，追平和日更属于后续批次。正式可用日期始终以 `/options` 为准。
 更新后旧发布可因输入修订失效，但历史快照的计算产物保留，不能把其结果日期自动替换为新版本日期。
+
+
+## v3 增强协议与财务口径（Batch 3，2026-11-12）
+
+056仅新增协议和保护能力，迁移本身不改变旧发布的有效性。v1/v2仍按原三指标与基础组成校验；
+v3新增 `fundamental.indicator_q` 组成，风险准入按同run、同证券清单、协议版本独立登记。
+写入新数据和新增准入后，旧版本按现有机制失效，历史计算产物仍可读，不改写旧快照。
+
+年报数据取 Tushare `fina_indicator_vip`，与 `fina_indicator.roe_waa` 同字段语义，
+按年度100行分页保留原始公告及修订。入库唯一将源百分数除100，保留真实零值及负值，缺失不补零。
+单位核验对应[公司2024年年报摘要](https://www.moutai.com.cn/mtgf/articleFileDir/2025-04/08/a8931897311b4d4097b7c0b2bf3207d1.pdf)的加权平均ROE百分数表。
+只取完整年度12月31日、公告日不晚于诊断日期且观察时间不晚于发布时刻的记录；
+按报告期降序、同报告期公告日降序选择。当前接纳2025/2024年度，未提供可用值时明确不可用，
+不回退单季度、TTM或年化ROE，不计算组合平均ROE。source_revision保留供应商update_flag，
+不将其冒充独立的历史可得时间；本次观察不能认证历史PIT。
+
+设 `Σ` 为同模型同日期年化小数协方差，`σ=sqrt(wᵀΣw)`：
+
+- `risk_contribution[i] = w[i] * (Σw)[i] / σ`，合计为σ；显示波动率百分点时乘100。
+- `risk_contribution_ratio[i] = risk_contribution[i] / σ`，非零波动时合计为1。
+- `marginal_risk_contribution[i] = (Σw)[i] / σ`，单位为每一单位权重的年化小数波动率变化。
+- `l3_effective_count = 1 / sum(risk_contribution_ratio[i]^2)`。
+
+RC合计不是annual_variance；负贡献保留，存在负贡献时L3不能直接解读为独立股票数。
+本批独立复算采用 rtol=1e-12、atol=1e-15；REAL风险列按二进制读取，避免文本往返改变精度。
+零波动时RC、占比、MRC、L3不可用；缺任一正权重证券的模型输入时不对子集重新归一化。
+RC/L3准入路径跳过L4正交化计算，未开放能力不增加请求耗时。
+
+行业日更写入会先用已校验源闭区间收口旧行，再写新有效区间；源区间本身重叠则拒绝。
+无实质变化的成员行不更新available_at和updated_at；未收到可靠调出日期时不猜测收口。
+本批仅修复并验证该写入能力，未启用定时采集或日更调度。

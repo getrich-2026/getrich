@@ -219,6 +219,7 @@ def compute_model_risk(
     model: RiskModelInputs,
     *,
     high_threshold: float,
+    include_risk_sources: bool = True,
 ) -> ModelRiskResult:
     """在已识别子集的计算权重上计算全部模型口径指标。
 
@@ -226,6 +227,7 @@ def compute_model_risk(
         holdings: ``(instrument_id, 计算权重)``，权重合计为 1。
         model: 同一模型、日期、版本的风险截面。
         high_threshold: 模型相关性的高相关阈值（严格大于，一期 0.7）。
+        include_risk_sources: 是否计算L4风险源；仅准入RC/L3时关闭。
 
     Returns:
         完整组合模型指标要求全部正权重持仓的暴露与特质方差都有效（PA-13）；否则这些指标
@@ -339,37 +341,43 @@ def compute_model_risk(
     facts["negative_contribution"] = bool((rc < 0).any())
     l3 = 1.0 / float((ratio**2).sum())
 
-    try:
-        sources = risk_sources(w, b, factor_cov, spec, model.factor_codes, ids)
-        total = float(sources.variances.sum())
-        if abs(total - variance) > CONSERVATION_TOL * variance:
-            raise ModelInputError("risk source variances do not sum to portfolio variance")
-    except ModelInputError as exc:
-        reason = f"无法完成最小扭转正交化（{exc}），L4 及配套指标不可用。"
-        l4 = share = largest = unavailable(reason_code="data_not_validated", reason=reason)
-    else:
-        # 各源方差非负（正交因子方差 × 平方暴露、权重平方 × 特质方差），占比不会为负
-        shares = sources.variances / total
-        l4 = ok(1.0 / float((shares**2).sum()), method=METHOD)
-        top = int(np.argmax(shares))
-        kind, ident = sources.labels[top]
-        largest = ok(
-            {
-                "kind": kind,
-                "factor_code": ident if kind == "factor" else None,
-                "instrument_id": ident if kind == "idiosyncratic" else None,
-                "share": float(shares[top]),
-            },
-            method=METHOD,
+    if not include_risk_sources:
+        l4 = share = largest = unavailable(
+            reason_code="data_not_validated", reason="风险源指标未准入。"
         )
-        if model.market_factor is not None and model.market_factor in model.factor_codes:
-            share = ok(float(shares[model.factor_codes.index(model.market_factor)]), method=METHOD)
+    else:
+        try:
+            sources = risk_sources(w, b, factor_cov, spec, model.factor_codes, ids)
+            total = float(sources.variances.sum())
+            if abs(total - variance) > CONSERVATION_TOL * variance:
+                raise ModelInputError("risk source variances do not sum to portfolio variance")
+        except ModelInputError as exc:
+            reason = f"无法完成最小扭转正交化（{exc}），L4 及配套指标不可用。"
+            l4 = share = largest = unavailable(reason_code="data_not_validated", reason=reason)
         else:
-            share = unavailable(
-                reason_code="data_not_validated",
-                reason="所选模型没有已核验的市场联动因子，市场源占比不可用。",
+            # 各源方差非负（正交因子方差 × 平方暴露、权重平方 × 特质方差），占比不会为负
+            shares = sources.variances / total
+            l4 = ok(1.0 / float((shares**2).sum()), method=METHOD)
+            top = int(np.argmax(shares))
+            kind, ident = sources.labels[top]
+            largest = ok(
+                {
+                    "kind": kind,
+                    "factor_code": ident if kind == "factor" else None,
+                    "instrument_id": ident if kind == "idiosyncratic" else None,
+                    "share": float(shares[top]),
+                },
+                method=METHOD,
             )
-
+            if model.market_factor is not None and model.market_factor in model.factor_codes:
+                share = ok(
+                    float(shares[model.factor_codes.index(model.market_factor)]), method=METHOD
+                )
+            else:
+                share = unavailable(
+                    reason_code="data_not_validated",
+                    reason="所选模型没有已核验的市场联动因子，市场源占比不可用。",
+                )
     return ModelRiskResult(
         volatility=ok(vol, method=METHOD),
         risk_contribution=ok(_keyed(ids, rc), method=METHOD),

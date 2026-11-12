@@ -21,6 +21,7 @@ class IndustrySnapshot:
     nodes: pl.DataFrame
     members: pl.DataFrame
     missing_ids: tuple[int, ...]
+    closed_members: pl.DataFrame | None = None
 
 
 def normalize_industry(
@@ -63,17 +64,16 @@ def normalize_industry(
     )
     if frame.filter(pl.col("in_date").is_null() | (pl.col("out_date") <= pl.col("in_date"))).height:
         raise ValueError("Industry membership has invalid source dates")
-    frame = (
-        frame.filter(
-            (pl.col("in_date") <= as_of)
-            & (pl.col("out_date").is_null() | (pl.col("out_date") > as_of))
-        )
-        .select("ts_code", "l1_code", "in_date", "out_date")
-        .unique()
-    )
-    # 同一一级行业的三级调整可能产生重复来源行；只有完全相同的一级区间可去重。
-    if frame["ts_code"].n_unique() != frame.height:
-        raise ValueError("Multiple industry intervals cover the same security and date")
+    history = frame.select("ts_code", "l1_code", "in_date", "out_date").unique()
+    history = history.filter(pl.col("in_date") <= as_of).sort("ts_code", "in_date")
+    previous: dict[str, date | None] = {}
+    for row in history.iter_rows(named=True):
+        symbol = row["ts_code"]
+        if symbol in previous and (previous[symbol] is None or row["in_date"] < previous[symbol]):
+            raise ValueError("Overlapping source industry intervals")
+        previous[symbol] = row["out_date"]
+    closed = history.filter(pl.col("out_date").is_not_null() & (pl.col("out_date") <= as_of))
+    frame = history.filter(pl.col("out_date").is_null() | (pl.col("out_date") > as_of))
     if not set(frame["l1_code"]) <= set(selected["industry_code"]):
         raise ValueError("Membership references an unverified SW2021 node")
     frame = (
@@ -102,7 +102,15 @@ def normalize_industry(
     if frame["instrument_id"].n_unique() != frame.height:
         raise ValueError("Source aliases produce duplicate industry memberships")
     missing = tuple(sorted(set(symbol_ids.values()) - set(frame["instrument_id"])))
-    return IndustrySnapshot(selected.sort("industry_code"), frame, missing)
+    closed = closed.with_columns(
+        pl.col("ts_code").replace_strict(symbol_ids, return_dtype=pl.Int64).alias("instrument_id"),
+        pl.col("l1_code").alias("industry_code"),
+        pl.lit("sw2021").alias("scheme_code"),
+        pl.lit(1).cast(pl.Int16).alias("level"),
+        pl.lit(observed_at).alias("available_at"),
+        pl.lit("tushare").alias("source"),
+    ).select(frame.columns)
+    return IndustrySnapshot(selected.sort("industry_code"), frame, missing, closed)
 
 
 async def write_industry_snapshot(
@@ -148,6 +156,33 @@ async def write_industry_snapshot(
                 "VALUES (%s,'tushare','ingest')",
                 (table,),
             )
+    incoming = snapshot.members.to_dicts()
+    if snapshot.closed_members is not None:
+        incoming = snapshot.closed_members.to_dicts() + incoming
+    ids = sorted({r["instrument_id"] for r in incoming})
+    existing = await (
+        await conn.execute(
+            "SELECT instrument_id,scheme_code,level,industry_code,in_date,out_date,"
+            "available_at,source "
+            "FROM classify.instrument_industry WHERE scheme_code='sw2021' AND level=1 "
+            "AND instrument_id=ANY(%s) FOR UPDATE",
+            (ids,),
+        )
+    ).fetchall()
+    changes = industry_changes(existing, snapshot)
+    # 先收口，再插入；沿用源日期，不能自行猜一个新行业起点作为旧行业终点。
+    closed_keys = set()
+    if snapshot.closed_members is not None:
+        closed_keys = {
+            (r["instrument_id"], r["in_date"]) for r in snapshot.closed_members.to_dicts()
+        }
+    changes.sort(
+        key=lambda r: (
+            0 if (r["instrument_id"], r["in_date"]) in closed_keys else 1,
+            r["instrument_id"],
+            r["in_date"],
+        )
+    )
     frames = (
         (
             contracts.SCHEME,
@@ -165,7 +200,6 @@ async def write_industry_snapshot(
             contracts.INDUSTRY_NODE,
             snapshot.nodes.with_columns(pl.lit(None).cast(pl.String).alias("parent_code")),
         ),
-        (contracts.INSTRUMENT_INDUSTRY, snapshot.members),
     )
     for contract, frame in frames:
         table = f"{contract.schema}.{contract.table}"
@@ -187,3 +221,41 @@ async def write_industry_snapshot(
         )
         async with conn.cursor() as cur:
             await cur.executemany(statement, frame.select(columns).iter_rows())
+
+    for row in changes:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO classify.instrument_industry "
+                "(instrument_id,scheme_code,level,industry_code,in_date,out_date,"
+                "available_at,source) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT "
+                "(instrument_id,scheme_code,level,in_date) DO UPDATE SET "
+                "industry_code=EXCLUDED.industry_code,out_date=EXCLUDED.out_date,"
+                "available_at=EXCLUDED.available_at,source=EXCLUDED.source,updated_at=now()",
+                tuple(row[c] for c in contracts.INSTRUMENT_INDUSTRY.columns),
+            )
+
+
+def industry_changes(existing: list[dict], snapshot: IndustrySnapshot) -> list[dict]:
+    """仅产出实质变化；历史闭区间只收口已有行，不扩大当前节点的历史认证。"""
+    by_key = {(r["instrument_id"], r["in_date"]): r for r in existing}
+    changes = []
+    closed = snapshot.closed_members.to_dicts() if snapshot.closed_members is not None else []
+    for row, historical in [(r, True) for r in closed] + [
+        (r, False) for r in snapshot.members.to_dicts()
+    ]:
+        old = by_key.get((row["instrument_id"], row["in_date"]))
+        if old is None and historical:
+            continue
+        if old and (old["industry_code"], old["out_date"], old["source"]) == (
+            row["industry_code"],
+            row["out_date"],
+            row["source"],
+        ):
+            continue
+        if historical and old and old["industry_code"] != row["industry_code"]:
+            raise ValueError("Source closure conflicts with stored industry identity")
+        if old and row["available_at"] < old["available_at"]:
+            raise ValueError("Stale industry observation would overwrite a newer interval")
+        changes.append(row)
+    return changes

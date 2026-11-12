@@ -88,3 +88,33 @@ async def test_writer_requires_outer_transaction_and_unchanged_owner():
     assert not any(
         "INSERT" in str(call) or "DELETE" in str(call) for call in conn.execute.call_args_list
     )
+
+
+def test_same_security_changes_industry_closes_old_interval():
+    from gr_data.ingest.tushare.industry import industry_changes
+
+    old = normalize([member()]).members.to_dicts()
+    source = normalize([member(last="20261105"), member("801120.SI", first="20261105")])
+    changes = industry_changes(old, source)
+    assert len(changes) == 2
+    assert changes[0]["out_date"] == date(2026, 11, 5)
+    assert changes[1]["industry_code"] == "801120.SI"
+
+
+def test_security_removed_without_replacement_closes_interval():
+    from gr_data.ingest.tushare.industry import industry_changes
+
+    old = normalize([member()]).members.to_dicts()
+    source = normalize([member(last="20261105")])
+    assert source.members.is_empty()
+    changes = industry_changes(old, source)
+    assert len(changes) == 1 and changes[0]["out_date"] == date(2026, 11, 5)
+
+
+def test_unchanged_industry_preserves_first_observation():
+    from gr_data.ingest.tushare.industry import industry_changes
+
+    old = normalize([member()]).members.to_dicts()
+    before = old[0]["available_at"]
+    assert industry_changes(old, normalize([member()])) == []
+    assert old[0]["available_at"] == before

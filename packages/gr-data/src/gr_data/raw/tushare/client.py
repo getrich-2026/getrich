@@ -59,6 +59,8 @@ PAGE_LIMITS: dict[str, int] = {
     "index_basic": 5000,
     "index_classify": 2000,
     "index_member_all": 2000,
+    "fina_indicator": 100,
+    "fina_indicator_vip": 100,
     "fut_basic": 5000,
     "etf_basic": 5000,
     # 官方 doc_id=19 单次上限 15000；取保守值只会多翻页，不会漏数据。
@@ -141,6 +143,12 @@ class TushareProClient:
             page = self.query(api_name, limit=limit, offset=offset, **params)
             if page.empty:
                 break
+            if (
+                api_name in {"fina_indicator", "fina_indicator_vip"}
+                and frames
+                and page.equals(frames[-1])
+            ):
+                raise PermanentError(f"Repeated financial pagination page endpoint={api_name}")
             if guarded:
                 if len(page) > limit or "ts_code" not in page:
                     raise PermanentError(f"Invalid pagination response endpoint={api_name}")

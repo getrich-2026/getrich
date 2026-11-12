@@ -13,6 +13,13 @@ from gr_data.diagnostic_publication import portfolio_hash
 
 METRICS = frozenset({"annual_variance", "volatility", "daily_prediction_volatility"})
 
+ENHANCED_METRICS = METRICS | {
+    "risk_contribution",
+    "risk_contribution_ratio",
+    "marginal_risk_contribution",
+    "l3_effective_count",
+}
+
 
 def input_weights(summary: dict[str, Any]) -> tuple[dict[int, Decimal], list[dict[str, Any]]]:
     """从固定输入回显还原完整分母份额，未识别项仍占分母，重复项合并。"""
@@ -67,8 +74,12 @@ def scope(version: dict[str, Any]) -> dict[str, Any]:
         or value.get("as_of") != str(version.get("as_of_date"))
         or value.get("model") != "v2"
         or not value.get("run_id")
-        or set(value.get("metrics") or ()) != METRICS
-        or (kind == "security_universe" and contract != "diag-publication-v2-universe")
+        or set(value.get("metrics") or ())
+        != (ENHANCED_METRICS if contract == "diag-publication-v3" else METRICS)
+        or (
+            kind == "security_universe"
+            and contract not in {"diag-publication-v2-universe", "diag-publication-v3"}
+        )
         or (kind == "exact_portfolio" and contract != "diag-publication-v1")
     ):
         raise BadRequest("publication scope identity is invalid", http_status=503)

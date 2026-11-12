@@ -223,11 +223,16 @@ def load_api_settings(environment: Environment | None = None) -> ApiSettings:
             raise SettingsError("WEB_CORS_ORIGINS must be explicitly configured outside dev")
         if "*" in web.cors_origins:
             raise SettingsError("WEB_CORS_ORIGINS must use explicit origins outside dev")
-    if app_env == "prod" and all(
+        if any(
+            urlsplit(origin).scheme not in {"http", "https"} or not urlsplit(origin).hostname
+            for origin in web.cors_origins
+        ):
+            raise SettingsError("WEB_CORS_ORIGINS requires http/https origins with a hostname")
+    if app_env == "prod" and any(
         urlsplit(origin).hostname in {"localhost", "127.0.0.1", "::1"}
         for origin in web.cors_origins
     ):
-        raise SettingsError("WEB_CORS_ORIGINS must include a non-local origin in prod")
+        raise SettingsError("WEB_CORS_ORIGINS must not include local origins in prod")
     common = load_worker_settings(env)
     return ApiSettings(
         root=common.root,

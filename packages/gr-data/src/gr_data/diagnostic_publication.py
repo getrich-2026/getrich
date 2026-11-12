@@ -33,6 +33,9 @@ BASIC_DATASETS = (
 )
 
 
+ENHANCED_BASIC_DATASETS = (*BASIC_DATASETS, "fundamental.indicator_q")
+
+
 @dataclass(frozen=True)
 class InputReceipt:
     """已验收的基础观察；日期范围和manifest为真实证据，不采集或填补数据。"""
@@ -91,6 +94,7 @@ async def admit_risk_universe(
     units_evidence: dict[str, Any],
     evidence: dict[str, Any],
     metrics: Sequence[str] = ("annual_variance", "daily_prediction_volatility", "volatility"),
+    contract_version: str = "diag-publication-v2-universe",
 ) -> UUID:
     """验收同run证券清单内任意非负权重组合的指定指标，不扩为旧精确组合证据。
 
@@ -107,8 +111,8 @@ async def admit_risk_universe(
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """SELECT * FROM factor.risk_universe_admission
-                   WHERE run_id=%s AND security_hash=%s""",
-                (run_id, scope),
+                   WHERE run_id=%s AND security_hash=%s AND contract_version=%s""",
+                (run_id, scope, contract_version),
             )
             old = await cur.fetchone()
             expected = {
@@ -130,8 +134,8 @@ async def admit_risk_universe(
             await cur.execute(
                 """INSERT INTO factor.risk_universe_admission
                    (admission_id,run_id,receipt_id,as_of_date,security_ids,security_hash,
-                    metrics,factor_order_hash,units_evidence,evidence)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    metrics,factor_order_hash,units_evidence,evidence,contract_version)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     admission_id,
                     run_id,
@@ -143,6 +147,7 @@ async def admit_risk_universe(
                     factor_order_hash,
                     Jsonb(units_evidence),
                     Jsonb(evidence),
+                    contract_version,
                 ),
             )
             await cur.executemany(
@@ -175,7 +180,7 @@ async def accept_input(
         ValueError: 未验收、归属冲突、修订过时或同观察证据不同。
     """
     if (
-        receipt.dataset_key not in BASIC_DATASETS
+        receipt.dataset_key not in ENHANCED_BASIC_DATASETS
         or receipt.quality.get("accepted") is not True
         or not receipt.evidence
     ):
@@ -365,16 +370,28 @@ async def publish_version(
     as_of_date: date,
     components: Sequence[Component],
     available_options: dict[str, Any],
+    contract_version: str | None = None,
 ) -> str:
     """在排他屏障内一次发布完整清单；最新失效版本不能原地复活。
 
     收据包含源范围和验收证据。发布不填补数据、不做历史PIT认证。
     同version重放必须清单完全一致；已失效时拒绝发布同一version。
     """
-    keys = {(c.dataset_key, c.partition_key) for c in components}
-    if len(keys) != len(components) or not set(BASIC_DATASETS) <= {
-        c.dataset_key for c in components
+    universe_scope = (available_options.get("publication_scope") or {}).get(
+        "scope_type"
+    ) == "security_universe"
+    contract = contract_version or (
+        "diag-publication-v2-universe" if universe_scope else "diag-publication-v1"
+    )
+    if contract not in {
+        "diag-publication-v1",
+        "diag-publication-v2-universe",
+        "diag-publication-v3",
     }:
+        raise ValueError("Unsupported diagnostic publication contract")
+    required = ENHANCED_BASIC_DATASETS if contract == "diag-publication-v3" else BASIC_DATASETS
+    keys = {(c.dataset_key, c.partition_key) for c in components}
+    if len(keys) != len(components) or not set(required) <= {c.dataset_key for c in components}:
         raise ValueError(
             "Publication requires every diagnostic base dataset exactly once per partition"
         )
@@ -418,7 +435,7 @@ async def publish_version(
                 await cur.execute(
                     """SELECT admission_id,security_ids,security_hash,metrics,factor_order_hash,
                               units_evidence,evidence FROM factor.risk_universe_admission
-                       WHERE run_id=%s ORDER BY security_hash""",
+                       WHERE run_id=%s ORDER BY security_hash,admission_id""",
                     (run_id,),
                 )
                 universe_admissions.extend(await cur.fetchall())
@@ -430,7 +447,6 @@ async def publish_version(
             }
             scope = available_options.get("publication_scope") or {}
             universe_scope = scope.get("scope_type") == "security_universe"
-            contract = "diag-publication-v2-universe" if universe_scope else "diag-publication-v1"
             if universe_admissions:
                 manifest["universe_admissions"] = universe_admissions
             if universe_scope:

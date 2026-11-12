@@ -657,6 +657,26 @@ def _report_mode(intent: str) -> str:
 # ===========================================================================
 
 
+async def _fetch_annual_roe(
+    db: DictConnection, ids: list[int], *, as_of: date
+) -> dict[int, dict[str, Any]]:
+    """仅v3读取已签财务组成；选最新完整年度及当时已披露修订。"""
+    context = publication.current.get()
+    if context is None or context.version.get("contract_version") != "diag-publication-v3":
+        return {}
+    await publication.require_coverage(db, as_of, as_of, ("fundamental.indicator_q",))
+    async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT DISTINCT ON(instrument_id) instrument_id,roe,end_date,ann_date "
+            "FROM fundamental.indicator_q WHERE instrument_id=ANY(%s) "
+            "AND end_date<=%s AND ann_date<=%s AND available_at<=%s "
+            "AND EXTRACT(MONTH FROM end_date)=12 AND EXTRACT(DAY FROM end_date)=31 "
+            "AND source='tushare' ORDER BY instrument_id,end_date DESC,ann_date DESC",
+            (diagnosis_scope.base_ids(ids), as_of, as_of, publication.cutoff()),
+        )
+        return {r["instrument_id"]: r for r in await cur.fetchall()}
+
+
 async def _fetch_industry(
     db: DictConnection, ids: list[int], *, scheme_code: str, level: int, as_of: date
 ) -> dict[int, IndustryAssignment]:
@@ -1092,9 +1112,35 @@ def _scoped_risk(holdings: list[CalcHolding], loaded: LoadedRiskModel) -> ModelR
             reason="本次单日范围与指标已准入；全区间未校准。",
             method="forward",
         )
+    enhanced = set(admission["metrics"]) & {
+        "risk_contribution",
+        "risk_contribution_ratio",
+        "marginal_risk_contribution",
+        "l3_effective_count",
+    }
+    computed = None
+    if enhanced:
+        computed = compute_model_risk(
+            [(h.instrument_id, float(h.weight)) for h in holdings],
+            loaded.inputs,
+            high_threshold=0.7,
+            include_risk_sources=False,
+        )
+        for metric in enhanced:
+            value = getattr(computed, metric)
+            values[metric] = (
+                degraded(
+                    value["value"],
+                    reason_code="not_calibrated",
+                    reason="本次单日增强指标已准入；全区间未校准。",
+                    method="forward",
+                )
+                if has_value(value)
+                else value
+            )
     facts = {
         "missing": [],
-        "negative_contribution": False,
+        "negative_contribution": bool(computed and computed.facts.get("negative_contribution")),
         "calibrated": admission["calibrated"],
         "run_id": admission["run_id"],
         "receipt_id": admission["receipt_id"],
@@ -1211,6 +1257,24 @@ async def _compute_plan(
         category=await _fetch_category(db, ids, as_of=as_of),
         valuation=await _fetch_valuation(db, ids, as_of=as_of),
     )
+    annual_roe = await _fetch_annual_roe(db, ids, as_of=as_of)
+    context = publication.current.get()
+    if context is not None and context.version.get("contract_version") == "diag-publication-v3":
+        for entry in metrics["instrument_facts"]["value"].values():
+            entry["roe"] = unavailable(
+                reason_code="coverage_below_threshold",
+                reason="缺少诊断时已披露的有效年度加权平均ROE。",
+            )
+    for iid, row in annual_roe.items():
+        metrics["instrument_facts"]["value"][str(iid)].update(
+            roe_report_year=row["end_date"].year, roe_ann_date=row["ann_date"].isoformat()
+        )
+        if row["roe"] is not None:
+            metrics["instrument_facts"]["value"][str(iid)].update(
+                roe={"status": "ok", "value": float(row["roe"]), "method": "annual_roe_waa"},
+                roe_report_year=row["end_date"].year,
+                roe_ann_date=row["ann_date"].isoformat(),
+            )
     coverage, original_weights = diagnosis_scope.initial_coverage(item.summary)
     loaded = await _load_risk_model(
         db,
