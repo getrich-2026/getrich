@@ -344,6 +344,8 @@ class MaxIndustry(ApiModel):
 class InstrumentFacts(ApiModel):
     """PA-07 个股展示字段；各字段独立表达可用性，不用 0 或缺省值顶替。"""
 
+    industry_code: str | None = None
+    industry_name: str | None = None
     total_mv_yi: MetricValue[FiniteFloat]  # 总市值，亿元；入库为元，换算一处完成
     pb: MetricValue[FiniteFloat]  # 原值展示，非正值不截断
     valuation_date: date | None  # 总市值与 PB 的数据日期
@@ -366,6 +368,7 @@ class ExposureMetrics(ApiModel):
     l1_count: MetricValue[int]
     l2_effective_count: MetricValue[FiniteFloat]
     # 键为行业代码；缺失归入保留键 unclassified，不重新归一化（PA-05）
+    industry_labels: dict[str, str] = Field(default_factory=dict)
     industry_distribution: MetricValue[dict[str, Ratio]]
     max_industry: MetricValue[MaxIndustry]
     market_distribution: MetricValue[dict[str, Ratio]]  # 键 cn_a/hk/us/other

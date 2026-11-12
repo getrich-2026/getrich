@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 #: ``diag.diagnosis_run.payload`` 的结构版本。payload 是 CalculationPayload 同形 JSON，
 #: 缓存字段增删必须同步 +1；它也进入 calculation_hash，旧结构不会被新代码复用。
-PAYLOAD_SCHEMA_VERSION = "7.1"
+PAYLOAD_SCHEMA_VERSION = "7.2"
 
 #: 进程时区不能决定业务日期；数据库连接虽钉住了会话时区，却不会改变 Python 进程时区。
 PLATFORM_TZ = ZoneInfo("Asia/Shanghai")

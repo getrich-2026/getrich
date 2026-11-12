@@ -212,6 +212,13 @@ def load_api_settings(environment: Environment | None = None) -> ApiSettings:
     if web.allow_mock_auth and app_env != "dev":
         # 先于其余校验，且不论是否严格模式都拒绝启动：误开即任何人可冒充任意用户。
         raise SettingsError("GETRICH_ALLOW_MOCK_AUTH is only allowed when APP_ENV=dev")
+    if app_env != "dev":
+        if web.jwt_secret.strip() in ("", "getrich-dev-secret-change-in-prod"):
+            raise SettingsError("JWT_SECRET must be explicitly configured outside dev")
+        if not env.values.get("WEB_CORS_ORIGINS", "").strip() or not web.cors_origins:
+            raise SettingsError("WEB_CORS_ORIGINS must be explicitly configured outside dev")
+        if "*" in web.cors_origins:
+            raise SettingsError("WEB_CORS_ORIGINS must use explicit origins outside dev")
     common = load_worker_settings(env)
     return ApiSettings(
         root=common.root,

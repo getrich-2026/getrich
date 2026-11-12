@@ -17,10 +17,10 @@ if TYPE_CHECKING:
 def verify_signature(raw_body: bytes, signature: str | None, *, secret: str | None = None) -> None:
     """HMAC-SHA256 验签。
 
-    由应用配置传入 PAYMENT_WEBHOOK_SECRET；未设置时保留既有的开发模式行为。
+    由应用配置传入 PAYMENT_WEBHOOK_SECRET；未配置时拒绝回调。
     """
-    if not secret:
-        return
+    if not secret or not secret.strip():
+        raise Unauthorized("payment webhook is not configured", http_status=503)
     if not signature:
         raise Unauthorized("missing X-Webhook-Signature header")
     expected = hmac.new(

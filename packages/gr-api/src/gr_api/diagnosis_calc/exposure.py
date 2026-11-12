@@ -170,6 +170,7 @@ def compute_exposure(
         # 一期只接受沪深 A 股个股（PA-01），不存在需要穿透的基金持仓。
         "lookthrough_coverage": ok(1.0),
     }
+    metrics["industry_labels"] = {}
     facts: dict[str, Any] = {"coverage": {}, "missing": {}, "industry_names": {}}
 
     # 行业（PA-05）：只在已验证的体系下出数，缺失单列 unclassified。
@@ -199,6 +200,7 @@ def compute_exposure(
         facts["coverage"]["industry"] = data_coverage(holdings, missing)
         facts["missing"]["industry"] = missing
         facts["industry_names"] = names
+        metrics["industry_labels"] = names
 
     # 资产类别与市场（PA-06）：缺失同样单列，不重新归一化。
     for metric_id, field in (
@@ -242,7 +244,14 @@ def compute_exposure(
     )
 
     metrics["instrument_facts"] = ok(
-        {str(i): _instrument_facts(valuation.get(i), as_of=as_of) for i in ids}
+        {
+            str(i): {
+                **_instrument_facts(valuation.get(i), as_of=as_of),
+                "industry_code": industry[i].code if industry_scheme and i in industry else None,
+                "industry_name": industry[i].name if industry_scheme and i in industry else None,
+            }
+            for i in ids
+        }
     )
     return metrics, facts
 

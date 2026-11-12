@@ -5,7 +5,7 @@ into the orders/subscriptions tables. The two functions are
 orthogonal:
 
 - `verify_signature`: synchronous HMAC-SHA256 check, secret read from
-  the `PAYMENT_WEBHOOK_SECRET` env var. Skipped in dev (no secret).
+  application config. Missing secrets reject the callback.
 - `handle_webhook`: async state-transition for the order + linked
   subscription. Idempotent on `payment_ref`.
 """
@@ -108,16 +108,11 @@ def _body(**overrides: Any) -> PaymentWebhookIn:
 # ---------------------------------------------------------------------------
 
 
-def test_verify_signature_skips_when_secret_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """In dev mode, the service MUST allow webhooks through — the
-    spec explicitly states `PAYMENT_WEBHOOK_SECRET` being unset
-    bypasses verification. Otherwise dev/test environments break.
-    """
-    monkeypatch.delenv("PAYMENT_WEBHOOK_SECRET", raising=False)
-    # No exception raised.
-    verify_signature(b"{}", signature=None, secret=os.environ.get("PAYMENT_WEBHOOK_SECRET"))
+def test_verify_signature_rejects_unconfigured_secret() -> None:
+    for secret in (None, "", "  "):
+        with pytest.raises(Unauthorized) as exc:
+            verify_signature(b"{}", signature=None, secret=secret)
+        assert exc.value.http_status == 503
 
 
 def test_verify_signature_rejects_missing_header(

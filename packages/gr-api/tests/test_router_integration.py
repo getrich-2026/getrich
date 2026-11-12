@@ -25,7 +25,7 @@ to, plus the auth / envelope / request-id plumbing.
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -189,15 +189,13 @@ async def test_admin_imports_get_job_route_returns_payload(
 # ===========================================================================
 
 
-def test_payments_webhook_skips_signature_when_secret_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When PAYMENT_WEBHOOK_SECRET is not set, ``verify_signature`` is a no-op."""
-    monkeypatch.delenv("PAYMENT_WEBHOOK_SECRET", raising=False)
-    # Should not raise.
-    payment_svc.verify_signature(
-        b"{}", "any-signature", secret=os.environ.get("PAYMENT_WEBHOOK_SECRET")
-    )
+def test_payments_webhook_rejects_unconfigured_secret() -> None:
+    """未配置密钥时拒绝支付回调。"""
+    from gr_api.errors import Unauthorized
+
+    with pytest.raises(Unauthorized) as exc:
+        payment_svc.verify_signature(b"{}", "any-signature", secret="")
+    assert exc.value.http_status == 503
 
 
 def test_payments_webhook_rejects_bad_signature(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,10 +225,13 @@ def test_payments_webhook_accepts_correct_hmac(monkeypatch: pytest.MonkeyPatch) 
 
 async def test_payments_webhook_route_envelopes_handle_result(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """POST /webhooks/payment wraps the handle_webhook result in the envelope."""
     from fastapi.requests import Request
+    from gr_api.config import load_api_settings
     from gr_api.routers.payments import payment_webhook
+    from gr_tools.config import Environment
 
     monkeypatch.delenv("PAYMENT_WEBHOOK_SECRET", raising=False)
 
@@ -259,12 +260,18 @@ async def test_payments_webhook_route_envelopes_handle_result(
         receive=receive,
     )
 
+    import hashlib
+    import hmac
+
+    signature = hmac.new(b"fixture-secret", payload, hashlib.sha256).hexdigest()
     response = await payment_webhook(
         request=request,
-        x_webhook_signature=None,
+        x_webhook_signature=signature,
         db=_FakeConn(_FakeCursor()),
         rid="rid-wh",
-        settings=SimpleNamespace(payment_webhook_secret=""),
+        settings=load_api_settings(
+            Environment(tmp_path, {"PAYMENT_WEBHOOK_SECRET": "fixture-secret"})
+        ),
     )
 
     assert response["code"] == 0

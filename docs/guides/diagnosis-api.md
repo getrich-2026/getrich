@@ -2,7 +2,7 @@
 
 面向后端接口使用者，说明独立于网页的调用方式、响应和启停。字段真源为 `/openapi.json`、[请求模型](../../packages/gr-api/src/gr_api/schemas/diagnosis.py)和[响应模型](../../packages/gr-api/src/gr_api/schemas/diagnosis_response.py)；设计 OpenAPI 不能替代实现。
 
-状态（2026-11-10）：工作库定向055、新证券范围发布、新连接读回及真实TCP HTTP多用户验收通过。本轮交付仅后端API、迁移及数据发布；浏览器测试仅补充证据，现有apps/web改动保留待另审，未部署网页。用户已批准正式后端部署与启用；当前正式部署主机、服务进程和对外地址待明确，正式地址复验待此信息到位后执行，常规 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 未改。
+历史数据验收状态（2026-11-10）：工作库定向055、新证券范围发布、新连接读回及真实TCP HTTP多用户验收通过。本轮交付仅后端API、迁移及数据发布；浏览器测试仅补充证据，现有apps/web改动保留待另审，未部署网页。用户已批准正式后端部署与启用；当前正式部署主机、服务进程和对外地址待明确，正式地址复验待此信息到位后执行，常规 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 未改。
 
 ## 已验收范围
 
@@ -107,7 +107,8 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 | 已识别的ETF、北交所、退市或其他范围外资产 | 422，要求修正后提交，不静默删除 |
 | 日期与发布日不同或请求越界指标 | 422，不回退；请求 `metrics` 只能选annual_variance/volatility/daily_prediction_volatility |
 | 正权重证券无法解析、未在清单或缺同run风险输入 | 保留证券、原份额及原因，完整组合三项模型风险unavailable；不对覆盖子集重新归一化。没有可解析正权重标的时输入422 |
-| 他人或匿名读取有归属的结果、报告、数据质量或重算 | 403；使用另一个token不能取得原快照 |
+| 无凭证、无效或过期凭证访问私有诊断接口 | 401 unauthorized，使用标准诊断错误结构 |
+| 已登录用户读取他人结果、报告、数据质量或重算 | 403 forbidden |
 | 最新发布失效/无可用发布 | 新诊断503，不自动回退旧日期；历史产物仍可读，重算409 |
 
 例如80%茅台加20%无法解析的888888.SH，实际返回 `model_coverage.covered_weight="0.8"`、`data_quality.plans[0].coverage_summary.risk_model=0.8`，缺失项 `{"symbol":"888888.SH","weight":"0.2","reason":"unresolved_symbol"}`，三项完整模型风险均不可用且无value。不能把该请求解读为茅台100%的风险。
@@ -116,7 +117,7 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 
 ## 正式启用与回退
 
-工作库055及本版发布已验收，用户已批准仅后端正式部署与启用。当前正式服务目标未明确，发布候选准备完成但尚未部署/改开关，未部署网页。收到部署目标后按下列步骤直接继续，保留原授权。
+工作库055及本版发布已验收，用户已批准仅后端正式部署与启用。后续部署须先完成已批准的本地批次及审核；真实目标与上线状态在仓外维护。下列为已有版本的部署参考，不代表已部署。
 
 正式部署时：
 
@@ -128,3 +129,98 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 回退：撤下诊断新请求入口，将 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 并优雅重启；如需应用版本回退，选兼容现有schema的后端版本。保留055、全部账本、新旧publication/receipt、已保存报告和验收证据，不自动删表/逆改账本/恢复覆盖当前库。需要数据库恢复时，先从逻辑备份恢复全新隔离库核对，再另审切换方案。
 
 实现入口：[HTTP](../../packages/gr-api/src/gr_api/routers/diagnosis.py)、[读取与幂等](../../packages/gr-api/src/gr_api/services/diagnosis.py)、[固定版本读取](../../packages/gr-api/src/gr_api/services/diagnosis_publication.py)、[范围门禁](../../packages/gr-api/src/gr_api/services/diagnosis_scope.py)、[发布与收据](../../packages/gr-data/src/gr_data/diagnostic_publication.py)。迁移和工作验收见[实施计划](../plans/gr-data-reliability-implementation-plan.md#多用户-v1证券清单准入与工作库执行门槛2026-11-10)。
+
+
+## Batch 1 接口契约（2026-11-12）
+
+前端主页面消费 `/result` 与 `/data-quality`；`/report` 用于文字报告及分享报告。
+前端只格式化和展示，不重复计算指标。实际路径统一为 `/v1/diagnosis`，无 `/api` 段。
+本批只更新代码契约，不执行数据导入、迁移或发布；行业数据接入由后续批次完成。
+
+### 认证与启动
+
+除 `GET /share/{token}/report` 仍按分享 token 校验外，全部诊断端点必须登录，
+包括 options、spec-versions、提交、重算、结果、报告、数据质量、stream 和创建分享。
+匿名不再创建快照或读取选项；跨用户访问仍为 403。分享管理与流式展示不属于首批联调要求。
+
+非开发服务显式设置 `APP_ENV=staging` 或 `prod`，不得使用默认开发环境。
+这两种环境必须提供非默认、非空 `JWT_SECRET` 和非空、非通配的 `WEB_CORS_ORIGINS`，
+漏配即拒绝加载配置；mock 认证仅允许 dev。部署流程须检查 APP_ENV，库仍保留本地 dev 默认值。
+支付不作为诊断启动依赖，但任何环境下缺少支付验签密钥均返回 503，绝不跳过验签。
+以上错误与正常响应均保留 CSP、X-Frame-Options、X-Content-Type-Options、Referrer-Policy。
+
+### 返回字段及单位
+
+以下路径相对成功信封的 `data`。完整字段、可空性与枚举以响应模型及生成的 OpenAPI 为准；
+表中 `A`、`B`、`D` 分别表示 `plans[].section_a.value`、`section_b.value`、`section_d.value`。
+本表覆盖计划指标的路径，并不表示这些指标当前已经完成数据准入。
+
+| 路径 | 类型及单位 | 口径与展示 |
+| --- | --- | --- |
+| `plans[].input.holdings` / `calculation_holdings` | 持仓数组；权重见模型定义 | 原始输入与解析后的计算持仓分开，不用计算权重覆盖原份额 |
+| `A.topn` | MetricValue，value 为 n/actual_count/weight 数组 | Top1/3/5；weight 为小数份额，展示百分比乘 100 |
+| `A.hhi` / `l1_count` / `l2_effective_count` | MetricValue，数值 | HHI、持仓数、资金有效持仓数 |
+| `A.industry_distribution` / `max_industry` | MetricValue，行业权重分布 / 最大行业对象 | 按输入覆盖规则汇总；unclassified 为未分类 |
+| `A.industry_labels` | `dict[str,str]` | 行业代码到中文名；体系不可用时为空对象 |
+| `A.market_distribution` / `asset_category_distribution` | MetricValue，权重字典 | 市场与资产类别构成 |
+| `A.mktcap_distribution` / `pb_distribution` | MetricValue，权重字典 | 档位以 spec params 为准；缺失/异常单列，非正 PB 不代表便宜 |
+| `A.lookthrough_coverage` | MetricValue，小数份额 | 当前个股输入的穿透覆盖 |
+| `A.instrument_facts.value.<id>.industry_code` / `industry_name` | string 或 null | 逐股归属；未分类或体系不可用时均为 null |
+| `A.instrument_facts.value.<id>.total_mv_yi` / `pb` | MetricValue，亿元 / 倍数 | 总市值已换算亿元，禁止再次换算；估值日期在 valuation_date |
+| `A.instrument_facts.value.<id>.roe` | MetricValue，小数 | 后续接入最近完整年度加权平均 ROE；报告年份 roe_report_year、公告日期 roe_ann_date；当前不可用 |
+| `B.annual_variance` | MetricValue，年化小数方差 | 不作为百分比转换 |
+| `B.volatility.by_method.forward` / `daily_prediction_volatility` | MetricValue，小数波动率 | 前瞻年化 / 单日预测；百分比展示乘 100，年化天数见 annualization_days |
+| `B.instrument_betas.value[]` | instrument_id 与指标对象数组 | historical_volatility 为逐股历史年化小数波动率；beta 和 benchmark_correlation 当前不可用 |
+| `B.risk_contribution` / `risk_contribution_ratio` / `marginal_risk_contribution` | MetricValue，按 instrument_id 的字典 | 后续准入；分别为年化波动率贡献、贡献份额、边际贡献；前两项展示为百分点、百分比时乘 100 |
+| `B.l3_effective_count` | MetricValue，数值 | 后续准入；存在负贡献时不能直读为独立股票数 |
+| `D.correlation.by_method.historical` | MetricValue，instrument_ids 与 matrix | 矩阵轴按 instrument_ids 对齐；系数不做百分比转换 |
+| `D.avg_pairwise_correlation.by_method.historical` / `high_correlation_pairs.by_method.historical` | MetricValue，数值 / 股票对数组 | 与历史相关矩阵同口径，阈值以 spec 为准 |
+| `publication.declared_metrics` / `B.model_coverage` | 指标数组 / 覆盖对象 | 只开放该快照实际准入指标；模型卡片按 declared_metrics 裁剪 |
+| `data_quality.plans[]` | issues、coverage_summary、forced_disclosures | `/data-quality` 的明细，覆盖率为小数；issues.paths 指向结果 JSON 路径 |
+
+快照的 `as_of_date` 是诊断日期；`data_fingerprint` 固定数据版本，估值可有更早的逐股日期。
+历史指标通过 `method`、`window_target`、`window_actual`、`sample_count` 回显方法、窗口与有效样本；
+相关性和逐股波动率样本分别计算。`cov` 与 `options` 记录模型和区间选择，不用浏览器当前日期代替。
+L4、模型相关性、风格暴露等未准入字段继续不可用，文字报告不输出未准入的模型卡片及相应说明。
+
+载体缓存版本从 7.1 升为 7.2；新增行业字段不改写旧快照，旧载体经响应模型补空字典/null。
+这些缺省值表示旧结果未提供信息，不应显示为真实行业归属。
+
+### 状态与响应样例
+
+当前同步执行：POST 新建返回 **201**，幂等重放返回 **200**；GET 返回 **200**。
+同步响应已经是终态，不需要先轮询。不能承诺所有规模均为毫秒级，应按实际规模测量耗时。
+`run_status=partially_succeeded` 也是终态，表示有区块尚不可用，不应无限重试。
+下列 JSON 为契约摘录，省略的字段按 OpenAPI 返回，不能作为完整响应 fixture。
+
+正常可用的指标（成功响应 data 内）：
+
+```json
+{"plans":[{"section_a":{"status":"ready","value":{"hhi":{"status":"ok","value":0.345,"method":"exact"}}}}]}
+```
+
+部分不可用：区块 ready 只说明组装完成，应逐项检查指标状态；unavailable 无 value，严禁显示为 0。
+
+```json
+{"plans":[{"section_a":{"status":"ready","value":{"industry_distribution":{"status":"unavailable","reason_code":"data_not_validated","reason":"行业数据尚未完成验证。"}}}}]}
+```
+
+仅供未来异步化的合成示例：**202** + `Retry-After: 1`，当前真实计算链路不触发。
+前端只有遇到 pending/running 才按 links 查询；遇到 succeeded/partially_succeeded/failed 停止轮询。
+
+```json
+{"code":0,"message":"ok","data":{"run_status":"running","snapshot_id":"11111111-1111-4111-8111-111111111111"},"timestamp":0,"request_id":"synthetic-example"}
+```
+
+整单错误与成功信封不同，例如未登录 **401**：
+
+```json
+{"request_id":"synthetic-example","error":{"code":"unauthorized","message":"auth required: please log in","retryable":false,"issues":[]}}
+```
+
+参数错误为 422，`issues[].path` 是 JSON Pointer；同幂等键异体为 409。
+单方案失败时在成功信封中保留 plan 的 failed 状态与 error，不删除该方案；
+发布不可用时整单 503，不伪装成全零报告。所有示例均不含真实账号、联调地址或持仓。
+
+重算仅复制原持仓并修改 options，不支持替换持仓；调整股票或权重应创建新快照。
+原数据版本失效或无法取得时返回 409 `BASE_DATA_VERSION_UNAVAILABLE`，不使用最新版本替代。

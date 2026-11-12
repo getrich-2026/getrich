@@ -416,3 +416,13 @@ def test_report_shows_l4_with_companions_and_caveat() -> None:
     assert "risk_contribution:2" not in retail_ids
     assert "risk_contribution_ratio:2" in retail_ids
     assert math.isfinite(cards["l4_effective_count"]["value"]["value"])
+
+
+def test_report_only_shows_admitted_model_metrics() -> None:
+    model = _model([[0.04]], {1: [1.0], 2: [-0.8]}, {1: 0.01, 2: 0.01})
+    risk, _ = _sections([(1, 0.6), (2, 0.4)], model)
+    blocks = view._risk_blocks(risk, {"1": "甲", "2": "乙"}, "pro", {"volatility"})
+    cards = [c["metric_id"] for b in blocks if b["type"] == "metric_cards" for c in b["items"]]
+    assert "volatility.forward" in cards
+    assert not any(c.startswith(("l3", "l4", "risk_contribution", "marginal")) for c in cards)
+    assert not any("L4" in b.get("text", "") or "风险贡献" in b.get("text", "") for b in blocks)

@@ -614,7 +614,7 @@ def test_diagnosis_routes_keep_security_headers(monkeypatch: pytest.MonkeyPatch)
     ServerErrorMiddleware 处理，本来就拿不到这几个头。
     """
     from fastapi import FastAPI
-    from gr_api.deps import get_db
+    from gr_api.deps import get_db, require_user
     from gr_api.middleware import SecurityHeadersMiddleware
     from gr_api.routers.diagnosis import router
 
@@ -642,6 +642,7 @@ def test_diagnosis_routes_keep_security_headers(monkeypatch: pytest.MonkeyPatch)
         yield None
 
     app.dependency_overrides[get_db] = _fake_db
+    app.dependency_overrides[require_user] = lambda: "fixture-user"
     client = TestClient(app, raise_server_exceptions=False)
 
     r = client.get("/v1/diagnosis/spec-versions")

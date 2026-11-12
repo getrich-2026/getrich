@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
-from gr_api.deps import get_current_user, get_db, request_id
+from gr_api.deps import get_db, request_id, require_user
 from gr_api.errors import ApiError
 from gr_api.response import success
 from gr_api.schemas.diagnosis import (
@@ -97,6 +97,7 @@ class DiagnosisRoute(APIRoute):
                 else:
                     status_code, message, issues = exc.http_status, exc.message, exc.issues
                     code = exc.error_code or {
+                        401: "unauthorized",
                         403: "forbidden",
                         404: "not_found",
                         409: "idempotency_conflict",
@@ -121,7 +122,7 @@ router = APIRouter(
     prefix="/diagnosis",
     tags=["组合诊断"],
     route_class=DiagnosisRoute,
-    responses={code: {"model": ErrorResponse} for code in (403, 404, 409, 422, 503)},
+    responses={code: {"model": ErrorResponse} for code in (401, 403, 404, 409, 422, 503)},
 )
 
 
@@ -158,6 +159,7 @@ def _idempotency_key(raw: str | None) -> str | None:
 
 @router.post(
     "/snapshots",
+    dependencies=[Depends(require_user)],
     response_model=ApiResponse[SnapshotAccepted],
     responses={
         201: {"model": ApiResponse[SnapshotAccepted]},
@@ -168,7 +170,7 @@ async def create_snapshot(
     body: SnapshotRequest,
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    user_id: str | None = Depends(get_current_user),
+    user_id: str = Depends(require_user),
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
@@ -192,6 +194,7 @@ async def create_snapshot(
 
 @router.post(
     "/snapshots/{snapshot_id}/recompute",
+    dependencies=[Depends(require_user)],
     response_model=ApiResponse[SnapshotAccepted],
     responses={
         201: {"model": ApiResponse[SnapshotAccepted]},
@@ -203,7 +206,7 @@ async def recompute_snapshot(
     body: RecomputeRequest,
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    user_id: str | None = Depends(get_current_user),
+    user_id: str = Depends(require_user),
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
@@ -227,13 +230,14 @@ async def recompute_snapshot(
 
 @router.get(
     "/snapshots/{snapshot_id}/result",
+    dependencies=[Depends(require_user)],
     response_model=ApiResponse[DiagnosisResult | SnapshotProgress],
     responses={202: {"model": ApiResponse[SnapshotProgress]}},
 )
 async def get_result(
     snapshot_id: UUID,
     response: Response,
-    user_id: str | None = Depends(get_current_user),
+    user_id: str = Depends(require_user),
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
@@ -250,6 +254,7 @@ async def get_result(
 
 @router.get(
     "/snapshots/{snapshot_id}/report",
+    dependencies=[Depends(require_user)],
     response_model=ApiResponse[ReportResponse | SnapshotProgress],
     responses={202: {"model": ApiResponse[SnapshotProgress]}},
 )
@@ -257,7 +262,7 @@ async def get_report(
     snapshot_id: UUID,
     response: Response,
     user_level: str | None = Query(default=None, pattern=r"^(retail|pro)$"),
-    user_id: str | None = Depends(get_current_user),
+    user_id: str = Depends(require_user),
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
@@ -272,13 +277,14 @@ async def get_report(
 
 @router.get(
     "/snapshots/{snapshot_id}/data-quality",
+    dependencies=[Depends(require_user)],
     response_model=ApiResponse[DataQualityResponse | SnapshotProgress],
     responses={202: {"model": ApiResponse[SnapshotProgress]}},
 )
 async def get_data_quality(
     snapshot_id: UUID,
     response: Response,
-    user_id: str | None = Depends(get_current_user),
+    user_id: str = Depends(require_user),
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
@@ -319,11 +325,11 @@ async def _stream_sections(snapshot_id: UUID, result: dict, request: Request):
         yield sse_frame("complete", result, event_id="1")
 
 
-@router.get("/snapshots/{snapshot_id}/stream")
+@router.get("/snapshots/{snapshot_id}/stream", dependencies=[Depends(require_user)])
 async def stream_snapshot(
     snapshot_id: UUID,
     request: Request,
-    user_id: str | None = Depends(get_current_user),
+    user_id: str = Depends(require_user),
 ) -> StreamingResponse:
     """SSE 分批推送。
 
@@ -361,7 +367,11 @@ async def stream_snapshot(
 # ---------------------------------------------------------------- 口径版本
 
 
-@router.get("/spec-versions", response_model=ApiResponse[SpecVersionList])
+@router.get(
+    "/spec-versions",
+    dependencies=[Depends(require_user)],
+    response_model=ApiResponse[SpecVersionList],
+)
 async def list_spec_versions(
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
@@ -373,7 +383,11 @@ async def list_spec_versions(
     )
 
 
-@router.get("/spec-versions/current", response_model=ApiResponse[SpecVersionInfo])
+@router.get(
+    "/spec-versions/current",
+    dependencies=[Depends(require_user)],
+    response_model=ApiResponse[SpecVersionInfo],
+)
 async def get_current_spec_version(
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
@@ -392,12 +406,13 @@ async def get_current_spec_version(
 
 @router.post(
     "/snapshots/{snapshot_id}/share",
+    dependencies=[Depends(require_user)],
     status_code=201,
     response_model=ApiResponse[ShareTokenCreated],
 )
 async def create_share(
     snapshot_id: UUID,
-    user_id: str | None = Depends(get_current_user),
+    user_id: str = Depends(require_user),
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
@@ -433,7 +448,11 @@ async def get_shared_report(
     )
 
 
-@router.get("/options", response_model=ApiResponse[PublishedOptionsResponse])
+@router.get(
+    "/options",
+    dependencies=[Depends(require_user)],
+    response_model=ApiResponse[PublishedOptionsResponse],
+)
 async def get_options(
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),

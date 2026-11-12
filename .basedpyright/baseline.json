@@ -3084,14 +3084,6 @@
             {
                 "code": "reportArgumentType",
                 "range": {
-                    "startColumn": 17,
-                    "endColumn": 59,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportArgumentType",
-                "range": {
                     "startColumn": 11,
                     "endColumn": 35,
                     "lineCount": 1

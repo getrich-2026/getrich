@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from gr_api.deps import get_current_user, get_db
+from gr_api.deps import get_db, require_user
 from gr_api.diagnosis_calc.exposure import (
     CalcHolding,
     IndustryAssignment,
@@ -369,10 +369,10 @@ def api_client(monkeypatch: pytest.MonkeyPatch):
         yield object()
 
     async def user():
-        return None
+        return "11111111-1111-1111-1111-111111111111"
 
     app.dependency_overrides[get_db] = db
-    app.dependency_overrides[get_current_user] = user
+    app.dependency_overrides[require_user] = user
     result, _ = fixture_result()
 
     async def get_result(*args, **kwargs):
@@ -565,3 +565,28 @@ def test_two_stock_structure_report_shows_matrix_average_and_pairs() -> None:
         "data_not_validated"
     )
     assert "浦发银行 与 招商银行：1.00" in blocks[2]["text"]
+
+
+def test_report_filters_model_placeholders_by_snapshot_admission() -> None:
+    result, _ = fixture_result()
+    result["publication"] = {
+        "status": "available",
+        "recomputable": True,
+        "declared_metrics": ["annual_variance", "volatility", "daily_prediction_volatility"],
+    }
+    report = view.report(result, "pro")
+    serialized = json.dumps(report, ensure_ascii=False)
+    assert "L4" not in serialized
+    assert "风险贡献：" not in serialized
+
+
+def test_old_payload_defaults_industry_display_fields() -> None:
+    result, _ = fixture_result()
+    metrics = result["plans"][0]["section_a"]["value"]
+    metrics.pop("industry_labels", None)
+    if metrics["instrument_facts"]["status"] != "unavailable":
+        for facts in metrics["instrument_facts"]["value"].values():
+            facts.pop("industry_code", None)
+            facts.pop("industry_name", None)
+    validated = DiagnosisResult.model_validate(result).model_dump(mode="json")
+    assert validated["plans"][0]["section_a"]["value"]["industry_labels"] == {}

@@ -158,6 +158,8 @@ def _plan_issues(plan: dict[str, Any], facts: dict[str, Any]) -> list[dict[str, 
             )
     if plan["section_a"]["status"] == "ready":
         for key, metric in plan["section_a"]["value"].items():
+            if key == "industry_labels":
+                continue
             if metric["status"] != "ok":
                 issues.append(
                     {
@@ -703,10 +705,33 @@ def _model_blocks(risk: dict[str, Any], names: dict[str, str], level: str) -> li
 
 
 def _risk_blocks(
-    risk: dict[str, Any], names: dict[str, str], level: str = "retail"
+    risk: dict[str, Any],
+    names: dict[str, str],
+    level: str = "retail",
+    admitted_metrics: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """模型口径风险、逐股历史年化波动率；不可用项给出原因。"""
     blocks = _model_blocks(risk, names, level)
+    if admitted_metrics is not None:
+        filtered = []
+        for block in blocks:
+            if block["type"] == "metric_cards":
+                items = [
+                    item
+                    for item in block["items"]
+                    if item["metric_id"].split(":")[0].split(".")[0] in admitted_metrics
+                ]
+                if items:
+                    filtered.append({**block, "items": items})
+            elif block["text"].startswith("L4"):
+                if "l4_effective_count" in admitted_metrics:
+                    filtered.append(block)
+            elif block["text"].startswith(("风险贡献：", "部分持仓风险贡献")):
+                if "risk_contribution_ratio" in admitted_metrics:
+                    filtered.append(block)
+            elif "volatility" in admitted_metrics:
+                filtered.append(block)
+        blocks = filtered
     betas = risk["instrument_betas"]
     if has_value(betas):
         blocks.append(
@@ -832,7 +857,13 @@ def report(
             pid,
             "exposure",
             "构成与敞口",
-            ready(_exposure_blocks(a["value"], level, labels)) if a["status"] == "ready" else a,
+            ready(
+                _exposure_blocks(
+                    a["value"], level, {**labels, **a["value"].get("industry_labels", {})}
+                )
+            )
+            if a["status"] == "ready"
+            else a,
         )
         names = {str(h["instrument_id"]): h["name"] for h in p["input"]["calculation_holdings"]}
         b = p["section_b"]
@@ -840,7 +871,18 @@ def report(
             pid,
             "risk",
             "风险画像",
-            ready(_risk_blocks(b["value"], names, level)) if b["status"] == "ready" else b,
+            ready(
+                _risk_blocks(
+                    b["value"],
+                    names,
+                    level,
+                    set(result["publication"]["declared_metrics"])
+                    if result.get("publication") is not None
+                    else None,
+                )
+            )
+            if b["status"] == "ready"
+            else b,
         )
         add(pid, "style", "历史回放与分位", p["section_c"], "history")
         d = p["section_d"]
