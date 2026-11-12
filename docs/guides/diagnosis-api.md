@@ -2,12 +2,12 @@
 
 面向后端接口使用者，说明独立于网页的调用方式、响应和启停。字段真源为 `/openapi.json`、[请求模型](../../packages/gr-api/src/gr_api/schemas/diagnosis.py)和[响应模型](../../packages/gr-api/src/gr_api/schemas/diagnosis_response.py)；设计 OpenAPI 不能替代实现。
 
-状态（2026-11-12，Batch 3 本地增强批次）：新增056并按v3协议发布年度ROE及七项模型风险指标，日期仍为2026-11-05。仅后端与数据验收，常规诊断开关仍false；未部署远端、未修改前端。历史批次的说明以下文标注的协议边界为准。
+状态（2026-11-12，Batch 4 本地验收）：仓内两阶段日更已落地，工作库已从11-05推进至**2026-11-11**，12项基础输入与七项模型风险通过验收。11-12米筐原件未通过完整性门槛，阶段A中止且旧发布保持有效。常规开关仍false；未部署远端、未修改前端。
 
 ## 已验收范围
 
-- 日期 **2026-11-05**，米筐v2，原run `da212baf-9bfc-5014-8bff-0b574e8e7b9b`；不回退日期或模型。
-- 发布版本 `diag-v3-20261105-enhanced-20261112-v1`，5224只沪深A股（上交所2318、深交所2906）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
+- 本次验收日期 **2026-11-11**，米筐v2；不回退日期或模型。最新可用日期及清单以每次 `/options` 返回为准。
+- 本次验收发布 `diag-v3-20261111-daily-9cb3fe090904b3e6`，5225只沪深A股（上交所2319、深交所2906）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
 - 三项基础模型指标：`annual_variance`、`volatility.by_method.forward`（年化预测波动率）、`daily_prediction_volatility`。后两者都是小数，显示百分比时乘100；年化方差保持小数平方。
 - v3另准入 `risk_contribution`、`risk_contribution_ratio`、`marginal_risk_contribution`、`l3_effective_count`。L4、模型相关性、风格暴露和回放仍不可用。年度ROE为个股辅助字段，不是模型风险指标。
 - `calibrated=false`，指标状态为 `degraded/not_calibrated`：指定单日证券清单及准入指标的源值、单位和数值验收通过，全区间校准及P6尚未完成。不能解释为历史PIT或未准入风险指标已验收。
@@ -21,7 +21,7 @@
 成功响应的 `data` 返回新的 `access_token`、轮换后的 `refresh_token`、`token_type` 和 `user`。
 前端同时替换两个 token；无效或过期 refresh token 返回 401，重新登录。
 
-下例需要curl和jq。把 `BASE_URL` 改为获准启用的服务地址，把 `TOKEN_A` 设为本人有效token。本轮临时验收地址127.0.0.1:18011已停止，不作为正式地址。
+下例需要curl和jq。把 `BASE_URL` 改为获准启用的服务地址，把 `TOKEN_A` 设为本人有效token。本轮仅使用进程内ASGI验收，没有常驻联调服务；真实地址通过仓外渠道交付。
 
 ```bash
 export BASE_URL='https://YOUR_API_HOST'
@@ -29,7 +29,6 @@ export TOKEN_A='YOUR_ACCESS_TOKEN'
 
 cat > portfolio.json <<'JSON'
 {
-  "as_of_date": "2026-11-05",
   "plans": [{
     "plan_id": "regression",
     "holdings": [
@@ -57,7 +56,7 @@ jq '.data | {as_of_date,data_fingerprint,publication,
   plans:[.plans[] | {plan_id,risk:.section_b.value}]}' result.json
 ```
 
-POST新建返回201和 `data.links.result/report/data_quality`。按返回的links读取结果、报告或缺失原因；结果已经同步计算。下列是本次三股工作库GET响应的字段摘录，保留实际层级，省略其他诊断字段：
+POST新建返回201和 `data.links.result/report/data_quality`。按返回的links读取结果、报告或缺失原因；结果已经同步计算。请求省略as_of_date时使用最新可用发布。下列是11-05验收当时的历史GET响应摘录，已被日更取代，不代表当前新诊断的日期或数值；保留实际层级，省略其他字段：
 
 ```json
 {
@@ -224,6 +223,8 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 
 对应年化预测波动率21.2906386217%，单日预测波动率1.3411841678%。用独立资产协方差路线复算，rtol=1e-12/atol=1e-15通过。最终F和特异方差从库内pct2_annual各除10000恢复年化小数方差，再仅除252一次取得日方差；不再次平方特异方差。
 
+以上11-05数值与后续调权数字为历史验收样例，不作为新交易日的固定预期值。
+
 ## 修改权重、多个方案与重算
 
 修改股票或权重后，向同一个 `POST /snapshots` 提交新的**完整组合**及新的Idempotency-Key。例如三股改为20%/30%/50%，三项实际结果为0.0410145604591487、0.20252051861267958和0.012757593515166138。
@@ -244,7 +245,7 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 | 正权重证券无法解析、未在清单或缺同run风险输入 | 保留证券、原份额及原因，完整组合本次准入模型风险unavailable；不对覆盖子集重新归一化。没有可解析正权重标的时输入422 |
 | 无凭证、无效或过期凭证访问私有诊断接口 | 401 unauthorized，使用标准诊断错误结构 |
 | 已登录用户读取他人结果、报告、数据质量或重算 | 403 forbidden |
-| 最新发布失效/无可用发布 | 新诊断503，不自动回退旧日期；历史产物仍可读，重算409 |
+| 最新发布失效、滞后超过一个已完成交易日或日历不完整 | 新诊断503，不自动回退旧日期；历史产物仍可读，失效版本重算409 |
 
 例如80%茅台加20%无法解析的888888.SH，实际返回 `model_coverage.covered_weight="0.8"`、`data_quality.plans[0].coverage_summary.risk_model=0.8`，缺失项 `{"symbol":"888888.SH","weight":"0.2","reason":"unresolved_symbol"}`，本次准入的完整模型风险均不可用且无value。不能把该请求解读为茅台100%的风险。
 
@@ -256,9 +257,9 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 
 正式部署时：
 
-1. 发布仅已验收后端及依赖，包含注册必填列修复和gr-api显式依赖gr-signal的声明；后者在独立安装时验证为必需。使用锁定依赖的非editable安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），不携带apps/web部署。先核对056唯一账本和新v3版本可用性，不再跑全目录迁移。
+1. 发布仅已验收后端及依赖，包含注册必填列修复和gr-api显式依赖gr-signal的声明；后者在独立安装时验证为必需。使用锁定依赖的非editable安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），不携带apps/web部署。已有库先核对现行57条账本与磁盘及v3发布可用性，不把迁移作为日更动作；全新库按部署流程初始化完整DDL。
 2. 在现有API运行环境设置 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`，保持 `GETRICH_ALLOW_MOCK_AUTH=false` 及既有JWT配置，优雅重启既有API进程。
-3. 用真实登录账号读options，确认最新日期、版本、动态证券清单和declared_metrics（v3七项）；调用三股样本复现1.3411841678%，验证不同用户的403及缺失持仓提示后再放通流量。
+3. 用真实登录账号读options，确认最新日期、版本、动态证券清单和declared_metrics（v3七项）；独立复算当日三股样本，不能将11-05历史固定数值作为新日期门禁；验证不同用户的403及缺失持仓提示后再放通流量。
 4. 运行中发布失效应返回503，先核查真实数据和收据，不为恢复出数而回退日期或放宽coverage。
 
 回退：撤下诊断新请求入口，将 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 并优雅重启；如需应用版本回退，选兼容现有schema的后端版本。保留055、全部账本、新旧publication/receipt、已保存报告和验收证据，不自动删表/逆改账本/恢复覆盖当前库。需要数据库恢复时，先从逻辑备份恢复全新隔离库核对，再另审切换方案。
@@ -383,7 +384,7 @@ canonical 本次只接纳覆盖诊断日期的归属区间，保留来源 `in_da
 | ROE、风险贡献与 L3 | 后续批次 | 本批不新增准入 |
 | Beta、L4、模型相关性、风格暴露与回放 | 尚未开放 | 保持 unavailable，不由行业接入自动开放 |
 
-本批新发布仍为 2026-11-05 数据，追平和日更属于后续批次。正式可用日期始终以 `/options` 为准。
+Batch 2当时验收日期为2026-11-05；Batch 4追平结果见末节。正式可用日期始终以 `/options` 为准。
 更新后旧发布可因输入修订失效，但历史快照的计算产物保留，不能把其结果日期自动替换为新版本日期。
 
 
@@ -462,3 +463,20 @@ ROE缺失不填零，现有年度数据与增量合并，公告日与实际观�
 所有v3七项风险指标仍为 `calibrated=false`，`/result`、`/report`及`/data-quality`
 按各自快照实际 `declared_metrics` 同步披露。旧三项快照保持原边界。风险贡献采用波动率贡献，
 满足 `sum(RC)=sqrt(annual_variance)`；不是方差贡献。L4、回放、Beta等仍未准入。
+
+
+### Batch 4 本地终验（2026-11-12）
+
+工作库已按11-06、11-09、11-10、11-11逐日发布，57条迁移账本及磁盘checksum不变，
+未重发11-05。最新清单5225只、12项基础输入/14项发布组成均有效。11-10新上市证券
+缺特异收益，按完整五件套门槛排除；11-11恢复完整准入。年度ROE共10460行，含新股
+定向补入的2024/2025年报，公告日与单位已核实。
+
+隔离库完成阶段A缺数保旧、阶段B基础/风险/发布三个故障点回滚、跨日发布和零写重放。
+工作库完整日期范围重跑及单日apply重放均零业务变更；11-12预检失败后，11-11输入指纹、
+收据头及有效发布保持不变。真实ASGI验证登录/刷新、七项风险独立复算、252日历史统计、
+行业/ROE、新股、旧报告可读和重算409、401/403及四个安全头；三端强制披露一致。
+本机三股新建请求约449ms，仅代表该样本；远端与最大规模性能留待后续联调。
+
+三个受影响包测试3087通过、250条件跳过、4既有xfail；关键隔离PG五项另行实测全部通过。
+Ruff、格式、全仓类型检查及迁移检查通过。未启用常规开关、未注册调度、未部署或推送。
