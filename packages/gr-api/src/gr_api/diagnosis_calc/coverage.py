@@ -1,8 +1,7 @@
 """PA-13 覆盖率阈值：把共享计算载体与当前请求的输入覆盖率合成最终状态。
 
-共享载体只描述已识别子集；同一载体可能被「完整输入」与「一半是未识别代码」的两个
-请求复用（§7.8 缓存纯度验收例），所以阈值必须在组装时按各自的输入份额重新判定，
-且不能就地修改共享对象。
+旧共享载体只描述已识别子集，组装时须按各自完整输入份额判定。V1完整风险载体的缓存键
+另固定完整输入范围，并以coverage_basis标明原分母，避免重复折算。两者都不得就地修改。
 """
 
 from __future__ import annotations
@@ -139,6 +138,12 @@ FULL_PORTFOLIO_MODEL_METRICS: tuple[tuple[str, str], ...] = (
 )
 
 
+def model_input_coverage(model_facts: Mapping[str, Any], resolved_weight: float) -> float:
+    """返回完整输入分母的模型覆盖率，兼容旧子集载体与V1完整输入载体。"""
+    raw = float(model_facts.get("coverage", 1.0))
+    return raw if model_facts.get("coverage_basis") == "full_input" else resolved_weight * raw
+
+
 def apply_model_coverage(
     risk: Mapping[str, Any],
     structure: Mapping[str, Any],
@@ -177,7 +182,7 @@ def apply_model_coverage(
             )
 
     degraded_at, unavailable_at = _thresholds(DEFAULT_GROUP, params)
-    coverage = resolved_weight * float(model_facts.get("coverage", 1.0))
+    coverage = model_input_coverage(model_facts, resolved_weight)
     for name in ("avg_pairwise_correlation", "high_correlation_pairs"):
         by_method = sections["section_d"][name]["by_method"]
         metric = by_method["forward"]

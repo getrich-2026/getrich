@@ -195,7 +195,12 @@ def validate_daily_risk(
 
 
 def _check_unit_ratio(
-    ratios: NDArray[np.float64], lower: float, upper: float, stage: str
+    ratios: NDArray[np.float64],
+    lower: float,
+    upper: float,
+    stage: str,
+    *,
+    diagnostic_only: bool = False,
 ) -> dict[str, object]:
     if not np.isfinite(ratios).all():
         _reject(stage, "non_finite_ratio")
@@ -208,9 +213,12 @@ def _check_unit_ratio(
         "outside_fraction": float(outside.size / ratios.size),
         "outside_indices": outside.tolist(),
     }
-    if not lower <= distribution["median"] <= upper:
+    report["diagnostic_only"] = diagnostic_only
+    report["median_outside"] = not lower <= distribution["median"] <= upper
+    report["fraction_outside_limit"] = outside.size * 5 > ratios.size
+    if not diagnostic_only and not lower <= distribution["median"] <= upper:
         _reject(stage, "median_unit_ratio_limit", report)
-    if outside.size * 5 > ratios.size:
+    if not diagnostic_only and outside.size * 5 > ratios.size:
         _reject(stage, "outside_unit_ratio_fraction_limit", report)
     return report
 
@@ -221,7 +229,7 @@ def validate_source_units(
     covariance: ArrayLike,
     specific_risk: ArrayLike,
 ) -> dict[str, object]:
-    """用固定 120 交易日完整历史复核已声明的年化小数源单位。
+    """用固定 120 日作源单位辅助复核；最终协方差／实现方差比率仅作诊断。
 
     Args:
         factor_returns: 120 × k 因子的日频小数简单收益。
@@ -233,11 +241,15 @@ def validate_source_units(
 
     Returns:
         rf=diag(Σ)/var(f)、rs=σ/std(u) 的分布及区间外数量，ddof=1。
-        该历史对照只检查单位，不证明预测准确或模型已校准。
+        供应商确认最终 daily 协方差为年化矩阵，含 Volatility Regime 调整；
+        与等权实现方差的比率不能独立判错单位或拒绝入库。比率分布保留为诊断，
+        不将最终 C 除以辅助矩阵的拟合比例，也不改变原值。具体确认原文／哈希由
+        调用方在运行与 ETL 的追加证据登记；这里不构造供应商认证或模型校准。
 
     Raises:
         ContractViolationError: 非完整 120 行、缺失、零实现方差、轴不一致；
-            rf 中位不在 [80,800]，rs 不在 [5,50]，或任一组区间外超过 20%。
+            特异标准差 rs 中位不在 [5,50] 或其区间外超过 20%。
+            协方差比率 rf 超限只提示；其余结构、有限性及零分母处理保持。
     """
     factors = _array(factor_returns, "factor_returns", 2)
     specifics = _array(specific_returns, "specific_returns", 2)
@@ -260,11 +272,15 @@ def validate_source_units(
             rs = sigma / specific_std
     except FloatingPointError:
         _reject("source_units", "invalid_realized_variance")
+    factor_ratio = _check_unit_ratio(rf, 80, 800, "factor_source_units", diagnostic_only=True)
+    warnings = list(cast(list[str], covariance_report["warnings"]))
+    if factor_ratio["median_outside"] or factor_ratio["fraction_outside_limit"]:
+        warnings.append("factor_forecast_vs_realized_variance_ratio_outside_diagnostic_band")
     return {
         "history_days": 120,
         "ddof": 1,
-        "factor_variance_ratio": _check_unit_ratio(rf, 80, 800, "factor_source_units"),
+        "factor_variance_ratio": factor_ratio,
         "specific_sigma_ratio": _check_unit_ratio(rs, 5, 50, "specific_source_units"),
         "covariance": covariance_report,
-        "warnings": covariance_report["warnings"],
+        "warnings": warnings,
     }

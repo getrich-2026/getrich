@@ -193,7 +193,7 @@ def test_source_unit_check_uses_ddof_one_and_annual_units():
     json.dumps(report, allow_nan=False)
 
 
-@pytest.mark.parametrize("piece,scale", [(2, 1 / 252), (2, 10000), (3, 1 / np.sqrt(252)), (3, 100)])
+@pytest.mark.parametrize("piece,scale", [(3, 1 / np.sqrt(252)), (3, 100)])
 def test_source_unit_check_rejects_daily_or_percent_unit_mismatch(piece, scale):
     inputs = list(_unit_inputs())
     inputs[piece] *= scale
@@ -204,8 +204,14 @@ def test_source_unit_check_rejects_daily_or_percent_unit_mismatch(piece, scale):
 def test_source_units_twenty_percent_boundary_and_larger_tail():
     report = validate_source_units(*_unit_inputs([1, 252, 252, 252, 252]))
     assert report["factor_variance_ratio"]["outside_fraction"] == 0.2
-    with pytest.raises(RiskQualityError, match="outside_unit_ratio_fraction_limit"):
-        validate_source_units(*_unit_inputs([1, 1, 252, 252, 252]))
+    report = validate_source_units(*_unit_inputs([1, 1, 252, 252, 252]))
+    factor_report = report["factor_variance_ratio"]
+    warnings = report["warnings"]
+    assert isinstance(factor_report, dict)
+    assert isinstance(warnings, list)
+    assert factor_report["diagnostic_only"] is True
+    assert factor_report["outside_count"] == 2
+    assert "factor_forecast_vs_realized_variance_ratio_outside_diagnostic_band" in warnings
     report = validate_source_units(*_unit_inputs(specific_ratios=[1, 15, 15, 15, 15]))
     assert report["specific_sigma_ratio"]["outside_fraction"] == 0.2
     with pytest.raises(RiskQualityError, match="outside_unit_ratio_fraction_limit"):
@@ -236,3 +242,23 @@ def test_source_units_never_fill_or_silently_change_reference_sample(fault):
         sigma[0] *= -1
     with pytest.raises(ContractViolationError):
         validate_source_units(factors, specifics, cov, sigma)
+
+
+@pytest.mark.parametrize("ratio", [1.0, 835.289881845, 2520000.0])
+def test_final_covariance_ratio_is_diagnostic_not_unit_rejection(ratio):
+    inputs = _unit_inputs([ratio] * 5)
+    before = np.array(inputs[2], copy=True)
+    report = validate_source_units(*inputs)
+    factor_report = report["factor_variance_ratio"]
+    assert isinstance(factor_report, dict)
+    assert factor_report["diagnostic_only"] is True
+    assert factor_report["outside_count"] == 5
+    assert np.array_equal(inputs[2], before)
+    assert report["warnings"]
+
+
+def test_ratio_diagnostic_does_not_allow_bad_final_matrix():
+    inputs = list(_unit_inputs([1000] * 5))
+    inputs[2][0, 1] = 1.0
+    with pytest.raises(RiskQualityError, match="asymmetry"):
+        validate_source_units(*inputs)

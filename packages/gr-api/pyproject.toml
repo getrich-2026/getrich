@@ -8,12 +8,14 @@ version = "0.1.2"
 description = "GetRich FastAPI 应用：给前端提供查询接口，并承载回测作业队列与 Celery worker"
 requires-python = ">=3.11"
 dependencies = [
+    "anyio>=4,<5",
     "bcrypt>=4.0",
     "bleach>=6.3.0",
     "celery[redis]>=5.4",
     "fastapi>=0.115,<0.142",
     "gr-backtest",
     "gr-data",
+    "gr-signal",
     "gr-tools",
     "numpy",
     "orjson>=3.10",
@@ -32,3 +34,6 @@ gr-worker = "gr_api.worker.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["gr_api*"]
+
+[tool.uv.sources]
+gr-signal = { workspace = true }

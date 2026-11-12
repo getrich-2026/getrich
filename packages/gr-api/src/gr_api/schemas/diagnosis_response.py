@@ -49,6 +49,7 @@ class ReasonCode(StrEnum):
     FEATURE_NOT_AVAILABLE = "feature_not_available"
     NOT_APPLICABLE = "not_applicable"
     # 2026-10-20 新增（PA-15 I10）
+    NOT_CALIBRATED = "not_calibrated"
     DATA_NOT_VALIDATED = "data_not_validated"  # 供应商数据未通过接入验证（PA-04、DP-04）
     DATA_STALE = "data_stale"  # 超出 DP-08 过期上限
     EXECUTION_UNDETERMINED = "execution_undetermined"  # 开盘价或交易状态缺失（PA-12）
@@ -417,7 +418,34 @@ class RiskSourceShare(ApiModel):
         return self
 
 
+class MissingRiskHolding(ApiModel):
+    instrument_id: int | None
+    symbol: str
+    weight: str
+    reason: str
+
+
+class ModelCoverage(ApiModel):
+    status: Literal["complete", "incomplete"]
+    scope_type: Literal["exact_portfolio", "security_universe"] | None
+    total_count: int
+    covered_count: int
+    total_weight: str
+    covered_weight: str
+    missing: list[MissingRiskHolding]
+    metrics: list[str]
+    reason: str | None
+
+
 class RiskSection(ApiModel):
+    model_coverage: ModelCoverage | None = None
+    model_id: str | None = None
+    model_date: date | None = None
+    annual_variance: MetricValue[FiniteFloat] | None = None
+    daily_prediction_volatility: MetricValue[FiniteFloat] | None = None
+    annualization_days: int | None = None
+    model_run_id: str | None = None
+    calibrated: bool | None = None
     volatility: MethodValues[FiniteFloat]  # 一期 by_method 只含 forward（PA-10）
     instrument_betas: MetricValue[list[InstrumentBeta]]
     risk_contribution: MetricValue[dict[str, FiniteFloat]]
@@ -588,7 +616,20 @@ class PlanResult(CalculationPayload):
         return self
 
 
+class PublicationStatus(ApiModel):
+    scope_type: Literal["exact_portfolio", "security_universe"] | None = None
+    scope_id: str | None = None
+    declared_metrics: list[str] = Field(default_factory=list)
+    status: Literal["available", "invalidated", "unpublished"]
+    recomputable: bool
+    invalidation_reasons: list[str] = Field(default_factory=list)
+    model_run_id: str | None = None
+    calibrated: bool | None = None
+    units_evidence: dict[str, JsonValue] | None = None
+
+
 class SnapshotMeta(ApiModel):
+    publication: PublicationStatus | None = None
     snapshot_id: UUID
     schema_version: Literal["diagnosis.v1"] = "diagnosis.v1"
     spec_version: str
@@ -755,3 +796,14 @@ class SharedReportResponse(ApiModel):
     report_mode: ReportMode
     sections: list[SharedReportSection]
     disclosures: list[str]
+
+
+class PublishedOptionsResponse(ApiModel):
+    publication_scope: dict[str, JsonValue] | None = None
+    """已发布版本的声明选项；具体组合仍需单独准入。"""
+
+    data_version_id: str
+    as_of_date: date
+    published_at: AwareDatetime
+    available_options: dict[str, JsonValue]
+    declared_metrics: list[str]

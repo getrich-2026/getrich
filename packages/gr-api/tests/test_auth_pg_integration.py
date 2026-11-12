@@ -20,7 +20,14 @@ import bcrypt
 import pytest
 from gr_api.config import load_api_settings
 from gr_api.errors import Unauthorized
-from gr_api.routers.auth import LoginRequest, RefreshRequest, login, refresh
+from gr_api.routers.auth import (
+    LoginRequest,
+    RefreshRequest,
+    RegisterRequest,
+    login,
+    refresh,
+    register,
+)
 from gr_data.config import load_postgres
 from gr_tools.config import load_environment
 
@@ -126,6 +133,41 @@ async def test_login_and_refresh_fall_back_to_name(
         settings=settings,
     )
     assert refreshed["data"]["user"]["name"] == "认证 PG 测试用户"
+
+
+async def test_registration_populates_required_user_fields(
+    auth_db: tuple[DictConnection, str],
+) -> None:
+    """注册必须兼容011必填列，并能由真实user_auth链路登录。"""
+    conn, _ = auth_db
+    email = f"{_EMAIL_PREFIX}{uuid4().hex}@example.invalid"
+    settings = load_api_settings()
+    created = await register(
+        body=RegisterRequest(email=f"  {email.upper()}  ", password=_PASSWORD, name="注册回归"),
+        db=conn,
+        rid="registration-pg",
+        settings=settings,
+    )
+    user_id = created["data"]["user"]["id"]
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "SELECT u.email,u.password,ua.credential FROM app.users u "
+            "JOIN app.user_auth ua ON ua.user_id=u.id AND ua.auth_type='email' "
+            "WHERE u.id=%s",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+    assert row is not None
+    assert row["email"] == email
+    assert row["password"] == row["credential"]
+    assert bcrypt.checkpw(_PASSWORD.encode(), row["password"].encode())
+    authenticated = await login(
+        body=LoginRequest(email=email, password=_PASSWORD),
+        db=conn,
+        rid="registration-pg-login",
+        settings=settings,
+    )
+    assert authenticated["data"]["user"]["id"] == user_id
 
 
 async def test_login_and_refresh_prefer_display_name(

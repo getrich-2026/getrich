@@ -16,9 +16,7 @@ from gr_api.diagnosis_calc.metrics import has_value, ok, unavailable
 from gr_api.diagnosis_calc.model_risk import ModelRiskResult
 
 
-MODEL_REASON = (
-    "米筐 v2 风险模型数据尚未入库并按 D-022 发布，模型口径指标不可用，不以历史协方差替代。"
-)
+MODEL_REASON = "目标日期的米筐 v2 风险模型数据尚未完成准入校验或正式发布，模型口径指标暂不可用。"
 BENCHMARK_REASON = "全收益基准尚未接入，个股 Beta 与基准相关性不可用，不回退价格指数。"
 
 

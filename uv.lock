@@ -1157,12 +1157,14 @@ name = "gr-api"
 version = "0.1.2"
 source = { editable = "packages/gr-api" }
 dependencies = [
+    { name = "anyio" },
     { name = "bcrypt" },
     { name = "bleach" },
     { name = "celery", extra = ["redis"] },
     { name = "fastapi" },
     { name = "gr-backtest" },
     { name = "gr-data" },
+    { name = "gr-signal" },
     { name = "gr-tools" },
     { name = "numpy" },
     { name = "orjson" },
@@ -1176,12 +1178,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4,<5" },
     { name = "bcrypt", specifier = ">=4.0" },
     { name = "bleach", specifier = ">=6.3.0" },
     { name = "celery", extras = ["redis"], specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115,<0.142" },
     { name = "gr-backtest", editable = "packages/gr-backtest" },
     { name = "gr-data", editable = "packages/gr-data" },
+    { name = "gr-signal", editable = "packages/gr-signal" },
     { name = "gr-tools", editable = "packages/gr-tools" },
     { name = "numpy" },
     { name = "orjson", specifier = ">=3.10" },

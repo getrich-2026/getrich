@@ -141,6 +141,10 @@ class SnapshotRequest(ApiModel):
     编排层按 ``len(plans)`` 与 ``intent`` 决定跑几遍。
     """
 
+    metrics: (
+        list[Literal["annual_variance", "volatility", "daily_prediction_volatility"]] | None
+    ) = Field(default=None, min_length=1, max_length=3)
+
     plans: list[PortfolioPlan] = Field(min_length=1, max_length=5)
     intent: Intent | None = None  # 缺省 → 按方案数与解析结果判定
     as_of_date: date | None = None  # 缺省 → 最新已发布数据日期；一期不接受更早日期

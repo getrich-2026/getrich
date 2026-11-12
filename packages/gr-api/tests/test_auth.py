@@ -276,7 +276,7 @@ class TestRegister:
         conn = _FakeConn(cur)
 
         body = RegisterRequest(
-            email="alice@test.com",
+            email="  Alice@TEST.com  ",
             password="Str0ngPass!",
             name="Alice",
         )
@@ -294,8 +294,10 @@ class TestRegister:
 
         # Check INSERT INTO users was called with correct args
         insert_users = cur.executed[2]
-        assert "INSERT INTO users" in insert_users[0]
+        assert "INSERT INTO app.users (email, password, name)" in insert_users[0]
         assert insert_users[1]["name"] == "Alice"
+        assert insert_users[1]["email"] == "alice@test.com"
+        assert insert_users[1]["credential"].startswith("$2b$12$")
 
         # Check INSERT INTO user_auth was called with correct args
         insert_auth = cur.executed[3]
@@ -303,6 +305,7 @@ class TestRegister:
         assert "'email'" in insert_auth[0]  # auth_type is a SQL literal, not a named param
         assert insert_auth[1]["email"] == "alice@test.com"
         assert insert_auth[1]["credential"].startswith("$2b$12$")
+        assert insert_auth[1]["credential"] == insert_users[1]["credential"]
 
     def test_rejects_duplicate_email_in_user_auth(self) -> None:
         """Duplicate email in user_auth → BadRequest."""

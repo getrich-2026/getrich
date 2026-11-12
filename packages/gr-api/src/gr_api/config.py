@@ -57,6 +57,7 @@ class WebConfig:
     # 开发期 mock 认证：开启后无 Bearer token 的请求按 X-User-Id 头识别用户。
     # 任何人都能伪造该头，默认关闭，且只允许在 APP_ENV=dev 时开启。
     allow_mock_auth: bool = False
+    diagnosis_publications_enabled: bool = False
 
     @classmethod
     def from_env(cls, strict: bool, environ: Mapping[str, str] | None = None) -> WebConfig:
@@ -118,6 +119,10 @@ class WebConfig:
             jwt_expire_minutes=jwt_expire_minutes,
             jwt_refresh_expire_hours=jwt_refresh_expire_hours,
             csp_policy=csp_policy,
+            diagnosis_publications_enabled=parse_bool(
+                source.get("GETRICH_DIAG_PUBLICATIONS_ENABLED"),
+                name="GETRICH_DIAG_PUBLICATIONS_ENABLED",
+            ),
             allow_mock_auth=parse_bool(
                 source.get("GETRICH_ALLOW_MOCK_AUTH"), name="GETRICH_ALLOW_MOCK_AUTH"
             ),

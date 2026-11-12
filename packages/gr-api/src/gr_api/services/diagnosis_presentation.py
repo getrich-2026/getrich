@@ -14,6 +14,7 @@ from gr_api.diagnosis_calc.coverage import (
     apply_exposure_coverage,
     apply_model_coverage,
     effective_coverage,
+    model_input_coverage,
 )
 from gr_api.diagnosis_calc.exposure import MISSING_OR_INVALID, NON_POSITIVE, UNCLASSIFIED
 from gr_api.diagnosis_calc.metrics import has_value
@@ -336,8 +337,8 @@ def assemble(
             }
         coverage = {"symbol_resolution": summary["resolved_weight"]}
         if facts.get("model"):
-            coverage["risk_model"] = summary["resolved_weight"] * float(
-                facts["model"].get("coverage", 1.0)
+            coverage["risk_model"] = model_input_coverage(
+                facts["model"], summary["resolved_weight"]
             )
         for source, metric_id in DATA_COVERAGE_KEYS.items():
             if source in (facts.get("coverage") or {}):
@@ -575,7 +576,27 @@ def _model_blocks(risk: dict[str, Any], names: dict[str, str], level: str) -> li
     """
     forward = risk["volatility"]["by_method"]["forward"]
     if not has_value(forward):
-        return [{"type": "text", "text": f"模型风险：{forward['reason']}"}]
+        blocks = [{"type": "text", "text": f"模型风险：{forward['reason']}"}]
+        coverage = risk.get("model_coverage") or {}
+        labels = {
+            "outside_security_universe": "不在已准入证券清单",
+            "unresolved_symbol": "代码未识别",
+            "specific_risk_missing": "特异风险缺失",
+            "exposure_missing": "因子暴露缺失",
+            "risk_coverage_not_included": "风险覆盖未纳入",
+            "risk_not_available_at_publication": "发布时风险数据尚不可用",
+            "covariance_missing": "因子协方差缺失",
+            "covariance_invalid": "因子协方差未通过校验",
+        }
+        for missing in coverage.get("missing", []):
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": f"{missing['symbol']}，权重 {missing['weight']}："
+                    + labels.get(str(missing["reason"]), str(missing["reason"])),
+                }
+            )
+        return blocks
     largest = risk["l4_largest_source"]
     largest_label = (
         f"最大风险源占比（{_source_label(largest['value'], names)}）"
@@ -590,6 +611,19 @@ def _model_blocks(risk: dict[str, Any], names: dict[str, str], level: str) -> li
             "type": "metric_cards",
             "items": [
                 _card("volatility.forward", "模型年化波动率", forward, "percent", 1),
+                *(
+                    [
+                        _card(
+                            "daily_prediction_volatility",
+                            "单日预测波动率",
+                            risk["daily_prediction_volatility"],
+                            "percent",
+                            6,
+                        )
+                    ]
+                    if risk.get("daily_prediction_volatility") is not None
+                    else []
+                ),
                 _card(
                     "l3_effective_count",
                     "风险有效持仓数（L3）",

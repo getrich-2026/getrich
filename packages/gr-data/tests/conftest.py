@@ -735,7 +735,11 @@ def pg_conn(pg_dsn):
             "FROM timescaledb_information.jobs WHERE proc_name LIKE 'policy_%'"
         )
     # 每个测试前清空业务数据，保证隔离（容器为 session 级，importer 会 commit）。
+    # 054 对诊断证据表及 ops.data_quality_check 安装了禁止 TRUNCATE 的触发器，CASCADE
+    # 也会波及引用 factor.* 的证据表。仅在这个一次性容器的清理事务内关闭触发器
+    # （SET LOCAL，提交即恢复）；用例执行期间触发器照常生效，不可变保护另由 054 专项测试验证。
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL session_replication_role = replica")
         cur.execute(
             """
             TRUNCATE

@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -30,7 +30,7 @@ from gr_api.diagnosis_calc.history import (
     historical_volatility,
     trading_status,
 )
-from gr_api.diagnosis_calc.metrics import has_value
+from gr_api.diagnosis_calc.metrics import degraded, has_value, unavailable
 from gr_api.diagnosis_calc.model_risk import (
     ModelRiskResult,
     RiskModelInputs,
@@ -52,7 +52,11 @@ from gr_api.schemas.diagnosis import (
     SnapshotRequest,
 )
 from gr_api.schemas.diagnosis_response import CalculationPayload, ResolvedCalculationOptions
-from gr_api.services import diagnosis_presentation as presentation
+from gr_api.services import (
+    diagnosis_presentation as presentation,
+    diagnosis_publication as publication,
+    diagnosis_scope,
+)
 from gr_api.services.pick_symbols import parse_symbol
 
 
@@ -67,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 #: ``diag.diagnosis_run.payload`` 的结构版本。payload 是 CalculationPayload 同形 JSON，
 #: 缓存字段增删必须同步 +1；它也进入 calculation_hash，旧结构不会被新代码复用。
-PAYLOAD_SCHEMA_VERSION = "5.0"
+PAYLOAD_SCHEMA_VERSION = "7.1"
 
 #: 进程时区不能决定业务日期；数据库连接虽钉住了会话时区，却不会改变 Python 进程时区。
 PLATFORM_TZ = ZoneInfo("Asia/Shanghai")
@@ -130,16 +134,22 @@ def _calculation_hash(
     spec_version: str,
     data_fingerprint: str,
     resolved_options: dict[str, Any],
+    full_input_scope_hash: str | None = None,
 ) -> str:
     """单个 plan 的计算缓存键，跨用户共享（T17）。
 
-    plan_id、label、plan_index、intent 与输入覆盖率都不参与；持仓按 instrument_id
-    升序，权重用与计算相同的整数份额，保证输入顺序或尾数不改变命中结果。
+    plan_id、label、plan_index、intent不参与。持仓按instrument_id升序、采用整数份额。
+    发布模式完整组合风险还依赖原分母/未知项范围hash，防止不完整组合污染成功缓存。
     """
     return _sha256(
         _canonical_json(
             {
                 "payload_schema_version": PAYLOAD_SCHEMA_VERSION,
+                **(
+                    {"full_input_scope_hash": full_input_scope_hash}
+                    if full_input_scope_hash is not None
+                    else {}
+                ),
                 "weight_mode": weight_mode,
                 "resolved_holdings": [
                     {"instrument_id": iid, "weight_units": quantized[iid]}
@@ -199,6 +209,8 @@ async def get_data_version(db: DictConnection) -> dict[str, Any]:
        版本应由 gr-data 在导入并通过质量检查后发布（D-022 2b），该流程尚未落地；
        数据重新导入后 fingerprint 不会自动推进，旧结果仍会被复用。
     """
+    if publication.enabled.get():
+        return await publication.require_publication(db)
     async with db.cursor() as cur:
         await cur.execute("SELECT * FROM diag.data_version ORDER BY snapshot_at DESC LIMIT 1")
         row = await cur.fetchone()
@@ -276,7 +288,9 @@ async def _resolve_as_of_date(
     today = _today()
     if requested is not None and requested > today:
         raise _issue_error("as_of_date must not be in the future", "/as_of_date")
-    published = data_version["snapshot_at"].astimezone(PLATFORM_TZ).date()
+    published = (
+        data_version.get("as_of_date") or data_version["snapshot_at"].astimezone(PLATFORM_TZ).date()
+    )
     latest = await _trading_day_on_or_before(db, min(published, today))
     if latest is None:
         # 日历没覆盖到发布日。不静默回退到自然日，否则后续按交易日过滤的查询会查空。
@@ -428,7 +442,23 @@ async def _resolve_options(
             )
         resolved[field] = None
 
-    return ResolvedCalculationOptions.model_validate(resolved).model_dump(mode="json")
+    serialized = ResolvedCalculationOptions.model_validate(resolved).model_dump(mode="json")
+    if publication.current.get() is not None:
+        windows = [_window(serialized[name]) for name in ("correlation_window", "beta_window")]
+        first = min(w[0] for w in windows)
+        start = await _trading_day_before(db, first) or first
+        await publication.require_coverage(
+            db,
+            start,
+            max(w[1] for w in windows),
+            (
+                "market.stock_bar_1d",
+                "meta.trading_calendar",
+                "market.stock_suspend_event",
+                "market.stock_suspend_coverage",
+            ),
+        )
+    return serialized
 
 
 # ===========================================================================
@@ -631,6 +661,7 @@ async def _fetch_industry(
     db: DictConnection, ids: list[int], *, scheme_code: str, level: int, as_of: date
 ) -> dict[int, IndustryAssignment]:
     """取诊断日有效的行业归属（``in_date <= as_of < out_date``），不用当前归属回算。"""
+    ids = diagnosis_scope.base_ids(ids)
     async with db.cursor() as cur:
         await cur.execute(
             """
@@ -646,9 +677,9 @@ async def _fetch_industry(
               AND ii.level = %s
               AND ii.in_date <= %s
               AND (ii.out_date IS NULL OR ii.out_date > %s)
-              AND ii.available_at <= now()
+              AND ii.available_at <= %s
             """,
-            (ids, scheme_code, level, as_of, as_of),
+            (ids, scheme_code, level, as_of, as_of, publication.cutoff()),
         )
         return {
             r["instrument_id"]: IndustryAssignment(
@@ -661,6 +692,7 @@ async def _fetch_industry(
 async def _fetch_category(
     db: DictConnection, ids: list[int], *, as_of: date
 ) -> dict[int, dict[str, str]]:
+    ids = diagnosis_scope.base_ids(ids)
     async with db.cursor() as cur:
         await cur.execute(
             """
@@ -669,9 +701,9 @@ async def _fetch_category(
             WHERE instrument_id = ANY(%s)
               AND in_date <= %s
               AND (out_date IS NULL OR out_date > %s)
-              AND available_at <= now()
+              AND available_at <= %s
             """,
-            (ids, as_of, as_of),
+            (ids, as_of, as_of, publication.cutoff()),
         )
         return {
             r["instrument_id"]: {"asset_category": r["asset_category"], "market": r["market"]}
@@ -686,6 +718,7 @@ async def _fetch_valuation(
 
     停牌、非交易日都会让当日无行，硬等于 as_of 会整批查空；滞后由日期回显并降级。
     """
+    ids = diagnosis_scope.base_ids(ids)
     async with db.cursor() as cur:
         await cur.execute(
             """
@@ -693,10 +726,10 @@ async def _fetch_valuation(
             FROM fundamental.valuation_1d
             WHERE instrument_id = ANY(%s)
               AND trading_day <= %s
-              AND available_at <= now()
+              AND available_at <= %s
             ORDER BY instrument_id, trading_day DESC
             """,
-            (ids, as_of),
+            (ids, as_of, publication.cutoff()),
         )
         return {
             r["instrument_id"]: Valuation(
@@ -740,6 +773,8 @@ async def _fetch_daily_observations(
     Raises:
         IncompleteCalendarError: 某交易所日历在区间内缺行。
     """
+    all_ids = ids
+    ids = diagnosis_scope.base_ids(ids)
     async with db.cursor() as cur:
         await cur.execute(
             "SELECT instrument_id, exchange FROM meta.instruments WHERE instrument_id = ANY(%s)",
@@ -798,7 +833,7 @@ async def _fetch_daily_observations(
         )
         rows = list(await cur.fetchall())
 
-    observations: dict[int, dict[date, DailyObservation]] = {i: {} for i in ids}
+    observations: dict[int, dict[date, DailyObservation]] = {i: {} for i in all_ids}
     for row in rows:
         observations[row["instrument_id"]][row["trading_day"]] = DailyObservation(
             status=trading_status(
@@ -810,7 +845,7 @@ async def _fetch_daily_observations(
             ),
             adj_close=row["adj_close"],
         )
-    calendars = {i: open_days.get(exchange_of.get(i, ""), []) for i in ids}
+    calendars = {i: open_days.get(exchange_of.get(i, ""), []) for i in all_ids}
     return calendars, observations
 
 
@@ -826,19 +861,252 @@ class LoadedRiskModel:
     model_id: str
     model_version: str
     model_date: date
+    admission: dict[str, Any] | None = None
 
 
 async def _load_risk_model(
-    db: DictConnection, ids: list[int], *, spec: dict[str, Any], as_of: date
+    db: DictConnection,
+    ids: list[int],
+    *,
+    spec: dict[str, Any],
+    as_of: date,
+    weights: dict[int, Decimal] | None = None,
+    assessment: dict[str, Any] | None = None,
+    input_weights: dict[int, Decimal] | None = None,
 ) -> LoadedRiskModel | None:
-    """取口径版本指定模型在诊断日的风险截面；不可取得时返回 None，模型口径指标不可用。
+    """读取发布固定run的完整组合；精确旧组合与证券清单准入分别核验。"""
+    import numpy as np
+    from gr_api.diagnosis_calc.model_risk import validated_factor_covariance
+    from gr_api.services.diagnosis_scope import scope
+    from gr_data.diagnostic_publication import portfolio_hash
 
-    当前固定返回 None：米筐 v2 数据尚未入工作库，正式风险读取须等 D-022 2b 的发布清单与
-    统一读取入口（含 production run 绑定、单位与期限换算、特异波动率平方）落地后开放。
-    在那之前不能直接读 ``factor.*`` 业务表，否则无法保证同一模型、日期、版本与发布可见性。
-    """
-    del db, ids, spec, as_of
-    return None
+    context = publication.current.get()
+    if context is None:
+        return None
+    coverage = assessment if assessment is not None else {}
+    original = input_weights if input_weights is not None else (weights or {})
+    symbols: dict[int, str] = {}
+
+    def issue(iid: int, reason: str) -> dict[str, Any]:
+        return {
+            "instrument_id": iid,
+            "symbol": symbols.get(iid, str(iid)),
+            "weight": format(original.get(iid, Decimal(0)), "f"),
+            "reason": reason,
+        }
+
+    def fail(reason: str) -> None:
+        coverage["reason"] = reason
+        coverage["covered_count"] = 0
+        coverage["covered_weight"] = "0"
+        known = {x["instrument_id"] for x in coverage.get("missing", [])}
+        coverage.setdefault("missing", []).extend(
+            issue(i, reason) for i in original if i not in known
+        )
+        return None
+
+    admitted = scope(dict(context.version))
+    selector = (spec.get("params") or {}).get("forward_model_selector") or {}
+    async with db.cursor(binary=True) as cur:
+        # 二进制REAL读取保留真实float32值，避免文本短十进制改变既有验收精度。
+        await cur.execute(
+            "SELECT instrument_id,symbol FROM meta.instruments WHERE instrument_id=ANY(%s)",
+            (list(original),),
+        )
+        symbols = {r["instrument_id"]: r["symbol"] for r in await cur.fetchall()}
+        if "forward" not in (spec.get("params") or {}).get("cov_methods", []) or selector != {
+            "source": "ricequant",
+            "model": "v2",
+            "industry_mapping": "sws_2021",
+        }:
+            return fail("spec_model_mismatch")
+        if weights is None or not original:
+            return fail("incomplete_input_holdings")
+        if admitted["scope_type"] == "security_universe":
+            table = "factor.risk_universe_admission"
+            where = "a.admission_id=%s AND a.security_ids=%s::BIGINT[] AND a.security_hash=%s"
+            identity = (
+                admitted.get("universe_admission_id"),
+                admitted.get("security_ids"),
+                admitted.get("security_hash"),
+            )
+        else:
+            table = "factor.risk_run_admission"
+            where = "a.portfolio_hash=%s"
+            identity = (portfolio_hash(weights),)
+        # table/where仅由上方两个内部常量分支决定，不接受请求SQL片段。
+        await cur.execute(
+            """SELECT m.*,a.metrics,a.units_evidence,a.evidence,b.receipt_id,
+                      v.identity->>'horizon' AS horizon,b.trading_day
+               FROM diag.data_version_component c
+               JOIN factor.model_run_binding b ON b.run_id=c.run_id
+                 AND b.receipt_id=c.risk_receipt_id
+               JOIN factor.model_run m ON m.run_id=b.run_id
+               JOIN factor.dataset_variant v ON v.variant_id=b.variant_id
+               JOIN """
+            + table
+            + """ a ON a.run_id=m.run_id AND a.receipt_id=b.receipt_id
+               WHERE c.data_version_id=%s AND a.as_of_date=%s AND """
+            + where
+            + """
+                 AND m.run_id=%s AND v.purpose='production'""",
+            (context.version_id, as_of, *identity, admitted["run_id"]),
+        )
+        runs = await cur.fetchall()
+        if len(runs) != 1:
+            return fail("risk_run_not_admitted")
+        run = runs[0]
+        coverage["_identity"] = {
+            "run_id": str(run["run_id"]),
+            "receipt_id": str(run["receipt_id"]),
+            "model_id": run["model_id"],
+            "model_date": as_of.isoformat(),
+            "calibrated": run["calibrated"],
+            "units_evidence": run["units_evidence"],
+            "metrics": run["metrics"],
+        }
+        if (
+            set(run["metrics"]) != set(admitted["metrics"])
+            or run["observed_at"] > context.published_at
+            or run["trading_day"] != as_of
+            or as_of != context.as_of_date
+            or run["units"].get("model") != "v2"
+            or run["source"] != "ricequant"
+            or run["annualization_basis"] != "annual_252"
+            or run["units"].get("covariance") != "pct2_annual"
+            or run["units"].get("specific_risk") != "pct2_annual"
+            or run["horizon"] != "daily"
+            or (spec.get("factor_model") is not None and spec["factor_model"] != run["model_id"])
+            or (
+                spec.get("factor_model_version") is not None
+                and spec["factor_model_version"] != run["model_version"]
+            )
+        ):
+            return fail("risk_identity_or_units_mismatch")
+        allowed = set(admitted.get("security_ids", original))
+        await cur.execute(
+            """SELECT i.instrument_id,e.exposure,s.specific_var,c.status,
+                   e.available_at AS exposure_at,s.available_at AS specific_at
+            FROM meta.instruments i
+            LEFT JOIN factor.exposure e ON e.instrument_id=i.instrument_id
+                AND e.run_id=%s AND e.trading_day=%s
+            LEFT JOIN factor.specific_risk s ON s.instrument_id=i.instrument_id
+                AND s.run_id=%s AND s.trading_day=%s
+            LEFT JOIN factor.model_run_coverage c ON c.instrument_id=i.instrument_id
+                AND c.run_id=%s AND c.trading_day=%s
+            WHERE i.instrument_id=ANY(%s)""",
+            (run["run_id"], as_of, run["run_id"], as_of, run["run_id"], as_of, list(original)),
+        )
+        rows = {r["instrument_id"]: r for r in await cur.fetchall()}
+        included: dict[int, dict[str, Any]] = {}
+        k = len(run["factor_order"])
+        for iid in original:
+            row = rows.get(iid)
+            reason = None
+            if iid not in allowed:
+                reason = "outside_security_universe"
+            elif row is None or row["exposure"] is None:
+                reason = "exposure_missing"
+            elif row["specific_var"] is None:
+                reason = "specific_risk_missing"
+            elif row["status"] != "included":
+                reason = "risk_coverage_not_included"
+            elif (
+                row["exposure_at"] > context.published_at
+                or row["specific_at"] > context.published_at
+            ):
+                reason = "risk_not_available_at_publication"
+            elif len(row["exposure"]) != k or not np.isfinite(row["exposure"]).all():
+                reason = "exposure_invalid"
+            elif not np.isfinite(row["specific_var"]) or row["specific_var"] < 0:
+                reason = "specific_risk_invalid"
+            if reason:
+                coverage.setdefault("missing", []).append(issue(iid, reason))
+            else:
+                assert row is not None
+                included[iid] = row
+        coverage["covered_count"] = len(included)
+        coverage["covered_weight"] = format(sum((original[i] for i in included), Decimal(0)), "f")
+        if coverage.get("missing"):
+            coverage["reason"] = "incomplete_holdings_coverage"
+            return None
+        await cur.execute(
+            "SELECT cov_flat FROM factor.covariance WHERE run_id=%s AND trading_day=%s "
+            "AND available_at<=%s",
+            (run["run_id"], as_of, context.published_at),
+        )
+        covariance = await cur.fetchone()
+    if covariance is None:
+        return fail("covariance_missing")
+    upper = np.triu_indices(k)
+    cov = np.zeros((k, k))
+    cov[upper] = np.asarray(covariance["cov_flat"]) / 10000
+    cov[(upper[1], upper[0])] = cov[upper]
+    inputs = RiskModelInputs(
+        tuple(run["factor_order"]),
+        cov,
+        {i: np.asarray(r["exposure"], dtype=float) for i, r in included.items()},
+        {i: float(r["specific_var"]) / 10000 for i, r in included.items()},
+    )
+    try:
+        validated_factor_covariance(inputs)
+    except ValueError:
+        return fail("covariance_invalid")
+    coverage["covered_weight"] = "1"
+    coverage["status"] = "complete"
+    coverage["reason"] = None
+    return LoadedRiskModel(
+        inputs,
+        run["model_id"],
+        run["model_version"],
+        as_of,
+        {**run, "run_id": str(run["run_id"]), "receipt_id": str(run["receipt_id"])},
+    )
+
+
+def _scoped_risk(holdings: list[CalcHolding], loaded: LoadedRiskModel) -> ModelRiskResult:
+    """指定组合的已验收方差和波动率；其他模型指标保持未准入。"""
+    import math
+
+    import numpy as np
+
+    admission = loaded.admission
+    assert admission is not None
+    b = sum(
+        (float(h.weight) * loaded.inputs.exposures[h.instrument_id] for h in holdings),
+        np.zeros(len(loaded.inputs.factor_codes)),
+    )
+    factor = float(b @ loaded.inputs.factor_covariance @ b)
+    specific = sum(
+        float(h.weight) ** 2 * loaded.inputs.specific_variance[h.instrument_id] for h in holdings
+    )
+    annual = factor + specific
+    if not math.isfinite(annual) or annual < 0:
+        raise ValueError("invalid portfolio variance")
+    na = unavailable(reason_code="data_not_validated", reason="本次单日验收未覆盖该模型指标。")
+    values = {f.name: dict(na) for f in fields(ModelRiskResult) if f.name != "facts"}
+    if "volatility" in admission["metrics"]:
+        values["volatility"] = degraded(
+            math.sqrt(annual),
+            reason_code="not_calibrated",
+            reason="本次单日范围与指标已准入；全区间未校准。",
+            method="forward",
+        )
+    facts = {
+        "missing": [],
+        "negative_contribution": False,
+        "calibrated": admission["calibrated"],
+        "run_id": admission["run_id"],
+        "receipt_id": admission["receipt_id"],
+        "units_evidence": admission["units_evidence"],
+        "metrics": admission["metrics"],
+        "factor_annual_variance": factor,
+        "specific_annual_variance": specific,
+        "annual_variance": annual,
+        "daily_prediction_volatility": math.sqrt(annual / 252),
+        "annualization_days": 252,
+    }
+    return ModelRiskResult(**values, facts=facts)
 
 
 async def _compute_history(
@@ -943,12 +1211,25 @@ async def _compute_plan(
         category=await _fetch_category(db, ids, as_of=as_of),
         valuation=await _fetch_valuation(db, ids, as_of=as_of),
     )
-    loaded = await _load_risk_model(db, ids, spec=spec, as_of=as_of)
+    coverage, original_weights = diagnosis_scope.initial_coverage(item.summary)
+    loaded = await _load_risk_model(
+        db,
+        ids,
+        spec=spec,
+        as_of=as_of,
+        weights={h.instrument_id: h.weight for h in holdings},
+        assessment=coverage,
+        input_weights=original_weights,
+    )
     model = (
-        compute_model_risk(
-            [(h.instrument_id, float(h.weight)) for h in holdings],
-            loaded.inputs,
-            high_threshold=float(params.get("corr_high_threshold") or 0.7),
+        (
+            _scoped_risk(holdings, loaded)
+            if loaded.admission is not None
+            else compute_model_risk(
+                [(h.instrument_id, float(h.weight)) for h in holdings],
+                loaded.inputs,
+                high_threshold=float(params.get("corr_high_threshold") or 0.7),
+            )
         )
         if loaded is not None
         else None
@@ -956,7 +1237,55 @@ async def _compute_plan(
     risk, structure, facts["history"] = await _compute_history(
         db, ids, params=params, options=options, model=model
     )
-    facts["model"] = None if model is None else model.facts
+    identity = coverage.pop("_identity", {})
+    model_coverage_ratio = float(
+        Decimal(coverage["covered_weight"]) / Decimal(coverage["total_weight"])
+    )
+    facts["model"] = (
+        {
+            **identity,
+            "missing": [
+                x["instrument_id"] for x in coverage["missing"] if x["instrument_id"] is not None
+            ],
+            "coverage": model_coverage_ratio,
+            "coverage_basis": "full_input",
+            "model_coverage": coverage,
+        }
+        if model is None
+        else {
+            **model.facts,
+            "coverage": model_coverage_ratio,
+            "coverage_basis": "full_input",
+            "model_coverage": coverage,
+        }
+    )
+    if publication.current.get() is not None:
+        risk["model_coverage"] = coverage
+        risk["model_run_id"] = identity.get("run_id")
+        risk["model_id"] = identity.get("model_id")
+        risk["model_date"] = as_of
+        risk["calibrated"] = identity.get("calibrated")
+        risk["annualization_days"] = 252
+        if model is None:
+            reason = "完整组合风险不可用：" + (coverage["reason"] or "风险模型尚未准入")
+            metric = unavailable(reason_code="data_not_validated", reason=reason)
+            risk["annual_variance"] = dict(metric)
+            risk["daily_prediction_volatility"] = dict(metric)
+    if loaded is not None and loaded.admission is not None and model is not None:
+        for metric in ("annual_variance", "daily_prediction_volatility"):
+            risk[metric] = (
+                degraded(
+                    model.facts[metric],
+                    reason_code="not_calibrated",
+                    reason="本次单日范围与指标已准入；全区间未校准。",
+                    method="forward",
+                )
+                if metric in loaded.admission["metrics"]
+                else unavailable(reason_code="data_not_validated", reason="该指标未准入。")
+            )
+        risk["annualization_days"] = 252
+        risk["model_run_id"] = loaded.admission["run_id"]
+        risk["calibrated"] = loaded.admission["calibrated"]
     forward_ok = model is not None and (has_value(model.volatility) or has_value(model.correlation))
     historical_ok = has_value(structure["correlation"]["by_method"]["historical"])
     payload = {
@@ -1003,6 +1332,9 @@ async def _ensure_run(
         spec_version=spec["spec_version"],
         data_fingerprint=data_fingerprint,
         resolved_options=options,
+        full_input_scope_hash=diagnosis_scope.cache_scope(item.summary)
+        if publication.enabled.get()
+        else None,
     )
     async with db.cursor() as cur:
         await cur.execute(
@@ -1093,6 +1425,9 @@ async def _record_failed_run(
         spec_version=spec["spec_version"],
         data_fingerprint=data_fingerprint,
         resolved_options=options,
+        full_input_scope_hash=diagnosis_scope.cache_scope(item.summary)
+        if publication.enabled.get()
+        else None,
     )
     async with db.cursor() as cur:
         await cur.execute(
@@ -1282,8 +1617,12 @@ async def create_snapshot(
     async def create(key_hash: str) -> UUID:
         spec = await get_active_spec_version(db, req.spec_version)
         data_version = await get_data_version(db)
+        if publication.enabled.get():
+            diagnosis_scope.validate_request(data_version, [], req.as_of_date, req.metrics)
         as_of = await _resolve_as_of_date(db, req.as_of_date, data_version)
         plans = await _normalize_request_plans(db, req.plans, as_of=as_of)
+        if publication.enabled.get():
+            diagnosis_scope.validate_request(data_version, plans, req.as_of_date, req.metrics)
         intent = _resolve_intent(req.intent, plans)
         options = await _resolve_options(
             db,
@@ -1326,8 +1665,14 @@ async def _base_data_version_available(db: DictConnection, snapshot: dict[str, A
     无法证明底层数据自原版本以来未被修订，一律返回 False，由调用方返回 409。
     回放类统计区间重算可只读持久化的回放状态，但一期回放尚未开放，没有可读的状态。
     """
-    del db, snapshot
-    return False
+    if not publication.enabled.get():
+        return False
+    async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT diag.publication_is_valid(%s) AS valid", (snapshot["data_fingerprint"],)
+        )
+        row = await cur.fetchone()
+        return bool(row and row["valid"])
 
 
 async def recompute_snapshot(
@@ -1355,7 +1700,11 @@ async def recompute_snapshot(
                 "the original data version cannot be reproduced; recompute is refused"
             )
         spec = await get_active_spec_version(db, base["resolved_spec_version"])
-        data_version = await _get_data_version_by_id(db, base["data_fingerprint"])
+        data_version = (
+            await publication.require_publication(db, base["data_fingerprint"])
+            if publication.enabled.get()
+            else await _get_data_version_by_id(db, base["data_fingerprint"])
+        )
         as_of: date = base["resolved_as_of_date"]
         options = await _resolve_options(
             db,
@@ -1390,6 +1739,8 @@ async def recompute_snapshot(
             )
             for r in rows
         ]
+        if publication.enabled.get():
+            diagnosis_scope.validate_request(data_version, plans, as_of, None)
         return await _persist_snapshot(
             db,
             key_hash=key_hash,
@@ -1486,6 +1837,69 @@ async def _load_result(
     result = presentation.assemble(
         snapshot, spec, rows, _aggregate_run_status(rows), report_mode=_report_mode
     )
+    if publication.enabled.get():
+        async with db.cursor() as cur:
+            await cur.execute(
+                "SELECT diag.publication_is_valid(%s) AS valid, "
+                "EXISTS(SELECT 1 FROM diag.data_publication WHERE data_version_id=%s) AS published",
+                (snapshot["data_fingerprint"], snapshot["data_fingerprint"]),
+            )
+            state = await cur.fetchone()
+            assert state is not None
+        model_facts = next(
+            (
+                (r["data_quality"] or {}).get("model")
+                for r in rows
+                if (r["data_quality"] or {}).get("model")
+            ),
+            None,
+        )
+        async with db.cursor() as cur:
+            await cur.execute(
+                "SELECT reason FROM diag.data_version_invalidation WHERE data_version_id=%s "
+                "ORDER BY invalidated_at,event_key",
+                (snapshot["data_fingerprint"],),
+            )
+            invalidations = [r["reason"] for r in await cur.fetchall()]
+        async with db.cursor() as cur:
+            await cur.execute(
+                "SELECT available_options FROM diag.data_version WHERE data_version_id=%s",
+                (snapshot["data_fingerprint"],),
+            )
+            version_row = await cur.fetchone()
+        declared = (
+            ((version_row["available_options"] or {}).get("publication_scope") or {})
+            if version_row
+            else {}
+        )
+        result["publication"] = {
+            "scope_type": declared.get("scope_type")
+            or ("exact_portfolio" if "holdings" in declared else None),
+            "scope_id": declared.get("universe_admission_id") or declared.get("portfolio_hash"),
+            "declared_metrics": declared.get("metrics", []),
+            "status": "available"
+            if state["valid"]
+            else ("invalidated" if state["published"] else "unpublished"),
+            "recomputable": bool(state["valid"]),
+            "invalidation_reasons": []
+            if state["valid"]
+            else (invalidations or ["input_version_unavailable"]),
+            "model_run_id": model_facts.get("run_id") if model_facts else None,
+            "calibrated": model_facts.get("calibrated") if model_facts else None,
+            "units_evidence": model_facts.get("units_evidence") if model_facts else None,
+        }
+        if model_facts and model_facts.get("calibrated") is False and "disclosures" in result:
+            admitted_scope = result["publication"]["scope_type"]
+            boundary = (
+                "已验收证券清单内的完整组合"
+                if admitted_scope == "security_universe"
+                else "指定组合"
+            )
+            result["disclosures"].append(
+                "风险模型 calibrated=false；本次仅覆盖"
+                + boundary
+                + "、指定单日的年化方差和年化／单日波动率三项指标，全区间未校准。"
+            )
     labels: dict[str, str] = {}
     for row in rows:
         labels.update((row["data_quality"] or {}).get("industry_names") or {})

@@ -247,14 +247,18 @@ async def register(
             bcrypt.gensalt(rounds=12),
         ).decode("utf-8")
 
-        # Insert into users (profile)
+        # 011要求email/password非空；与user_auth保存同一规范邮箱和bcrypt值。
         await cur.execute(
             """
-            INSERT INTO users (name)
-            VALUES (%(name)s)
+            INSERT INTO app.users (email, password, name)
+            VALUES (%(email)s, %(credential)s, %(name)s)
             RETURNING id
             """,
-            {"name": body.name.strip()},
+            {
+                "email": email_lower,
+                "credential": password_hash,
+                "name": body.name.strip(),
+            },
         )
         new_user = await cur.fetchone()
         user_id = str(new_user["id"])

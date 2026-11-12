@@ -602,7 +602,8 @@ def test_json_diagnosis_routes_declare_response_models() -> None:
         for route in router.routes
         if isinstance(route, APIRoute) and not route.path.endswith("/stream")
     ]
-    assert len(json_routes) == 9
+    assert len(json_routes) == 10
+    assert any(route.path.endswith("/options") for route in json_routes)
     assert all(route.response_model is not None for route in json_routes)
 
 

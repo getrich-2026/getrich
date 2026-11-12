@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -33,6 +34,7 @@ from gr_api.schemas.diagnosis_response import (
     DataQualityResponse,
     DiagnosisResult,
     ErrorResponse,
+    PublishedOptionsResponse,
     ReportResponse,
     SharedReportResponse,
     SnapshotAccepted,
@@ -42,12 +44,25 @@ from gr_api.schemas.diagnosis_response import (
     SpecVersionList,
 )
 from gr_api.services import diagnosis as diag_svc
+from gr_api.services.diagnosis_publication import consistent_read
 from gr_api.services.sse import sse_frame
 from gr_data.db import pg_pool
 
 
 if TYPE_CHECKING:
     from gr_data.db import DictConnection
+
+
+async def get_diagnosis_db(
+    request: Request, db: DictConnection = Depends(get_db)
+) -> AsyncIterator[DictConnection]:
+    """诊断借用独占连接；不复用认证事务，启用前保持原依赖契约。"""
+    settings = getattr(request.app.state, "settings", None)
+    if settings and settings.web.diagnosis_publications_enabled:
+        async with consistent_read(db, mutation=request.method == "POST"):
+            yield db
+    else:
+        yield db
 
 
 class DiagnosisRoute(APIRoute):
@@ -154,7 +169,7 @@ async def create_snapshot(
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user_id: str | None = Depends(get_current_user),
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """提交持仓 + 意图。
@@ -189,7 +204,7 @@ async def recompute_snapshot(
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user_id: str | None = Depends(get_current_user),
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """按新的 ``options`` 基于原快照创建新快照，原快照不变（PA-14、PA-15）。
@@ -219,7 +234,7 @@ async def get_result(
     snapshot_id: UUID,
     response: Response,
     user_id: str | None = Depends(get_current_user),
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """一次性取全量结果。
@@ -243,7 +258,7 @@ async def get_report(
     response: Response,
     user_level: str | None = Query(default=None, pattern=r"^(retail|pro)$"),
     user_id: str | None = Depends(get_current_user),
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """取渲染后报告，按**访问时**的 ``user_level`` 裁剪。
@@ -264,7 +279,7 @@ async def get_data_quality(
     snapshot_id: UUID,
     response: Response,
     user_id: str | None = Depends(get_current_user),
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """单独取降级清单与强制声明。"""
@@ -318,7 +333,12 @@ async def stream_snapshot(
     # yield 型 FastAPI 依赖会等流结束才清理，不能把 get_db 挂在 SSE 路由上；
     # 在返回 StreamingResponse 前显式退出连接上下文，流只消费内存中的 result。
     async with pg_pool.connection() as db:
-        result = await diag_svc.get_result(db, snapshot_id, user_id=user_id)
+        settings = getattr(request.app.state, "settings", None)
+        if settings and settings.web.diagnosis_publications_enabled:
+            async with consistent_read(db):
+                result = await diag_svc.get_result(db, snapshot_id, user_id=user_id)
+        else:
+            result = await diag_svc.get_result(db, snapshot_id, user_id=user_id)
 
     if result["run_status"] in ("pending", "running"):
         return JSONResponse(
@@ -343,7 +363,7 @@ async def stream_snapshot(
 
 @router.get("/spec-versions", response_model=ApiResponse[SpecVersionList])
 async def list_spec_versions(
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """口径版本列表。"""
@@ -355,7 +375,7 @@ async def list_spec_versions(
 
 @router.get("/spec-versions/current", response_model=ApiResponse[SpecVersionInfo])
 async def get_current_spec_version(
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """当前生效口径、阈值与协方差方法配置。
@@ -378,7 +398,7 @@ async def get_current_spec_version(
 async def create_share(
     snapshot_id: UUID,
     user_id: str | None = Depends(get_current_user),
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """创建分享 token。"""
@@ -389,7 +409,7 @@ async def create_share(
 @router.get("/share/{token}/report", response_model=ApiResponse[SharedReportResponse])
 async def get_shared_report(
     token: str,
-    db: DictConnection = Depends(get_db),
+    db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
     """分享链接专用：只暴露渲染后报告，**不暴露 /result 全量数据**。"""
@@ -408,6 +428,35 @@ async def get_shared_report(
                 for section in data["sections"]
                 if section["kind"] != "instrument"
             ],
+        },
+        rid,
+    )
+
+
+@router.get("/options", response_model=ApiResponse[PublishedOptionsResponse])
+async def get_options(
+    db: DictConnection = Depends(get_diagnosis_db),
+    rid: str = Depends(request_id),
+):
+    """返回最新可用发布的声明；组合风险还需精确持仓范围准入。"""
+    from gr_api.errors import BadRequest
+    from gr_api.services import diagnosis_publication as publication
+
+    if not publication.enabled.get():
+        raise BadRequest("diagnostic publication reading is disabled", http_status=503)
+    version = await publication.require_publication(db)
+    from gr_api.services.diagnosis_scope import scope
+
+    declared = scope(version)
+    metrics = declared["metrics"]
+    return success(
+        {
+            "data_version_id": version["data_version_id"],
+            "as_of_date": version["as_of_date"],
+            "published_at": version["published_at"],
+            "available_options": version["available_options"],
+            "declared_metrics": metrics,
+            "publication_scope": declared,
         },
         rid,
     )
