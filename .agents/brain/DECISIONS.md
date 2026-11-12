@@ -447,6 +447,11 @@ A–E 显式区分 ready／unavailable／failed，报告与数值基于同一组
 模型卡片按快照declared_metrics过滤，未准入的L4等占位说明不作为已开放能力展示。
 非dev显式配置非默认JWT和具体CORS源；支付缺密钥在所有环境拒绝，不作为诊断启动依赖。
 
+#### Batch 2 行业观察与原子重发（2026-11-12）
+
+SW2021一级分类用Tushare index_classify与index_member_all，后者2000行分页并取Y/N，原件保留历史；本次canonical只接纳目标日有效区间，源in/out日期不改，按既有排他out_date读取。available_at保守用整批采集完成时间，不以生效日冒充历史可得时间。
+三张行业表实际为空且未登记owner，按授权首次登记tushare，不虚构datayes释放操作。ownership写入会全局标脏，需在同一外层发布事务重签全部11项基础组成及风险头，再发布；失败整体回滚，不能分步提交或关闭保护触发器。新发布使旧输入版本失效，旧报告保留并标invalidated，重算409。分类接入不扩大风险指标准入；ROE、RC/L3与日更仍属后续批次。
+
 ## 文档与材料边界
 
 <a id="d-019"></a>

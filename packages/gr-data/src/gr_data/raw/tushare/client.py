@@ -57,6 +57,8 @@ PAGE_LIMITS: dict[str, int] = {
     "trade_cal": 5000,
     "stock_basic": 5000,
     "index_basic": 5000,
+    "index_classify": 2000,
+    "index_member_all": 2000,
     "fut_basic": 5000,
     "etf_basic": 5000,
     # 官方 doc_id=19 单次上限 15000；取保守值只会多翻页，不会漏数据。

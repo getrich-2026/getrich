@@ -1,5 +1,7 @@
 # GetRich 当前状态
 
+- 持仓诊断 Batch 2（2026-11-12）：申万一级行业已入工作库，最新有效发布 `diag-v2-20261105-core-industry-20261112-v1`，日期仍11-05、范围5224、三项风险不扩展。Tushare采集31一级行业及7928成员原件，目标日5224归属完整；三张行业表原为空且无owner（非已有datayes），显式登记tushare。按采集完成时间记录available_at，不认证历史PIT。全局标脏后同事务重签11项基础数据集（12收据分区）及风险头，再发布；其余8项基础范围指纹不变，56迁移checksum全部一致。最终隔离库完成回滚恢复、发布、幂等零写重放及实际ASGI/PG复算；工作库逻辑备份677849字节已封存、新连接独立读回通过。SDK3.8.1五件套与旧原件对齐后数值一致；三股样本行业哑变量int64与列序差异如实留证，不按位置读取。真实注册/登录/刷新、行业与A/B/D、三股各252历史样本独立复算、单股/集中/未知20%不重归一化、幂等、401/403及4安全头通过；13份有归属旧快照及report可读并标invalidated，旧重算409。测试账号已禁用。API全包1130通过/31跳过；gr-data1818通过/214沙盒未启用集成跳过/4xfail，新增专项11通过；Ruff与全仓类型检查完成。证据根 `/Volumes/myssd/data/getrich-validation/diagnosis-batch2-20261112`，重点final-acceptance.json、working-publication.json、working-http.json、sdk-comparison.json、working-prechange.dump；失败与初轮隔离证据保留。未改apps/web、未迁移、未追平/启用日更、未上云，常规开关仍false；本地提交后停在独立复核点，不push、不进入Batch3。
+
 - Batch 1 独立审核补丁（2026-11-12）：APP_ENV归一化与白名单、非dev拒绝change-me占位JWT、prod拒绝纯本地CORS（staging保留）；未发布旧报告保留模型缺失原因；错误body/header复用request_id；旧载体测试覆盖assemble到report；指南补refresh实际契约。API全包1129通过/31集成跳过及1条prod测试环境配置不足，补齐隔离测试PG/存储配置后26专项通过；Ruff通过、全仓类型零诊断。按授权本地fix提交后直接进入Batch2，只读前检与隔离演练先行，不push。
 
 - 持仓诊断 Batch 1（2026-11-12）：仅后端契约与安全收口，未改 apps/web、000～055 或工作库，未导入／发布数据。新增行业名称映射及逐股可空归属，载体7.1→7.2，旧响应补空字段；私有诊断端点强制登录／401，公开分享保留token校验；非dev禁止默认JWT与缺省／空／通配CORS；支付空密钥在DB连接前拒绝503。report按快照declared_metrics裁剪模型卡片与未准入说明；API指南补单位、状态、202合成示例与重算边界。gr-api全包1120通过／31显式集成跳过，新增CORS及测试类型修正后相关30通过；Ruff check/format通过，全仓basedpyright零诊断并自动移除1项已修复基线。未验证实际PG／远端。仅本地提交，不push，停在独立复核点，未进入Batch2。
