@@ -114,7 +114,11 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                     if count is None or count[0] != (last - first).days + 1:
                         raise ValueError("Trading calendar does not cover the requested range")
                 results = []
+                skipped_dates = []
                 for (day,) in dates:
+                    if day <= previous["as_of_date"]:
+                        skipped_dates.append(str(day))
+                        continue
                     artifact = root / str(day)
                     write_json(
                         state,
@@ -136,7 +140,11 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                             "version_id": results[-1]["version_id"],
                         },
                     )
-                result = {"status": "complete", "publications": results}
+                result = {
+                    "status": "complete",
+                    "publications": results,
+                    "skipped_dates": skipped_dates,
+                }
         if args.action != "status":
             write_json(state, {"status": "success", "action": args.action, "result": result})
         print(json.dumps(result, ensure_ascii=False, default=str))

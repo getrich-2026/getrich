@@ -225,3 +225,48 @@ def test_default_prepare_failure_status_preserves_target_and_failed_stage(monkey
     assert status["day"] == "2026-11-06" and status["failed_stage"] == "ricequant_capture_preflight"
     assert status["artifact"].endswith("diagnosis/daily/2026-11-06")
     assert status["reason"] == "No complete risk input"
+
+
+def test_repeated_date_range_skips_completed_dates_without_preparing_or_writing(
+    monkeypatch, tmp_path
+):
+    from argparse import Namespace
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from gr_data.diagnosis_daily import cli
+
+    conn = Mock()
+    conn.transaction.return_value.__enter__ = Mock()
+    conn.transaction.return_value.__exit__ = Mock(return_value=False)
+    conn.execute.return_value.fetchall.return_value = [(date(2026, 11, n),) for n in (6, 9, 10)]
+    conn.execute.return_value.fetchone.return_value = (5,)
+
+    @contextmanager
+    def connection(pg):
+        yield conn
+
+    monkeypatch.setattr("gr_data.cli._pg", lambda cfg: Mock())
+    monkeypatch.setattr("gr_data.raw.tushare.client.TushareProClient", Mock())
+    monkeypatch.setattr("gr_data.raw.ricequant.client.RqdatacClient", Mock())
+    monkeypatch.setattr(cli, "connect", connection)
+    monkeypatch.setattr(
+        cli, "latest_publication", lambda c: {"as_of_date": date(2026, 11, 10), "valid": True}
+    )
+    prepare_call, apply_call = Mock(), Mock()
+    monkeypatch.setattr(cli, "prepare", prepare_call)
+    monkeypatch.setattr(cli, "apply", apply_call)
+    args = Namespace(
+        action="run",
+        artifact=None,
+        day=None,
+        start=date(2026, 11, 6),
+        end=date(2026, 11, 10),
+        reuse_raw=None,
+    )
+    cfg = Mock(raw_root=tmp_path, environment=SimpleNamespace(values={}))
+    assert cli.run(args, cfg) == 0
+    prepare_call.assert_not_called()
+    apply_call.assert_not_called()
+    state = json.loads((tmp_path / "diagnosis/daily/last-run.json").read_text())
+    assert state["result"]["skipped_dates"] == ["2026-11-06", "2026-11-09", "2026-11-10"]
