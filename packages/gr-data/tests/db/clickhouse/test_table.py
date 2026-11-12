@@ -18,11 +18,12 @@ fake `ClickHouseClient` for the assertions.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+from gr_data.db.clickhouse import ClickHouseClient, ClickHouseConnectionPool
 from gr_data.db.clickhouse.table import ClickHouseTable
 
 
@@ -187,7 +188,7 @@ def test_constructor_logger_uses_class_name_by_default() -> None:
     ):
         t = _TestTable(table_name="t")
 
-    assert t.logger._logger.name == "_TestTable"
+    assert t.logger.name == "_TestTable"
 
 
 def test_constructor_logger_accepts_custom_name() -> None:
@@ -198,7 +199,7 @@ def test_constructor_logger_accepts_custom_name() -> None:
     ):
         t = _TestTable(table_name="t", logger_name="my.logger")
 
-    assert t.logger._logger.name == "my.logger"
+    assert t.logger.name == "my.logger"
 
 
 # ---------------------------------------------------------------------------
@@ -613,8 +614,8 @@ def test_repr_includes_table_and_pool_mode() -> None:
     rendered = repr(t)
 
     assert "bars_1d" in rendered
-    assert "host='h'" in rendered
-    assert "database='d'" in rendered
+    assert "host=None" in rendered
+    assert "database=None" in rendered
     assert "pool_mode=True" in rendered
     assert "owns_client=False" in rendered
 
@@ -640,3 +641,18 @@ def test_repr_with_own_client() -> None:
     rendered = repr(t)
 
     assert "owns_client=True" in rendered
+
+
+def test_repr_never_borrows_a_connection() -> None:
+    pool = _FakePool(client=_FakeClient())
+    table = _TestTable(table_name="t", pool=cast(ClickHouseConnectionPool, pool))
+    with patch.object(pool, "get_connection", side_effect=TimeoutError("pool full")):
+        assert "pool_mode=True" in repr(table)
+    assert pool.release_calls == []
+
+
+def test_exists_uses_qualified_table_and_parameters() -> None:
+    fake = _FakeClient()
+    table = _TestTable(table_name="other.t", client=cast(ClickHouseClient, fake))
+    table.exists()
+    assert fake.query.call_args.kwargs["params"] == {"database": "other", "table": "t"}

@@ -9,11 +9,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TypeAlias
 
 from psycopg import AsyncConnection
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -31,31 +33,38 @@ class PgConnectionPool:
 
     def __init__(self) -> None:
         self._pool: AsyncConnectionPool[DictConnection] | None = None
+        self._lifecycle_lock = asyncio.Lock()
 
     async def init(self, cfg: PostgresConfig) -> None:
         """初始化连接池并预热连接。重复调用会被忽略。"""
-        if self._pool is not None:
-            return
-
-        dsn = (
-            f"postgresql://{cfg.user}:{cfg.password}@{cfg.host}:{cfg.port}/{cfg.database}"
-            f"?application_name=getrich-web"
-        )
-        self._pool = AsyncConnectionPool(
-            conninfo=dsn,
-            connection_class=DictConnection,
-            min_size=cfg.min_size,
-            max_size=cfg.max_size,
-            kwargs={
-                "row_factory": dict_row,
-                # search_path 覆盖业务主库（app）与参考／行情数据（market、meta），
-                # 让不带前缀的业务查询照常工作。回测产物在 backtest schema，
-                # 相关 SQL 一律显式写 backtest. 前缀，不依赖这里的顺序。
-                "options": "-c timezone=Asia/Shanghai -c search_path=app,market,meta,public",
-            },
-            open=False,
-        )
-        await self._pool.open(wait=True)
+        async with self._lifecycle_lock:
+            if self._pool is not None:
+                return
+            dsn = make_conninfo(
+                host=cfg.host,
+                port=cfg.port,
+                user=cfg.user,
+                password=cfg.password,
+                dbname=cfg.database,
+                application_name="getrich-web",
+            )
+            pool = AsyncConnectionPool(
+                conninfo=dsn,
+                connection_class=DictConnection,
+                min_size=cfg.min_size,
+                max_size=cfg.max_size,
+                kwargs={
+                    "row_factory": dict_row,
+                    "options": "-c timezone=Asia/Shanghai -c search_path=app,market,meta,public",
+                },
+                open=False,
+            )
+            try:
+                await pool.open(wait=True)
+            except BaseException:
+                await pool.close()
+                raise
+            self._pool = pool
 
     @asynccontextmanager
     async def connection(self) -> AsyncIterator[DictConnection]:
@@ -67,9 +76,10 @@ class PgConnectionPool:
 
     async def close(self) -> None:
         """关闭连接池。"""
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
+        async with self._lifecycle_lock:
+            if self._pool is not None:
+                await self._pool.close()
+                self._pool = None
 
     @property
     def is_ready(self) -> bool:

@@ -25,11 +25,13 @@ itself, so no live Postgres is required.
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from gr_data.config import PostgresConfig
 from gr_data.db.postgres.pool import PgConnectionPool
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 
@@ -165,8 +167,14 @@ async def test_init_creates_pool_with_expected_dsn_and_kwargs() -> None:
     # We pull the DSN from whichever slot the wrapper used.
     conninfo = kwargs.get("conninfo") or args[0] if args else kwargs.get("conninfo")
     assert conninfo is not None
-    assert "postgresql://bob:hunter2@pg.internal:6432/getrich_test" in conninfo
-    assert "application_name=getrich-web" in conninfo
+    assert conninfo_to_dict(conninfo) == {
+        "host": "pg.internal",
+        "port": "6432",
+        "user": "bob",
+        "password": "hunter2",
+        "dbname": "getrich_test",
+        "application_name": "getrich-web",
+    }
     assert kwargs["min_size"] == 1
     assert kwargs["max_size"] == 5
     assert kwargs["open"] is False
@@ -323,3 +331,77 @@ async def test_full_lifecycle_init_connection_close() -> None:
         assert conn is fake_conn
     await pool.close()
     assert pool.is_ready is False
+
+
+async def test_init_failure_closes_pool_and_allows_retry() -> None:
+    pool = PgConnectionPool()
+    failed = _make_fake_async_pool()
+    failed.open.side_effect = RuntimeError("unavailable")
+    healthy = _make_fake_async_pool()
+    with patch(
+        "gr_data.db.postgres.pool.AsyncConnectionPool", side_effect=[failed, healthy]
+    ) as factory:
+        with pytest.raises(RuntimeError, match="unavailable"):
+            await pool.init(cast(PostgresConfig, _FakePgSettings()))
+        assert pool.is_ready is False
+        failed.close.assert_awaited_once()
+        await pool.init(cast(PostgresConfig, _FakePgSettings()))
+    assert factory.call_count == 2
+    assert pool._pool is healthy
+
+
+async def test_init_preserves_special_password_characters() -> None:
+    pool = PgConnectionPool()
+    fake = _make_fake_async_pool()
+    cfg = cast(PostgresConfig, _FakePgSettings(password="synthetic %'\\ value"))
+    with patch("gr_data.db.postgres.pool.AsyncConnectionPool", return_value=fake) as factory:
+        await pool.init(cfg)
+    parsed = conninfo_to_dict(factory.call_args.kwargs["conninfo"])
+    assert parsed["password"] == cfg.password
+
+
+async def test_concurrent_init_waits_for_first_open() -> None:
+    import asyncio
+
+    pool = PgConnectionPool()
+    fake = _make_fake_async_pool()
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def open_pool(*, wait: bool) -> None:
+        started.set()
+        await finish.wait()
+
+    fake.open.side_effect = open_pool
+    with patch("gr_data.db.postgres.pool.AsyncConnectionPool", return_value=fake) as factory:
+        first = asyncio.create_task(pool.init(cast(PostgresConfig, _FakePgSettings())))
+        await started.wait()
+        second = asyncio.create_task(pool.init(cast(PostgresConfig, _FakePgSettings())))
+        await asyncio.sleep(0)
+        assert not second.done()
+        assert not pool.is_ready
+        finish.set()
+        await asyncio.gather(first, second)
+    factory.assert_called_once()
+
+
+async def test_cancelled_init_closes_pool() -> None:
+    import asyncio
+
+    pool = PgConnectionPool()
+    fake = _make_fake_async_pool()
+    started = asyncio.Event()
+
+    async def open_pool(*, wait: bool) -> None:
+        started.set()
+        await asyncio.Future()
+
+    fake.open.side_effect = open_pool
+    with patch("gr_data.db.postgres.pool.AsyncConnectionPool", return_value=fake):
+        task = asyncio.create_task(pool.init(cast(PostgresConfig, _FakePgSettings())))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    fake.close.assert_awaited_once()
+    assert not pool.is_ready

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any, cast
 
 import clickhouse_connect
@@ -7,31 +9,13 @@ import pandas as pd
 from clickhouse_connect.driver.client import Client
 
 from gr_data.config import ClickHouseConfig
-from gr_data.logging import Logger
 
 
-log = Logger(module_name="ClickhouseClient")
+log = logging.getLogger("ClickhouseClient")
 
 
 class ClickHouseClient:
-    """
-    ClickHouse 客户端类,负责数据库连接管理和基础操作。
-
-    职责：
-    - 管理数据库连接的生命周期
-    - 提供底层的 SQL 执行接口
-    - 提供通用的数据读写方法
-
-    使用方式：
-        # 方式1: 使用默认配置
-        client = ClickHouseClient()
-
-        # 方式2: 指定配置
-        client = ClickHouseClient(host='localhost', database='mydb')
-
-        # 方式3: 运行时修改配置
-        client.configure(database='new_db', reconnect=True)
-    """
+    """同步 ClickHouse 客户端；失败通过 False、None 或空表返回。"""
 
     def __init__(
         self,
@@ -42,19 +26,9 @@ class ClickHouseClient:
         database: str | None = None,
         *,
         config: ClickHouseConfig | None = None,
-    ):
-        """
-        初始化 ClickHouse 客户端。
-
-        Args:
-            host: ClickHouse 主机地址
-            port: ClickHouse 端口
-            user: 用户名
-            password: 密码
-            database: 数据库名
-        """
+    ) -> None:
+        """显式参数覆盖注入配置；初始化时建立连接。"""
         cfg = config if config is not None else ClickHouseConfig.from_env(strict=False)
-        # 存储配置
         self._config: dict[str, Any] = {
             "host": cfg.host if host is None else host,
             "port": cfg.port if port is None else port,
@@ -63,10 +37,8 @@ class ClickHouseClient:
             "database": cfg.database if database is None else database,
         }
 
-        # 底层连接对象
         self._connection: Client | None = None
 
-        # 自动连接
         self.connect()
 
     @property
@@ -75,19 +47,14 @@ class ClickHouseClient:
         return self._connection
 
     def connect(self) -> bool:
-        """
-        连接到 ClickHouse 数据库。
-
-        Returns:
-            连接成功返回 True,否则返回 False
-        """
+        """连接到 ClickHouse 数据库。"""
         if self._connection is not None:
             try:
-                self._connection.ping()
-                return True
+                if self._connection.ping():
+                    return True
             except Exception:
                 log.warning("Connection check failed, reconnecting...")
-                self._connection = None
+            self.close()
         try:
             self._connection = clickhouse_connect.get_client(**self._config)
             log.info(
@@ -97,7 +64,7 @@ class ClickHouseClient:
             return True
         except Exception as e:
             log.error(f"Failed to connect to ClickHouse: {e}")
-            self._connection = None
+            self.close()
             return False
 
     def close(self) -> None:
@@ -122,18 +89,7 @@ class ClickHouseClient:
         database: str | None = None,
         reconnect: bool = True,
     ) -> None:
-        """
-        更新数据库连接配置。
-
-        Args:
-            host: 新的主机地址
-            port: 新的端口
-            user: 新的用户名
-            password: 新的密码
-            database: 新的数据库名
-            reconnect: 是否立即重新连接,默认 True
-        """
-        # 更新配置
+        """更新数据库连接配置。"""
         if host is not None:
             self._config["host"] = host
         if port is not None:
@@ -150,52 +106,27 @@ class ClickHouseClient:
             f"{self._config['host']}:{self._config['port']}/{self._config['database']}"
         )
 
-        # 如果需要重新连接
         if reconnect:
             self.close()
             self.connect()
 
     def get_config(self) -> dict[str, Any]:
-        """
-        获取当前的数据库配置。
-
-        Returns:
-            配置字典
-        """
+        """获取当前的数据库配置。"""
         return self._config.copy()
 
     def is_connected(self) -> bool:
-        """
-        检查是否已连接。
-
-        Returns:
-            已连接返回 True,否则返回 False
-        """
+        """检查是否已连接。"""
         return self._connection is not None
 
     def ensure_connection(self) -> bool:
-        """
-        确保数据库连接可用,断开时自动重连。
-
-        Returns:
-            连接可用返回 True,否则返回 False
-        """
+        """确保数据库连接可用,断开时自动重连。"""
         if not self.is_connected():
             log.warning("No active connection, attempting to reconnect...")
             return self.connect()
         return True
 
     def execute(self, sql: str, params: dict[str, Any] | None = None) -> bool:
-        """
-        执行任意 SQL 语句(主要用于 DDL 或不返回数据的 DML)。
-
-        Args:
-            sql: 要执行的 SQL 语句
-            params: SQL 参数化查询的参数字典
-
-        Returns:
-            成功时返回 True,失败时返回 False
-        """
+        """执行任意 SQL 语句(主要用于 DDL 或不返回数据的 DML)。"""
         if not self.ensure_connection():
             return False
 
@@ -208,34 +139,21 @@ class ClickHouseClient:
             return True
         except Exception as e:
             log.error(f"Error executing SQL: {e}\nSQL: {sql}")
-            self._connection = None
+            self.close()
             return False
 
     def execute_sql_file(self, file_path: str) -> bool:
-        """
-        从 SQL 文件中读取并执行多个 SQL 语句。
-        主要用于执行包含多个 DDL 语句的 SQL 脚本文件。
-
-        Args:
-            file_path: SQL 文件路径
-
-        Returns:
-            全部执行成功返回 True, 遇到错误停止并返回 False
-        """
+        """顺序执行分号分隔的 SQL；不支持字符串内分号，失败即停止。"""
         try:
             with open(file_path, encoding="utf-8") as f:
                 sql_content = f.read()
 
-            # 简单的按分号分割, 过滤空语句
-            # 注意: 这种简单的分割不支持 SQL 字符串中包含分号的情况
-            # 但对于通常的 schema 定义文件来说已经足够
             statements = [s.strip() for s in sql_content.split(";") if s.strip()]
 
             log.info(f"Found {len(statements)} SQL statements in {file_path}")
 
             for i, sql in enumerate(statements):
-                # 检查是否只有注释或为空
-                # 移除单行注释 (-- ) 并检查是否有剩余内容
+                # 跳过纯行注释。
                 lines = sql.split("\n")
                 has_content = False
                 for line in lines:
@@ -261,16 +179,7 @@ class ClickHouseClient:
             return False
 
     def query(self, sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
-        """
-        执行查询并以 Pandas DataFrame 形式返回结果。
-
-        Args:
-            sql: 要执行的 SQL 查询语句
-            params: 查询参数
-
-        Returns:
-            包含查询结果的 DataFrame,如果出错或无数据则返回空的 DataFrame
-        """
+        """返回查询结果；失败返回空表，与零行结果不作区分。"""
         if not self.ensure_connection():
             return pd.DataFrame()
 
@@ -280,7 +189,7 @@ class ClickHouseClient:
             log.info(f"Query executed successfully, returned {len(result_df)} rows")
             return result_df
         except Exception as e:
-            self._connection = None
+            self.close()
             log.error(f"Error executing query: {e}\nSQL: {sql}")
             return pd.DataFrame()
 
@@ -294,18 +203,7 @@ class ClickHouseClient:
         offset: int | None = None,
         order_by: str | None = None,
     ) -> pd.DataFrame | None:
-        """
-        从表中读取数据并返回一个pandas DataFrame, 支持参数化查询和分页
-        :param table_name: 表名
-        :param columns: 要查询的列, 默认为'*'
-        :param condition: WHERE子句的条件, 例如 "symbol = 'BTC/USDT'"
-        :return: 包含查询结果的pandas DataFrame, 如果出错则返回None
-        :param params: SQL参数化查询的参数字典
-        :param limit: 限制返回的记录数
-        :param offset: 偏移量
-        :param order_by: 排序字段, 例如 "date DESC"
-        :return: 包含查询结果的pandas DataFrame, 如果出错则返回None
-        """
+        """按 SQL 子句读取；失败返回 None，子句须来自可信调用方。"""
         if not self.ensure_connection():
             return None
 
@@ -314,9 +212,9 @@ class ClickHouseClient:
             query += f" WHERE {condition}"
         if order_by:
             query += f" ORDER BY {order_by}"
-        if limit:
+        if limit is not None:
             query += f" LIMIT {limit}"
-        if offset:
+        if offset is not None:
             query += f" OFFSET {offset}"
 
         try:
@@ -329,7 +227,7 @@ class ClickHouseClient:
             return cast(pd.DataFrame, df)
         except Exception as e:
             log.error(f"Error reading data from table {table_name}: {e}\nSQL: {query}")
-            self._connection = None
+            self.close()
             return None
 
     def insert_data(
@@ -339,14 +237,11 @@ class ClickHouseClient:
         column_names: list[str] | None = None,
         batch_size: int | None = None,
     ) -> bool:
-        """
-        向表中插入数据, 支持批量插入
-        :param table_name: 表名
-        :param data: 要插入的数据,可以是pandas DataFrame或list of lists/tuples
-        :param column_names: 列名列表。如果data是DataFrame,则忽略此参数
-        :param batch_size: 批量插入的批次大小, None表示一次性插入
-        :return: 成功时返回True,失败时返回False
-        """
+        """分批插入；失败返回 False，已成功批次不会回滚。"""
+        if batch_size is not None and (type(batch_size) is not int or batch_size <= 0):
+            log.error("batch_size must be a positive integer or None")
+            return False
+
         if not self.ensure_connection():
             return False
 
@@ -358,13 +253,13 @@ class ClickHouseClient:
                     return True
                 try:
                     if batch_size and len(data) > batch_size:
-                        # 分批次插入
                         for i in range(0, len(data), batch_size):
                             self._connection.insert_df(table_name, data.iloc[i : i + batch_size])
                     else:
                         self._connection.insert_df(table_name, data)
                 except Exception as e:
                     log.error(f"Error inserting data into table {table_name}: {e}")
+                    self.close()
                     return False
 
                 log.info(f"Successfully inserted {len(data)} records into table {table_name}")
@@ -379,7 +274,6 @@ class ClickHouseClient:
                     log.warning("column_names parameter is required when data is a list")
                     return False
 
-                # 分批处理列表数据
                 if batch_size and len(data) > batch_size:
                     for i in range(0, len(data), batch_size):
                         batch = data[i : i + batch_size]
@@ -393,7 +287,7 @@ class ClickHouseClient:
                 log.warning("Unsupported data type, must be DataFrame or list")
                 return False
         except Exception as e:
-            self._connection = None
+            self.close()
             log.error(f"Error inserting data into table {table_name}: {e}")
             return False
 
@@ -404,71 +298,27 @@ class ClickHouseClient:
         key_columns: list[str],
         batch_size: int | None = None,
     ) -> bool:
-        """
-        向表中更新或插入数据 (Upsert)。
-        如果表的ENGINE是ReplacingMergeTree, 使用insert以后自动去重的机制来update。
-        如果表的ENGINE是MergeTree, 此方法首先删除与 `key_columns` 匹配的现有行, 然后插入新数据。
-        注意: ClickHouse的DELETE (ALTER TABLE ... DELETE) 操作是异步执行的,
-        数据不会立即被删除, 而是在后台合并过程中被清理。
-
-        :param table_name: 表名
-        :param data: 要插入的pandas DataFrame
-        :param key_columns: 用于标识唯一记录的列名列表
-        :param batch_size: 批量处理的批次大小, None表示一次性处理
-        :return: 成功时返回True, 失败时返回False
-        """
-        if not self.ensure_connection():
+        """校验替换引擎与排序键后插入；成功仅表示接受写入，不保证即时唯一。"""
+        if batch_size is not None and (type(batch_size) is not int or batch_size <= 0):
+            log.error("batch_size must be a positive integer or None")
             return False
-
-        if not isinstance(data, pd.DataFrame) or data.empty:  # type: ignore
+        if not isinstance(data, pd.DataFrame) or data.empty:
             log.warning("Data must be a non-empty pandas DataFrame")
             return False
-
-        # 检查key_columns是否存在于DataFrame中
-        missing_keys = [key for key in key_columns if key not in data.columns]
-        if missing_keys:
-            log.warning(f"Key columns {missing_keys} not found in DataFrame")
+        if not key_columns or len(set(key_columns)) != len(key_columns):
+            log.error("Upsert requires non-empty, distinct key_columns")
             return False
-
-        try:
-            total_rows = len(data)
-
-            # 如果未指定批次大小或数据量较小, 一次性处理
-            if batch_size is None or total_rows <= batch_size:
-                return self._process_upsert_batch(table_name, data, key_columns)
-
-            # 批量处理
-            log.info(f"Starting batch upsert, total {total_rows} records, batch size {batch_size}")
-            success_count = 0
-            for i in range(0, total_rows, batch_size):
-                batch_data = data.iloc[i : i + batch_size].copy()
-                batch_num = i // batch_size + 1
-                total_batches = (total_rows + batch_size - 1) // batch_size
-
-                log.debug(
-                    f"Processing batch {batch_num}/{total_batches}, record count: {len(batch_data)}"
-                )
-
-                if self._process_upsert_batch(table_name, batch_data, key_columns):
-                    success_count += len(batch_data)
-                else:
-                    log.error(f"Batch {batch_num} processing failed")
-                    return False
-
-            log.info(f"Batch upsert completed, successfully processed {success_count} records")
-            return True
-        except Exception as e:
-            self._connection = None
-            log.error(f"Error upserting data into table {table_name}: {e}")
+        if any(key not in data.columns for key in key_columns):
+            log.error("Upsert key_columns must exist in the DataFrame")
             return False
+        if not self.ensure_connection():
+            return False
+        if not self._validate_upsert_target(table_name, key_columns):
+            return False
+        return self.insert_data(table_name, data, batch_size=batch_size)
 
     def truncate_data(self, table_name: str) -> bool:
-        """
-        清空表中的所有数据。
-
-        :param table_name: 要清空的表名。
-        :return: 成功时返回True, 失败时返回False。
-        """
+        """清空表中的所有数据。"""
         if not self.ensure_connection():
             return False
 
@@ -482,13 +332,7 @@ class ClickHouseClient:
             return False
 
     def drop_table(self, table_name: str, if_exists: bool = True) -> bool:
-        """
-        删除指定的表。
-
-        :param table_name: 要删除的表名
-        :param if_exists: 如果为True, 在表不存在时不会报错; 如果为False, 表不存在时会报错
-        :return: 成功时返回True, 失败时返回False
-        """
+        """删除指定的表。"""
         if not self.ensure_connection():
             return False
 
@@ -502,147 +346,52 @@ class ClickHouseClient:
             log.error(f"Failed to drop table '{table_name}'")
             return False
 
-    def _process_upsert_batch(
-        self, table_name: str, batch_data: pd.DataFrame, key_columns: list[str]
-    ) -> bool:
-        """处理单个批次的upsert操作"""
-        try:
-            # 方案1: 使用 REPLACE INTO (推荐)
-            if self._support_replace_into(table_name):
-                return self._upsert_with_replace(table_name, batch_data)
-
-            # 方案2: 传统的 DELETE + INSERT
-            return self._upsert_with_delete_insert(table_name, batch_data, key_columns)
-
-        except Exception as e:
-            log.error(f"Error processing batch: {e}")
+    def _validate_upsert_target(self, table_name: str, key_columns: list[str]) -> bool:
+        """仅接受已知替换引擎和简单列排序键；无法确认时拒绝写入。"""
+        identifier = r"[A-Za-z_][A-Za-z0-9_]*"
+        if not re.fullmatch(rf"{identifier}(?:\.{identifier})?", table_name):
+            log.error("Cannot verify upsert target name: %s", table_name)
             return False
-
-    def _upsert_with_replace(self, table_name: str, data: pd.DataFrame) -> bool:
-        """
-        使用 ReplacingMergeTree 的自动去重机制进行 upsert
-
-        ReplacingMergeTree 会在后台合并时自动去重,根据 ORDER BY 子句中的列判断重复。
-        相同排序键的行中,保留版本号（如果指定）最大的行,或最后插入的行。
-
-        注意：去重不是立即发生的,而是在后台合并过程中异步执行。
-        查询时使用 FINAL 修饰符可以强制进行去重,但会影响性能。
-        """
-        try:
-            # ReplacingMergeTree 引擎直接插入即可,后台会自动去重
-            return self.insert_data(table_name, data)
-
-        except Exception as e:
-            log.error(f"ReplacingMergeTree upsert operation failed: {e}")
-            return False
-
-    def _upsert_with_delete_insert(
-        self, table_name: str, data: pd.DataFrame, key_columns: list[str]
-    ) -> bool:
-        """使用 DELETE + INSERT 进行upsert"""
-        try:
-            # 1. 构建安全的DELETE查询
-            if not self._delete_existing_records(table_name, data, key_columns):
-                return False
-
-            # 2. 插入新数据
-            return self.insert_data(table_name, data)
-
-        except Exception as e:
-            log.error(f"DELETE+INSERT operation failed: {e}")
-            return False
-
-    def _delete_existing_records(
-        self, table_name: str, data: pd.DataFrame, key_columns: list[str]
-    ) -> bool:
-        """安全地删除现有记录"""
-        try:
-            keys_df = data[key_columns].drop_duplicates()
-
-            # 分批构建DELETE语句以避免SQL过长
-            batch_size = 500  # DELETE批次大小
-
-            for i in range(0, len(keys_df), batch_size):
-                batch_keys = keys_df.iloc[i : i + batch_size]
-
-                if len(key_columns) == 1:
-                    # 单列键
-                    key_col = key_columns[0]
-                    values = batch_keys[key_col].tolist()
-
-                    # 安全处理值类型
-                    if pd.api.types.is_string_dtype(batch_keys[key_col]):
-                        values_str = ", ".join(
-                            [f"'{str(v).replace(chr(39), chr(39) + chr(39))}'" for v in values]
-                        )
-                    else:
-                        values_str = ", ".join(map(str, values))
-
-                    where_clause = f"{key_col} IN ({values_str})"
-                else:
-                    # 多列键
-                    conditions = []
-                    for row in batch_keys.itertuples(index=False, name=None):
-                        condition_parts = []
-                        for col, value in zip(key_columns, row, strict=True):
-                            if pd.isna(value):
-                                condition_parts.append(f"{col} IS NULL")
-                            elif isinstance(value, str):
-                                escaped_value = str(value).replace("'", "''")
-                                condition_parts.append(f"{col} = '{escaped_value}'")
-                            else:
-                                condition_parts.append(f"{col} = {value}")
-
-                        conditions.append(f"({' AND '.join(condition_parts)})")
-
-                    where_clause = " OR ".join(conditions)
-
-                delete_query = f"ALTER TABLE {table_name} DELETE WHERE {where_clause}"
-                # NOTE: short-circuit on first failed DELETE. Previously the
-                # return value was discarded, so a single failing batch
-                # (e.g. ALTER TABLE on a missing partition) silently left
-                # the upsert pipeline to insert NEW rows on top of the
-                # un-deleted OLD rows. The caller (`_upsert_with_delete_insert`)
-                # DOES check the return value, so propagating False here
-                # gives the caller a chance to abort.
-                if not self.execute(delete_query):
-                    log.error(
-                        f"DELETE batch failed for {table_name} "
-                        f"(batch starting at index {i}/{len(keys_df)})"
-                    )
-                    return False
-
-            return True
-
-        except Exception as e:
-            log.error(f"Error deleting existing records: {e}")
-            return False
-
-    def _support_replace_into(self, table_name: str) -> bool:
-        """检查表是否支持REPLACE INTO操作"""
-        if not self.ensure_connection():
-            return False
-
+        database, separator, table = table_name.partition(".")
+        params = {"table": table if separator else table_name}
+        database_clause = "currentDatabase()"
+        if separator:
+            database_clause = "%(database)s"
+            params["database"] = database
         try:
             assert self._connection is not None
-            # 检查表引擎和主键设置
-            sql = f"""
-                SELECT engine, primary_key
-                FROM system.tables
-                WHERE database = currentDatabase() AND name = '{table_name}'
-            """
-            result = self._connection.query(sql).result_rows
-
-            if not result:
+            rows = self._connection.query(
+                "SELECT engine, sorting_key FROM system.tables "
+                f"WHERE database = {database_clause} AND name = %(table)s",
+                parameters=params,
+            ).result_rows
+            if len(rows) != 1:
+                log.error("Cannot find unique upsert metadata for %s", table_name)
                 return False
-
-            engine, primary_key = result[0]
-
-            # ReplacingMergeTree 或有主键的表支持 REPLACE
-            return "ReplacingMergeTree" in engine or bool(primary_key)
-
+            engine, sorting_key = rows[0]
+            if engine not in {"ReplacingMergeTree", "ReplicatedReplacingMergeTree"}:
+                log.error("Unsupported upsert engine for %s: %s", table_name, engine)
+                return False
+            key = sorting_key.strip()
+            if key.startswith("tuple(") and key.endswith(")"):
+                key = key[6:-1]
+            elif key.startswith("(") and key.endswith(")"):
+                key = key[1:-1]
+            columns = [part.strip() for part in key.split(",")]
+            # 不推断表达式、别名或带转义的标识符，避免把不同键误认为相同。
+            columns = [
+                col[1:-1] if len(col) >= 2 and col[0] == col[-1] and col[0] in '`"' else col
+                for col in columns
+            ]
+            if any(re.fullmatch(identifier, col) is None for col in columns):
+                log.error("Cannot verify ORDER BY columns for %s: %s", table_name, sorting_key)
+                return False
+            if columns != key_columns:
+                log.error("Upsert key_columns do not match ORDER BY for %s", table_name)
+                return False
+            return True
         except Exception as e:
-            log.debug(f"Error checking REPLACE support, using traditional method: {e}")
+            log.error("Failed to verify upsert metadata for %s: %s", table_name, e)
             return False
 
     def __enter__(self) -> ClickHouseClient:

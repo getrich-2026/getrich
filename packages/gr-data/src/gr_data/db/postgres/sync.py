@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import psycopg
@@ -21,7 +21,7 @@ class PgConfig:
     port: int = 5432
     dbname: str = "getrich"
     user: str = "postgres"
-    password: str = ""
+    password: str = field(default="", repr=False)
     statement_timeout_ms: int = 60000
 
     @classmethod
@@ -37,30 +37,22 @@ class PgConfig:
         )
 
     def conninfo(self) -> str:
-        """构造 libpq 连接串。
-
-        必须用 ``make_conninfo`` 而不是 f-string 拼接：keyword=value 格式里，
-        含空格 / 单引号 / 反斜杠的值需要转义。手工拼接时密码含空格会直接
-        ProgrammingError，含反斜杠更糟——会被**静默**解析成另一个值
-        （``a\\b`` → ``a\b``），表现为莫名其妙的认证失败。
-        """
+        """构造安全连接串，统一设置时区与语句超时。"""
         return make_conninfo(
             host=self.host,
             port=self.port,
             dbname=self.dbname,
             user=self.user,
             password=self.password,
+            options=f"-c timezone=Asia/Shanghai -c statement_timeout={self.statement_timeout_ms}",
         )
 
 
 @contextmanager
 def connect(cfg: PgConfig) -> Iterator[psycopg.Connection]:
-    """打开一个连接，设置 statement_timeout，结束自动关闭。"""
+    """打开同步连接；调用方负责提交或回滚，退出时关闭。"""
     conn = psycopg.connect(cfg.conninfo(), autocommit=False)
     try:
-        with conn.cursor() as cur:
-            cur.execute(f"SET statement_timeout = {int(cfg.statement_timeout_ms)}")
-        conn.commit()
         yield conn
     finally:
         conn.close()
@@ -69,7 +61,7 @@ def connect(cfg: PgConfig) -> Iterator[psycopg.Connection]:
 class PgPool:
     """轻量连接池包装（psycopg_pool）。批量入库可直接用 connect()；池供长驻进程用。"""
 
-    def __init__(self, cfg: PgConfig, min_size: int = 1, max_size: int = 8):
+    def __init__(self, cfg: PgConfig, min_size: int = 1, max_size: int = 8) -> None:
         from psycopg_pool import ConnectionPool
 
         self._pool = ConnectionPool(cfg.conninfo(), min_size=min_size, max_size=max_size, open=True)

@@ -109,6 +109,7 @@ def _make_pool(*, min_size: int = 1, max_size: int = 3) -> ClickHouseConnectionP
     pool._config = {"host": "h", "port": 9000, "database": "d"}
     pool._pool = []
     pool._lock = threading.RLock()
+    pool._available = threading.Condition(pool._lock)
     pool._stats = {
         "total_connections": 0,
         "active_connections": 0,
@@ -134,8 +135,8 @@ def _append(
     conn.client = client
     conn.pool = pool
     conn.in_use = in_use
-    conn.created_at = time.time()
-    conn.last_used = time.time()
+    conn.created_at = time.monotonic()
+    conn.last_used = time.monotonic()
     conn.use_count = 0
     pool._pool.append(conn)
     pool._stats["total_connections"] += 1
@@ -152,8 +153,8 @@ def _make_pooled_connection(
     pc.client = client
     pc.pool = pool
     pc.in_use = False
-    pc.created_at = time.time()
-    pc.last_used = time.time()
+    pc.created_at = time.monotonic()
+    pc.last_used = time.monotonic()
     pc.use_count = 0
     return pc
 
@@ -170,7 +171,7 @@ def test_pooled_connection_mark_in_use_sets_state() -> None:
     conn.client = MagicMock()
     conn.pool = MagicMock()
     conn.in_use = False
-    conn.created_at = time.time()
+    conn.created_at = time.monotonic()
     conn.last_used = 0.0
     conn.use_count = 0
 
@@ -186,7 +187,7 @@ def test_pooled_connection_mark_available_clears_state() -> None:
     conn.client = MagicMock()
     conn.pool = MagicMock()
     conn.in_use = True
-    conn.created_at = time.time()
+    conn.created_at = time.monotonic()
     conn.last_used = 0.0
     conn.use_count = 5
 
@@ -207,8 +208,8 @@ def test_pooled_connection_is_expired_false_when_fresh() -> None:
     conn = PooledConnection.__new__(PooledConnection)
     conn.client = MagicMock()
     conn.pool = MagicMock()
-    conn.created_at = time.time()
-    conn.last_used = time.time()
+    conn.created_at = time.monotonic()
+    conn.last_used = time.monotonic()
 
     assert conn.is_expired(max_age=3600) is False
 
@@ -217,8 +218,8 @@ def test_pooled_connection_is_expired_true_when_old() -> None:
     conn = PooledConnection.__new__(PooledConnection)
     conn.client = MagicMock()
     conn.pool = MagicMock()
-    conn.created_at = time.time() - 7200  # 2h ago
-    conn.last_used = time.time()
+    conn.created_at = time.monotonic() - 7200  # 2h ago
+    conn.last_used = time.monotonic()
 
     assert conn.is_expired(max_age=3600) is True
 
@@ -227,8 +228,8 @@ def test_pooled_connection_is_idle_timeout_false_when_recent() -> None:
     conn = PooledConnection.__new__(PooledConnection)
     conn.client = MagicMock()
     conn.pool = MagicMock()
-    conn.created_at = time.time() - 1000
-    conn.last_used = time.time()  # used just now
+    conn.created_at = time.monotonic() - 1000
+    conn.last_used = time.monotonic()  # used just now
 
     assert conn.is_idle_timeout(idle_timeout=300) is False
 
@@ -237,8 +238,8 @@ def test_pooled_connection_is_idle_timeout_true_when_idle() -> None:
     conn = PooledConnection.__new__(PooledConnection)
     conn.client = MagicMock()
     conn.pool = MagicMock()
-    conn.created_at = time.time() - 1000
-    conn.last_used = time.time() - 600  # idle 10min
+    conn.created_at = time.monotonic() - 1000
+    conn.last_used = time.monotonic() - 600  # idle 10min
 
     assert conn.is_idle_timeout(idle_timeout=300) is True
 
@@ -250,8 +251,8 @@ def test_pooled_connection_close_delegates() -> None:
     conn.client = fake
     conn.pool = MagicMock()
     conn.in_use = False
-    conn.created_at = time.time()
-    conn.last_used = time.time()
+    conn.created_at = time.monotonic()
+    conn.last_used = time.monotonic()
     conn.use_count = 0
 
     conn.close()
@@ -267,8 +268,8 @@ def test_pooled_connection_close_swallows_missing_client() -> None:
     conn.client = None
     conn.pool = MagicMock()
     conn.in_use = False
-    conn.created_at = time.time()
-    conn.last_used = time.time()
+    conn.created_at = time.monotonic()
+    conn.last_used = time.monotonic()
     conn.use_count = 0
 
     conn.close()  # should NOT raise
@@ -570,8 +571,8 @@ def test_shrink_closes_idle_above_active_count() -> None:
     stale = _FakeClient(connected=True)
     _append(pool, fresh)
     _append(pool, stale)
-    pool._pool[0].last_used = time.time()  # newer
-    pool._pool[1].last_used = time.time() - 1000  # older
+    pool._pool[0].last_used = time.monotonic()  # newer
+    pool._pool[1].last_used = time.monotonic() - 1000  # older
 
     pool.shrink()
 
@@ -684,3 +685,52 @@ def test_repr_hides_password() -> None:
     assert "secret" not in rendered
     assert "***" in rendered
     assert "click.internal" in rendered
+
+
+def test_removing_bad_connection_does_not_skip_next_idle_client() -> None:
+    pool = _make_pool(max_size=2)
+    bad, good = _FakeClient(connected=False), _FakeClient()
+    _append(pool, bad)
+    _append(pool, good)
+    with patch.object(pool, "_create_connection") as create:
+        assert pool.get_connection(timeout=0) is good
+    create.assert_not_called()
+    assert bad.closed
+
+
+def test_zero_timeout_does_not_wait_when_saturated() -> None:
+    pool = _make_pool(max_size=1)
+    _append(pool, _FakeClient(), in_use=True)
+    with patch.object(pool._available, "wait") as wait, pytest.raises(TimeoutError):
+        pool.get_connection(timeout=0)
+    wait.assert_not_called()
+
+
+def test_release_wakes_waiting_borrower() -> None:
+    pool = _make_pool(max_size=1)
+    client = _FakeClient()
+    _append(pool, client)
+    borrowed = pool.get_connection()
+    waiting = threading.Event()
+    original_wait = pool._available.wait
+    result = []
+
+    def wait(timeout=None):
+        waiting.set()
+        return original_wait(timeout)
+
+    def borrow():
+        result.append(pool.get_connection(timeout=1))
+
+    with patch.object(pool._available, "wait", side_effect=wait):
+        worker = threading.Thread(target=borrow)
+        worker.start()
+        try:
+            assert waiting.wait(1)
+            pool.release_connection(borrowed)
+        finally:
+            worker.join(2)
+    assert not worker.is_alive()
+    assert result == [client]
+    assert pool.get_stats()["active_connections"] == 1
+    pool.release_connection(borrowed)

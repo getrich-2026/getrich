@@ -1,19 +1,4 @@
-"""Tests for ``gr_data.db.clickhouse.database.ClickHouseClient``.
-
-The wrapper is responsible for:
-- Connection lifecycle (connect, ping, reconnect, close)
-- DDL/DML via `execute()` and `execute_sql_file()`
-- Read APIs (`query`, `read_data`)
-- Write APIs (`insert_data`, `upsert_data`)
-- Schema operations (`truncate_data`, `drop_table`)
-- Internal upsert routing (REPLACE INTO for
-  ReplacingMergeTree, otherwise DELETE+INSERT)
-
-These tests mock the underlying
-``clickhouse_connect.get_client`` factory so no real
-ClickHouse is required. The mock implements only the
-methods the wrapper actually calls.
-"""
+"""ClickHouse 客户端回归测试；全部使用替身，不连接真实数据库。"""
 
 from __future__ import annotations
 
@@ -764,333 +749,76 @@ def test_upsert_data_rejects_missing_key_columns() -> None:
     assert result is False
 
 
-def test_upsert_data_single_batch_routes_to_insert() -> None:
-    """With `batch_size=None` and small data, the wrapper
-    calls `_process_upsert_batch` once (which delegates
-    to `insert_data` when ReplacingMergeTree is detected,
-    or DELETE+INSERT otherwise)."""
+@pytest.mark.parametrize("engine", ["ReplacingMergeTree", "ReplicatedReplacingMergeTree"])
+@pytest.mark.parametrize("sorting_key", ["id, v", "tuple(id, v)", "(id, v)", "`id`, v"])
+def test_upsert_validates_once_before_all_batches(engine: str, sorting_key: str) -> None:
     client, fake = _make_client()
-    df = pd.DataFrame({"id": [1, 2], "v": [10, 20]})
+    fake.query.return_value.result_rows = [(engine, sorting_key)]
+    data = pd.DataFrame({"id": [1, 2, 3], "v": [10, 20, 30]})
 
-    with patch.object(
-        client,
-        "_support_replace_into",
-        return_value=True,
-    ):
-        result = client.upsert_data("t", df, key_columns=["id"])
+    def check_metadata_first(*args, **kwargs):
+        fake.query.assert_called_once()
 
-    assert result is True
-    # insert_df was called once (via insert_data → _upsert_with_replace).
-    fake.insert_df.assert_called_once()
-
-
-def test_upsert_data_multi_batch_stops_on_failure() -> None:
-    """With `batch_size=2` and 4 rows, processing happens
-    in 2 batches. If the 2nd batch fails, the wrapper
-    returns False (no further processing)."""
-    client, fake = _make_client()
-    df = pd.DataFrame({"id": [1, 2, 3, 4], "v": [10, 20, 30, 40]})
-    call_count = {"n": 0}
-
-    def _maybe_fail(*args, **kwargs):
-        call_count["n"] += 1
-        if call_count["n"] == 2:
-            raise RuntimeError("batch 2 failed")
-
-    fake.insert_df.side_effect = _maybe_fail
-
-    with patch.object(client, "_support_replace_into", return_value=True):
-        result = client.upsert_data("t", df, key_columns=["id"], batch_size=2)
-
-    assert result is False
-    assert call_count["n"] == 2
-
-
-def test_upsert_data_returns_false_when_ensure_fails() -> None:
-    client, _fake = _make_client()
-    client._connection = None
-
-    with patch(
-        "gr_data.db.clickhouse.database.clickhouse_connect.get_client",
-        side_effect=RuntimeError("nope"),
-    ):
-        result = client.upsert_data("t", pd.DataFrame({"id": [1]}), key_columns=["id"])
-
-    assert result is False
-
-
-# ---------------------------------------------------------------------------
-# _support_replace_into() — engine detection
-# ---------------------------------------------------------------------------
-
-
-def test_support_replace_into_returns_false_for_empty_result() -> None:
-    """If the `system.tables` query returns no rows
-    (table does not exist), the wrapper assumes
-    REPLACE INTO is not supported."""
-    client, fake = _make_client()
-    result_mock = MagicMock()
-    result_mock.result_rows = []
-    fake.query.return_value = result_mock
-
-    assert client._support_replace_into("nonexistent") is False
-
-
-def test_support_replace_into_true_for_replacing_merge_tree() -> None:
-    client, fake = _make_client()
-    result_mock = MagicMock()
-    result_mock.result_rows = [("ReplacingMergeTree", "id")]
-    fake.query.return_value = result_mock
-
-    assert client._support_replace_into("t") is True
-
-
-def test_support_replace_into_true_for_table_with_primary_key() -> None:
-    """Any table with a non-empty `primary_key` is
-    considered REPLACE-INTO capable, even if the engine
-    is plain MergeTree (REPLACE INTO needs an ORDER BY
-    column, which the primary key satisfies)."""
-    client, fake = _make_client()
-    result_mock = MagicMock()
-    result_mock.result_rows = [("MergeTree", "id")]
-    fake.query.return_value = result_mock
-
-    assert client._support_replace_into("t") is True
-
-
-def test_support_replace_into_false_for_no_primary_key_merge_tree() -> None:
-    client, fake = _make_client()
-    result_mock = MagicMock()
-    result_mock.result_rows = [("MergeTree", "")]
-    fake.query.return_value = result_mock
-
-    assert client._support_replace_into("t") is False
-
-
-def test_support_replace_into_returns_false_on_error() -> None:
-    """If the engine-detection query raises, fall back
-    to the conservative (False) path: the upsert
-    proceeds via DELETE+INSERT instead of REPLACE INTO."""
-    client, fake = _make_client()
-    fake.query.side_effect = RuntimeError("system query failed")
-
-    assert client._support_replace_into("t") is False
-
-
-def test_support_replace_into_returns_false_when_disconnected() -> None:
-    client, _fake = _make_client()
-    client._connection = None
-
-    assert client._support_replace_into("t") is False
-
-
-# ---------------------------------------------------------------------------
-# _delete_existing_records() — IN-clause builder
-# ---------------------------------------------------------------------------
-
-
-def test_delete_existing_records_single_string_column() -> None:
-    """For a single string-typed key column, the
-    IN-clause values are quoted and single-quote-escaped
-    (`'` → `''`)."""
-    client, fake = _make_client()
-    df = pd.DataFrame({"symbol": ["rb2410", "cu2412"]})
-
-    result = client._delete_existing_records("t", df, ["symbol"])
-
-    assert result is True
-    # Two DELETE statements: one per 500-key batch.
-    assert len(fake.command_calls) == 1
-    sql, _ = fake.command_calls[0]
-    assert "ALTER TABLE t DELETE WHERE" in sql
-    assert "'rb2410'" in sql
-    assert "'cu2412'" in sql
-    # The escaping for the apostrophe in the test data is
-    # exercised by the `replace("'", "''")` call in the
-    # wrapper — it doesn't fire here (no apostrophe in
-    # "rb2410") but the formatter is in the call path.
-
-
-def test_delete_existing_records_single_int_column() -> None:
-    """For a single int-typed key column, the IN-clause
-    values are NOT quoted (numeric literals)."""
-    client, fake = _make_client()
-    df = pd.DataFrame({"id": [10, 20, 30]})
-
-    result = client._delete_existing_records("t", df, ["id"])
-
-    assert result is True
-    sql, _ = fake.command_calls[0]
-    assert "10" in sql
-    assert "20" in sql
-    assert "30" in sql
-
-
-def test_delete_existing_records_multi_column() -> None:
-    """For multi-column keys, the wrapper builds
-    `((c1 = v1) AND (c2 = v2)) OR (...)` predicates."""
-    client, fake = _make_client()
-    df = pd.DataFrame(
-        {
-            "symbol": ["rb2410", "cu2412"],
-            "dt": ["2024-01-01", "2024-01-02"],
-        }
+    fake.insert_df.side_effect = check_metadata_first
+    assert client.upsert_data("other.t", data, ["id", "v"], batch_size=2) is True
+    assert fake.query.call_args.kwargs["parameters"] == {"database": "other", "table": "t"}
+    assert "sorting_key" in fake.query.call_args.args[0]
+    assert fake.insert_df.call_count == 2
+    pd.testing.assert_frame_equal(
+        pd.concat([call.args[1] for call in fake.insert_df.call_args_list]), data
     )
-
-    result = client._delete_existing_records("t", df, ["symbol", "dt"])
-
-    assert result is True
-    sql, _ = fake.command_calls[0]
-    assert "(symbol = 'rb2410' AND dt = '2024-01-01')" in sql
-    assert "(symbol = 'cu2412' AND dt = '2024-01-02')" in sql
-    assert " OR " in sql
+    fake.command.assert_not_called()
 
 
-def test_delete_existing_records_handles_null_in_multi_column() -> None:
-    """In multi-column mode, NaN values become
-    `IS NULL` clauses (rather than `= NULL` which is
-    always false in SQL)."""
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [("MergeTree", "id")],
+        [("AggregatingMergeTree", "id")],
+        [("FakeReplacingMergeTree", "id")],
+        [("ReplacingMergeTree", "v")],
+        [("ReplacingMergeTree", "tuple(id, v)")],
+        [("ReplacingMergeTree", "toString(id)")],
+        [("ReplacingMergeTree", "tuple()")],
+        [],
+    ],
+)
+def test_upsert_rejects_unverified_target_without_writes(rows: list) -> None:
     client, fake = _make_client()
-    df = pd.DataFrame(
-        {
-            "a": [1, 2],
-            "b": [None, "x"],
-        }
-    )
-
-    result = client._delete_existing_records("t", df, ["a", "b"])
-
-    assert result is True
-    sql, _ = fake.command_calls[0]
-    # The NaN row becomes `(a = 1 AND b IS NULL)`.
-    assert "b IS NULL" in sql
-
-
-def test_delete_existing_records_batches_at_500_keys() -> None:
-    """The wrapper partitions keys into batches of 500
-    to avoid IN-clause length explosions."""
-    client, fake = _make_client()
-    df = pd.DataFrame({"id": list(range(1200))})
-
-    result = client._delete_existing_records("t", df, ["id"])
-
-    assert result is True
-    # 1200 / 500 = 3 batches (500, 500, 200).
-    assert len(fake.command_calls) == 3
-
-
-def test_delete_existing_records_returns_false_on_alter_failure() -> None:
-    """P0 fix (Round #1047): previously `_delete_existing_records`
-    IGNORED the return value of `self.execute(delete_query)` —
-    so a single failing ALTER batch would silently leave the
-    upsert pipeline to insert NEW rows on top of un-deleted OLD
-    rows. After the fix, the method short-circuits to `False`
-    on the first failed batch, giving the caller a chance to
-    abort.
-
-    The failure mode in production is `command()` raising
-    (network error, permission denied, etc.), which `execute()`
-    catches and turns into `False`. We mirror that here by
-    raising from the side_effect."""
-    client, fake = _make_client()
-    calls: list[tuple[str, dict | None]] = []
-
-    def _record_and_fail(sql, parameters=None):
-        calls.append((sql, parameters))
-        raise RuntimeError("ALTER failed (table missing)")
-
-    fake.command.side_effect = _record_and_fail
-    df = pd.DataFrame({"id": [1]})
-
-    result = client._delete_existing_records("t", df, ["id"])
-
-    assert result is False
-    assert len(calls) == 1
-    assert "ALTER TABLE t DELETE WHERE" in calls[0][0]
-
-
-def test_delete_existing_records_stops_at_first_failing_batch() -> None:
-    """With 1200 keys (3 batches of 500), if batch #2 fails
-    the method returns False AND batch #3 is never attempted."""
-    client, fake = _make_client()
-    call_count = {"n": 0}
-
-    def _fail_on_second(sql, parameters=None):
-        call_count["n"] += 1
-        if call_count["n"] == 2:
-            raise RuntimeError("ALTER failed (batch 2)")
-        return None
-
-    fake.command.side_effect = _fail_on_second
-    df = pd.DataFrame({"id": list(range(1200))})
-
-    result = client._delete_existing_records("t", df, ["id"])
-
-    assert result is False
-    assert call_count["n"] == 2  # stopped at batch 2; #3 was never attempted
-
-
-def test_delete_existing_records_all_batches_succeed() -> None:
-    """Sanity check: with 1200 keys, if all 3 batches succeed
-    the method returns True."""
-    client, fake = _make_client()
-    df = pd.DataFrame({"id": list(range(1200))})
-
-    result = client._delete_existing_records("t", df, ["id"])
-
-    assert result is True
-    # 3 batches (500, 500, 200).
-    assert len(fake.command_calls) == 3
-
-
-def test_upsert_with_delete_insert_aborts_when_delete_fails() -> None:
-    """Caller-level P0: when `_delete_existing_records`
-    returns False (e.g. ALTER failed), `_upsert_with_delete_insert`
-    MUST NOT proceed to `insert_data` — otherwise we'd have
-    duplicate rows (old + new) on top of the failed DELETE.
-
-    Before Round #1047, this was a silent-failure risk: the
-    INSERT would proceed and the caller (`upsert_data`) would
-    return True, reporting success while leaving the table in
-    an inconsistent state."""
-    client, fake = _make_client()
-
-    # Force the DELETE path (not REPLACE INTO) by reporting
-    # the table as plain MergeTree with no primary key.
-    result_mock = MagicMock()
-    result_mock.result_rows = [("MergeTree", "")]
-    fake.query.return_value = result_mock
-
-    # Make the underlying command() raise → execute() → False
-    # → _delete_existing_records → False → caller aborts.
-    fake.command.side_effect = RuntimeError("ALTER failed")
-
-    df = pd.DataFrame({"id": [1, 2]})
-    result = client.upsert_data("t", df, key_columns=["id"])
-
-    assert result is False
-    # `insert_data` must NOT have been called (no insert_df calls).
+    fake.query.return_value.result_rows = rows
+    assert client.upsert_data("t", pd.DataFrame({"id": [1, 2], "v": [1, 2]}), ["id"], 1) is False
     fake.insert_df.assert_not_called()
     fake.insert.assert_not_called()
+    fake.command.assert_not_called()
 
 
-def test_delete_existing_records_returns_false_on_outside_error() -> None:
-    """An error during the DataFrame prep (NOT during
-    the SQL execution) propagates as `False`."""
+def test_upsert_metadata_error_never_writes(caplog: pytest.LogCaptureFixture) -> None:
     client, fake = _make_client()
-    # A DataFrame without the requested key column
-    # raises `KeyError` inside `data[key_columns]` —
-    # which is OUTSIDE of the `execute()` call.
-    df = pd.DataFrame({"unrelated": [1]})
-
-    result = client._delete_existing_records("t", df, ["id"])
-
-    assert result is False
+    fake.query.side_effect = RuntimeError("metadata unavailable")
+    assert client.upsert_data("t", pd.DataFrame({"id": [1]}), ["id"]) is False
+    fake.insert_df.assert_not_called()
+    fake.insert.assert_not_called()
+    fake.command.assert_not_called()
+    assert "Failed to verify upsert metadata" in caplog.text
 
 
-# ---------------------------------------------------------------------------
-# truncate_data() / drop_table()
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("keys", [[], ["id", "id"], ["v", "id"]])
+def test_upsert_rejects_empty_duplicate_or_reordered_keys(keys: list[str]) -> None:
+    client, fake = _make_client()
+    fake.query.return_value.result_rows = [("ReplacingMergeTree", "id, v")]
+    assert client.upsert_data("t", pd.DataFrame({"id": [1], "v": [2]}), keys) is False
+    fake.insert_df.assert_not_called()
+    fake.command.assert_not_called()
+
+
+def test_upsert_stops_after_failed_batch() -> None:
+    client, fake = _make_client()
+    fake.query.return_value.result_rows = [("ReplacingMergeTree", "id")]
+    fake.insert_df.side_effect = [None, RuntimeError("batch failed"), None]
+    assert client.upsert_data("t", pd.DataFrame({"id": [1, 2, 3]}), ["id"], 1) is False
+    assert fake.insert_df.call_count == 2
+    fake.query.assert_called_once()
+    fake.close.assert_called_once()
 
 
 def test_truncate_data_runs_truncate_sql() -> None:
@@ -1156,3 +884,45 @@ def test_repr_includes_host_database_connected() -> None:
     assert "host='h'" in rendered
     assert "database='d'" in rendered
     assert "connected=True" in rendered
+
+
+@pytest.mark.parametrize("batch_size", [-1, 0, True, 1.5])
+def test_invalid_batch_size_never_writes(batch_size: int) -> None:
+    client, fake = _make_client()
+    data = pd.DataFrame({"id": [1, 2]})
+    assert client.insert_data("t", data, batch_size=batch_size) is False
+    assert client.insert_data("t", [[1]], ["id"], batch_size=batch_size) is False
+    assert client.upsert_data("t", data, ["id"], batch_size=batch_size) is False
+    fake.insert_df.assert_not_called()
+    fake.insert.assert_not_called()
+    fake.query.assert_not_called()
+
+
+def test_connect_replaces_connection_when_ping_returns_false() -> None:
+    client, fake = _make_client()
+    fake.ping.return_value = False
+    replacement = _FakeClient()
+    with patch(
+        "gr_data.db.clickhouse.database.clickhouse_connect.get_client", return_value=replacement
+    ):
+        assert client.connect() is True
+    fake.close.assert_called_once()
+    assert client.client is replacement
+
+
+def test_read_data_keeps_zero_limit() -> None:
+    client, fake = _make_client()
+    client.read_data("t", limit=0)
+    assert "LIMIT 0" in fake.query_df_calls[0][0]
+
+
+def test_upsert_connection_failure_never_writes() -> None:
+    client, fake = _make_client()
+    client.close()
+    with patch(
+        "gr_data.db.clickhouse.database.clickhouse_connect.get_client",
+        side_effect=RuntimeError("offline"),
+    ):
+        assert client.upsert_data("t", pd.DataFrame({"id": [1]}), ["id"]) is False
+    fake.insert_df.assert_not_called()
+    fake.command.assert_not_called()

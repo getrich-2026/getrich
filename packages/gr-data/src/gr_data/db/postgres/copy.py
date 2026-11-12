@@ -1,19 +1,14 @@
-"""批量 upsert：临时表 + COPY + INSERT ... ON CONFLICT。
-
-流程（单事务）：
-1. 建与目标表同结构的临时表（仅取规范列）。
-2. COPY 把行写入临时表（高效批量加载）。
-3. INSERT INTO 目标表 SELECT FROM 临时表 ON CONFLICT 更新。
-
-只操作 contract 声明的规范列；updated_at 由 DB 默认/触发器维护或在 SET 中刷新。
-"""
+"""使用临时表和 COPY 批量 upsert；调用方控制外层事务。"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
+from uuid import uuid4
 
 import psycopg
+from psycopg import sql
+from psycopg.pq import TransactionStatus
 
 from gr_data.common.contracts import TableContract
 
@@ -29,40 +24,49 @@ def upsert_rows(
 
     rows 中每行的列顺序必须与 ``columns``（默认 contract.columns）一致。
     """
-    cols = list(columns or contract.columns)
+    cols = list(contract.columns if columns is None else columns)
     if not rows:
         return 0
+    if not cols or len(set(cols)) != len(cols) or any(col not in contract.columns for col in cols):
+        raise ValueError("Upsert columns must be distinct contract columns")
+    if any(key not in cols for key in contract.conflict_keys):
+        raise ValueError("Upsert columns must include all conflict keys")
+    if any(len(row) != len(cols) for row in rows):
+        raise ValueError("Upsert row width does not match columns")
 
-    col_idents = ", ".join(f'"{c}"' for c in cols)
-    tmp = f"_stage_{contract.table}"
-
-    update_cols = [c for c in cols if c not in contract.conflict_keys]
-    set_clause = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in update_cols)
-    conflict = ", ".join(f'"{c}"' for c in contract.conflict_keys)
-
-    with conn.cursor() as cur:
-        cur.execute(
-            f'CREATE TEMP TABLE "{tmp}" '
-            f"(LIKE {contract.qualified} INCLUDING DEFAULTS) ON COMMIT DROP"
+    table = sql.Identifier(contract.schema, contract.table)
+    stage = sql.Identifier(f"_stage_{uuid4().hex}")
+    col_sql = sql.SQL(", ").join(map(sql.Identifier, cols))
+    conflict_sql = sql.SQL(", ").join(map(sql.Identifier, contract.conflict_keys))
+    update_cols = [col for col in cols if col not in contract.conflict_keys]
+    if update_cols:
+        assignments = sql.SQL(", ").join(
+            sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(col), sql.Identifier(col))
+            for col in update_cols
         )
-        # 临时表继承了目标表所有列；COPY 只填规范列。
-        copy_sql = f'COPY "{tmp}" ({col_idents}) FROM STDIN'
+        on_conflict = sql.SQL("DO UPDATE SET {}").format(assignments)
+    else:
+        on_conflict = sql.SQL("DO NOTHING")
+
+    if not conn.autocommit and conn.info.transaction_status == TransactionStatus.IDLE:
+        conn.execute("SELECT 1")  # 由调用方提交外层事务；下方只管理保存点。
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            sql.SQL("CREATE TEMP TABLE {} (LIKE {} INCLUDING DEFAULTS) ON COMMIT DROP").format(
+                stage, table
+            )
+        )
         pg_types = contract.pg_types_for(cols)
-        with cur.copy(copy_sql) as cp:
+        with cur.copy(sql.SQL("COPY {} ({}) FROM STDIN").format(stage, col_sql)) as cp:
             if pg_types is not None:
-                # 按实际写入列的顺序设置契约声明的 PostgreSQL 类型。
                 cp.set_types(pg_types)
             for row in rows:
                 cp.write_row(row)
-
-        if set_clause:
-            on_conflict = f"ON CONFLICT ({conflict}) DO UPDATE SET {set_clause}"
-        else:
-            on_conflict = f"ON CONFLICT ({conflict}) DO NOTHING"
-
         cur.execute(
-            f"INSERT INTO {contract.qualified} ({col_idents}) "
-            f'SELECT {col_idents} FROM "{tmp}" '
-            f"{on_conflict}"
+            sql.SQL("INSERT INTO {} ({}) SELECT {} FROM {} ON CONFLICT ({}) {}").format(
+                table, col_sql, col_sql, stage, conflict_sql, on_conflict
+            )
         )
-        return cur.rowcount
+        written = cur.rowcount
+        cur.execute(sql.SQL("DROP TABLE {}").format(stage))
+        return written

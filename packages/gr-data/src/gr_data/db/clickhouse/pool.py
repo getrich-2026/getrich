@@ -1,19 +1,15 @@
-"""
-ClickHouse 连接池
-
-提供连接池管理功能,支持连接复用、自动重连、负载均衡等特性。
-"""
+"""同步 ClickHouse 连接池。"""
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
-from threading import RLock
+from threading import Condition, RLock
 from typing import Any
 
 from gr_data.config import ClickHouseConfig
-from gr_data.logging import Logger
 
 from .database import ClickHouseClient
 
@@ -21,55 +17,33 @@ from .database import ClickHouseClient
 class PooledConnection:
     """池化连接包装器"""
 
-    def __init__(self, client: ClickHouseClient, pool: ClickHouseConnectionPool):
-        """
-        初始化池化连接。
-
-        Args:
-            client: ClickHouse 客户端实例
-            pool: 所属的连接池
-        """
+    def __init__(self, client: ClickHouseClient, pool: ClickHouseConnectionPool) -> None:
+        """记录客户端的借用状态与生命周期。"""
         self.client = client
         self.pool = pool
         self.in_use = False
-        self.created_at = time.time()
-        self.last_used = time.time()
+        self.created_at = time.monotonic()
+        self.last_used = time.monotonic()
         self.use_count = 0
 
     def mark_in_use(self) -> None:
         """标记为使用中"""
         self.in_use = True
-        self.last_used = time.time()
+        self.last_used = time.monotonic()
         self.use_count += 1
 
     def mark_available(self) -> None:
         """标记为可用"""
         self.in_use = False
-        self.last_used = time.time()
+        self.last_used = time.monotonic()
 
     def is_expired(self, max_age: float) -> bool:
-        """
-        检查连接是否过期。
-
-        Args:
-            max_age: 最大生命周期(秒)
-
-        Returns:
-            已过期返回 True
-        """
-        return (time.time() - self.created_at) > max_age
+        """检查连接是否过期。"""
+        return (time.monotonic() - self.created_at) > max_age
 
     def is_idle_timeout(self, idle_timeout: float) -> bool:
-        """
-        检查连接是否空闲超时。
-
-        Args:
-            idle_timeout: 空闲超时时间(秒)
-
-        Returns:
-            空闲超时返回 True
-        """
-        return (time.time() - self.last_used) > idle_timeout
+        """检查连接是否空闲超时。"""
+        return (time.monotonic() - self.last_used) > idle_timeout
 
     def close(self) -> None:
         """关闭连接"""
@@ -78,35 +52,7 @@ class PooledConnection:
 
 
 class ClickHouseConnectionPool:
-    """
-    ClickHouse 连接池。
-
-    功能:
-    - 连接复用:减少连接创建开销
-    - 自动扩容:根据需求动态增加连接
-    - 连接回收:自动清理空闲/过期连接
-    - 健康检查:定期检查连接可用性
-    - 线程安全:支持多线程环境
-
-    使用方式:
-        # 创建连接池
-        pool = ClickHouseConnectionPool(
-            min_size=2,
-            max_size=10,
-            host='192.168.1.232'
-        )
-
-        # 方式1:手动获取/释放
-        client = pool.get_connection()
-        try:
-            df = client.query(sql)
-        finally:
-            pool.release_connection(client)
-
-        # 方式2:使用上下文管理器(推荐)
-        with pool.connection() as client:
-            df = client.query(sql)
-    """
+    """复用客户端；cleanup 与 health_check 由调用方主动执行。"""
 
     def __init__(
         self,
@@ -122,23 +68,8 @@ class ClickHouseConnectionPool:
         connect_timeout: float = 10.0,
         health_check_interval: float = 60.0,  # 1分钟
         config: ClickHouseConfig | None = None,
-    ):
-        """
-        初始化连接池。
-
-        Args:
-            min_size: 最小连接数
-            max_size: 最大连接数
-            host: ClickHouse 主机地址
-            port: ClickHouse 端口
-            user: 用户名
-            password: 密码
-            database: 数据库名
-            max_idle_time: 连接最大空闲时间(秒)
-            max_lifetime: 连接最大生命周期(秒)
-            connect_timeout: 获取连接超时时间(秒)
-            health_check_interval: 健康检查间隔(秒)
-        """
+    ) -> None:
+        """初始化连接池；connect_timeout 是借用等待秒数，不是网络超时。"""
         if min_size < 1:
             raise ValueError("min_size must be at least 1")
         if max_size < min_size:
@@ -152,7 +83,7 @@ class ClickHouseConnectionPool:
         self.health_check_interval = health_check_interval
 
         cfg = config if config is not None else ClickHouseConfig.from_env(strict=False)
-        # 连接配置：优先使用传入参数，否则使用注入配置或当前进程的 CH 环境配置
+        # 显式参数优先于配置。
         self._config: dict[str, Any] = {
             "host": cfg.host if host is None else host,
             "port": cfg.port if port is None else port,
@@ -160,14 +91,12 @@ class ClickHouseConnectionPool:
             "password": cfg.password if password is None else password,
             "database": cfg.database if database is None else database,
         }
-        # 过滤 None 值 (虽然有了默认值通常不会是None，但为了健壮性保留)
         self._config = {k: v for k, v in self._config.items() if v is not None}
 
-        # 连接池
         self._pool: list[PooledConnection] = []
-        self._lock = RLock()  # 可重入锁
+        self._lock = RLock()
+        self._available = Condition(self._lock)
 
-        # 统计信息
         self._stats = {
             "total_connections": 0,
             "active_connections": 0,
@@ -179,10 +108,8 @@ class ClickHouseConnectionPool:
             "failed_health_checks": 0,
         }
 
-        # 日志
-        self.logger = Logger(module_name="ClickHouseConnectionPool")
+        self.logger = logging.getLogger("ClickHouseConnectionPool")
 
-        # 初始化最小连接数
         self._initialize_pool()
 
         self.logger.info(
@@ -206,12 +133,7 @@ class ClickHouseConnectionPool:
                     self._pool.append(conn)
 
     def _create_connection(self) -> PooledConnection | None:
-        """
-        创建新连接。
-
-        Returns:
-            创建成功返回 PooledConnection,否则返回 None
-        """
+        """创建新连接。"""
         try:
             client = ClickHouseClient(**self._config)
             if not client.is_connected():
@@ -231,76 +153,50 @@ class ClickHouseConnectionPool:
             return None
 
     def get_connection(self, timeout: float | None = None) -> ClickHouseClient:
-        """
-        从池中获取连接。
-
-        Args:
-            timeout: 获取超时时间(秒),None 使用默认值
-
-        Returns:
-            ClickHouse 客户端实例
-
-        Raises:
-            TimeoutError: 获取连接超时
-            RuntimeError: 无法创建连接
-        """
-        timeout = timeout or self.connect_timeout
-        start_time = time.time()
-
-        self._stats["get_requests"] += 1
-
-        while True:
-            with self._lock:
-                # 1. 尝试获取空闲连接
-                for conn in self._pool:
-                    if not conn.in_use:
-                        # 检查连接健康
-                        if self._is_connection_healthy(conn):
-                            conn.mark_in_use()
-                            self._stats["active_connections"] += 1
-                            self.logger.debug(
-                                f"Reused connection (active: {self._stats['active_connections']})"
-                            )
-                            return conn.client
-                        else:
-                            # 移除不健康的连接
-                            self._remove_connection(conn)
-
-                # 2. 如果没有空闲连接,尝试创建新连接
-                if len(self._pool) < self.max_size:
-                    new_conn = self._create_connection()
-                    if new_conn:
-                        self._pool.append(new_conn)
-                        new_conn.mark_in_use()
+        """借用独占客户端；等待超过 timeout 秒时抛出 TimeoutError。"""
+        timeout = self.connect_timeout if timeout is None else timeout
+        deadline = time.monotonic() + timeout
+        with self._available:
+            self._stats["get_requests"] += 1
+            while True:
+                # 删除失效连接时遍历快照，避免跳过后一个连接。
+                for conn in self._pool[:]:
+                    if conn.in_use:
+                        continue
+                    if self._is_connection_healthy(conn):
+                        conn.mark_in_use()
                         self._stats["active_connections"] += 1
-                        self.logger.debug(f"Created new connection (total: {len(self._pool)})")
-                        return new_conn.client
+                        return conn.client
+                    self._remove_connection(conn)
 
-            # 3. 达到最大连接数,等待连接释放
-            elapsed = time.time() - start_time
-            if elapsed >= timeout:
-                self._stats["get_timeouts"] += 1
-                raise TimeoutError(
-                    f"Could not get connection within {timeout}s "
-                    f"(pool size: {len(self._pool)}/{self.max_size})"
-                )
+                can_create = len(self._pool) < self.max_size
+                if can_create:
+                    conn = self._create_connection()
+                    if conn is not None:
+                        self._pool.append(conn)
+                        conn.mark_in_use()
+                        self._stats["active_connections"] += 1
+                        return conn.client
 
-            # 短暂等待后重试
-            time.sleep(0.01)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._stats["get_timeouts"] += 1
+                    raise TimeoutError(
+                        f"Could not get connection within {timeout}s "
+                        f"(pool size: {len(self._pool)}/{self.max_size})"
+                    )
+                # 池满等待归还；建连失败则短暂退避后重试。
+                self._available.wait(min(remaining, 0.1) if can_create else remaining)
 
     def release_connection(self, client: ClickHouseClient) -> None:
-        """
-        释放连接回池中。
-
-        Args:
-            client: 要释放的客户端
-        """
+        """释放连接回池中。"""
         with self._lock:
             for conn in self._pool:
                 if conn.client is client:
                     if conn.in_use:
                         conn.mark_available()
                         self._stats["active_connections"] -= 1
+                        self._available.notify()
                         self.logger.debug(
                             f"Released connection (active: {self._stats['active_connections']})"
                         )
@@ -310,19 +206,7 @@ class ClickHouseConnectionPool:
 
     @contextmanager
     def connection(self, timeout: float | None = None) -> Generator[ClickHouseClient, None, None]:
-        """
-        获取连接的上下文管理器。
-
-        Args:
-            timeout: 获取超时时间(秒)
-
-        Yields:
-            ClickHouse 客户端实例
-
-        Example:
-            with pool.connection() as client:
-                df = client.query(sql)
-        """
+        """获取连接的上下文管理器。"""
         client = self.get_connection(timeout)
         try:
             yield client
@@ -330,26 +214,16 @@ class ClickHouseConnectionPool:
             self.release_connection(client)
 
     def _is_connection_healthy(self, conn: PooledConnection) -> bool:
-        """
-        检查连接是否健康。
-
-        Args:
-            conn: 池化连接
-
-        Returns:
-            健康返回 True
-        """
+        """检查连接是否健康。"""
         # 检查是否过期
         if conn.is_expired(self.max_lifetime):
             self.logger.debug("Connection expired (max lifetime)")
             return False
 
-        # 检查是否空闲超时
         if conn.is_idle_timeout(self.max_idle_time):
             self.logger.debug("Connection idle timeout")
             return False
 
-        # 检查连接是否有效
         if not conn.client.is_connected():
             self.logger.debug("Connection not connected")
             return False
@@ -357,31 +231,22 @@ class ClickHouseConnectionPool:
         return True
 
     def _remove_connection(self, conn: PooledConnection) -> None:
-        """
-        从池中移除连接。
-
-        Args:
-            conn: 要移除的连接
-        """
+        """从池中移除连接。"""
         try:
             conn.close()
             self._pool.remove(conn)
             self._stats["total_connections"] -= 1
             self._stats["connections_closed"] += 1
+            self._available.notify_all()
             self.logger.debug(f"Removed connection (total: {self._stats['total_connections']})")
         except Exception as e:
             self.logger.error(f"Error removing connection: {e}")
 
     def shrink(self) -> None:
-        """
-        收缩连接池到最小连接数。
-
-        关闭超过最小数量的空闲连接。
-        """
+        """收缩连接池到最小连接数。"""
         with self._lock:
             idle_connections = [c for c in self._pool if not c.in_use]
 
-            # 计算需要关闭的连接数
             current_size = len(self._pool)
             target_size = max(self.min_size, self._stats["active_connections"])
             to_close = current_size - target_size
@@ -397,9 +262,7 @@ class ClickHouseConnectionPool:
                 )
 
     def cleanup(self) -> None:
-        """
-        清理过期和空闲超时的连接。
-        """
+        """清理过期和空闲超时的连接。"""
         with self._lock:
             to_remove = []
 
@@ -427,11 +290,7 @@ class ClickHouseConnectionPool:
                 )
 
     def health_check(self) -> None:
-        """
-        执行健康检查。
-
-        检查所有连接的健康状态,移除不健康的连接。
-        """
+        """主动探测空闲连接，不干扰已借出的连接。"""
         with self._lock:
             self._stats["health_checks"] += 1
 
@@ -460,16 +319,13 @@ class ClickHouseConnectionPool:
             self._pool.clear()
             self._stats["total_connections"] = 0
             self._stats["active_connections"] = 0
+            self._stats["connections_closed"] += closed_count
+            self._available.notify_all()
 
             self.logger.info(f"Closed all {closed_count} connections")
 
     def get_stats(self) -> dict[str, Any]:
-        """
-        获取连接池统计信息。
-
-        Returns:
-            统计信息字典
-        """
+        """获取连接池统计信息。"""
         with self._lock:
             stats = self._stats.copy()
             stats["pool_size"] = len(self._pool)
