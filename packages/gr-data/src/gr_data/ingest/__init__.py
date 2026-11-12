@@ -51,6 +51,21 @@ def _tushare_option_validation_only(cfg: Config) -> bool:
     return enabled
 
 
+def _tushare_option_admission(cfg: Config) -> str | None:
+    """显式准入只开放报价历史与当前快照，不与隔离开关混用。"""
+    from gr_data.ingest.tushare.option_admission import QUOTE_SNAPSHOT_ADMISSION
+
+    source = cfg.environment.values if cfg.environment is not None else os.environ
+    mode = source.get("TUSHARE_OPTION_ADMISSION")
+    if mode is None:
+        return None
+    if mode != QUOTE_SNAPSHOT_ADMISSION:
+        raise UnknownImporterError(f"Unapproved option admission: {mode}")
+    if _tushare_option_validation_only(cfg):
+        raise UnknownImporterError("Option validation and purpose admission cannot be combined")
+    return mode
+
+
 PROVIDERS = ("yinhe", "ricequant", "insight", "tushare", "datayes")
 
 
@@ -140,7 +155,11 @@ def plan_importers(provider: str, cfg: Config, only: list[str] | None = None) ->
         # --only 的排列不能颠倒 instruments → symbol_map → 其余数据的依赖。
         names.sort(key=list(registry).index)
         option_writes = TUSHARE_OPTION_WRITERS.intersection(names)
-        if option_writes and not _tushare_option_validation_only(cfg):
+        if (
+            option_writes
+            and not _tushare_option_admission(cfg)
+            and not _tushare_option_validation_only(cfg)
+        ):
             raise UnknownImporterError(
                 "Option writes are validation-only; set TUSHARE_OPTION_VALIDATION_ONLY=1 "
                 "only for an isolated validation database"
@@ -232,7 +251,10 @@ def run_provider(
     for i, name in enumerate(names):
         try:
             if provider == "tushare" and name in TUSHARE_OPTION_WRITERS:
-                kwargs = {"validation_only": _tushare_option_validation_only(cfg)}
+                kwargs = {
+                    "validation_only": _tushare_option_validation_only(cfg),
+                    "admission": _tushare_option_admission(cfg),
+                }
                 if name == "option_bar_1d":
                     kwargs["czce_official_manifest_sha256"] = cfg.get(
                         "providers", "tushare", "czce_official_manifest_sha256"

@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "authorization": "2026-11-09 user confirmed14contracts16metadata corrections and authorized replay protection from immutable correction audits",
+  "records": [
+    {
+      "symbol": "WR1809.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_wr2018_last_trading_date_correction",
+      "plan_sha256": "7aa6dc5fab0e76f4ceb8071897eabd282fac9ffaad778d7add6eb028247a6346",
+      "audit_detail_sha256": "659d8562d1a673ee6df1b21a9c70e2a39a88f9fcac9370fdb6a64da1009acdd7",
+      "original_date": "2018-09-17",
+      "verified_date": "2018-08-30",
+      "list_date": "2017-09-18",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "0a86821c901c532780750cb2b471ccbf5246ca83f0641de093c2c5dd7f5a9cde"
+    },
+    {
+      "symbol": "WR1810.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_wr2018_last_trading_date_correction",
+      "plan_sha256": "7aa6dc5fab0e76f4ceb8071897eabd282fac9ffaad778d7add6eb028247a6346",
+      "audit_detail_sha256": "4fe5e0ace98ab9097d9ad08cfabfbfd08208dfc2f2123783c9f3e1b6e496d49f",
+      "original_date": "2018-10-15",
+      "verified_date": "2018-08-30",
+      "list_date": "2017-10-17",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "0a86821c901c532780750cb2b471ccbf5246ca83f0641de093c2c5dd7f5a9cde"
+    },
+    {
+      "symbol": "WR1811.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_wr2018_last_trading_date_correction",
+      "plan_sha256": "7aa6dc5fab0e76f4ceb8071897eabd282fac9ffaad778d7add6eb028247a6346",
+      "audit_detail_sha256": "e3a0be9192c289e84a19f02621ab9cef14bebed2832de1e7e7de4e66b96f0cb9",
+      "original_date": "2018-11-15",
+      "verified_date": "2018-08-30",
+      "list_date": "2017-11-16",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "0a86821c901c532780750cb2b471ccbf5246ca83f0641de093c2c5dd7f5a9cde"
+    },
+    {
+      "symbol": "WR1812.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_wr2018_last_trading_date_correction",
+      "plan_sha256": "7aa6dc5fab0e76f4ceb8071897eabd282fac9ffaad778d7add6eb028247a6346",
+      "audit_detail_sha256": "7a2d3f75e2ff03e94388b40d6371bf1d4c5374f712b3506995d1774ea9aa4193",
+      "original_date": "2018-12-17",
+      "verified_date": "2018-08-30",
+      "list_date": "2017-12-18",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "0a86821c901c532780750cb2b471ccbf5246ca83f0641de093c2c5dd7f5a9cde"
+    },
+    {
+      "symbol": "WR1901.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_wr2018_last_trading_date_correction",
+      "plan_sha256": "7aa6dc5fab0e76f4ceb8071897eabd282fac9ffaad778d7add6eb028247a6346",
+      "audit_detail_sha256": "f39f2d9dc63df037ef53677390314f698bfce70e78d0e91269708fc51145ee5c",
+      "original_date": "2019-01-15",
+      "verified_date": "2018-08-30",
+      "list_date": "2018-01-16",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "0a86821c901c532780750cb2b471ccbf5246ca83f0641de093c2c5dd7f5a9cde"
+    },
+    {
+      "symbol": "WR1902.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_wr2018_last_trading_date_correction",
+      "plan_sha256": "7aa6dc5fab0e76f4ceb8071897eabd282fac9ffaad778d7add6eb028247a6346",
+      "audit_detail_sha256": "6ee86767f6efc81ddaf08a384ed34a5bbc2b57c791857175a6901f68c247cb2a",
+      "original_date": "2019-02-15",
+      "verified_date": "2018-08-30",
+      "list_date": "2018-02-12",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "0a86821c901c532780750cb2b471ccbf5246ca83f0641de093c2c5dd7f5a9cde"
+    },
+    {
+      "symbol": "FU1807.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_fu2018_last_trading_date_correction",
+      "plan_sha256": "22d122eac4d7346f19ff7d8ad7a0b10862b07fdd21495f64215559adc3417285",
+      "audit_detail_sha256": "22a5715716a9a2266dbd60d371d638c2f12219253184570ca6071f7f506f2a14",
+      "original_date": "2018-06-28",
+      "verified_date": "2018-06-26",
+      "list_date": "2017-07-03",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "ec50956b8ae4e7ed289f8a2337ae2107bc61d502c10626a1768e5391083a79e4"
+    },
+    {
+      "symbol": "FU1808.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_fu2018_last_trading_date_correction",
+      "plan_sha256": "22d122eac4d7346f19ff7d8ad7a0b10862b07fdd21495f64215559adc3417285",
+      "audit_detail_sha256": "a347feae77eae3c4effa9bfde9bda541f483b9d3adf1f53f549d4402e79a94c4",
+      "original_date": "2018-06-28",
+      "verified_date": "2018-06-26",
+      "list_date": "2017-08-01",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "ec50956b8ae4e7ed289f8a2337ae2107bc61d502c10626a1768e5391083a79e4"
+    },
+    {
+      "symbol": "FU1809.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_fu2018_last_trading_date_correction",
+      "plan_sha256": "22d122eac4d7346f19ff7d8ad7a0b10862b07fdd21495f64215559adc3417285",
+      "audit_detail_sha256": "dbdacaa2d0cf4740530e340c2e0c5073b2924a14ff6bd3c9d36035fd42ac65a6",
+      "original_date": "2018-06-28",
+      "verified_date": "2018-06-26",
+      "list_date": "2017-09-01",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "ec50956b8ae4e7ed289f8a2337ae2107bc61d502c10626a1768e5391083a79e4"
+    },
+    {
+      "symbol": "FU1810.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_fu2018_last_trading_date_correction",
+      "plan_sha256": "22d122eac4d7346f19ff7d8ad7a0b10862b07fdd21495f64215559adc3417285",
+      "audit_detail_sha256": "b7b2b2f92e985357c7e2b0556098d64aca90c43906e8637a7945935c611cbada",
+      "original_date": "2018-06-28",
+      "verified_date": "2018-06-26",
+      "list_date": "2017-10-09",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "ec50956b8ae4e7ed289f8a2337ae2107bc61d502c10626a1768e5391083a79e4"
+    },
+    {
+      "symbol": "FU1811.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_fu2018_last_trading_date_correction",
+      "plan_sha256": "22d122eac4d7346f19ff7d8ad7a0b10862b07fdd21495f64215559adc3417285",
+      "audit_detail_sha256": "9cf7f59b357bb2acee3dfc20bb22b1b918eab42ac822011f1c7d039c5428824f",
+      "original_date": "2018-06-28",
+      "verified_date": "2018-06-26",
+      "list_date": "2017-11-01",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "ec50956b8ae4e7ed289f8a2337ae2107bc61d502c10626a1768e5391083a79e4"
+    },
+    {
+      "symbol": "FU1812.SHF",
+      "asset": "future",
+      "exchange": "SHFE",
+      "rule": "tushare_fu2018_last_trading_date_correction",
+      "plan_sha256": "22d122eac4d7346f19ff7d8ad7a0b10862b07fdd21495f64215559adc3417285",
+      "audit_detail_sha256": "274bc61154f9a15b0577d99ea344993bde1873afede6336a1300e0503f8ea49f",
+      "original_date": "2018-06-28",
+      "verified_date": "2018-06-26",
+      "list_date": "2017-12-01",
+      "target_fields": {
+        "meta.instruments": "delist_date"
+      },
+      "official_sha256": "ec50956b8ae4e7ed289f8a2337ae2107bc61d502c10626a1768e5391083a79e4"
+    },
+    {
+      "symbol": "90005271.SZ",
+      "asset": "option",
+      "exchange": "XSHE",
+      "rule": "tushare_szse20250331_option_last_trade_correction",
+      "plan_sha256": "e17fa723ca4fc5e5df2601e853ec0dbc2323fcaf2e3a93f67ae42183d0244de0",
+      "audit_detail_sha256": "3b497a8cd39df25e4a459d1badea4f2c823ff85b3588c1568173fcc206b27b48",
+      "original_date": "2025-05-28",
+      "verified_date": "2025-03-28",
+      "list_date": "2025-03-27",
+      "target_fields": {
+        "meta.instruments": "delist_date",
+        "meta.option_contracts": "last_trade_date"
+      },
+      "official_sha256": "ef5e4f203c9f4c105fbfcd96f31a232639ce53c1bf3eb3f6b5644ffac18e6c8b",
+      "maturity_date": "2025-05-28"
+    },
+    {
+      "symbol": "90005272.SZ",
+      "asset": "option",
+      "exchange": "XSHE",
+      "rule": "tushare_szse20250331_option_last_trade_correction",
+      "plan_sha256": "e17fa723ca4fc5e5df2601e853ec0dbc2323fcaf2e3a93f67ae42183d0244de0",
+      "audit_detail_sha256": "85c1e46dacd9bfd058bd209eb725f21272d11e30e7dfd7891953578e21f71209",
+      "original_date": "2025-05-28",
+      "verified_date": "2025-03-28",
+      "list_date": "2025-03-27",
+      "target_fields": {
+        "meta.instruments": "delist_date",
+        "meta.option_contracts": "last_trade_date"
+      },
+      "official_sha256": "ef5e4f203c9f4c105fbfcd96f31a232639ce53c1bf3eb3f6b5644ffac18e6c8b",
+      "maturity_date": "2025-05-28"
+    }
+  ]
+}

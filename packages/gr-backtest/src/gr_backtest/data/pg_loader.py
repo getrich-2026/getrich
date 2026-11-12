@@ -75,6 +75,22 @@ class PgBarLoader:
     #: 行情表按品种分表，没有「所有品种」的合并表；不指定 asset_class 时用它。
     DEFAULT_ASSET_CLASS = "stock"
 
+    @classmethod
+    def _require_historical_parameters(cls, asset_class: str | AssetClass | None) -> None:
+        """期权报价／当前快照入库不构成历史回测参数准入。"""
+        value = cls.DEFAULT_ASSET_CLASS if asset_class is None else asset_class_value(asset_class)
+        if value.strip().lower() in {
+            "option",
+            "equity_a_option",
+            AssetClass.EQUITY_OPTION_A.value,
+            AssetClass.COMMODITY_FUTURE_OPTION.value,
+            AssetClass.INDEX_FUTURE_OPTION.value,
+        }:
+            raise DataLoadError(
+                "Option historical backtests require verified historical contract parameters; "
+                "current snapshots do not provide historical strike/multiplier effective dates"
+            )
+
     #: ``market.*_bar_*`` 里可用的可选列 -> 引擎 canonical 列名。
     #: ``amount`` 不在其中：它要和 volume 一起算成 vwap，见 ``_bar_select_sql``。
     OPTIONAL_COLUMN_MAP = {
@@ -188,6 +204,7 @@ class PgBarLoader:
         全品种共用一张表，用 ``asset`` 列按品种过滤（原实现假设的
         ``instruments_{asset}`` 分表在 gr-data schema 里不存在）。
         """
+        self._require_historical_parameters(asset_class)
         table = self._table_name_instruments(asset_class)
         cls_str = asset_class_value(asset_class)
 
@@ -466,6 +483,7 @@ class PgBarLoader:
         adj_policy: str = "none",
     ) -> pl.DataFrame:
         """Load bars for the requested left-closed/right-open range."""
+        self._require_historical_parameters(asset_class)
         normalized_start, normalized_end = normalize_datetime_range(start, end)
 
         table = self._table_name(asset_class, freq)
@@ -551,6 +569,7 @@ class PgBarLoader:
         chunk: str = "month",
     ) -> Generator[pl.DataFrame, None, None]:
         """Load bars in monthly (or other) chunks from PostgreSQL."""
+        self._require_historical_parameters(asset_class)
         for chunk_start, chunk_end in _iter_date_chunks(start, end, chunk=chunk):
             yield self.load_bars(
                 symbols=symbols,

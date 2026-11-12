@@ -1,4 +1,4 @@
-"""ETF / 三类期权的显式入库；期权参数仅允许隔离验证，不发布历史定价能力。"""
+"""ETF / 三类期权的显式入库；期权报价／当前快照按用途准入。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from gr_data.common import contracts
 from gr_data.common.dates import int_to_date, today_int
 from gr_data.common.paths import RawPaths
 from gr_data.ingest.base import BaseImporter, IngestContext, IngestGateError, IngestResult
+from gr_data.ingest.tushare import czce_bar_duplicates
 from gr_data.ingest.tushare.adapter import TushareAdapter
 from gr_data.ingest.tushare.czce_metadata import merge_metadata, monthly_reports, record_audit
 from gr_data.ingest.tushare.czce_official import reconcile_czce_official, record_czce_official_audit
@@ -27,6 +28,7 @@ from gr_data.ingest.tushare.etf_scope import (
 )
 from gr_data.ingest.tushare.importers.profile import _number, _text
 from gr_data.ingest.tushare.importers.reference import parse_date
+from gr_data.ingest.tushare.option_admission import require_option_admission
 from gr_data.ingest.tushare.symbols import split_ts_code
 from gr_data.raw.czce.metadata import NOTICE as CZCE_METADATA_NOTICE
 from gr_data.raw.tushare.asset_rules import (
@@ -55,7 +57,11 @@ from gr_data.raw.tushare.asset_rules import (
 
 
 def asset_metadata(
-    paths: RawPaths, asset: str, *, notice: Callable[[str], None] | None = None
+    paths: RawPaths,
+    asset: str,
+    *,
+    notice: Callable[[str], None] | None = None,
+    conn: psycopg.Connection | None = None,
 ) -> pd.DataFrame:
     """读取独立参考清单，待上市 ETF 留在 raw，交易身份仍严格校验。
 
@@ -63,6 +69,7 @@ def asset_metadata(
         paths: 仓库外的原始数据路径。
         asset: etf 或 option。
         notice: 接收被跳过的待上市 ETF 条数及样本的软告警。
+        conn: importer 的当前连接；登记行的日期保护先于去重与日期校验。
     """
     frame, _ = read_asset_observation(paths.dataset_file("tushare", "instruments", asset))
     if frame is None or frame.empty:
@@ -70,6 +77,10 @@ def asset_metadata(
     required = ("ts_code", "exchange", "list_date")
     require_columns(frame, required, asset)
     source_codes(frame)
+    if conn is not None:
+        from gr_data.ingest.tushare.metadata_corrections import protect_metadata_dates
+
+        frame = protect_metadata_dates(conn, paths, frame, asset)
     frame = unique_rows(frame, ("ts_code",))
     if asset == "etf":
         require_columns(frame, ("list_status", "extname"), asset)
@@ -148,7 +159,7 @@ class _AssetImporter(BaseImporter):
     ASSET = ""
 
     def _metadata(self) -> pd.DataFrame:
-        return asset_metadata(self.paths, self.ASSET, notice=self._soft)
+        return asset_metadata(self.paths, self.ASSET, notice=self._soft, conn=self.conn)
 
     def _ids(self, codes: list[str], asset: str) -> dict[str, int]:
         codes = list(dict.fromkeys(codes))
@@ -317,13 +328,14 @@ class _OptionValidation:
     """四个期权 writer 共用的库调用门禁，必须在 claim / 写入之前检查。"""
 
     validation_only: bool
+    admission: str | None
 
     def _require_validation(self) -> None:
-        if self.validation_only is not True:
-            raise IngestGateError(
-                "Option writes are validation-only: historical contract parameters "
-                "and publication contract are not verified"
-            )
+        require_option_admission(
+            cast(BaseImporter, self).DATASET,
+            validation_only=self.validation_only,
+            admission=self.admission,
+        )
 
 
 class EtfInstrumentsImporter(_AssetInstrumentsImporter):
@@ -342,9 +354,11 @@ class OptionInstrumentsImporter(_OptionValidation, _AssetInstrumentsImporter):
         client: object = None,
         *,
         validation_only: bool = False,
+        admission: str | None = None,
     ) -> None:
         super().__init__(conn, ctx, client)
         self.validation_only = validation_only
+        self.admission = admission
 
     def run(self) -> IngestResult:
         self._require_validation()
@@ -404,9 +418,11 @@ class OptionSymbolMapImporter(_OptionValidation, _AssetSymbolMapImporter):
         client: object = None,
         *,
         validation_only: bool = False,
+        admission: str | None = None,
     ) -> None:
         super().__init__(conn, ctx, client)
         self.validation_only = validation_only
+        self.admission = admission
 
     def run(self) -> IngestResult:
         self._require_validation()
@@ -414,7 +430,7 @@ class OptionSymbolMapImporter(_OptionValidation, _AssetSymbolMapImporter):
 
 
 class OptionContractsImporter(_OptionValidation, _AssetImporter):
-    """opt_basic 当前观察 → 合约静态表，仅隔离验证，不作历史时点参数。"""
+    """opt_basic 当前观察 → 合约静态表，不作历史时点参数。"""
 
     DATASET = "option_contracts"
     ASSET = "option"
@@ -428,15 +444,17 @@ class OptionContractsImporter(_OptionValidation, _AssetImporter):
         client: object = None,
         *,
         validation_only: bool = False,
+        admission: str | None = None,
     ) -> None:
         super().__init__(conn, ctx, client)
         self.validation_only = validation_only
+        self.admission = admission
 
     def run(self) -> IngestResult:
         self._require_validation()
         self._soft(
             "Current option parameter snapshot; historical parameters "
-            "and publication are not verified"
+            "are not verified; current snapshot use only"
         )
         return super().run()
 
@@ -541,6 +559,13 @@ class _AssetBarsImporter(_AssetImporter):
         registry = load_etf_identity_registry() if self.ASSET == "etf" else None
         metadata = self._metadata().set_index("ts_code")
         raw = self._read(self.RAW_DATASET)
+        self.czce_duplicate_reports = []
+        if self.ASSET == "option":
+            raw, self.czce_duplicate_reports = czce_bar_duplicates.apply(
+                raw, metadata.reset_index(), self.paths
+            )
+            for report in self.czce_duplicate_reports:
+                self._soft(czce_bar_duplicates.NOTICE + json.dumps(report, sort_keys=True))
         self.czce_metadata_reports = (
             monthly_reports(
                 self.paths,
@@ -707,7 +732,7 @@ class EtfBars1dImporter(_AssetBarsImporter):
 
 
 class OptionBars1dImporter(_OptionValidation, _AssetBarsImporter):
-    """期权报价保持源尺度，手数不换算，金额 ×10000；仅隔离验证。"""
+    """期权报价保持源尺度，手数不换算，金额 ×10000；不依赖当前乘数。"""
 
     DATASET = "option_bar_1d"
     ASSET = "option"
@@ -721,19 +746,25 @@ class OptionBars1dImporter(_OptionValidation, _AssetBarsImporter):
         client: object = None,
         *,
         validation_only: bool = False,
+        admission: str | None = None,
         czce_official_manifest_sha256: str | None = None,
     ) -> None:
         super().__init__(conn, ctx, client)
         self.validation_only = validation_only
+        self.admission = admission
         self.czce_official_manifest_sha256 = czce_official_manifest_sha256
         self.czce_official_reports = []
         self.czce_official_diffs = None
         self.czce_metadata_reports = []
+        self.czce_duplicate_reports = []
 
     def run(self) -> IngestResult:
         self._require_validation()
         self._soft(
-            "Option prices validated without historical contract parameter eligibility; "
+            "Option prices admitted for quote history only; historical parameter-dependent "
+            "pricing, PnL and trading remain ineligible"
+            if self.admission is not None
+            else "Option prices validated without historical contract parameter eligibility; "
             "not published"
         )
         return super().run()
@@ -751,4 +782,7 @@ class OptionBars1dImporter(_OptionValidation, _AssetBarsImporter):
                 self.contract.qualified,
             )
         record_audit(self.conn, self.czce_metadata_reports, self.contract.qualified)
+        czce_bar_duplicates.record_audit(
+            self.conn, self.czce_duplicate_reports, self.contract.qualified
+        )
         super()._record_run(rows_written, warnings)

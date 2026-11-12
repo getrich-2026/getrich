@@ -61,6 +61,35 @@ OPTION_CONTRACTS = TableContract(
 )
 
 
+OPTION_TERMS_1D = TableContract(
+    schema="meta",
+    table="option_terms_1d",
+    columns=(
+        "instrument_id",
+        "trading_day",
+        "strike",
+        "multiplier",
+        "trading_code",
+        "source",
+        "observation_id",
+        "observed_at",
+        "available_at",
+    ),
+    conflict_keys=("instrument_id", "trading_day", "observation_id"),
+    column_types=(
+        ("instrument_id", "int8"),
+        ("trading_day", "date"),
+        ("strike", "numeric"),
+        ("multiplier", "numeric"),
+        ("trading_code", "text"),
+        ("source", "text"),
+        ("observation_id", "text"),
+        ("observed_at", "timestamptz"),
+        ("available_at", "timestamptz"),
+    ),
+)
+
+
 # ---- 标的档案（tushare 主数据快照里 meta.instruments 放不下的字段）----
 # 档案契约统一声明全部列的 COPY 适配类型。
 def _profile(table: str, typed: tuple[tuple[str, str], ...]) -> TableContract:

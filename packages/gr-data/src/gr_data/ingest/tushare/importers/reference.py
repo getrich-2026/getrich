@@ -14,6 +14,7 @@ from gr_data.ingest.tushare.adapter import (
     CALENDAR_EXCHANGES,
     TushareAdapter,
 )
+from gr_data.ingest.tushare.metadata_corrections import protect_metadata_dates
 from gr_data.ingest.tushare.stock_scope import StockScopeAdapter, StockScopeImporter
 from gr_data.ingest.tushare.symbols import split_ts_code, stock_alias_ids
 from gr_data.raw.tushare.fetchers.reference import read_open_days
@@ -123,7 +124,10 @@ class InstrumentsImporter(StockScopeImporter):
 
     def _build_future(self, raw: pd.DataFrame) -> pd.DataFrame:
         _require(raw, {"ts_code", "name", "list_date", "delist_date"}, "fut_basic")
-        r = _clean_codes(raw, "fut_basic")
+        r = raw.copy()
+        r["ts_code"] = r["ts_code"].astype(str).str.strip()
+        r = protect_metadata_dates(self.conn, self.paths, r, "future")
+        r = _clean_codes(r, "fut_basic")
         expired = r["delist_date"].map(parse_date)
         today = int_to_date(today_int())
         return pd.DataFrame(
