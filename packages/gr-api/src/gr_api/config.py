@@ -6,6 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from gr_data.config import PostgresConfig, load_postgres
 from gr_tools.config import (
@@ -207,18 +208,26 @@ def load_worker_settings(environment: Environment | None = None) -> WorkerSettin
 def load_api_settings(environment: Environment | None = None) -> ApiSettings:
     """应用创建时加载；不缓存成跨应用全局单例。"""
     env = environment if environment is not None else load_environment()
-    app_env = env.values.get("APP_ENV", "dev")
+    app_env = env.values.get("APP_ENV", "dev").strip().lower()
     web = WebConfig.from_env(env.strict, env.values)
     if web.allow_mock_auth and app_env != "dev":
         # 先于其余校验，且不论是否严格模式都拒绝启动：误开即任何人可冒充任意用户。
         raise SettingsError("GETRICH_ALLOW_MOCK_AUTH is only allowed when APP_ENV=dev")
+    if app_env not in {"dev", "staging", "prod"}:
+        raise SettingsError("APP_ENV must be dev, staging or prod")
     if app_env != "dev":
-        if web.jwt_secret.strip() in ("", "getrich-dev-secret-change-in-prod"):
+        secret = web.jwt_secret.strip().lower()
+        if secret in ("", "getrich-dev-secret-change-in-prod") or secret.startswith("change-me"):
             raise SettingsError("JWT_SECRET must be explicitly configured outside dev")
         if not env.values.get("WEB_CORS_ORIGINS", "").strip() or not web.cors_origins:
             raise SettingsError("WEB_CORS_ORIGINS must be explicitly configured outside dev")
         if "*" in web.cors_origins:
             raise SettingsError("WEB_CORS_ORIGINS must use explicit origins outside dev")
+    if app_env == "prod" and all(
+        urlsplit(origin).hostname in {"localhost", "127.0.0.1", "::1"}
+        for origin in web.cors_origins
+    ):
+        raise SettingsError("WEB_CORS_ORIGINS must include a non-local origin in prod")
     common = load_worker_settings(env)
     return ApiSettings(
         root=common.root,

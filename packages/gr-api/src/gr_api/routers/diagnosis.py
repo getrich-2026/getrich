@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from gr_api.deps import get_db, request_id, require_user
 from gr_api.errors import ApiError
+from gr_api.logging_middleware import get_current_request_id
 from gr_api.response import success
 from gr_api.schemas.diagnosis import (
     ApiResponse,
@@ -105,7 +106,11 @@ class DiagnosisRoute(APIRoute):
                         503: "data_unavailable",
                     }.get(status_code, "request_failed")
                 payload = ErrorResponse(
-                    request_id=request.headers.get("X-Request-Id") or uuid4().hex,
+                    request_id=(
+                        get_current_request_id()
+                        if get_current_request_id() != "-"
+                        else request.headers.get("X-Request-Id") or uuid4().hex
+                    ),
                     error={
                         "code": code,
                         "message": message,

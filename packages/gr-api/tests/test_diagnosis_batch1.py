@@ -64,7 +64,7 @@ def test_all_private_routes_require_login(client: TestClient, token: str | None)
             response = client.request(method, concrete, headers=headers, json={})
             assert response.status_code == 401, (path, response.text)
             assert response.json()["error"]["code"] == "unauthorized"
-            assert response.json()["request_id"]
+            assert response.json()["request_id"] == response.headers["X-Request-Id"]
             assert all(header in response.headers for header in HEADERS)
 
 
@@ -185,3 +185,39 @@ def test_staging_config_accepts_explicit_origins(tmp_path: Path) -> None:
     )
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+@pytest.mark.parametrize("app_env", [" STAGING ", " Dev ", "prod", "unknown", ""])
+def test_environment_normalization(tmp_path: Path, app_env: str) -> None:
+    values = {
+        "APP_ENV": app_env,
+        "PG_PASSWORD": "fixture-password",
+        "BACKTEST_ARTIFACT_DIR": str(tmp_path),
+        "JWT_SECRET": "fixture-secret",
+        "WEB_CORS_ORIGINS": "https://api.example",
+    }
+    if app_env in ("unknown", ""):
+        with pytest.raises(SettingsError, match="APP_ENV"):
+            load_api_settings(Environment(tmp_path, values))
+    else:
+        assert load_api_settings(Environment(tmp_path, values)).env == app_env.strip().lower()
+
+
+@pytest.mark.parametrize("secret", ["change-me-local-only", " Change-Me-production "])
+def test_template_jwt_refused(tmp_path: Path, secret: str) -> None:
+    with pytest.raises(SettingsError, match="JWT_SECRET"):
+        load_api_settings(Environment(tmp_path, {"APP_ENV": "staging", "JWT_SECRET": secret}))
+
+
+def test_prod_rejects_local_only_cors(tmp_path: Path) -> None:
+    with pytest.raises(SettingsError, match="non-local"):
+        load_api_settings(
+            Environment(
+                tmp_path,
+                {
+                    "APP_ENV": "prod",
+                    "JWT_SECRET": "fixture-secret",
+                    "WEB_CORS_ORIGINS": "http://localhost:3000,http://127.0.0.1:3000",
+                },
+            )
+        )

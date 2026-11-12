@@ -712,7 +712,7 @@ def _risk_blocks(
 ) -> list[dict[str, Any]]:
     """模型口径风险、逐股历史年化波动率；不可用项给出原因。"""
     blocks = _model_blocks(risk, names, level)
-    if admitted_metrics is not None:
+    if admitted_metrics is not None and has_value(risk["volatility"]["by_method"]["forward"]):
         filtered = []
         for block in blocks:
             if block["type"] == "metric_cards":

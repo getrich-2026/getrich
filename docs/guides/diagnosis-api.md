@@ -16,6 +16,10 @@
 
 所有诊断路径前缀为 `/v1/diagnosis`。成功信封是 `{code,message,data,timestamp,request_id}`。使用已有账号向 `POST /v1/auth/login` 提交 `email/password`，把返回的 `data.access_token` 作为 `Authorization: Bearer ...`。不同用户分别使用自己的token；正式使用保持 `GETRICH_ALLOW_MOCK_AUTH=false`。
 
+续期调用 `POST /v1/auth/refresh`，JSON 请求为 `{"refresh_token":"YOUR_REFRESH_TOKEN"}`；
+成功响应的 `data` 返回新的 `access_token`、轮换后的 `refresh_token`、`token_type` 和 `user`。
+前端同时替换两个 token；无效或过期 refresh token 返回 401，重新登录。
+
 下例需要curl和jq。把 `BASE_URL` 改为获准启用的服务地址，把 `TOKEN_A` 设为本人有效token。本轮临时验收地址127.0.0.1:18011已停止，不作为正式地址。
 
 ```bash
@@ -209,7 +213,7 @@ L4、模型相关性、风格暴露等未准入字段继续不可用，文字报
 前端只有遇到 pending/running 才按 links 查询；遇到 succeeded/partially_succeeded/failed 停止轮询。
 
 ```json
-{"code":0,"message":"ok","data":{"run_status":"running","snapshot_id":"11111111-1111-4111-8111-111111111111"},"timestamp":0,"request_id":"synthetic-example"}
+{"code":0,"message":"success","data":{"run_status":"running","snapshot_id":"11111111-1111-4111-8111-111111111111"},"timestamp":0,"request_id":"synthetic-example"}
 ```
 
 整单错误与成功信封不同，例如未登录 **401**：

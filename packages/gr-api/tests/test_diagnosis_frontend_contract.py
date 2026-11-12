@@ -581,12 +581,24 @@ def test_report_filters_model_placeholders_by_snapshot_admission() -> None:
 
 
 def test_old_payload_defaults_industry_display_fields() -> None:
-    result, _ = fixture_result()
-    metrics = result["plans"][0]["section_a"]["value"]
+    row = fixture_row()
+    metrics = row["payload"]["section_a"]["value"]
     metrics.pop("industry_labels", None)
     if metrics["instrument_facts"]["status"] != "unavailable":
         for facts in metrics["instrument_facts"]["value"].values():
             facts.pop("industry_code", None)
             facts.pop("industry_name", None)
-    validated = DiagnosisResult.model_validate(result).model_dump(mode="json")
-    assert validated["plans"][0]["section_a"]["value"]["industry_labels"] == {}
+    result = view.assemble(
+        fixture_snapshot(), SPEC, [row], row["status"], report_mode=svc._report_mode
+    )
+    assert result["plans"][0]["section_a"]["value"]["industry_labels"] == {}
+    assert view.report(result, "pro")["sections"]
+
+
+def test_unpublished_report_keeps_model_unavailable_reason() -> None:
+    result, _ = fixture_result()
+    result["publication"] = {"status": "unpublished", "recomputable": False, "declared_metrics": []}
+    risk = result["plans"][0]["section_b"]["value"]
+    reason = risk["volatility"]["by_method"]["forward"]["reason"]
+    report = json.dumps(view.report(result, "pro"), ensure_ascii=False)
+    assert f"模型风险：{reason}" in report
