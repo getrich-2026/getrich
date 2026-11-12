@@ -602,3 +602,71 @@ def test_unpublished_report_keeps_model_unavailable_reason() -> None:
     reason = risk["volatility"]["by_method"]["forward"]["reason"]
     report = json.dumps(view.report(result, "pro"), ensure_ascii=False)
     assert f"模型风险：{reason}" in report
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("enhanced", [False, True])
+async def test_loaded_snapshot_disclosures_match_result_report_and_quality(monkeypatch, enhanced):
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    from gr_api.services import diagnosis_publication as publication
+
+    declared = ["annual_variance", "volatility", "daily_prediction_volatility"]
+    if enhanced:
+        declared += [
+            "risk_contribution",
+            "risk_contribution_ratio",
+            "marginal_risk_contribution",
+            "l3_effective_count",
+        ]
+    assembled, _ = fixture_result()
+    stored = fixture_row()
+    stored["data_quality"]["model"] = {"calibrated": False}
+
+    class Db:
+        query = ""
+
+        @asynccontextmanager
+        async def cursor(self):
+            yield self
+
+        async def execute(self, query, args=None):
+            self.query = query
+
+        async def fetchall(self):
+            return [stored] if "DISTINCT ON" in self.query else []
+
+        async def fetchone(self):
+            if "publication_is_valid" in self.query:
+                return {"valid": True, "published": True}
+            return {
+                "available_options": {
+                    "publication_scope": {"scope_type": "security_universe", "metrics": declared}
+                }
+            }
+
+    monkeypatch.setattr(
+        svc,
+        "_load_snapshot",
+        AsyncMock(return_value={"resolved_spec_version": "spec", "data_fingerprint": "version"}),
+    )
+    monkeypatch.setattr(svc, "get_active_spec_version", AsyncMock(return_value={}))
+    monkeypatch.setattr(svc.presentation, "assemble", lambda *args, **kwargs: deepcopy(assembled))
+    token = publication.enabled.set(True)
+    db: Any = Db()
+    try:
+        result = await svc.get_result(db, uuid4(), user_id="user")
+        quality = await svc.get_data_quality(db, uuid4(), user_id="user")
+        report = view.report(result, "retail", industry_labels={})
+    finally:
+        publication.enabled.reset(token)
+    disclosure = next(d for d in result["disclosures"] if "calibrated=false" in d)
+    assert "年化方差" in disclosure and "单日预测波动率" in disclosure
+    assert ("风险有效持仓数 L3" in disclosure) is enhanced
+    assert disclosure in quality["data_quality"]["forced_disclosures"]
+    assert report["disclosures"] == result["disclosures"]
+    assert (
+        report["data_quality"]["forced_disclosures"]
+        == quality["data_quality"]["forced_disclosures"]
+    )

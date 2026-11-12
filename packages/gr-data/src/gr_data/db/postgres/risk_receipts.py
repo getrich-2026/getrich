@@ -184,13 +184,19 @@ def record_capture(
     manifest: dict[str, Any],
     *,
     channel: str = "ingest",
+    transaction_managed: bool = False,
 ) -> None:
     """已校验 raw 的采集登记；独立提交，后续业务事务失败不撤销采集证据。
 
+    transaction_managed=True 时只建保存点，采集登记与外层发布一起提交或回滚。
     captured_at 保留实际 raw observed_at；按每个观察登记，不表示连续日期水位。
     重放只检查固定身份，不把已有 imported 检查点退回 captured。
     """
-    _idle(conn)
+    if transaction_managed:
+        if conn.info.transaction_status != TransactionStatus.INTRANS:
+            raise ValueError("Managed capture requires an outer transaction")
+    else:
+        _idle(conn)
     get_importer_version(require_clean=options.purpose == "production")
     partition, day, observation, digest = _identity(options, manifest)
     captured_at = datetime.fromisoformat(manifest["observed_at"])

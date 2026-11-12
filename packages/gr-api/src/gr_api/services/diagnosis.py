@@ -1959,11 +1959,28 @@ async def _load_result(
                 if admitted_scope == "security_universe"
                 else "指定组合"
             )
-            result["disclosures"].append(
-                "风险模型 calibrated=false；本次仅覆盖"
-                + boundary
-                + "、指定单日的年化方差和年化／单日波动率三项指标，全区间未校准。"
+            names = {
+                "annual_variance": "年化方差",
+                "volatility": "前瞻年化波动率",
+                "daily_prediction_volatility": "单日预测波动率",
+                "risk_contribution": "个股风险贡献",
+                "risk_contribution_ratio": "风险贡献占比",
+                "marginal_risk_contribution": "边际风险贡献",
+                "l3_effective_count": "风险有效持仓数 L3",
+            }
+            metrics = result["publication"]["declared_metrics"]
+            coverage = "、".join(names.get(str(k), str(k)) for k in metrics) or "无已准入模型指标"
+            disclosure = (
+                f"风险模型 calibrated=false；本次仅覆盖{boundary}、指定单日的"
+                f"{coverage}，全区间未校准。"
             )
+            for items in (
+                result["disclosures"],
+                result["data_quality"]["forced_disclosures"],
+            ):
+                if disclosure not in items:
+                    items.append(disclosure)
+
     labels: dict[str, str] = {}
     for row in rows:
         labels.update((row["data_quality"] or {}).get("industry_names") or {})

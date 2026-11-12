@@ -22,6 +22,7 @@ class IndustrySnapshot:
     members: pl.DataFrame
     missing_ids: tuple[int, ...]
     closed_members: pl.DataFrame | None = None
+    as_of: date | None = None
 
 
 def normalize_industry(
@@ -110,7 +111,7 @@ def normalize_industry(
         pl.lit(observed_at).alias("available_at"),
         pl.lit("tushare").alias("source"),
     ).select(frame.columns)
-    return IndustrySnapshot(selected.sort("industry_code"), frame, missing, closed)
+    return IndustrySnapshot(selected.sort("industry_code"), frame, missing, closed, as_of)
 
 
 async def write_industry_snapshot(
@@ -159,7 +160,7 @@ async def write_industry_snapshot(
     incoming = snapshot.members.to_dicts()
     if snapshot.closed_members is not None:
         incoming = snapshot.closed_members.to_dicts() + incoming
-    ids = sorted({r["instrument_id"] for r in incoming})
+    ids = sorted({r["instrument_id"] for r in incoming} | set(snapshot.missing_ids))
     existing = await (
         await conn.execute(
             "SELECT instrument_id,scheme_code,level,industry_code,in_date,out_date,"
@@ -170,6 +171,7 @@ async def write_industry_snapshot(
         )
     ).fetchall()
     changes = industry_changes(existing, snapshot)
+    validate_missing_closures(existing, changes, snapshot)
     # 先收口，再插入；沿用源日期，不能自行猜一个新行业起点作为旧行业终点。
     closed_keys = set()
     if snapshot.closed_members is not None:
@@ -211,13 +213,16 @@ async def write_industry_snapshot(
             if c not in keys
         )
         statement = sql.SQL(
-            "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO UPDATE SET {}"
+            "INSERT INTO {} AS target ({}) VALUES ({}) ON CONFLICT ({}) DO UPDATE SET {} "
+            "WHERE ROW({}) IS DISTINCT FROM ROW({})"
         ).format(
             sql.Identifier(contract.schema, contract.table),
             sql.SQL(",").join(map(sql.Identifier, columns)),
             sql.SQL(",").join(sql.Placeholder() for _ in columns),
             sql.SQL(",").join(map(sql.Identifier, keys)),
             assignments,
+            sql.SQL(",").join(sql.Identifier("target", c) for c in columns if c not in keys),
+            sql.SQL(",").join(sql.Identifier("excluded", c) for c in columns if c not in keys),
         )
         async with conn.cursor() as cur:
             await cur.executemany(statement, frame.select(columns).iter_rows())
@@ -259,3 +264,23 @@ def industry_changes(existing: list[dict], snapshot: IndustrySnapshot) -> list[d
             raise ValueError("Stale industry observation would overwrite a newer interval")
         changes.append(row)
     return changes
+
+
+def validate_missing_closures(
+    existing: list[dict], changes: list[dict], snapshot: IndustrySnapshot
+) -> None:
+    """源端缺行不能代替区间收口证据。"""
+    if not snapshot.missing_ids:
+        return
+    if snapshot.as_of is None:
+        raise ValueError("Missing industry memberships require an explicit target date")
+    projected = {(r["instrument_id"], r["in_date"]): r for r in existing}
+    projected.update({(r["instrument_id"], r["in_date"]): r for r in changes})
+    missing = set(snapshot.missing_ids)
+    if any(
+        r["instrument_id"] in missing
+        and r["in_date"] <= snapshot.as_of
+        and (r["out_date"] is None or r["out_date"] > snapshot.as_of)
+        for r in projected.values()
+    ):
+        raise ValueError("Missing source industry row leaves a stored interval open")

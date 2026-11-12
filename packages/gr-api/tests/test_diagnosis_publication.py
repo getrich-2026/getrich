@@ -301,3 +301,31 @@ async def test_cancel_while_waiting_for_writer_does_not_leave_mutation_lock():
     assert not conn.locked
     assert conn.autocommit is False
     assert conn.timeout == "1729ms"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("count,lag,accepted", [(7, 1, True), (7, 2, False), (6, 1, False)])
+async def test_new_diagnosis_freshness_uses_completed_trading_days(
+    monkeypatch, count, lag, accepted
+):
+    from gr_api.errors import BadRequest
+
+    class CalendarDb:
+        @asynccontextmanager
+        async def cursor(self):
+            yield self
+
+        async def execute(self, query, params):
+            assert params == (date(2026, 11, 5), date(2026, 11, 12))
+
+        async def fetchone(self):
+            return {"calendar_days": count, "lag": lag}
+
+    monkeypatch.setattr(pub, "_latest_completed_date", lambda: date(2026, 11, 12))
+    db: Any = CalendarDb()
+    if accepted:
+        await pub.require_freshness(db, date(2026, 11, 5))
+    else:
+        with pytest.raises(BadRequest) as exc:
+            await pub.require_freshness(db, date(2026, 11, 5))
+        assert exc.value.http_status == 503

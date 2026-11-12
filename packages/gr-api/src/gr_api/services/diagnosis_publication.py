@@ -8,9 +8,10 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from types import MappingProxyType
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from anyio import CancelScope
 from gr_api.errors import BadRequest
@@ -142,6 +143,7 @@ async def consistent_read(
 
 async def require_publication(db: DictConnection, version_id: str | None = None) -> dict[str, Any]:
     """核对一个正式发布及其失效状态；最新失效时不回退旧日期。"""
+    latest_requested = version_id is None
     pinned = current.get()
     if pinned is not None:
         if version_id is not None and version_id != pinned.version_id:
@@ -169,12 +171,38 @@ async def require_publication(db: DictConnection, version_id: str | None = None)
         row = await cur.fetchone()
     if row is None:
         raise BadRequest("no usable diagnostic publication", http_status=503)
+    if latest_requested:
+        await require_freshness(db, row["as_of_date"])
     current.set(
         PublishedDiagnosticContext(
             version_id, row["as_of_date"], row["published_at"], MappingProxyType(deepcopy(row))
         )
     )
     return row
+
+
+def _latest_completed_date() -> date:
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    return now.date() if now.time() >= time(15) else now.date() - timedelta(days=1)
+
+
+async def require_freshness(db: DictConnection, as_of: date) -> None:
+    """新诊断最多滞后一个已收盘交易日；历史快照读取不调用此门禁。"""
+    until = _latest_completed_date()
+    if as_of > until:
+        raise BadRequest("diagnostic publication date is not completed", http_status=503)
+    async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT count(*) AS calendar_days,count(*) FILTER (WHERE is_open) AS lag "
+            "FROM meta.trading_calendar WHERE exchange='XSHG' "
+            "AND trading_day>%s AND trading_day<=%s",
+            (as_of, until),
+        )
+        row = await cur.fetchone()
+    if not row or row["calendar_days"] != (until - as_of).days or row["lag"] > 1:
+        raise BadRequest(
+            "diagnostic publication is stale or calendar is incomplete", http_status=503
+        )
 
 
 def cutoff() -> datetime:

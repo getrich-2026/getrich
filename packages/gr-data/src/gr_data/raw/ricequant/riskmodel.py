@@ -134,7 +134,8 @@ def run_risk_raw(
     init 跳过已完整观察的日期；update 每轮重抓显式日期范围，失败后续跑同一轮。
     内存上界为显式股票范围的一日矩阵（最多 10000 只），SDK 分批至 batch_size。
     capture_callback 在每个完整发布或复用的观察上执行；失败保留 raw 等待重放。
-    production 必须提供已完成数据库预检的 callback，命令入口负责迁移和 variant 登记。
+    production 必须提供采集凭据 callback；普通入口登记PG，两阶段入口仅封存原件，
+    在原子发布事务中补登记，不允许采集阶段提前改写业务输入。
     """
     if mode not in {"init", "update"}:
         raise ValueError("未知采集模式")

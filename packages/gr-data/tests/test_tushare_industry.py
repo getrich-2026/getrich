@@ -118,3 +118,14 @@ def test_unchanged_industry_preserves_first_observation():
     before = old[0]["available_at"]
     assert industry_changes(old, normalize([member()])) == []
     assert old[0]["available_at"] == before
+
+
+def test_missing_source_row_cannot_leave_old_membership_open():
+    from gr_data.ingest.tushare.industry import industry_changes, validate_missing_closures
+
+    old = normalize([member()]).members.to_dicts()
+    absent = normalize([member(first="20261106")])
+    with pytest.raises(ValueError, match="leaves a stored interval open"):
+        validate_missing_closures(old, industry_changes(old, absent), absent)
+    closed = normalize([member(last="20261105")])
+    validate_missing_closures(old, industry_changes(old, closed), closed)

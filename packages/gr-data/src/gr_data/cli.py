@@ -209,6 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", help="配置文件路径", default=None)
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    from gr_data.diagnosis_daily.cli import register
+
+    register(sub)
     raw = sub.add_parser("raw", help="抓取 raw 数据落 parquet")
     raw.add_argument("provider", choices=["yinhe", "ricequant", "insight", "tushare", "datayes"])
     raw.add_argument("--mode", choices=["init", "update"], default="update")

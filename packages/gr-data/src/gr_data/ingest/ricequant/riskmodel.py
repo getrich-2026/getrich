@@ -654,6 +654,7 @@ def run_risk_ingest(
     options: RiskOptions,
     *,
     identity_mapping: IdentityMapping | None = None,
+    transaction_managed: bool = False,
 ) -> IngestResult:
     """逐日读取经过校验的五件套并原子写库。
 
@@ -661,6 +662,7 @@ def run_risk_ingest(
         conn: 空闲 PostgreSQL 连接；每个观测日独立提交，失败日完整回滚。
         ctx: raw 路径和可选月份过滤；禁止通过 force_ownership 隐式切换源。
         options: 已确认模型、单位和标的范围的配置。
+        transaction_managed: 仅单日日更允许外层事务；本函数不单独提交或写失败流水。
         identity_mapping: 独立生成并按文件哈希校验的跨库映射；只适用于动态快照。
 
     Returns:
@@ -681,12 +683,29 @@ def run_risk_ingest(
         raise ContractViolationError("Cross-database mapping requires dynamic raw coverage")
     if ctx.force_ownership:
         raise OwnershipError("RiceQuant risk import requires explicit gr-data own release/set")
-    if conn.info.transaction_status != TransactionStatus.IDLE:
-        raise ValueError("RiceQuant risk import requires an idle connection")
+    expected_status = TransactionStatus.INTRANS if transaction_managed else TransactionStatus.IDLE
+    if conn.info.transaction_status != expected_status:
+        raise ValueError(
+            "Managed risk import transaction boundary requires an outer transaction"
+            if transaction_managed
+            else "RiceQuant risk import requires an idle connection"
+        )
+    if transaction_managed and options.start_date != options.end_date:
+        raise ValueError("Managed risk import requires exactly one trading day")
     total = 0
     committed_days: list[date] = []
     warnings: list[str] = []
-    for manifest, frames, started_at in _audited_bundles(conn, ctx, options):
+    bundles = (
+        (
+            (m, f, datetime.now(timezone.utc))
+            for m, f in read_bundles(
+                ctx.paths, options, months=ctx.months, observation_id=ctx.observation_id
+            )
+        )
+        if transaction_managed
+        else _audited_bundles(conn, ctx, options)
+    )
+    for manifest, frames, started_at in bundles:
         day = None
         request = _request(options, ctx)
         request.update(
@@ -730,7 +749,13 @@ def run_risk_ingest(
                 )
             if coverage is not None:
                 request["stage"] = "capture_registration"
-                record_capture(conn, options, manifest, channel=ctx.channel)
+                record_capture(
+                    conn,
+                    options,
+                    manifest,
+                    channel=ctx.channel,
+                    transaction_managed=transaction_managed,
+                )
             order = list(frames["exposure"].columns)
             if not order or len(order) > 32767 or any(len(name) > 32 for name in order):
                 raise ContractViolationError("RiceQuant factor definitions exceed storage contract")
@@ -741,6 +766,8 @@ def run_risk_ingest(
             )
             if coverage is not None:
                 quality.update(_publication_quality(manifest))
+            if transaction_managed and not quality.get("publication_eligible", False):
+                raise ContractViolationError("Managed risk input is not publication eligible")
             request["quality"] = quality
             day_warnings = list(quality["warnings"])
             if coverage is not None and manifest["coverage_counts"]["complete"] < len(coverage):
@@ -910,6 +937,8 @@ def run_risk_ingest(
                 )
                 transaction_body_complete = True
         except Exception as exc:
+            if transaction_managed:
+                raise
             # 40003 明确表示完成未知，不能按整个 40 类推断回滚。
             known_database_rejection = (
                 isinstance(exc, psycopg.Error)

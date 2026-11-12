@@ -59,6 +59,8 @@ def normalize_annual_roe(
                 raise ValueError("Conflicting annual ROE source revisions")
             if old[1] == "1":
                 continue
+        if old is not None and old[1] == "1" and flag != "1":
+            continue
         rows[key] = (row, flag)
     schema = {
         "instrument_id": pl.Int64,

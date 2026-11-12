@@ -80,3 +80,11 @@ def test_annual_fetch_preserves_raw_and_permanent_errors(tmp_path):
     client.query_all.side_effect = PermanentError("credentials missing")
     with pytest.raises(PermanentError, match="credentials missing"):
         fetch_annual_roe(client, RawPaths(tmp_path), years=(2025,))
+
+
+@pytest.mark.parametrize("flags", [("0", "1"), ("1", "0")])
+def test_equal_roe_revisions_prefer_updated_flag_independent_of_page_order(flags):
+    result = normalize([row(30, flag=flag) for flag in flags])
+    assert result.height == 1
+    assert result["source_revision"][0] == "1"
+    assert result["roe"][0] == Decimal(".3")

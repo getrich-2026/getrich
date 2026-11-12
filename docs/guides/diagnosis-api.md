@@ -241,14 +241,14 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 | 负权重、非有限数、全零、部分填写、超过100行/5方案 | 422，按issues定位；全部省略时对唯一标的等权，重复项合并 |
 | 已识别的ETF、北交所、退市或其他范围外资产 | 422，要求修正后提交，不静默删除 |
 | 日期与发布日不同或请求越界指标 | 422，不回退；请求 `metrics` 必须属于当前 `/options` 的 declared_metrics；旧v1/v2仅三项，v3为七项 |
-| 正权重证券无法解析、未在清单或缺同run风险输入 | 保留证券、原份额及原因，完整组合三项模型风险unavailable；不对覆盖子集重新归一化。没有可解析正权重标的时输入422 |
+| 正权重证券无法解析、未在清单或缺同run风险输入 | 保留证券、原份额及原因，完整组合本次准入模型风险unavailable；不对覆盖子集重新归一化。没有可解析正权重标的时输入422 |
 | 无凭证、无效或过期凭证访问私有诊断接口 | 401 unauthorized，使用标准诊断错误结构 |
 | 已登录用户读取他人结果、报告、数据质量或重算 | 403 forbidden |
 | 最新发布失效/无可用发布 | 新诊断503，不自动回退旧日期；历史产物仍可读，重算409 |
 
-例如80%茅台加20%无法解析的888888.SH，实际返回 `model_coverage.covered_weight="0.8"`、`data_quality.plans[0].coverage_summary.risk_model=0.8`，缺失项 `{"symbol":"888888.SH","weight":"0.2","reason":"unresolved_symbol"}`，三项完整模型风险均不可用且无value。不能把该请求解读为茅台100%的风险。
+例如80%茅台加20%无法解析的888888.SH，实际返回 `model_coverage.covered_weight="0.8"`、`data_quality.plans[0].coverage_summary.risk_model=0.8`，缺失项 `{"symbol":"888888.SH","weight":"0.2","reason":"unresolved_symbol"}`，本次准入的完整模型风险均不可用且无value。不能把该请求解读为茅台100%的风险。
 
-区块状态与指标状态分别判断：`ready/unavailable/failed` 与 `ok/degraded/unavailable`。`run_status=partially_succeeded` 可由未开放的C区等产生，不表示已验收的三项风险计算失败；只消费本次准入的指标及其status，不把其他字段推断为新增准入。不可用指标没有value，不能显示为0。
+区块状态与指标状态分别判断：`ready/unavailable/failed` 与 `ok/degraded/unavailable`。`run_status=partially_succeeded` 可由未开放的C区等产生，不表示本次已准入的风险计算失败；只消费本次准入的指标及其status，不把其他字段推断为新增准入。不可用指标没有value，不能显示为0。
 
 ## 正式启用与回退
 
@@ -258,7 +258,7 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 
 1. 发布仅已验收后端及依赖，包含注册必填列修复和gr-api显式依赖gr-signal的声明；后者在独立安装时验证为必需。使用锁定依赖的非editable安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），不携带apps/web部署。先核对056唯一账本和新v3版本可用性，不再跑全目录迁移。
 2. 在现有API运行环境设置 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`，保持 `GETRICH_ALLOW_MOCK_AUTH=false` 及既有JWT配置，优雅重启既有API进程。
-3. 用真实登录账号读options，确认日期、版本、5224清单和三指标；调用三股样本复现1.3411841678%，验证不同用户的403及缺失持仓提示后再放通流量。
+3. 用真实登录账号读options，确认最新日期、版本、动态证券清单和declared_metrics（v3七项）；调用三股样本复现1.3411841678%，验证不同用户的403及缺失持仓提示后再放通流量。
 4. 运行中发布失效应返回503，先核查真实数据和收据，不为恢复出数而回退日期或放宽coverage。
 
 回退：撤下诊断新请求入口，将 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 并优雅重启；如需应用版本回退，选兼容现有schema的后端版本。保留055、全部账本、新旧publication/receipt、已保存报告和验收证据，不自动删表/逆改账本/恢复覆盖当前库。需要数据库恢复时，先从逻辑备份恢复全新隔离库核对，再另审切换方案。
@@ -416,3 +416,43 @@ RC/L3准入路径跳过L4正交化计算，未开放能力不增加请求耗时�
 行业日更写入会先用已校验源闭区间收口旧行，再写新有效区间；源区间本身重叠则拒绝。
 无实质变化的成员行不更新available_at和updated_at；未收到可靠调出日期时不猜测收口。
 本批仅修复并验证该写入能力，未启用定时采集或日更调度。
+
+
+## 两阶段日更（运维入口）
+
+适用已完成初始验收的沪深 A 股诊断库。使用 `gr-data diagnosis-daily` 前台执行有限日期范围，
+调度及真实连接配置放仓外；不需要额外队列、服务或新迁移。常规 API 发布开关默认仍为 false。
+
+```bash
+# 阶段A：供应商采集、归一化及预检，仅只读访问PG
+uv run gr-data diagnosis-daily prepare --day 2026-11-06 --artifact <ARTIFACT_DIR>
+# 阶段B：只读取固定产物，一次事务完成入库、12项基础收据、风险准入和v3发布
+uv run gr-data diagnosis-daily apply --artifact <ARTIFACT_DIR>
+# 自动逐个交易日推进；缺数或失败即停止后续日期
+uv run gr-data diagnosis-daily run --start 2026-11-06 --end 2026-11-12
+uv run gr-data diagnosis-daily status
+```
+
+产物默认位于 `$RAW_PARQUET_ROOT/diagnosis/daily/<日期>`；单日命令可显式指定仓外目录。
+`prepared.json` 固定源码提交、原件和canonical哈希、上一发布、输入指纹及归属；`status.json`
+记录失败阶段和原因。生产导入要求源码及DDL已提交；源码变更后必须重新准备，不复用旧进程身份。
+跨隔离库验证可用 `prepare --reuse-raw <RAW_DIR>` 复用原件，但必须重新取得目标库基线。
+
+阶段A校验日历、日线/复权/估值、停复牌覆盖、SW2021来源区间、公告日财务增量及米筐v2命名轴、
+单位、存储精度和覆盖门槛。缺日线须有同日全天停牌证据；未知行业缺行不能替代旧区间收口。
+财务按明确 `ann_date` 查询，源 `start_date/end_date` 是报告期；空响应仍封存凭据。
+ROE缺失不填零，现有年度数据与增量合并，公告日与实际观察时间分别保留。
+
+阶段B先核对基线，再在同一连接、同一外层事务和排他发布屏障内执行；已有导入器仅使用保存点，
+不独立提交。失败整笔回滚，旧发布保持有效。合法重复apply直接返回原发布，业务零写入。
+新上市身份在只读阶段冻结候选ID，写入阶段锁定身份表并校验；新增ID序列允许失败留下空洞，
+不得以连续ID作为业务语义。所有历史窗口及来源观察均随收据留证，不认证历史PIT或全区间校准。
+
+当日风险run满足既有99.9%覆盖门槛且无未知边界/未映射证券时，自动准入完整五件套的在市证券；
+个别缺暴露/特异风险的标的保留排除证据。持仓命中缺项时保留原权重，完整模型风险不可用。
+新诊断最多允许滞后一个已完成交易日；过期、最新发布失效或日历不完整返回503，不回退旧版本。
+历史快照保留产物并标记invalidated；依赖失效基础版本的重算返回409。
+
+所有v3七项风险指标仍为 `calibrated=false`，`/result`、`/report`及`/data-quality`
+按各自快照实际 `declared_metrics` 同步披露。旧三项快照保持原边界。风险贡献采用波动率贡献，
+满足 `sum(RC)=sqrt(annual_variance)`；不是方差贡献。L4、回放、Beta等仍未准入。
