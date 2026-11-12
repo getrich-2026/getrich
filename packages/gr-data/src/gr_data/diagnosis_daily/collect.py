@@ -385,6 +385,22 @@ def current_alias_snapshot(metadata: dict, day: date) -> tuple[dict, dict]:
     }
 
 
+def validate_risk_identities(manifest: dict, metadata: dict, day: date) -> None:
+    """完整候选集合须与本库当日在市身份一致，缺项证券同样不能跨库错配。"""
+    expected = {
+        row["instrument_id"]: row["symbol"]
+        for row in metadata["instruments"]
+        if row["list_date"] is not None
+        and date.fromisoformat(str(row["list_date"])) <= day
+        and (row["delist_date"] is None or date.fromisoformat(str(row["delist_date"])) > day)
+    }
+    actual = {row["instrument_id"]: row["canonical_symbol"] for row in manifest["coverage"]}
+    if actual != expected:
+        raise ValueError(
+            "Risk candidate identities differ from target database; capture a new risk observation"
+        )
+
+
 def collect_risk(
     client: Any, paths: RawPaths, day: date, options: RiskOptions, metadata: dict
 ) -> dict:
@@ -418,6 +434,7 @@ def collect_risk(
     if len(bundles) != 1 or bundles[0][0]["day"] != str(day):
         raise ValueError("Risk capture must contain exactly the requested trading day")
     manifest, frames = bundles[0]
+    validate_risk_identities(manifest, metadata, day)
     coverage = _dynamic_coverage(manifest, frames, options)
     values = _normalize(frames, options)
     storage = _storage_values(values)

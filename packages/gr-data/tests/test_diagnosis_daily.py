@@ -115,3 +115,51 @@ def test_expired_verified_alias_is_not_a_production_history_override():
     assert len(metadata["aliases"]) == 3
     old, _ = current_alias_snapshot(metadata, date(2010, 3, 4))
     assert len(old["aliases"]) == 3
+
+
+@pytest.mark.parametrize("status", ["included", "partial_bundle"])
+def test_phase_a_checks_every_risk_identity_including_exclusions(status):
+    from gr_data.diagnosis_daily.collect import validate_risk_identities
+
+    metadata = {
+        "instruments": [
+            {
+                "instrument_id": 42,
+                "symbol": "688827.SH",
+                "list_date": "2026-11-10",
+                "delist_date": None,
+            }
+        ]
+    }
+    raw = {"coverage": [{"instrument_id": 7, "canonical_symbol": "688827.SH", "status": status}]}
+    with pytest.raises(ValueError, match="identities differ"):
+        validate_risk_identities(raw, metadata, date(2026, 11, 10))
+    raw["coverage"][0]["instrument_id"] = 42
+    validate_risk_identities(raw, metadata, date(2026, 11, 10))
+
+
+@pytest.mark.anyio
+async def test_new_code_can_replay_valid_publication_but_cannot_write_old_artifact(
+    monkeypatch, tmp_path
+):
+    import gr_data.diagnosis_daily as daily
+    from gr_data.common.paths import RawPaths
+
+    conn = Mock()
+    conn.info.transaction_status = TransactionStatus.INTRANS
+    data = {
+        "day": "2026-11-06",
+        "history_start": "2025-10-22",
+        "version_id": "published",
+        "importer_version": "old",
+    }
+    monkeypatch.setattr(daily, "get_importer_version", lambda **kwargs: "new")
+    monkeypatch.setattr(daily, "_row", lambda *args: {"valid": True})
+    result = await daily._apply(conn, data, {}, RawPaths(tmp_path), Mock())
+    assert result["replay"] and result["business_rows_written"] == 0
+    monkeypatch.setattr(daily, "_row", lambda *args: None)
+    with pytest.raises(ValueError, match="Importer changed"):
+        await daily._apply(conn, data, {}, RawPaths(tmp_path), Mock())
+    assert not any(
+        "INSERT" in str(call) or "UPDATE" in str(call) for call in conn.execute.call_args_list
+    )

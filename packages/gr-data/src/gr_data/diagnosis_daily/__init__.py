@@ -265,8 +265,7 @@ def _load(artifact: Path) -> tuple[dict, dict[str, pl.DataFrame], RawPaths, Risk
         != data["artifact_hash"]
     ):
         raise ValueError("Prepared artifact identity changed")
-    if get_importer_version(require_clean=True) != data["importer_version"]:
-        raise ValueError("Importer changed since phase A; prepare again")
+    get_importer_version(require_clean=True)
     paths = RawPaths(data["raw_root"])
     frames = {}
     for name, expected in data["canonical_files"].items():
@@ -368,6 +367,8 @@ async def _apply(
         if not old["valid"]:
             raise ValueError("Existing daily publication is invalid; prepare a new observation")
         return {"version_id": data["version_id"], "replay": True, "business_rows_written": 0}
+    if get_importer_version(require_clean=True) != data["importer_version"]:
+        raise ValueError("Importer changed since phase A; prepare a new artifact before writing")
     current = latest_publication(conn)
     if current["data_version_id"] != data["previous_version"] or not current["valid"]:
         raise ValueError("Publication changed since phase A")
@@ -452,7 +453,7 @@ async def _apply(
     )
     if fail_after == "basics":
         raise RuntimeError("Injected failure after basic writes")
-    run_risk_ingest(
+    risk_result = run_risk_ingest(
         conn,
         IngestContext(paths, observation_id=data["risk_observation_id"]),
         options,
@@ -601,7 +602,8 @@ async def _apply(
         "version_id": data["version_id"],
         "day": str(day),
         "replay": False,
-        "business_rows_written": written,
+        "base_upsert_rows": written,
+        "risk_rows_written": risk_result.rows_written,
         "security_count": len(ids),
         "run_id": str(run_id),
         "receipt_id": str(run["receipt_id"]),

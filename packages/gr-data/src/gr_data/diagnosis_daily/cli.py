@@ -113,11 +113,17 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                 results = []
                 for (day,) in dates:
                     artifact = root / str(day)
-                    write_json(state, {"status": "running", "day": day, "phase": "A"})
+                    write_json(
+                        state,
+                        {"status": "running", "day": day, "phase": "A", "artifact": str(artifact)},
+                    )
                     # 已准备批次按固定观察恢复；不在失败后换原件冒充同一批次。
                     if not (artifact / "prepared.json").exists():
                         prepare(pg, artifact, day, tushare=ts, ricequant=rq)
-                    write_json(state, {"status": "running", "day": day, "phase": "B"})
+                    write_json(
+                        state,
+                        {"status": "running", "day": day, "phase": "B", "artifact": str(artifact)},
+                    )
                     results.append(apply(pg, artifact))
                     write_json(
                         state,
@@ -135,6 +141,19 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
     except Exception as exc:
         # 不输出供应商异常原文或连接参数；详细阶段诊断见对应产物status。
         previous_state = json.loads(state.read_text()) if state.exists() else {}
+        artifact = (
+            args.artifact
+            if args.artifact is not None
+            else (Path(previous_state["artifact"]) if previous_state.get("artifact") else None)
+        )
+        detail = {}
+        if artifact is not None and (artifact / "status.json").exists():
+            detail = json.loads((artifact / "status.json").read_text())
+        reason = (
+            str(exc)
+            if isinstance(exc, ValueError) or type(exc).__module__.startswith("gr_data.")
+            else "Inspect private artifact status for upstream failure"
+        )
         write_json(
             state,
             {
@@ -142,6 +161,9 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                 "status": "failed",
                 "action": args.action,
                 "error_type": type(exc).__name__,
+                "reason": reason,
+                "failed_stage": detail.get("stage") or detail.get("phase"),
+                "artifact": str(artifact) if artifact else None,
             },
         )
         log.error(
