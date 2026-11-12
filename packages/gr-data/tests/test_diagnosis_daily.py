@@ -196,3 +196,32 @@ def test_new_listing_bootstraps_annual_source_with_old_announcement(tmp_path):
     latest_announcement = frame["ann_date"].max()
     assert isinstance(latest_announcement, date)
     assert latest_announcement < date(2026, 11, 10)
+
+
+def test_default_prepare_failure_status_preserves_target_and_failed_stage(monkeypatch, tmp_path):
+    from argparse import Namespace
+    from types import SimpleNamespace
+
+    from gr_data.diagnosis_daily import cli
+
+    monkeypatch.setattr("gr_data.cli._pg", lambda cfg: Mock())
+    monkeypatch.setattr("gr_data.raw.tushare.client.TushareProClient", Mock())
+    monkeypatch.setattr("gr_data.raw.ricequant.client.RqdatacClient", Mock())
+
+    def missing(pg, artifact, day, **kwargs):
+        write_json(
+            artifact / "status.json",
+            {"phase": "A", "stage": "ricequant_capture_preflight", "status": "failed"},
+        )
+        raise ValueError("No complete risk input")
+
+    monkeypatch.setattr(cli, "prepare", missing)
+    args = Namespace(
+        action="prepare", artifact=None, day=date(2026, 11, 6), start=None, end=None, reuse_raw=None
+    )
+    cfg = Mock(raw_root=tmp_path, environment=SimpleNamespace(values={}))
+    assert cli.run(args, cfg) == 1
+    status = json.loads((tmp_path / "diagnosis/daily/last-run.json").read_text())
+    assert status["day"] == "2026-11-06" and status["failed_stage"] == "ricequant_capture_preflight"
+    assert status["artifact"].endswith("diagnosis/daily/2026-11-06")
+    assert status["reason"] == "No complete risk input"

@@ -39,6 +39,7 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
     pg = _pg(cfg)
     root = RawPaths(cfg.raw_root).dataset_dir("diagnosis", "daily")
     state = root / "last-run.json"
+    artifact: Path | None = args.artifact
     try:
         if args.action == "apply":
             if args.artifact is None:
@@ -69,7 +70,9 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
             if args.action == "prepare":
                 if args.day is None or args.day > last_closed:
                     raise ValueError("prepare requires a completed target trading day")
-                artifact = args.artifact or root / str(args.day)
+                artifact = (
+                    Path(args.artifact) if args.artifact is not None else root / str(args.day)
+                )
                 prepared = prepare(
                     pg, artifact, args.day, tushare=ts, ricequant=rq, reuse_raw=args.reuse_raw
                 )
@@ -141,11 +144,8 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
     except Exception as exc:
         # 不输出供应商异常原文或连接参数；详细阶段诊断见对应产物status。
         previous_state = json.loads(state.read_text()) if state.exists() else {}
-        artifact = (
-            args.artifact
-            if args.artifact is not None
-            else (Path(previous_state["artifact"]) if previous_state.get("artifact") else None)
-        )
+        if artifact is None and previous_state.get("artifact"):
+            artifact = Path(previous_state["artifact"])
         detail = {}
         if artifact is not None and (artifact / "status.json").exists():
             detail = json.loads((artifact / "status.json").read_text())
@@ -160,6 +160,7 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                 **previous_state,
                 "status": "failed",
                 "action": args.action,
+                "day": str(args.day) if args.day else previous_state.get("day"),
                 "error_type": type(exc).__name__,
                 "reason": reason,
                 "failed_stage": detail.get("stage") or detail.get("phase"),
