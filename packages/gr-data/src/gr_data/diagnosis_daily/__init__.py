@@ -38,11 +38,11 @@ from gr_data.diagnostic_publication import (
 )
 from gr_data.ingest.base import IngestContext
 from gr_data.ingest.ricequant.riskmodel import _model_run_id, run_risk_ingest
-from gr_data.ingest.tushare.financial import write_annual_roe
+from gr_data.ingest.tushare.financial import normalize_annual_roe, write_annual_roe
 from gr_data.ingest.tushare.industry import IndustrySnapshot, write_industry_snapshot
 
 from ._bridge import publication_connection
-from .collect import collect_risk, collect_tushare, normalize_tushare
+from .collect import collect_annual_backfill, collect_risk, collect_tushare, normalize_tushare
 from .evidence import digest, file_hash, fingerprints, write_frame, write_json
 
 
@@ -195,6 +195,30 @@ def prepare(
             ).fetchone()
             if history is None or expected is None or history[0] != expected[0]:
                 raise ValueError("Historical suspension coverage is incomplete")
+            known_financial_ids = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT instrument_id FROM fundamental.indicator_q "
+                    "WHERE instrument_id=ANY(%s) AND ann_date<=%s AND "
+                    "extract(month FROM end_date)=12 AND extract(day FROM end_date)=31",
+                    (sorted(symbols.values()), day),
+                ).fetchall()
+            }
+            known_financial_ids.update(frames["fundamental.indicator_q"]["instrument_id"])
+            bootstrap = [
+                symbol for symbol, iid in symbols.items() if iid not in known_financial_ids
+            ]
+        if bootstrap:
+            phase = "annual_financial_bootstrap"
+            extra, fiscal_observed = collect_annual_backfill(tushare, paths, bootstrap, day)
+            frames["fundamental.indicator_q"] = pl.concat(
+                [
+                    frames["fundamental.indicator_q"],
+                    normalize_annual_roe(
+                        extra, symbol_ids=symbols, as_of=day, observed_at=fiscal_observed
+                    ),
+                ]
+            )
         phase = "ricequant_capture_preflight"
         risk = collect_risk(ricequant, paths, day, options, metadata)
         if not set(risk["security_ids"]) <= set(symbols.values()):

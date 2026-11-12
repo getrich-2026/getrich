@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
@@ -123,6 +124,52 @@ def collect_tushare(client: Any, paths: RawPaths, day: date, previous: date) -> 
         {"day": day, "previous": previous, "observed_at": observed},
     )
     return observed
+
+
+def collect_annual_backfill(
+    client: Any, paths: RawPaths, symbols: list[str], day: date
+) -> tuple[pl.DataFrame, datetime]:
+    """新在市证券没有年度基线时补最近两年；不把旧公告遗漏在日增量之外。"""
+    frames = []
+    for symbol in sorted(symbols):
+        if re.fullmatch(r"[0-9]{6}\.(SH|SZ)", symbol) is None:
+            raise ValueError("Unsupported annual bootstrap symbol")
+        for year in (day.year - 1, day.year - 2):
+            period = f"{year}1231"
+            frame = client.query_all(
+                "fina_indicator",
+                ts_code=symbol,
+                period=period,
+                fields="ts_code,end_date,ann_date,roe_waa,update_flag",
+            )
+            if not frame.empty and (
+                not frame["ts_code"].eq(symbol).all()
+                or not frame["end_date"].astype(str).eq(period).all()
+            ):
+                raise ValueError("Annual bootstrap source ignored identity or period filter")
+            if frame.empty:
+                frame = pd.DataFrame(
+                    columns=["ts_code", "end_date", "ann_date", "roe_waa", "update_flag"]
+                )
+            write_parquet(
+                frame,
+                paths.dataset_file(
+                    "tushare", "fina_indicator", f"annual-bootstrap/{symbol}/{period}"
+                ),
+            )
+            frames.append(frame)
+    observed = datetime.now(timezone.utc)
+    raw = pd.concat(frames, ignore_index=True)
+    write_json(
+        paths.dataset_dir("tushare", "daily_capture") / "annual-bootstrap.json",
+        {
+            "symbols": symbols,
+            "observed_at": observed,
+            "rows": len(raw),
+            "years": [day.year - 1, day.year - 2],
+        },
+    )
+    return pl.from_pandas(raw), observed
 
 
 class _PreparationConnection:

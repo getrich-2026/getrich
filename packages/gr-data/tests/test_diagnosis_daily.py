@@ -163,3 +163,36 @@ async def test_new_code_can_replay_valid_publication_but_cannot_write_old_artifa
     assert not any(
         "INSERT" in str(call) or "UPDATE" in str(call) for call in conn.execute.call_args_list
     )
+
+
+def test_new_listing_bootstraps_annual_source_with_old_announcement(tmp_path):
+    from decimal import Decimal
+
+    import pandas as pd
+    from gr_data.common.paths import RawPaths
+    from gr_data.diagnosis_daily.collect import collect_annual_backfill
+    from gr_data.ingest.tushare.financial import normalize_annual_roe
+
+    class Supplier:
+        def query_all(self, endpoint, **params):
+            assert endpoint == "fina_indicator" and params["ts_code"] == "688827.SH"
+            return pd.DataFrame(
+                {
+                    "ts_code": ["688827.SH"],
+                    "end_date": [params["period"]],
+                    "ann_date": ["20260430"],
+                    "roe_waa": [20.0],
+                    "update_flag": ["1"],
+                }
+            )
+
+    raw, observed = collect_annual_backfill(
+        Supplier(), RawPaths(tmp_path), ["688827.SH"], date(2026, 11, 10)
+    )
+    frame = normalize_annual_roe(
+        raw, symbol_ids={"688827.SH": 42}, as_of=date(2026, 11, 10), observed_at=observed
+    )
+    assert set(frame["roe"]) == {Decimal(".2")} and frame.height == 2
+    latest_announcement = frame["ann_date"].max()
+    assert isinstance(latest_announcement, date)
+    assert latest_announcement < date(2026, 11, 10)
