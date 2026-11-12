@@ -355,6 +355,7 @@ def test_full_fetch_receipt_archive_and_restoration_are_separate(inputs, tmp_raw
     before = pd.read_parquet(path)
     writer.fetch("update")
     actual, receipt = read_asset_observation(path)
+    assert actual is not None
     pd.testing.assert_frame_equal(actual, before)
     assert receipt["scope"]["official_metadata_supplement_codes"] == ["CJ612C11200.ZCE"]
     assert receipt["scope"]["duplicate_metadata_rows"][0]["rows"] == 1
@@ -382,6 +383,7 @@ def test_full_fetch_receipt_archive_and_restoration_are_separate(inputs, tmp_raw
     )
     writer.fetch("update")
     actual, _ = read_asset_observation(path)
+    assert actual is not None
     assert actual.loc[actual.ts_code.eq("CJ612C11200.ZCE"), "name"].item() == "Tushare recovered"
     assert (
         json.loads((obj.root / "receipts/2026-05.json").read_text())["reports"][0]["code_count"]

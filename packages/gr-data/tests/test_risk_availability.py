@@ -82,7 +82,9 @@ def test_empty_or_all_zero_positions_do_not_produce_ready_result():
         holdings={},
         coverage=RiskCoverage("v2", date(2020, 2, 18), "run", ()),
     )
-    assert r["diagnostic_inputs_ready"] is False and "empty_nonzero_holdings" in r["reasons"]
+    reasons = r["reasons"]
+    assert isinstance(reasons, list)
+    assert r["diagnostic_inputs_ready"] is False and "empty_nonzero_holdings" in reasons
 
 
 @pytest.mark.parametrize("weight", [Decimal("NaN"), Decimal("Infinity"), 0.4])
@@ -99,7 +101,8 @@ def test_unmapped_full_code_is_not_matched_by_six_digits():
 def test_late_observed_snapshot_cannot_be_used_for_historical_decision():
     r = assess(ready(), known_at=datetime(2020, 2, 18, tzinfo=timezone.utc))
     assert r["diagnostic_inputs_ready"] is False
-    assert "snapshot_observed_after_knowledge_time" in r["reasons"]
+    reasons = r["reasons"]
+    assert isinstance(reasons, list) and "snapshot_observed_after_knowledge_time" in reasons
     with pytest.raises(ValueError, match="timezone"):
         assess(ready(), known_at=datetime(2020, 2, 18))
 
@@ -109,7 +112,9 @@ def test_range_lists_missing_days_from_full_calendar_not_existing_rows():
     rows = {d: ready(d) for d in days[2:]}
     rows[days[0]] = RiskDay("v2", days[0], "blocked_source_units")
     r = assess_range(rows, model="v2", start=days[0], end=days[-1], expected_days=days)
-    assert [x["day"] for x in r["missing_dates"]] == ["2020-02-14", "2020-02-17"]
+    missing = r["missing_dates"]
+    assert isinstance(missing, list)
+    assert [x["day"] for x in missing] == ["2020-02-14", "2020-02-17"]
     assert r["expected_trading_days"] == 5 and r["accepted_days"] == 3
     assert r["storage_interval_complete"] is False and r["diagnostic_inputs_ready"] is False
 

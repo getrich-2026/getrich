@@ -7,13 +7,14 @@ import json
 import os
 from datetime import date
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import psycopg
 import pytest
 from gr_data.common.parquet import read_parquet_strict, write_parquet
+from gr_data.common.retry import PermanentError
 from gr_data.config.pipeline import Config
 from gr_data.ingest import plan_importers, run_provider
 from gr_data.ingest.base import IngestContext, IngestGateError
@@ -76,7 +77,7 @@ def bar(code="510300.SH", **overrides) -> dict[str, object]:
     return row
 
 
-def option_meta(exchange):
+def option_meta(exchange: str) -> dict[str, Any]:
     code, underlying = OPTIONS[exchange]
     return dict(
         ts_code=code,
@@ -1949,6 +1950,7 @@ def test_option_exchange_scopes_survive_later_midmonth_exchange(asset_setup):
     OptionInstrumentsFetcher(client, ctx).fetch("update")
     path = paths.dataset_file("tushare", "opt_daily", "2024-01")
     raw, receipt = read_asset_observation(path)
+    assert raw is not None
     scopes = receipt["scope"]["exchange_scopes"]
     assert scopes["CZCE"] == {"start": "2024-01-01", "end": "2024-01-31", "pending_days": []}
     assert scopes["SHFE"] == {"start": "2024-01-16", "end": "2024-01-31", "pending_days": []}
@@ -1964,6 +1966,7 @@ def test_czce_uses_own_narrow_scope_not_legacy_whole_month(asset_setup):
     paths = prepare_assets(asset_setup)
     path = paths.dataset_file("tushare", "opt_daily", "2024-01")
     raw, receipt = read_asset_observation(path)
+    assert raw is not None
     receipt["scope"].update(start="2024-01-01", end="2024-01-31")
     # fixture的CZCE本来只抓了01-02；若退回整月，会把开市的01-03误报为缺失。
     path.with_suffix(".json").write_text(json.dumps(receipt))
@@ -1978,6 +1981,7 @@ def test_missing_czce_exchange_scope_stops_without_legacy_fallback(asset_setup):
     paths = prepare_assets(asset_setup)
     path = paths.dataset_file("tushare", "opt_daily", "2024-01")
     raw, receipt = read_asset_observation(path)
+    assert raw is not None
     receipt["scope"]["exchange_scopes"].pop("CZCE")
     path.with_suffix(".json").write_text(json.dumps(receipt))
     obj = importer(OptionBars1dImporter, paths)
@@ -2122,6 +2126,7 @@ def test_untraded_zero_pipeline_raw_receipt_and_ingest_day_warnings(asset_setup,
     path = paths.dataset_file("tushare", "opt_daily", "2023-01")
     before = path.read_bytes()
     raw, receipt = read_asset_observation(path)
+    assert raw is not None
     assert raw[["open", "high", "low", "close"]].eq(0).all().all()
     assert {
         ex: item["20230117"]["rows"]
@@ -2247,7 +2252,7 @@ def test_metadata_duplicate_other_exchange_still_stops(exchange):
 def test_czce_metadata_duplicate_exact_query_still_stops():
     standard = option_meta("CZCE")
     alias = dict(standard, ts_code=standard["ts_code"] + "2")
-    with pytest.raises(raw_asset_markets.PermanentError, match="Unresolved.*exchange=CZCE.*suffix"):
+    with pytest.raises(PermanentError, match="Unresolved.*exchange=CZCE.*suffix"):
         OptionInstrumentsFetcher._metadata_scope(
             pd.DataFrame([standard, alias]),
             "CZCE",

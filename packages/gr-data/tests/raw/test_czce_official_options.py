@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from typing import Any
 
 import pandas as pd
 import polars as pl
@@ -112,7 +113,8 @@ def test_contract_set_difference_stops(tmp_raw_root, kind):
 
 @pytest.mark.parametrize("field", ASSERT_FIELDS)
 def test_price_assertion_stops(tmp_raw_root, field):
-    history = setup_history(tmp_raw_root, [row(**{field: 13})])
+    changes: dict[str, Any] = {field: 13}
+    history = setup_history(tmp_raw_root, [row(**changes)])
     with pytest.raises(ValueError, match="price assertion failed"):
         history.reconcile(pd.DataFrame([row()]))
 

@@ -251,5 +251,7 @@ def test_legacy_seed_units_must_agree_with_fixed_policy() -> None:
     }
     with pytest.raises(HistoryError, match="method"):
         verify_existing_greek_methods(
-            AuditConnection([(SEED_GREEKS_RULE, detail)]), [row], "2026-11"
-        )  # type: ignore[arg-type]
+            AuditConnection([(SEED_GREEKS_RULE, detail)]),  # type: ignore[arg-type]
+            [row],
+            "2026-11",
+        )
