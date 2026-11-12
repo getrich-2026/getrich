@@ -37,7 +37,10 @@ export type Intent =
   | 'rebalance_holding'
   | 'multi_portfolio'
 
+export type RiskMetric = 'annual_variance' | 'volatility' | 'daily_prediction_volatility'
+
 export interface SnapshotRequest {
+  metrics?: RiskMetric[]
   plans: PortfolioPlanInput[]
   intent?: Intent
   as_of_date?: string
@@ -64,6 +67,7 @@ export type UserLevel = 'retail' | 'pro'
 // ==== 状态三态 ====
 
 export type ReasonCode =
+  | 'not_calibrated'
   | 'factor_model_unavailable'
   | 'history_insufficient'
   | 'coverage_below_threshold'
@@ -294,7 +298,34 @@ export interface RiskSourceShare {
   share: number
 }
 
+export interface MissingRiskHolding {
+  instrument_id: number | null
+  symbol: string
+  weight: string
+  reason: string
+}
+
+export interface ModelCoverage {
+  status: 'complete' | 'incomplete'
+  scope_type: 'exact_portfolio' | 'security_universe' | null
+  total_count: number
+  covered_count: number
+  total_weight: string
+  covered_weight: string
+  missing: MissingRiskHolding[]
+  metrics: string[]
+  reason: string | null
+}
+
 export interface RiskSection {
+  model_coverage?: ModelCoverage | null
+  model_id?: string | null
+  model_date?: string | null
+  annual_variance?: MetricValue<number> | null
+  daily_prediction_volatility?: MetricValue<number> | null
+  annualization_days?: number | null
+  model_run_id?: string | null
+  calibrated?: boolean | null
   volatility: MethodValues<number>
   instrument_betas: MetricValue<InstrumentBeta[]>
   risk_contribution: MetricValue<Record<string, number>>
@@ -406,7 +437,20 @@ export interface PlanResult {
   profile: SectionResult<PortfolioProfile>
 }
 
+export interface PublicationStatus {
+  scope_type?: 'exact_portfolio' | 'security_universe' | null
+  scope_id?: string | null
+  declared_metrics?: string[]
+  status: 'available' | 'invalidated' | 'unpublished'
+  recomputable: boolean
+  invalidation_reasons: string[]
+  model_run_id: string | null
+  calibrated: boolean | null
+  units_evidence: Record<string, unknown> | null
+}
+
 export interface SnapshotMeta {
+  publication?: PublicationStatus | null
   snapshot_id: string
   schema_version: 'diagnosis.v1'
   spec_version: string
@@ -523,4 +567,29 @@ export interface ReportResponse extends SnapshotMeta {
   sections: ReportSection[]
   disclosures: string[]
   data_quality: DataQualityReport
+}
+
+
+export interface PublicationScope {
+  scope_type?: 'exact_portfolio' | 'security_universe'
+  as_of: string
+  model: string
+  run_id: string
+  receipt_id?: string
+  metrics: RiskMetric[]
+  calibrated: boolean
+  holdings?: Record<string, string>
+  portfolio_hash?: string
+  security_ids?: number[]
+  security_hash?: string
+  universe_admission_id?: string
+}
+
+export interface PublishedOptionsResponse {
+  publication_scope?: PublicationScope | null
+  data_version_id: string
+  as_of_date: string
+  published_at: string
+  available_options: Record<string, unknown>
+  declared_metrics: string[]
 }

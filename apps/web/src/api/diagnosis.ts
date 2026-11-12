@@ -5,6 +5,7 @@ import type {
   DiagnosisErrorResponse,
   DiagnosisResult,
   ErrorInfo,
+  PublishedOptionsResponse,
   RecomputeRequest,
   ReportResponse,
   SnapshotAccepted,
@@ -24,9 +25,10 @@ import type {
  * 提交诊断。``idempotencyKey`` 由调用方在每次「开始诊断」时生成，
  * 只在这一次操作的网络重试中复用；同键异体后端返回 409。
  */
-export const createSnapshot = (body: SnapshotRequest, idempotencyKey: string) =>
+export const createSnapshot = (body: SnapshotRequest, idempotencyKey: string, signal?: AbortSignal) =>
   http.post<SnapshotAccepted>('/diagnosis/snapshots', body, {
     headers: { 'Idempotency-Key': idempotencyKey },
+    signal,
   })
 
 /**
@@ -42,18 +44,22 @@ export const recomputeSnapshot = (
     headers: { 'Idempotency-Key': idempotencyKey },
   })
 
-export const getDiagnosisResult = (snapshotId: string) =>
-  http.get<DiagnosisResult | SnapshotProgress>(`/diagnosis/snapshots/${snapshotId}/result`)
+export const getDiagnosisResult = (snapshotId: string, signal?: AbortSignal) =>
+  http.get<DiagnosisResult | SnapshotProgress>(`/diagnosis/snapshots/${snapshotId}/result`, { signal })
 
-export const getDiagnosisReport = (snapshotId: string, userLevel: UserLevel) =>
+export const getDiagnosisReport = (snapshotId: string, userLevel: UserLevel, signal?: AbortSignal) =>
   http.get<ReportResponse | SnapshotProgress>(`/diagnosis/snapshots/${snapshotId}/report`, {
     params: { user_level: userLevel },
+    signal,
   })
 
 export const getDiagnosisDataQuality = (snapshotId: string) =>
   http.get<DataQualityResponse | SnapshotProgress>(
     `/diagnosis/snapshots/${snapshotId}/data-quality`,
   )
+
+export const getPublishedOptions = (signal?: AbortSignal) =>
+  http.get<PublishedOptionsResponse>('/diagnosis/options', { signal })
 
 export const listSpecVersions = () => http.get<SpecVersionList>('/diagnosis/spec-versions')
 
