@@ -82,6 +82,8 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                     "artifact": str(artifact),
                     "version_id": prepared["version_id"],
                 }
+                if prepared.get("archived_attempt"):
+                    result["archived_attempt"] = prepared["archived_attempt"]
             else:
                 with connect(pg) as conn, conn.transaction():
                     conn.execute("SET TRANSACTION READ ONLY")
@@ -173,6 +175,11 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                 "reason": reason,
                 "failed_stage": detail.get("stage") or detail.get("phase"),
                 "artifact": str(artifact) if artifact else None,
+                **(
+                    {"archived_attempt": detail["archived_attempt"]}
+                    if detail.get("archived_attempt")
+                    else {}
+                ),
             },
         )
         log.error(

@@ -43,7 +43,14 @@ from gr_data.ingest.tushare.industry import IndustrySnapshot, write_industry_sna
 
 from ._bridge import publication_connection
 from .collect import collect_annual_backfill, collect_risk, collect_tushare, normalize_tushare
-from .evidence import digest, file_hash, fingerprints, write_frame, write_json
+from .evidence import (
+    archive_failed_attempt,
+    digest,
+    file_hash,
+    fingerprints,
+    write_frame,
+    write_json,
+)
 
 
 log = logging.getLogger(__name__)
@@ -130,12 +137,20 @@ def prepare(
     reuse_raw: Path | None = None,
 ) -> dict:
     """阶段A：只读PG，网络与预检均在发布屏障之外；失败仅落盘报告。"""
+    if (artifact / "prepared.json").exists():
+        raise ValueError("Prepared artifacts are immutable; use apply or a new artifact directory")
+    attempt_metadata = {}
+    if reuse_raw is None:
+        archived = archive_failed_attempt(artifact, day)
+        if archived is not None:
+            attempt_metadata["archived_attempt"] = archived
     artifact.mkdir(parents=True, exist_ok=True)
     phase = "initial_state"
     try:
-        if (artifact / "prepared.json").exists():
-            raise ValueError(
-                "Prepared artifacts are immutable; use apply or a new artifact directory"
+        if attempt_metadata:
+            write_json(
+                artifact / "status.json",
+                {"phase": "A", "status": "preparing", "day": day, **attempt_metadata},
             )
         version = get_importer_version(require_clean=True)
         with connect(pg) as conn, conn.transaction():
@@ -258,13 +273,20 @@ def prepare(
             "canonical_files": files,
             "raw_files": raw_files,
             "raw_root": str(paths.root.resolve()),
+            **attempt_metadata,
         }
         evidence["artifact_hash"] = digest(evidence)
         evidence["version_id"] = f"diag-v3-{day:%Y%m%d}-daily-{evidence['artifact_hash'][:16]}"
         write_json(artifact / "prepared.json", evidence)
         write_json(
             artifact / "status.json",
-            {"phase": "A", "status": "ready", "day": day, "version_id": evidence["version_id"]},
+            {
+                "phase": "A",
+                "status": "ready",
+                "day": day,
+                "version_id": evidence["version_id"],
+                **attempt_metadata,
+            },
         )
         return evidence
     except Exception as exc:
@@ -277,6 +299,7 @@ def prepare(
                 "day": day,
                 "reason": str(exc),
                 "error_type": type(exc).__name__,
+                **attempt_metadata,
             },
         )
         raise
@@ -637,8 +660,11 @@ async def _apply(
 
 def apply(pg: PgConfig, artifact: Path, *, fail_after: str | None = None) -> dict:
     """阶段B没有供应商请求；成功在外层退出时一次提交，失败整笔回滚。"""
+    attempt_metadata = {}
     try:
         data, frames, paths, options = _load(artifact)
+        if data.get("archived_attempt"):
+            attempt_metadata["archived_attempt"] = data["archived_attempt"]
         with connect(pg) as conn, conn.transaction():
             result = asyncio.run(_apply(conn, data, frames, paths, options, fail_after=fail_after))
         with connect(pg) as conn, conn.transaction():
@@ -646,6 +672,7 @@ def apply(pg: PgConfig, artifact: Path, *, fail_after: str | None = None) -> dic
                 conn, "SELECT diag.publication_is_valid(%s) AS valid", (result["version_id"],)
             )["valid"]:
                 raise ValueError("Publication invalidated after commit; inspect external writes")
+        result.update(attempt_metadata)
         write_json(artifact / "status.json", {"phase": "B", "status": "published", **result})
         return result
     except Exception as exc:
@@ -656,6 +683,7 @@ def apply(pg: PgConfig, artifact: Path, *, fail_after: str | None = None) -> dic
                 "status": "failed",
                 "reason": str(exc),
                 "error_type": type(exc).__name__,
+                **attempt_metadata,
             },
         )
         raise

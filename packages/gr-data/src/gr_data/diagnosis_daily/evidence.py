@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, LiteralString
 from uuid import uuid4
@@ -37,6 +37,31 @@ def write_json(path: Path, value: Any) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def archive_failed_attempt(artifact: Path, day: date) -> dict[str, str] | None:
+    """原子移走没有prepared的失败尝试；保留原件、计划及状态的原始内容。"""
+    if (artifact / "prepared.json").exists():
+        raise ValueError("Prepared artifacts cannot be archived as failed attempts")
+    if not artifact.exists():
+        return None
+    if artifact.is_symlink() or not artifact.is_dir():
+        raise ValueError("Failed attempt must be a regular artifact directory")
+    if not any(artifact.iterdir()):
+        return None
+    archive_root = artifact.parent / "_failed"
+    if archive_root.is_symlink():
+        raise ValueError("Failed attempt archive must not be a symbolic link")
+    archive_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc)
+    archived = archive_root / f"{day}-{stamp:%Y%m%dT%H%M%S%fZ}-{uuid4().hex}"
+    artifact.rename(archived)
+    return {
+        "day": str(day),
+        "path": str(archived.resolve()),
+        "source": str(artifact.absolute()),
+        "archived_at": stamp.isoformat(),
+    }
 
 
 def write_frame(path: Path, frame: pl.DataFrame) -> None:
