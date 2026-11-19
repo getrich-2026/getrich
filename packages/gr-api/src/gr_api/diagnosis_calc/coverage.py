@@ -1,7 +1,7 @@
 """PA-13 覆盖率阈值：把共享计算载体与当前请求的输入覆盖率合成最终状态。
 
-旧共享载体只描述已识别子集，组装时须按各自完整输入份额判定。V1完整风险载体的缓存键
-另固定完整输入范围，并以coverage_basis标明原分母，避免重复折算。两者都不得就地修改。
+暴露指标按已识别子集折算；模型覆盖率固定以完整输入为分母，禁止再次折算。
+模型载体通过 coverage_basis 校验口径，缓存键包含完整输入范围。不得就地修改载体。
 """
 
 from __future__ import annotations
@@ -138,10 +138,16 @@ FULL_PORTFOLIO_MODEL_METRICS: tuple[tuple[str, str], ...] = (
 )
 
 
-def model_input_coverage(model_facts: Mapping[str, Any], resolved_weight: float) -> float:
-    """返回完整输入分母的模型覆盖率，兼容旧子集载体与V1完整输入载体。"""
-    raw = float(model_facts.get("coverage", 1.0))
-    return raw if model_facts.get("coverage_basis") == "full_input" else resolved_weight * raw
+def model_input_coverage(model_facts: Mapping[str, Any]) -> float:
+    """返回完整输入分母的模型覆盖率；旧口径载体须重新计算。
+
+    Raises:
+        ValueError: 载体未明确采用完整输入分母。
+        KeyError: 载体缺少覆盖率。
+    """
+    if model_facts.get("coverage_basis") != "full_input":
+        raise ValueError("Model coverage requires full_input basis; recompute the diagnosis")
+    return float(model_facts["coverage"])
 
 
 def apply_model_coverage(
@@ -156,8 +162,8 @@ def apply_model_coverage(
 
     * 存在正份额的未识别代码时，完整组合模型指标（波动率、风险贡献及占比、MRC、L3、
       L4 及配套、风格暴露）整体不可用，不在已覆盖子集上出数；
-    * 模型口径的平均两两相关与高相关持仓对按一般指标阈值，覆盖率为已识别份额 ×
-      子集内具备模型数据的权重；热力图对有数据的股票照常展示。
+    * 模型口径的平均两两相关与高相关持仓对按一般指标阈值，覆盖率直接使用载体中
+      以完整输入为分母的值；热力图对有数据的股票照常展示。
     """
     sections = {"section_b": deepcopy(dict(risk)), "section_d": deepcopy(dict(structure))}
     if model_facts is None:
@@ -182,7 +188,7 @@ def apply_model_coverage(
             )
 
     degraded_at, unavailable_at = _thresholds(DEFAULT_GROUP, params)
-    coverage = model_input_coverage(model_facts, resolved_weight)
+    coverage = model_input_coverage(model_facts)
     for name in ("avg_pairwise_correlation", "high_correlation_pairs"):
         by_method = sections["section_d"][name]["by_method"]
         metric = by_method["forward"]

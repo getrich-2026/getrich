@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 #: ``diag.diagnosis_run.payload`` 的结构版本。payload 是 CalculationPayload 同形 JSON，
 #: 缓存字段增删必须同步 +1；它也进入 calculation_hash，旧结构不会被新代码复用。
-PAYLOAD_SCHEMA_VERSION = "7.2"
+PAYLOAD_SCHEMA_VERSION = "7.3"
 
 #: 进程时区不能决定业务日期；数据库连接虽钉住了会话时区，却不会改变 Python 进程时区。
 PLATFORM_TZ = ZoneInfo("Asia/Shanghai")
@@ -139,7 +139,7 @@ def _calculation_hash(
     """单个 plan 的计算缓存键，跨用户共享（T17）。
 
     plan_id、label、plan_index、intent不参与。持仓按instrument_id升序、采用整数份额。
-    发布模式完整组合风险还依赖原分母/未知项范围hash，防止不完整组合污染成功缓存。
+    完整组合风险还依赖原分母/未知项范围hash，防止不完整组合污染成功缓存。
     """
     return _sha256(
         _canonical_json(
@@ -1396,9 +1396,7 @@ async def _ensure_run(
         spec_version=spec["spec_version"],
         data_fingerprint=data_fingerprint,
         resolved_options=options,
-        full_input_scope_hash=diagnosis_scope.cache_scope(item.summary)
-        if publication.enabled.get()
-        else None,
+        full_input_scope_hash=diagnosis_scope.cache_scope(item.summary),
     )
     async with db.cursor() as cur:
         await cur.execute(
@@ -1489,9 +1487,7 @@ async def _record_failed_run(
         spec_version=spec["spec_version"],
         data_fingerprint=data_fingerprint,
         resolved_options=options,
-        full_input_scope_hash=diagnosis_scope.cache_scope(item.summary)
-        if publication.enabled.get()
-        else None,
+        full_input_scope_hash=diagnosis_scope.cache_scope(item.summary),
     )
     async with db.cursor() as cur:
         await cur.execute(

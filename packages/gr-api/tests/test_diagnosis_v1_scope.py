@@ -583,11 +583,10 @@ def test_full_input_numeric_coverage_is_not_discounted_twice():
     metric = result["avg_pairwise_correlation"]["by_method"]["forward"]
     assert metric["status"] == "degraded"
     assert "80.0%" in metric["reason"]
-    _, legacy = apply_model_coverage(
-        sections["section_b"],
-        sections["section_d"],
-        resolved_weight=0.8,
-        model_facts={"coverage": 0.8},
-        params={},
-    )
-    assert legacy["avg_pairwise_correlation"]["by_method"]["forward"]["status"] == "unavailable"
+    from gr_api.diagnosis_calc.coverage import model_input_coverage
+
+    for basis in (None, "resolved_subset", "typo"):
+        with pytest.raises(ValueError, match="full_input"):
+            model_input_coverage({"coverage": 0.8, "coverage_basis": basis})
+    with pytest.raises(KeyError, match="coverage"):
+        model_input_coverage({"coverage_basis": "full_input"})

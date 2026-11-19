@@ -370,7 +370,7 @@ def test_unresolved_share_blocks_full_portfolio_metrics_at_assembly() -> None:
     model, ids = _random_model(4, k=5, n=4)
     risk, structure = _sections(_equal(ids), model)
     frozen = repr((risk, structure))
-    facts = {"coverage": 1.0, "missing": []}
+    facts = {"coverage": 0.9, "coverage_basis": "full_input", "missing": []}
     blocked_risk, blocked_structure = apply_model_coverage(
         risk, structure, resolved_weight=0.9, model_facts=facts, params={}
     )
@@ -386,6 +386,7 @@ def test_unresolved_share_blocks_full_portfolio_metrics_at_assembly() -> None:
     assert blocked_structure["avg_pairwise_correlation"]["by_method"]["forward"]["status"] == (
         "degraded"
     )
+    facts["coverage"] = 1.0
     full_risk, _ = apply_model_coverage(
         risk, structure, resolved_weight=1.0, model_facts=facts, params={}
     )

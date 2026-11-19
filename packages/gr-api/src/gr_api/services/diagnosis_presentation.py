@@ -339,9 +339,7 @@ def assemble(
             }
         coverage = {"symbol_resolution": summary["resolved_weight"]}
         if facts.get("model"):
-            coverage["risk_model"] = model_input_coverage(
-                facts["model"], summary["resolved_weight"]
-            )
+            coverage["risk_model"] = model_input_coverage(facts["model"])
         for source, metric_id in DATA_COVERAGE_KEYS.items():
             if source in (facts.get("coverage") or {}):
                 coverage[source] = effective_coverage(metric_id, summary["resolved_weight"], facts)

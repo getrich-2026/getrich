@@ -65,7 +65,10 @@ def quantize_weights(raw: Mapping[int, Decimal]) -> dict[int, int]:
 
 
 def _ratio(value: Decimal) -> float:
-    """Decimal 份额转浮点；只截掉表示误差，不改变口径。"""
+    """Decimal 份额转浮点。
+
+    转换前会将数值截断到 [0, 1]，包括超出表示误差范围的越界值。
+    """
     return float(min(max(value, Decimal(0)), Decimal(1)))
 
 
