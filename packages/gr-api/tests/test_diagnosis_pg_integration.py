@@ -229,6 +229,11 @@ async def test_sql_end_to_end_cache_reuse_and_request_isolation(
     request_b = _request(
         "my-portfolio", [HoldingItem(symbol=_SYMBOL_A, weight=Decimal(100))], label="mine"
     )
+    request_c = _request(
+        "another-complete-plan",
+        [HoldingItem(symbol=_SYMBOL_A, weight=Decimal(100))],
+        label="another label",
+    )
 
     accepted_a, status_a = await svc.create_snapshot(db, request_a, user_id=str(user_a))
     key = str(uuid4())
@@ -238,20 +243,22 @@ async def test_sql_end_to_end_cache_reuse_and_request_isolation(
     repeated_b, repeated_status = await svc.create_snapshot(
         db, request_b, user_id=str(user_b), idempotency_key=key
     )
+    accepted_c, status_c = await svc.create_snapshot(db, request_c, user_id=str(user_a))
 
-    assert (status_a, status_b, repeated_status) == (201, 201, 200)
+    assert (status_a, status_b, repeated_status, status_c) == (201, 201, 200, 201)
     assert repeated_b["snapshot_id"] == accepted_b["snapshot_id"]
 
     result_a = await svc.get_result(db, UUID(accepted_a["snapshot_id"]), user_id=str(user_a))
     result_b = await svc.get_result(db, UUID(accepted_b["snapshot_id"]), user_id=str(user_b))
     report_b = await svc.get_report(db, UUID(accepted_b["snapshot_id"]), user_id=str(user_b))
+    result_c = await svc.get_result(db, UUID(accepted_c["snapshot_id"]), user_id=str(user_a))
 
     plan_a = result_a["plans"][0]
     plan_b = result_b["plans"][0]
     assert plan_a["plan_id"] == "before"
     assert any(i["code"] == "unresolved" for i in result_a["data_quality"]["plans"][0]["issues"])
     assert plan_a["input"]["calculation_coverage_ratio"] == 0.5
-    # 同一共享载体，状态按各自覆盖率判定（§7.8 缓存纯度验收例）
+    # 不完整与完整输入必须隔离；相同完整输入仍可跨用户复用，plan元数据不进缓存。
     assert plan_a["section_a"]["value"]["topn"]["status"] == "unavailable"
     assert plan_b["section_a"]["value"]["topn"]["value"][0]["weight"] == 1.0
     assert plan_b["plan_id"] == "my-portfolio"
@@ -260,14 +267,25 @@ async def test_sql_end_to_end_cache_reuse_and_request_isolation(
     assert result_b["data_fingerprint"] == _DATA_VERSION
     assert result_b["options"]["correlation_window"]["end"] == _AS_OF.isoformat()
     assert report_b["snapshot_id"] == accepted_b["snapshot_id"]
+    assert result_c["plans"][0]["plan_id"] == "another-complete-plan"
+    assert result_c["plans"][0]["label"] == "another label"
+    assert result_c["plans"][0]["input"]["calculation_coverage_ratio"] == 1.0
 
     async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT snapshot_id,run_id FROM diag.snapshot_run WHERE snapshot_id=ANY(%s::uuid[])",
+            ([accepted_a["snapshot_id"], accepted_b["snapshot_id"], accepted_c["snapshot_id"]],),
+        )
+        bindings = {str(row["snapshot_id"]): row["run_id"] for row in await cur.fetchall()}
+        assert len(bindings) == 3
+        assert bindings[accepted_a["snapshot_id"]] != bindings[accepted_b["snapshot_id"]]
+        assert bindings[accepted_b["snapshot_id"]] == bindings[accepted_c["snapshot_id"]]
         await cur.execute(
             "SELECT COUNT(*)::int AS runs FROM diag.diagnosis_run WHERE data_fingerprint = %s",
             (_DATA_VERSION,),
         )
         row = await cur.fetchone()
-    assert row is not None and row["runs"] == 1
+    assert row is not None and row["runs"] == 2
 
 
 async def test_equal_weight_baseline_metrics_on_real_sql(
