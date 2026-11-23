@@ -1,5 +1,25 @@
 # GetRich 当前状态
 
+读者：接续任务的 Claude／Codex／Antigravity；维护者也可用它快速定位当前状态。
+最后整理：**2026-11-23**（Asia/Shanghai）。已完成项从待办移除，关键长期取舍写入 [DECISIONS.md](DECISIONS.md)。
+
+## 开始任务
+
+1. 先读根 `AGENTS.md`，再读本文首节「当前状态与 V1 上线准备」。
+2. 按任务查 [待决问题](../../docs/plans/backlog.md)、[决策主题索引](DECISIONS.md) 与 [V1 发布切换指南](../../docs/guides/v1-release-cutover.md)。
+3. 使用说明从 [文档目录](../../docs/README.md) 定位；下方「历史阶段快照」仅供证据追溯，不作为当前指令。
+
+## 当前状态与 V1 上线准备（2026-11-23，Asia/Shanghai）
+
+- **云端数据库与 V1 发布数据已追平至 `2026-11-20`**（取代下方 11-19 接手快照中的“19日仍未入库”阻塞）：云端 PostgreSQL 18.6／TimescaleDB 2.30.1（`getrich` 库，57/57 迁移与磁盘一致）在米筐上游补齐后已连续完成 `2026-11-19`（`diag-v3-20261119-daily-e67ce254207af02a`）与 `2026-11-20`（`diag-v3-20261120-daily-9ff71d632cb1e712`）两日原子日更发布；最新 `as_of_date=2026-11-20`、`valid=true`、`5,224` 只沪深 A 股、14 个组成（12 张基础表／13 份分区收据 + 米筐 `v2` 48 因子五件套）全部 `dirty=false`，7 项 `v3` 模型指标准入（`calibrated=false`），`daily-blocked.json` 已清除，每日 `03:30` 滚动 `pg_dump` 正常保留最新 2 份。非诊断存量（米筐 `v1`/`v2trd` 及 ETF/指数/期货/期权截至 `2026-11-16`）按 V1 边界保留在库，不纳入日常日更。
+- **米筐 `v2` `exposure` T+1 时效与晨间调度门禁确认**：实测证实米筐 `v2` `exposure` 在交易日 $T$ 当晚 `23:30` 返回 `None`、次日 $T+1$ 早间发布；同时 `gr-api` `require_freshness` 在每日 `15:00 Asia/Shanghai` 推进 `until` 并要求开市日滞后 `lag <= 1`。因此线上定时日更必须从 `23:30` 调整至**次日早间 `<15:00 Asia/Shanghai`**（推荐 `09:00,12:30`）并搭配新增的 `gr-data diagnosis-daily run --probe-upstream`（单股暴露未就绪时写 `pending_upstream` 零写退出 `0`，不烧 83 批配额、不归档 `_failed`、不写 `daily-blocked.json`）。
+- **V1 仓库代码与安全加固已完成**：① `routers/auth.py` 修复 `app.user_auth` 登录漏检 `u.is_active = TRUE` 导致禁用账号仍能登录的漏洞，全量补齐 `app.*` schema 限定并将 `bcrypt` 移入 `asyncio.to_thread`；② 新增 `GETRICH_V1_DIAGNOSIS_ONLY` 开关（生产设为 `true` 时仅挂载 `/v1/auth`、`/v1/user`、`/v1/diagnosis`、`/health`、`/metrics` 并跳过 `BacktestJobListener`），同时在非 `dev` 环境拦截匿名回测任务并限制参数网格上限 `1,000`；③ 修复 `response.py` 错误信封 `request_id` 与响应头一致及非 `dev` 500 内部异常脱敏、`MetricsMiddleware` 未匹配 404 路径收敛为 `__unmatched__`、`services/strategy.py` 更新漏 `commit`、`admin_import.py` `detail_html` 清洗与长度限制；④ `raw/ricequant` 增加授权剩余天数 `<30` 天英文告警与 `--reuse-raw` 离线风险观察复用；⑤ 双仓（`getrich` 与 `getrich-design`）文档与 V1 契约、链接同步更新。
+- **待用户确认后执行的正式放通动作**：云端运行开关 `GETRICH_DIAG_PUBLICATIONS_ENABLED` 仍保持 `false`，尚未对外开放流量。与用户确认后按 [V1 发布切换指南](../../docs/guides/v1-release-cutover.md) 拆分 `api-prod.env`（移出 `maintenance-runtime.json` 哈希）、切换晨间日更 timer、部署最新 `current/{app,etl}` 并开启服务。
+
+---
+
+## 历史阶段快照
+
 <!-- cloud-stage-20261119 -->
 - 云端数据／开发接手验收完成，保留19日源缺口（2026-11-19 23:02 上海实查）：证据根`/Volumes/myssd/data/getrich-transfer/cloud-stage-20261119T120042Z`，云端仓外`/srv/getrich/operations/cloud-stage-20261119T120042Z`。完整getrich的9.91GB/1131项封存归档已传输验SHA并实际恢复，PG18.6/Timescale2.30.1，十二V1基础输入/当前五件套与coverage/十九完整状态表/57迁移与源一致，精确重放冻结054内部表守卫；原16日六表binary保持。新增17/18日每日暴露5224、因子收益1、协方差1、特异收益5224、特异风险5224，全部逐值及完整coverage/variant/观察/receipt/checkpoint链通过，18日重复apply零业务写入、前后12fp/六风险表/迁移/发布不变。最新有效`diag-v3-20261118-daily-6e13cb74450a752c`；18日真实ASGI七指标、252日历史波动／相关、ROE／覆盖边缘、鉴权／安全头／幂等和20份受支持旧报告通过，合成账号已禁用/token0，不改时钟。只支持full_input模型载体，旧无标记开发快照须基于当前版本新建，不补写旧run。
 - 19日仍未入库：v2暴露27批、5224码均成功返回None，其余四接口有数据，A阶段按门禁停止、18日发布保持有效；原失败raw/收据/哈希及daily-blocked保留，未自动重采或清锁。readback的exit1是因为整段仍缺19日，17/18实际读回及18日重放通过另列，不能写成整段完整。日更恢复须先确认源五件套完整、审计解除本次锁停，再从最新有效日后连续推进；不能跳日、拼接、填造或绕门禁。供应商授权期与额度实查在仓外provider-quota-after.json，续期须覆盖未来一个月。
@@ -73,18 +93,6 @@
 - 原13个模型月份剩余的79日现已全部补入（v2 29／v2trd 22／v1 28），无历史暂缓日期；先前原始RF比率／因子值／日期、月末重查及失败收据仍保留于前阶段 `evidence/unresolved-values-index-v2.json` 等封存文件。新准入依据是供应商最终C口径与完整逐日复验，不是改旧失败记录、阈值、样本或原值。
 - 前一补写阶段保护快照（2026-11-08，现由11551日保护范围承接）：原9,296历史日＋2,061增量共11,357日的11表全字段前后相同（ec6cb22d…），原两轮及194日补证账本、干净e661bb3批准源码／阶段登记继续保留。本轮再将该194日纳入保护，合计11551个既有日完整不变；不要重启旧已完成任务或覆盖原登记。
 - 先前Nov6空响应证据保留（11-08 23:33上海历史快照）：当时三模型成熟股暴露None、其余四接口非空的18请求和响应仍在前阶段 `evidence/increment-probe-v2/responses.json`（d3f5913c…）、登记a8fe6c0c…，不覆盖或追改；当前已由首条完成全市场入库；上述旧None及样本阶段证据原样保留。
-
-
-读者：接续任务的 Claude/Codex/Antigravity；维护者也可用它快速定位工作。
-最后整理：2026-11-04。只写现状与待办；已完成的工作留一行结论和证据位置，过程与测试数字不写入（可从 Git、代码和 docs/history 追溯）。
-
-## 开始任务
-
-1. 先读根 `AGENTS.md`，再读本文。
-2. 按任务查 [待决问题](../../docs/plans/backlog.md) 和 [决策主题索引](DECISIONS.md)。
-3. 使用说明从 [文档目录](../../docs/README.md) 定位；历史材料不作为现行指令。
-
-## 当前方向与阻塞
 
 - V2004四键官方原件补录完成，ETF按用户要求暂停（2026-11-09）：用户交付实际DCE_PVC_2019_original.xlsx，原件SHA2ea2d81b…原字节归档RawPaths/dce/v2004_manual_official_v1。仅V2004.DCE／2019-04-16～19正式新增4／修正0，官方前收/前结/收/结/量/额/仓原值×1，首日pre_close6855来自官方明确前收列；四键官方OHL0且量额仓0，在封闭派生行保留NULL，状态/限价无据NULL，不改通用importer。58测试、真实隔离回滚/并发/幂等与独立审查通过；正式新连接逐值与重放0新增/4保留、审计4条126492～126495（rule tushare_dce_v2004_official_20261109），月原14044及年原2924全字段含时间戳均保持，独立新连接终验通过。年度915个volume>0记录量仓与既有一致，465金额精确一致，450金额差±50各225；43个close/37个pre_close现有NULL及6033 OHL NULL-vs0编码差也单列保留，均未扩成已有值修正，不声明全年度逐值无差异。913有效价域控制支持金额元×1，不据零数值推单位、不额外单双边归一。原17555当前解释1284／累计补入19／待16252全为ETF，原已登记18个期货缺行候选均已补入。ETF未采集/写库/重核，候选旧字段逐值保持，等待用户与米筐沟通再继续，不自动恢复。新根 `/Volumes/myssd/data/getrich-validation/dce-v2004-official-admission-20261109`，看final-acceptance.json、independent-formal-postcheck.json、field-audit-by-business-key.json、annual-existing-after-check.json、existing-differences-summary.json及existing-official-differences.parquet；新总账candidate-decisions.final.parquet，不重写旧run。没有commit/push/DDL/源归属或查询身份API变更，不重启后台。
 

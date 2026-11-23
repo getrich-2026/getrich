@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 from uuid import uuid4
@@ -10,6 +11,11 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
 from gr_api.errors import ApiError
+from gr_api.logging_middleware import _current_request_id, get_current_request_id
+from gr_api.middleware import _STATIC_SECURITY_HEADERS
+
+
+logger = logging.getLogger(__name__)
 
 
 def _now_ts() -> int:
@@ -38,6 +44,12 @@ def error_payload(code: int, message: str, request_id: str) -> dict[str, Any]:
 
 
 def _request_id(request: Request) -> str:
+    current = get_current_request_id()
+    if current and current != "-":
+        return current
+    state_rid = getattr(request.state, "request_id", None)
+    if isinstance(state_rid, str) and state_rid:
+        return state_rid
     rid = request.headers.get("x-request-id")
     return rid or uuid4().hex
 
@@ -70,8 +82,30 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(request: Request, exc: Exception) -> ORJSONResponse:
-        # 未捕获异常 → 5000
+        # ServerErrorMiddleware 位于 RequestIdMiddleware 与 SecurityHeadersMiddleware 外层；
+        # 显式补齐 request_id 日志上下文、X-Request-Id 与安全响应头，并在非 dev 环境隐藏异常细节。
+        rid = _request_id(request)
+        token = _current_request_id.set(rid) if get_current_request_id() == "-" else None
+        try:
+            logger.exception(
+                "Unhandled exception on %s %s (request_id=%s)",
+                request.method,
+                request.url.path,
+                rid,
+            )
+        finally:
+            if token is not None:
+                _current_request_id.reset(token)
+
+        settings = getattr(request.app.state, "settings", None)
+        is_dev = getattr(settings, "is_dev", True)
+        msg = f"internal error: {exc}" if is_dev else "internal server error"
+        headers: dict[str, str] = {"X-Request-Id": rid, **_STATIC_SECURITY_HEADERS}
+        csp_policy = getattr(getattr(settings, "web", None), "csp_policy", "")
+        if csp_policy:
+            headers["Content-Security-Policy"] = csp_policy
         return ORJSONResponse(
             status_code=500,
-            content=error_payload(5000, f"internal error: {exc}", _request_id(request)),
+            content=error_payload(5000, msg, rid),
+            headers=headers,
         )

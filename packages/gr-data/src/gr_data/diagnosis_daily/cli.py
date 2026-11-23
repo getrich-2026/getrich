@@ -13,7 +13,7 @@ from gr_data.common.paths import RawPaths
 from gr_data.config.pipeline import Config
 from gr_data.db.postgres.sync import connect
 
-from . import apply, latest_publication, prepare
+from . import apply, latest_publication, prepare, probe_upstream
 from .evidence import write_json
 
 
@@ -22,12 +22,17 @@ log = logging.getLogger(__name__)
 
 def register(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("diagnosis-daily", help="两阶段诊断日更（前台、有界）")
-    parser.add_argument("action", choices=("prepare", "apply", "run", "status"))
+    parser.add_argument("action", choices=("prepare", "apply", "run", "status", "probe"))
     parser.add_argument("--day", type=date.fromisoformat)
     parser.add_argument("--start", type=date.fromisoformat)
     parser.add_argument("--end", type=date.fromisoformat)
     parser.add_argument("--artifact", type=Path, help="单日阶段A产物目录；apply时必填")
     parser.add_argument("--reuse-raw", type=Path, help="复用完整原件，仍重新执行只读预检")
+    parser.add_argument(
+        "--probe-upstream",
+        action="store_true",
+        help="采集前轻量探测米筐同日 v2 暴露是否就绪；未就绪时零写退出 0",
+    )
     parser.set_defaults(func=run)
 
 
@@ -40,6 +45,8 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
     root = RawPaths(cfg.raw_root).dataset_dir("diagnosis", "daily")
     state = root / "last-run.json"
     artifact: Path | None = args.artifact
+    current_day: date | None = getattr(args, "day", None)
+    probe_enabled = bool(getattr(args, "probe_upstream", False))
     try:
         if args.action == "apply":
             if args.artifact is None:
@@ -67,12 +74,42 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
             )
             now = datetime.now(ZoneInfo("Asia/Shanghai"))
             last_closed = now.date() if now.time() >= time(15) else now.date() - timedelta(days=1)
-            if args.action == "prepare":
+            if args.action == "probe":
+                target_day = args.day
+                if target_day is None:
+                    with connect(pg) as conn, conn.transaction():
+                        conn.execute("SET TRANSACTION READ ONLY")
+                        row = conn.execute(
+                            "SELECT max(trading_day) FROM meta.trading_calendar "
+                            "WHERE exchange='XSHG' AND is_open AND trading_day <= %s",
+                            (last_closed,),
+                        ).fetchone()
+                        target_day = row[0] if row else None
+                if target_day is None or target_day > last_closed:
+                    raise ValueError("probe requires a completed target trading day")
+                current_day = target_day
+                probe_check = probe_upstream(pg, target_day, ricequant=rq)
+                result = {k: v for k, v in probe_check.items() if k != "ready"}
+            elif args.action == "prepare":
                 if args.day is None or args.day > last_closed:
                     raise ValueError("prepare requires a completed target trading day")
+                current_day = args.day
                 artifact = (
                     Path(args.artifact) if args.artifact is not None else root / str(args.day)
                 )
+                if probe_enabled and not (artifact / "prepared.json").exists():
+                    probe_check = probe_upstream(
+                        pg, args.day, ricequant=rq, require_after_latest=True
+                    )
+                    if not probe_check["ready"]:
+                        pending_result = {
+                            "status": "pending_upstream",
+                            "day": str(args.day),
+                            "reason": probe_check["reason"],
+                        }
+                        write_json(state, pending_result)
+                        print(json.dumps(pending_result, ensure_ascii=False))
+                        return 0
                 prepared = prepare(
                     pg, artifact, args.day, tushare=ts, ricequant=rq, reuse_raw=args.reuse_raw
                 )
@@ -121,7 +158,25 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                     if day <= previous["as_of_date"]:
                         skipped_dates.append(str(day))
                         continue
+                    current_day = day
                     artifact = root / str(day)
+                    if probe_enabled and not (artifact / "prepared.json").exists():
+                        probe_check = probe_upstream(
+                            pg, day, ricequant=rq, require_after_latest=True
+                        )
+                        if not probe_check["ready"]:
+                            pending_state: dict[str, object] = {
+                                "status": "pending_upstream",
+                                "day": str(day),
+                                "reason": probe_check["reason"],
+                            }
+                            if results:
+                                pending_state["publications"] = results
+                            if skipped_dates:
+                                pending_state["skipped_dates"] = skipped_dates
+                            write_json(state, pending_state)
+                            print(json.dumps(pending_state, ensure_ascii=False, default=str))
+                            return 0
                     write_json(
                         state,
                         {"status": "running", "day": day, "phase": "A", "artifact": str(artifact)},
@@ -147,7 +202,7 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                     "publications": results,
                     "skipped_dates": skipped_dates,
                 }
-        if args.action != "status":
+        if args.action not in ("status", "probe"):
             write_json(state, {"status": "success", "action": args.action, "result": result})
         print(json.dumps(result, ensure_ascii=False, default=str))
         return 0
@@ -170,7 +225,7 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                 **previous_state,
                 "status": "failed",
                 "action": args.action,
-                "day": str(args.day) if args.day else previous_state.get("day"),
+                "day": str(current_day) if current_day else previous_state.get("day"),
                 "error_type": type(exc).__name__,
                 "reason": reason,
                 "failed_stage": detail.get("stage") or detail.get("phase"),

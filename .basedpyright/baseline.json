@@ -138,16 +138,6 @@
                 }
             }
         ],
-        "./packages/gr-api/src/gr_api/routers/auth.py": [
-            {
-                "code": "reportOptionalSubscript",
-                "range": {
-                    "startColumn": 22,
-                    "endColumn": 30,
-                    "lineCount": 1
-                }
-            }
-        ],
         "./packages/gr-api/src/gr_api/routers/diagnosis.py": [
             {
                 "code": "reportArgumentType",

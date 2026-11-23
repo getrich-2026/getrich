@@ -278,6 +278,20 @@ def test_middleware_increments_duration_histogram() -> None:
     assert count >= 1, f"duration histogram count={count} for /health; expected >= 1 after request"
 
 
+def test_middleware_collapses_unmatched_404_paths() -> None:
+    """Unmatched 404 routes collapse into ``__unmatched__`` to bound cardinality."""
+    app = _build_app_with_middleware()
+    client = TestClient(app)
+    before = _counter_value(HTTP_REQUESTS_TOTAL, method="GET", path="__unmatched__", status="404")
+    assert client.get("/v1/unknown-a").status_code == 404
+    assert client.get("/v1/unknown-b").status_code == 404
+    after = _counter_value(HTTP_REQUESTS_TOTAL, method="GET", path="__unmatched__", status="404")
+    assert after - before == 2.0
+    assert (
+        _counter_value(HTTP_REQUESTS_TOTAL, method="GET", path="/v1/unknown-a", status="404") == 0.0
+    )
+
+
 # ---------------------------------------------------------------------------
 # Severity label sanity (alerts counter)
 # ---------------------------------------------------------------------------

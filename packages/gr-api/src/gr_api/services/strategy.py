@@ -454,6 +454,8 @@ async def update_strategy(
 
         raise NotFound(f"strategy not found: {strategy_id}")
 
+    await db.commit()
+
     # Return updated detail
     return await get_strategy_detail(db, strategy_id)
 

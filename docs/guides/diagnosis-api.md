@@ -2,12 +2,12 @@
 
 面向后端接口使用者，说明独立于网页的调用方式、响应和启停。字段真源为 `/openapi.json`、[请求模型](../../packages/gr-api/src/gr_api/schemas/diagnosis.py)和[响应模型](../../packages/gr-api/src/gr_api/schemas/diagnosis_response.py)；设计 OpenAPI 不能替代实现。
 
-状态（2026-11-19 云端受控验收）：完整工作库已迁移并通过恢复对账，云端最新有效版本为 **2026-11-18** 的 `diag-v3-20261118-daily-6e13cb74450a752c`。新增 11-17、18 日的米筐 v2 五件套逐值读回、完整覆盖／收据链及最新日重复 apply 零业务写入通过；12 项基础输入、七项模型指标、鉴权、安全头和受支持旧报告的真实 ASGI 验收通过。11-19 因子暴露的 27 批、5,224 码响应全部为 `None`，阶段 A 停止，未写当日数据。持久正式读取开关仍为 false，`calibrated=false`，未公开服务或修改前端；回放、Beta、L4、P6 校准等未准入边界保持。下文 Batch 4 及 11-05 样本仅为历史验收记录，连接配置与部署证据在仓外维护。
+状态（2026-11-23 云端数据追平与 V1 上线加固）：完整工作库在云端（PostgreSQL 18.6／TimescaleDB 2.30.1，57/57 迁移校验一致）已追平有效发布至 **2026-11-20** 的 `diag-v3-20261120-daily-9ff71d632cb1e712`（此前 11-19 因米筐 `v2` 因子暴露 T+1 延迟暂缓，已在源端补齐后连续完成 11-19、11-20 两日原子发布并解除 `daily-blocked`）。12 项基础输入（13 个分区收据）+ 米筐 `v2` 五件套收据共 14 个组成有效，七项模型指标、鉴权、安全头、禁用账号拦截（`is_active=TRUE`）与最小路由面开关（`GETRICH_V1_DIAGNOSIS_ONLY`）均已验证。当前持久正式读取开关仍为 `false`，`calibrated=false`，`apps/web` 在 V1 冻结不部署；回放、Beta、L4、P6 校准等未准入边界保持。正式部署切换步骤见 [V1 发布切换指南](v1-release-cutover.md)；下文 Batch 4 及 11-05 样本为历史验收记录。
 
 ## 已验收范围
 
-- 本次验收日期 **2026-11-11**，米筐v2；不回退日期或模型。最新可用日期及清单以每次 `/options` 返回为准。
-- 本次验收发布 `diag-v3-20261111-daily-9cb3fe090904b3e6`，5225只沪深A股（上交所2319、深交所2906）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
+- 云端最新验收发布日期 **2026-11-20**，米筐 `v2`（`sws_2021`）；不回退日期或模型。最新可用日期及清单始终以每次 `/v1/diagnosis/options` 返回为准。
+- 云端最新有效版本 `diag-v3-20261120-daily-9ff71d632cb1e712`，5,224 只沪深 A 股（11-13 起 `002731.SZ` 退市退出）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
 - 三项基础模型指标：`annual_variance`、`volatility.by_method.forward`（年化预测波动率）、`daily_prediction_volatility`。后两者都是小数，显示百分比时乘100；年化方差保持小数平方。
 - v3另准入 `risk_contribution`、`risk_contribution_ratio`、`marginal_risk_contribution`、`l3_effective_count`。L4、模型相关性、风格暴露和回放仍不可用。年度ROE为个股辅助字段，不是模型风险指标。
 - `calibrated=false`，指标状态为 `degraded/not_calibrated`：指定单日证券清单及准入指标的源值、单位和数值验收通过，全区间校准及P6尚未完成。不能解释为历史PIT或未准入风险指标已验收。
@@ -257,8 +257,8 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 
 正式部署时：
 
-1. 发布仅已验收后端及依赖，包含注册必填列修复和gr-api显式依赖gr-signal的声明；后者在独立安装时验证为必需。使用锁定依赖的非editable安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），不携带apps/web部署。已有库先核对现行57条账本与磁盘及v3发布可用性，不把迁移作为日更动作；全新库按部署流程初始化完整DDL。
-2. 在现有API运行环境设置 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`，保持 `GETRICH_ALLOW_MOCK_AUTH=false` 及既有JWT配置，优雅重启既有API进程。
+1. 发布仅已验收后端及依赖，包含注册必填列修复、禁用账号登录拦截与 `gr-api` 显式依赖 `gr-signal` 的声明。API 运行副本使用锁定依赖的非 editable 安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），日更 ETL 副本则必须保留 `.git` 且使用 editable 安装（见 [V1 发布切换指南](v1-release-cutover.md)）；不携带 `apps/web` 部署。已有库先核对现行 57 条账本与磁盘及 `v3` 发布可用性，不把迁移作为日更动作。
+2. 在独立的 API 生产环境文件（与 ETL `maintenance-runtime.json` 哈希清单解耦）中设置 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`GETRICH_V1_DIAGNOSIS_ONLY=true`（仅挂载 `/v1/auth`、`/v1/user`、`/v1/diagnosis`、`/health`、`/metrics`），保持 `GETRICH_ALLOW_MOCK_AUTH=false` 及既有 JWT 配置，并确保 `BACKTEST_ARTIFACT_DIR` 目录在启动前已存在，优雅重启 API 进程。
 3. 用真实登录账号读options，确认最新日期、版本、动态证券清单和declared_metrics（v3七项）；独立复算当日三股样本，不能将11-05历史固定数值作为新日期门禁；验证不同用户的403及缺失持仓提示后再放通流量。
 4. 运行中发布失效应返回503，先核查真实数据和收据，不为恢复出数而回退日期或放宽coverage。
 
@@ -425,14 +425,19 @@ RC/L3准入路径跳过L4正交化计算，未开放能力不增加请求耗时�
 调度及真实连接配置放仓外；不需要额外队列、服务或新迁移。常规 API 发布开关默认仍为 false。
 
 ```bash
+# 轻量探测目标日米筐 v2 暴露是否已发布（不写 last-run.json，不消耗批量配额）
+uv run gr-data diagnosis-daily probe --day 2026-11-20
 # 阶段A：供应商采集、归一化及预检，仅只读访问PG
 uv run gr-data diagnosis-daily prepare --day 2026-11-06 --artifact <ARTIFACT_DIR>
 # 阶段B：只读取固定产物，一次事务完成入库、12项基础收据、风险准入和v3发布
 uv run gr-data diagnosis-daily apply --artifact <ARTIFACT_DIR>
-# 自动逐个交易日推进；缺数或失败即停止后续日期
+# 自动逐个交易日推进；定时调度建议次日 <15:00 Asia/Shanghai 搭配 --probe-upstream
+uv run gr-data diagnosis-daily run --probe-upstream
 uv run gr-data diagnosis-daily run --start 2026-11-06 --end 2026-11-12
 uv run gr-data diagnosis-daily status
 ```
+
+实测确认米筐 `v2` 因子暴露（`exposure`）在交易日 $T$ 当晚返回 `None`、次日 $T+1$ 早间发布，而 API `require_freshness` 在每日 `15:00 Asia/Shanghai` 推进上一已完成交易日并要求开市日滞后 `lag <= 1`。因此线上定时日更须安排在**次日早间 `15:00` 之前**（如 `09:00` 与 `12:30`）并传入 `--probe-upstream`：上游尚未发布时写 `pending_upstream` 并零写退出 `0`（不消耗 83 批配额、不归档 `_failed`、不触发锁停），就绪后在 `15:00` 前完成发布，详见 [V1 发布切换指南](v1-release-cutover.md)。
 
 产物默认位于 `$RAW_PARQUET_ROOT/diagnosis/daily/<日期>`；单日命令可显式指定仓外目录。
 `prepared.json` 固定源码提交、原件和canonical哈希、上一发布、输入指纹及归属；`status.json`

@@ -2,117 +2,66 @@
 
 面向安排工作的项目维护者。本文只保留未关闭、可落实的实现缺口与待定口径，不是已批准的实施计划，不授权变更 API、schema、依赖或工作库。
 
-基线核对：2026-10-28，静态核对代码、测试与设计。2026-10-30 补充两源真实字段、隔离 PG 与 P6 有界诊断，仅更新相应条目，其余问题未重新现场核验。当前采集进度与验收阻塞见 [NOTES](../../.agents/brain/NOTES.md)，实现取舍见[决策记录](../../.agents/brain/DECISIONS.md)。
+基线核对：**2026-11-23**（同步多用户持仓诊断 V1 `diag-publication-v3` 后端加固与云端 `/srv/getrich` 追平状态；已完成的 Batch 2 申万一级行业、Batch 3 年度 ROE、`051` 迁移、`052` 账本对齐、Batch 4 两阶段日更及初次上云均已从本表移除）。当前运行状态见 [NOTES](../../.agents/brain/NOTES.md)，实现取舍见 [决策记录](../../.agents/brain/DECISIONS.md)，上线切换步骤见 [V1 发布切换指南](../guides/v1-release-cutover.md)。
 
-## 持仓诊断与数据供给
+---
 
-优先补齐 gr-data 一期数据，再开放依赖它的指标。范围以设计仓的[范围决策](../../../getrich-design/governance/scope.md)、[接口设计](../../../getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md)及[一期数据集清单](../../../getrich-design/data-platform/portfolio-diagnosis-phase1-datasets.md)为准；相邻仓库链接用于本地双仓布局。
+## 1. V1 正式发布前运维切换项（`/srv/getrich`）
+
+仓库侧 V1 后端代码、测试与 `diag-publication-v3` 数据（云端已追平至 `2026-11-20`，`5,224` 只沪深 A 股、7 项模型指标）已就绪；正式对外开放前须由用户在云端确认并完成以下仓外切换：
+
+| 待切换项 | 完成条件与验收门禁 |
+| --- | --- |
+| **提升 `current/{app,etl}` 发布版本** | 云端冻结 ETL 仍停在旧 `9bf6a0e`，须从最新已推分支构建：`app` 使用 `--package gr-api --no-dev --no-editable`；`etl` **必须保留 `.git` 且使用 editable 安装**（满足 `risk_receipts.py` 干净源码树校验）。 |
+| **拆分 `api-prod.env` 并移出 `maintenance-runtime.json`** | 新建 `0600` 的 `api-prod.env`（不含供应商密钥，显式设 `GETRICH_V1_DIAGNOSIS_ONLY=true`、`GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`BACKTEST_ARTIFACT_DIR=/srv/getrich/state/artifacts` 并提前创建该目录）；将 `api.env`/`api-prod.env` 移出 `maintenance-runtime.json` 字节哈希，避免修改 API 配置阻断日更与 `pg_dump` 备份。 |
+| **日更定时器改至次日 `<15:00 Asia/Shanghai` 并启用 `--probe-upstream`** | 将 `getrich-v1-daily.timer` 从 `23:30` 改为 `09:00,12:30 Asia/Shanghai`，调用 `diagnosis-daily run --probe-upstream`，消除交易日当晚米筐 `v2` `exposure=None` 误触发 `daily-blocked.json` 及次日 `15:00` 后 `lag = 2` 的 `503` 窗口；同步对齐 `cloud_health.py` 的 `pending_upstream` 判定。 |
+| **`getrich-api.service` 与反向代理边界加固** | 显式绑定 `127.0.0.1:8001`、设 `--timeout-graceful-shutdown 35` 与 `TimeoutStopSec=45s`；反向代理对外屏蔽 `/metrics`、配置认证与诊断写入限流；ICP 备案前保持 DNS 暂停与非 `80/443` 源 IP 白名单，备案后拆分根/`www` 与 `api.<domain>`。 |
+| **供应商授权有效期与异机备份抽检** | 放通前核实米筐与 Tushare 剩余额度 `>= 10%`、授权有效期 `>= 30` 天；确认云端滚动 `.dump` 已定期拉回异机留存。 |
+
+---
+
+## 2. 持仓诊断 V1.1 / 二期 / V2 待决项
+
+范围对照设计仓 [范围决策](../../../getrich-design/governance/scope.md)、[表与接口设计](../../../getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md) 与 [一期数据集清单](../../../getrich-design/data-platform/portfolio-diagnosis-phase1-datasets.md)。
 
 | 未关闭问题 | 下一步与完成条件 |
 | --- | --- |
-| 多用户 V1：工作库后端验收完成，正式启用已获批待部署目标（2026-11-10） | 用户批准后已定向055、发布5224证券范围版本并完成新连接/真实TCP HTTP两用户复验，限定2026-11-05原v2 run的年化方差、年化/单日预测波动率已具备开放条件，calibrated=false如实披露。用户已批准正式部署/开启，当前缺正式主机/服务/对外基址，开关仍false。独立后端非editable安装发现并补齐既有gr-signal运行依赖，候选215项回归通过；启停步骤及可调用示例见[API指南](../guides/diagnosis-api.md)。本轮交付仅后端API/迁移/发布；既有8项apps/web改动哈希不变保留另审，不部署网页，浏览器测试仅补充证据。工作数据版本、数值与迁移恢复证据见[多用户V1结果](gr-data-reliability-implementation-plan.md#055与多用户工作api验收结果2026-11-10)。 |
-| V2：按风险偏好建议权重 | 用户明确列为V2待办；先确定偏好输入、约束与优化目标、解释及验收，不在V1自动生成或覆盖用户权重。 |
-| 模型风险、Beta 与回放未开放 | 2026-10-31 已开放 A 区、D 区历史相关性（PA-09）与 B 区个股历史年化波动率（PA-20）；2026-11-01 模型口径纯计算与组装已完成（`diagnosis_calc/model_risk.py`），米筐v2指定组合方差／波动率读取已通过2b隔离接口验收；工作库待审，其他模型指标仍需扩验收。`_load_risk_model`已实现（经 D-022 2b 统一读取、钉住 production run、确认库中特异风险已是方差后不再平方、期限与年化一致、因子顺序校验、`comovement` 与风格因子清单核验），用真实数据复跑最小扭转与 L4 检查并确定近奇异容差，再发带 `model_id` 的口径版本。剩余按 PA-04、PA-10～PA-12、PA-17～PA-19 在 `gr_api/diagnosis_calc/` 实现模型风险、个股与组合 Beta、回放与回放类指标；Beta 等全收益基准（DS08），回放等 DS06～DS08；完整组合模型指标要求全部正权重持仓数据有效（PA-13）；模型风险只用米筐同一模型／日期／版本，不回退历史协方差。L4 为最小扭转正交化后风险源方差份额的 HHI 倒数，配套市场源占比与最大风险源占比；验证方差守恒、近奇异及单位换算，历史分位按 PA-19 保持关闭 |
-| D-022 2b维护边界及API正式启用 | 054/055工作结构、收据/清单/固定run读取、原子失效和多用户实际HTTP已验收；首版三股v2保留原scope但因新准入失效，当前有效证券清单版见上行。已获正式启用授权，部署目标明确后只部署已验收后端并设置显式开关，不部署网页；后续日期仍须逐日准入。行业体系/基准、DROP/drop_chunks/受保护表retention、通用全量代际发布和历史PIT仍分别待审，不因本轮放宽。 |
-| 回放仍缺分红送转事件、全收益基准与退市终止价值依据 | 完成 DS06～DS08 的来源、单位、时点与接入；停复牌及涨跌停沿用 [D-023](../../.agents/brain/DECISIONS.md#d-023)／[D-024](../../.agents/brain/DECISIONS.md#d-024)，不重复建来源。事件缺失不能填值继续回放，价格指数不能替代全收益基准 |
-| 报告缺个股估值展示块 | `/result` 的 `instrument_facts` 已逐股给出总市值、PB、估值日期与 ROE 状态，但设计 §7.3.4 的报告块类型没有承载它，`/report` 暂不输出。需在设计仓补块类型后实现，前端在此之前从 `/result` 读取 |
-| 行业与年度 ROE 数据未对齐 | DS11 核验 Tushare SW2021 官方代码与历史归属后显式转移表归属；DS10 核验 `fina_indicator.roe_waa` 单位，只取已披露完整年度加权平均 ROE。通过新迁移更新旧注释，不改已记账 SQL |
-| P6 全区间与收益／暴露日期约定待确认（2026-10-30 有界样本数值自洽） | 固定 100 股三模型合计 500 个股日模型观测，以前日暴露、复权简单收益扣独立实际 3M 国债收益的 252 日复利日化值，复现 `r_excess_pct = 100·X_prev·f_decimal + u_pct`；原未复权价格收益与同日暴露反例保留。详见[迁移盘点](imac-collector-migration.md#字段互验与补充验证2026-10-30)。须取得供应商完整时间／无风险基准约定，并明确基准源值留存与历史可用时间，再扩日期／全区间；不把经验拟合成正式契约，不自动修改生产数据，保持 `calibrated=false` |
+| **L4、风格暴露与模型相关性主视图未准入** | V1 `v3` 已开放方差、年化/单日预测波动率、RC、RC 占比、MRC、L3 七项；`l4_effective_count`、`l4_market_source_share`、`l4_largest_source`、风格暴露及 `correlation.by_method.forward` 需先在真实全市场样本上复核最小扭转正交化的方差守恒与近奇异阈值后再发布新口径版本。 |
+| **米筐 P6 全区间校准（`calibrated=true`）待供应商约定** | 11,633 个模型日五表扫描已完成只读终验，但前日暴露 + 超额收益代理在历史个股日仍有未解残差（见 `NOTES` P6 记录）。须取得米筐关于暴露时点、复权与无风险利率的书面约定后再评定 `calibrated=true` 范围；在此之前全部保持 `calibrated=false`（`degraded / not_calibrated`）。 |
+| **组合回放与个股/组合 Beta 缺 DS06～DS08** | 完成 DS06 分红送转（`finance.dividend`）、DS07 退市终止价值依据与 DS08 全收益基准（如沪深 300 全收益）的来源核验与建表入库；严禁用价格指数替代全收益基准或静默填补缺失分红。组合回放按 [D-021](../../.agents/brain/DECISIONS.md#d-021) 独立实现，不复用 `gr-backtest`。 |
+| **`/report` 缺个股估值展示卡片** | `/result` 的 `instrument_facts` 已逐股返回总市值、PB、估值日期与年度 ROE，但设计稿 §7.3.4 尚未定义对应文字报告块类型，`/report` 暂不输出；需先补设计块定义再实现。 |
+| **主前端 `apps/web` 解冻与 `v3` 契约对齐** | `apps/web` 在 V1 冻结不部署；解冻前须补齐 `PortfolioDiagnosisPage.tsx` 对 `v3` 新增四项风险指标及行业/市值/PB/ROE/相关性区块的展示、移除过时的“匿名模式”提示（现已强制登录 `401`），并将 `apps/web/.env.example` 端口对齐至 `8001`。 |
+| **数据库维护边界与历史 PIT** | TimescaleDB 受保护表的 `DROP` / `drop_chunks` / retention 策略、诊断只读专用 DB 角色、通用全量代际发布以及历史任意交易日 PIT 诊断仍待后续阶段单独设计审阅。 |
+| **V2：按风险偏好建议权重与二期调仓对比/记忆** | 二期显式 Before/After 调仓对比、定性画像与盲点阈值（M11）、用户记忆与行为画像、V2 按风险偏好建议权重均按阶段规划推进，不在 V1 开放。 |
 
-### 首批诊断验收与 051 工作库迁移验收（2026-11-09）
+---
 
-本阶段固定米筐 v2、2026-11-05；只做当前观察下的事后研究验收，不宣称历史 PIT。用户再次授权由 Agent 选定首批组合后，固定真实证券 600519.SH／600036.SH／000333.SZ，验收权重 40%／35%／25%；这是一组基于真实数据的验收持仓，不代表个人账户仓位。工作库无持仓方案或快照不再阻塞此项。基础指标逐项交付数据日期、全量非零持仓覆盖、结果及不可用原因；模型风险入口保持关闭。
+## 3. 其他模块待决项
 
-051 已在一次性 PostgreSQL 18／TimescaleDB 隔离库通过空表升级、重复执行、非空旧快照拒绝与完整回滚；正式迁移执行器记账与第二次空计划通过，诊断集成和纯计算共 112 项通过。迁移前工作库只读核查发现：050／052／053 已记账、051 未记账，052 磁盘校验和与工作库不同。**不得直接运行全目录 migrate 来补 051**，否则会重跑 052；本任务不修改或重记账 052。
-
-本次已按审阅方案完成工作库迁移，执行范围仅为原 `051_diag_options_recompute.sql`，SHA256 为 `90e22bc44a94b0bc72a220286b3a93d4fd76d1c25321a3f1c9a2878887e93997`：
-
-1. 执行前重新检查目标库、051 文件哈希、050 前置、完整迁移账本及 `diag.portfolio_snapshot`／`diag.portfolio_plan` 仍为空；变化即停止。先逻辑导出 diag schema 与数据、相关迁移账本，不复制数据目录。
-2. 暂停诊断写入，在迁移事务内设有界锁等待，锁住上述两表后再次检查为空；通过现有 `PostgresMigrationExecutor.apply_one` 仅执行固定 051，使 DDL 与 checksum 记账同事务提交。失败整体回滚，不填造旧快照字段。
-3. 验证新增字段、约束、版本切换和唯一 051 账本；复查 052 账本保持原值。051 会停用旧口径并启用 `v1-model-20261031`，但不发布新数据日期，`factor_model` 仍为空、模型入口仍关闭、重算仍不可用。提交后若业务验证失败，保持诊断入口暂停，不自动删列或逆迁移；依据逻辑备份另审恢复方案。
-4. D-022 2b 单独实施：发布组成清单固定数据日期、收据／代际和风险 run；数据库约束拒绝 validation run；组成写入与旧版本失效同事务，读取在一致性快照内核对收据、禁用证据与可用选项，并用发布时刻取代 `now()` 截止。新增 schema/API 方案先列明审阅，不能把完成 051 当作完成发布。
-
-**051 工作库实际验收通过（2026-11-09 15:27 上海）**：先确认前次锁超时已完整回滚，051无账本、两表0行、原字段／约束／口径／账本不变。未终止备份任务；等其全库逻辑备份隔离恢复验收通过、进程exit 0且源库锁释放后，重新核对getrich／system_identifier=7701306429122666534／OID=16384、固定051哈希、050前置及53条原账本。事务内以7张diag表和迁移账本的ShareRowExclusive锁暂停诊断写入，同一导出快照重新逻辑备份diag与账本，两个archive目录与全量解码通过；随后取得两张持仓表AccessExclusive锁并再次验证0行，保留10秒lock_timeout，单次apply_one仅执行051。本次没有锁超时，暂停／排他锁／apply_one全程监控未采到阻塞；提交释放锁，未运行全目录迁移。
-
-新连接验证5个新增字段的类型／长度／空值／默认值、两个已验证外键及原约束保持；旧口径停用，`v1-model-20261031`唯一启用且参数逐项匹配051，factor_model仍NULL。完整账本从53→54，仅新增唯一051；052原checksum=`20a02e4fb539547ac221af5ccf7cf1aa5ffcf3076baac94a96162f589c237674`及applied_at完全不变，052文件未改，磁盘与旧账本差异仍保留。11551个run的calibrated标记逐条不变，正式风险读取仍返回None；数据仍仅`20260830T0000`种子版本，available_options={}，本次不发布11-05诊断数据。备份／锁／新连接验收见 `/Volumes/myssd/data/getrich-validation/diag-051-work-migration-20261109/retry-after-backup/` 的 `backup-completed-gate.json`、`backup-manifest.json`、`locked-precommit.json`、`postcheck.json`；前次失败与只读回滚核验保留在父目录。2b随后已按用户授权完成实现及隔离验收；054工作库迁移、首版发布和启用开关仍待审阅，见上方计划。
-
-首批基础指标实际验收通过（2026-11-09）：三只非零持仓的当日估值、分类与风险输入覆盖 3/3、权重 100%；2025-10-23～2026-11-05 各 252 个有效日收益、无剔除日期，759 条原始日线逐值复核。HHI=0.345，L2=2.8985507246；茅台／招行／美的历史年化波动率分别 22.8963%／17.2301%／20.2243%。标准库从原始价格独立复算通过，相关系数最大绝对差约 1.1e-15。行业、ROE、Beta、回放与正式模型风险仍按具体依赖不可用；这是离线事后验收，不是 API 已发布或历史 PIT 准入。051 工作库迁移已通过下述验收，D-022 2b 尚未实现。
-
-目标日库内检查：同 run 暴露／特异风险／included 覆盖交集 5,224 只，48 因子轴及 `comovement` 存在、协方差有限且正定。120 开市日因子收益跨两个显式登记的采集 variant，模型／轴／期限一致；按已声明单位换算的 RF 中位数 267.705766、超限 0/48，仅为库内数值诊断，未完成原始供应商重验或单位认证。`calibrated=false`、正式风险不可用保持；历史其他日期不阻塞本次基础指标验收。
-
-### v2 首批单日模型风险数值验收（2026-11-09）
-
-用户转述米筐确认：使用公开接口最终年化因子协方差 F，特异风险输入 s 为年化标准差，组合年化方差为 bᵀFb＋Σwᵢ²sᵢ²，单日波动率为 sqrt(年化方差／252)。本次答复作为单位证据留存；没有独立取得供应商原始答复附件。授权范围限前述固定三只证券、v2／2026-11-05／同一 run，取代该组合此前“只做预检、不输出风险数值”的阶段限制，不开放正式 API，也不改变其他历史日准入。
-
-已从收据 semantic hash 核对封存 manifest 和五件套文件哈希，逐值核对公开最终 F 及全部非零持仓。源单位沿用该 variant 登记的 dec2_annual／dec_annual：入库 F×10000、s²×10000，暴露与特异方差按 REAL 量化；库内两种风险量均为 pct2_annual，没有反年化。该轮离线验收时正式读入口仍返回None；随后2b隔离链已实现读取而工作库配置仍关闭。纯计算模块要求年化小数方差；本次离线读取仅将两种库内方差／10000，合计后／252 一次，不再次平方特异方差，不使用辅助矩阵或拟合倍率。
-
-实算年化小数方差：因子 0.03911895325904871、特异 0.00621017603302002、合计 0.04532912929206873；单日小数方差 0.00017987749719074894，单日预测波动率 1.3411841678%。先合并再反年化与各项先转日度再合并的日方差差为 8.13e-20；资产协方差路线及 50 位 Decimal 独立复算一致。封存 raw 路线与库内结果相对差 3.81e-10，由既有 REAL 量化产生，逐字段量化值完全匹配。
-
-D-010 校准逐项结论：目标日身份、轴、全部持仓覆盖、源到库转换及年／日两路线通过；全区间五表自洽与 P6 收益时点／超额收益约定未由本次方差公式答复完成，故 calibrated 保持 false，不批量改标。79 个历史模型日不阻塞本次单日数值验收；D-022 2b 发布、051 工作库迁移和历史 PIT 仍分别保留原边界。
-
-## 数据接入可靠性
+### 3.1 回测引擎与作业接口（`gr-backtest` / `gr-api`）
 
 | 未关闭问题 | 下一步与完成条件 |
 | --- | --- |
-| 全供应商可靠采集尚未闭环 | 按[可靠采集实施计划](gr-data-reliability-implementation-plan.md)推进 A0 状态机、quarantine、开始记录／本地 spool、不可变观察、收据、防回退与发布；Tushare 最低门禁和米筐 2a 不代表整套协议完成。细项与故障用例在专项计划维护 |
-| 停复牌空响应与观察时间语义 | 当日尚未发布的 `suspend_d` 空响应可能被记为已覆盖；局部重抓会刷新整月观察时间。纳入可靠性计划 C1／C2，区分未发布与合法空，保留分片观察／修订证据；估值交易日 17:00 的文档值不能冒充实际观测时间（原 T3） |
-| Tushare 仍有 4 项 strict xfail | [回归用例](../../packages/gr-data/tests/test_tushare_review_findings.py)：#4 强制换源无日志、#5 坏日历误报缺失、#26 未知股票上市状态默认 active、#37 收盘价越过高低价范围。修复后移除相应 xfail，保留行为断言 |
-| BJ 待处理项，后续单独核实（2026-10-31 用户调整） | 回补结束后用 `ops.tushare_bj_pending`、`bj-pending-months.json` 和最终汇总核对全部待处理记录的代码／日期／年月分布，区分数据集与源观察。集中在少数代码时，查证并修正有误的 `list_date`／历史上市区间、旧代码或复权来源，不长期依赖待处理；修正须保留证据并重验受影响观察。当前 920047.BJ 两条缺因子观察已转待处理，其他合格记录照常入库，股票回补已从 2010-04 恢复；不再以旧上市前隔离条件阻断 BJ |
-| 日线重复键处理口径 | 当前按重复键保留最后一行（原 #35）；需决定冲突值是否拒绝或记录修订，覆盖同值重复、异值冲突与跨分区重放 |
-| Tushare 字段审计后的缺口处理（2026-10-30 已实施，见 D-027） | 已落地：扩采集主数据与 fund_basic、档案表、ETF 分类、valuation_1d 专列、米筐期货合约参数。2026-10-30 已完成隔离真实采集验收（证据见 NOTES）。剩余：opt_basic 新字段的真实采集；可推导字段与 AH 盘后成交暂不采集；全历史覆盖仍未验收 |
-| RiceQuant 字段审计后的语义与发布缺口（2026-10-30 有界真实互验完成） | 13 张风险表逐列、142 个模型因子字段、三模型原生响应→raw→隔离 PG 逐值与重放、120 日单位重测通过，证据见[迁移盘点](imac-collector-migration.md#字段互验与补充验证2026-10-30)。5 张动态平台证据表无 SDK 对应字段，以真实 DDL 和本轮现有事务／约束回归验证。待处理：`estimated_at` 实存观察时间、`model_version` 为本地版本、half_life/window_days 未填的消费语义；P6 全区间／约定及 D-022 2b 发布。初轮认证失败已由用户恢复，不再作为阻塞；互验不等于校准或正式发布 |
-| 米筐补充数据准入仍排除 DataYes 重复项 | `gr_data/config/ricequant.py` 仍要求 `tushare_overlap` 和 `datayes_overlap` 均为 `distinct`；按 DP-02 确认去重门槛并同步配置、README 与测试，准入完成前不启用补充 writer |
+| **Black-Litterman 量纲与后验退化** | 按 [D-009](../../.agents/brain/DECISIONS.md#d-009) 确定 `Q` 与 `Ω` 标定口径；补非退化协方差的后验与观点符号回归。 |
+| **`PgBarLoader` 未完整适配真库** | `PgBarLoader` 仍拒绝 `oi`、未映射 `trading_status`、未接入公司行为表；完成适配前不将真库回测视为已验收（V1 通过 `GETRICH_V1_DIAGNOSIS_ONLY=true` 不对外挂载 `/v1/backtest-*`）。 |
+| **撮合顺序与涨停买入边界偏差** | `api.py` 先撮合后处理公司行为且 `_load_corp_actions()` 吞异常；`execution.py` 允许买价等于涨停价。按明确撮合规则修复并补可核算回归。 |
 
-DataYes 历史 SW14／SW21 切换仅在恢复该备用源时按 [D-013](../../.agents/brain/DECISIONS.md#d-013)处理；不作为当前采集前置。ETF／期权验收、全历史预算及分类更正的当前待办见 NOTES。
-
-### Tushare 日线导入结项后的覆盖与主数据待核
-
-用户已确认：截至 2026-11-06，约定范围内已取得并通过验收的 Tushare 日线已全部进入正式 PostgreSQL。原导入核对新增 0／修正 0，已验收分区无需重导；原证据根 `/Volumes/myssd/data/getrich-validation/tushare-daily-completeness-20261108` 与原失败／退出记录保留。
-
-2026-11-09 后续覆盖专项按股票→ETF→8 核心指数→期货→期权完成核查一轮：原 49,769 候选日已解释 32,214，尚待核 17,555；股票与两只期权候选已解释，8 指数逐只完整。12 只旧期货及两只深市期权共 16 行主数据订正后读回／幂等通过，日线新增 0／修正 0。新根 `/Volumes/myssd/data/getrich-validation/tushare-history-coverage-20261108`，看 `final-acceptance.json`、`final-database-postcheck.json`、`master-corrections-before-after.json`；具体逐键代码／日期／原因／来源路径在 `unresolved-by-symbol.json`／`unresolved-symbol-days.parquet`。北交所继续延期。
-
-本轮后续核查、两批补数及V2004官方原件补录（2026-11-09）以原17,555键为起点：累计解释1,284、补入19、待核16,252（全部ETF，用户明确暂停）；其中18个原期货缺行候选已全部补入。V2004.DCE四日按DCE年度原件新增4／修正0，58回归、隔离/正式逐值/幂等及独立终验通过；月14044/年2924原行含时间戳保持。最新根 `/Volumes/myssd/data/getrich-validation/dce-v2004-official-admission-20261109`，看final-acceptance.json、independent-formal-postcheck.json、candidate-decisions.final.parquet；450金额±50和现有空价格/编码差在existing-official-differences.parquet，只留证、不扩范围。ETF等待用户与米筐沟通后继续，旧26专项/334解释账与此前15行保持。
-
-| 独立待核项 | 已证事实与后续边界 |
-| --- | --- |
-| ETF供应商观察值已补16,132，复权待120；研究溯源延期（2026-11-11） | 用户已解除前述ETF暂停，封闭原16252键／364只按已知可能服务端填充的米筐返回值接纳；178月隔离恢复／双重放／故障回滚、正式逐月读回／重复0新增及独立全量终验通过，正式新增16132／修正0，原1625237行含时间戳和旧19条审计保持。原1284解释日不变，新逐键账把本轮单列为admitted_provider_observation，research_validated=false、provider_fill_possible=true，状态NULL；供应商填价／次日prev_close／无标记／num_trades历史边界及原文见D-012和本轮inputs，不认证真实成交或历史PIT，后续ETF专项再溯源。剩120键因同日Tushare fund_adj缺失、最新定向重查仍空而暂缓：511280.SH45、560000.SH13、560650.SH35、512390.SH27，不默认1。证据根 `/Volumes/myssd/data/getrich-validation/etf-provider-filled-admission-20261111T064053Z`，看final-acceptance.json、evidence/independent-formal-postcheck.json、新candidate-decisions.after-filled-admission.parquet及remaining-unresolved.parquet；原账和旧公告证据保留。不扩其他日期／品种，不改schema／表归属或风险发布。 |
-| 期货缺行候选清零（累计18已补入） | FU2005.SHF／2019-05-06～09 与 SI2401.GFE／2023-01-18～20 已核官方完整报价，Tushare 精确键、交易所日、合约月仍缺，前7键已按上述含ETF的8键用户授权补入并验收；另SC2005.INE四日、SC2206.INE／2019-06-03、FU2006.SHF／2019-06-03、SI2401.GFE／2023-01-17七个官方零成交参考报价，已按用户后续广泛授权正式补入并逐月读回/重复0新增；OHL等无据NULL，不能称成交日。V2004.DCE／2019-04-16～19已由用户手动下载的DCE年度原件证实并正式新增4行参考报价，完整来源审计/读回/重复0新增通过，OHL/状态/限价NULL、前收官方直供。期货既有候选不再待核；该年度既有450金额±50、43close/37pre_close空字段及OHL编码差继续单列，不未经授权覆盖旧值。 |
-| 期货历史规格与交易区间消费 | 五只重挂 FU 的 308 条旧报价与 2018-07-16 新规格上市日已获规则变更解释，原值保留。旧 50 吨／现 10 吨参数不能跨时期套用；WR1903～1908 中间终止区间也不能只用一个 list_date 表达。不在本轮扩展 V1 合约查询或身份体系 |
-| 独立股票停牌证据的消费边界 | 31,065 个新增解释日有米筐明确停牌 True，271 个股票摘牌边界经两源核实；仅用于本批覆盖解释，未改 Tushare 停复牌事件／覆盖表，原状态读取可能仍 UNKNOWN。不把独立证据伪装成 Tushare 事件或 PIT |
-| 期货正式交易日历的配套接入 | 六所完整供应商日历在 raw，正式 `meta.trading_calendar` 期货部分当前仅有 580 条已批准补推休市行。对账使用已留证 raw 日历及原补推证据；本轮不扩展日历写入方案，后续依赖该表的消费须单独补齐并验收 |
-
-### 期权历史参数与多方法指标：分阶段实施
-
-2026-11-08 本阶段已收敛为 Tushare 日线入库核对，以下米筐历史参数／Greeks 和郑商所原生指标均保留独立待办，不阻塞上述日线导入结项。历史参数剩余 82 日、米筐 Greeks 待处理 2,086,174 合约日（含已有行仅 Theta 待补的封闭样本）沿原证据复核；本阶段明确不执行 theta／vega／rho 扩精度迁移。`opt_mins` 无权限的分钟行情、北交所专项继续单列延期。
-
-
-2026-11-08 用户进一步批准历史参数迁移与固定米筐口径回补。迁移 053 已实施，三事件的五个调整合约加一个未调整对照、24 个合约日已隔离验证并正式读回／幂等通过；此前“5 个合约、24 日”混入了对照，现明确区分。扩大回补证据在仓外 `option-history-20261108`；只写来源实际返回并验证的日期，未知 `available_at` 保持 NULL。多方法新表和 Greeks 扩精度仍属方案，未获迁移授权。先前实测证据保留在 `option-parameters-20261107`、`option-greeks-20261107`。
-
-| 需求与真实触发 | 最小结构候选 | 验收与读取边界 |
-| --- | --- | --- |
-| ETF 期权历史行权价／乘数：沪深 3 个调整事件、5 个调整合约加 1 个对照、24 个合约日已与官方公告逐项核实；例如 10000615 在 2016-11-29 从 2.05／10000 调为 2.006／10220 | 已实施迁移 053：`meta.option_terms_1d`，不覆盖 `meta.option_contracts`。列为 `instrument_id BIGINT` FK、`trading_day DATE`、`strike NUMERIC(18,4)`、`multiplier NUMERIC(18,4)`、`trading_code VARCHAR(64)`、`source VARCHAR(32)`、`observation_id TEXT`、`observed_at TIMESTAMPTZ`、`available_at TIMESTAMPTZ NULL`；业务日期与观察版本键为 `(instrument_id, trading_day, observation_id)`，另有 `(instrument_id,trading_day)` 索引。单表唯一 ricequant 归属，来源证据／哈希仍用不可变 raw 和 ops 收据 | 先存接口直接返回的逐交易日参数；不能把稀疏采样首日推成整个生效区间。有效日可由完整日序列及官方调整公告验证，历史发布时间未知时 `available_at` 留 NULL，不能宣称可用于历史当时可知的交易回放。要求调整前后、退市合约、重复观察和失败回滚测试 |
-| R4 的模型／取价版本必须同时保存，现表 PK 只有 `(instrument_id,trading_day)` | 需要多方法时，采用设计仓 R4 的独立 `market.rq_option_greeks`：`instrument_id BIGINT` FK、`dt DATE`、`model TEXT`、`price_type TEXT`、`frequency TEXT`（初期 CHECK 仅 1d）、`calculation_version TEXT`、六指标 `NUMERIC(20,8)`、`source VARCHAR(32)`、`updated_at TIMESTAMPTZ`；PK 为 `(instrument_id,dt,model,price_type,frequency,calculation_version)`。`calculation_version` 无供应商版本证据时明确标成内部契约版本，不能冒充供应商版本 | 单一 owner 为 ricequant；不把 model 塞进 source，不把 CZCE 官方指标混入。现表只保留已批准单一 BS/implied_forward/close/1d 口径，不能被别的 variant 覆盖。多方法查询须显式指定维度，未知不自动取最新 |
-| 单一方法也出现精度溢出：LC2612C95000／2026-11-06 的 Theta 为 -10297.120805886261，现 `NUMERIC(12,8)` 不能表达 | 若先扩现表而非采用上行新表，2026-11-08 广期所真实预检另发现 Vega 最大 11,204.802593738017、Rho 最小 -23,418.725792607584、Theta 最小 -1,615,655.1481964143。最小改动方案仅将 theta／vega／rho 扩为 `NUMERIC(20,8)`，其余三列不动；非活动 proposal 已通过真实溢出行隔离写入／读回及 DDL／审计回滚，正式库无依赖视图且当时未见占锁，等待另行批准。迁移前检查依赖、锁及存量精度，不修改已记账迁移 | 本轮该 Theta 字段待补、原值留 raw；同一封闭合约日的其他五个已验证值正常准入，Theta 的 NULL 有同事务精度错误审计，不推广为通用置空。扩精度后再逐键补该字段。该精度变更本身不能解决多方法共存问题 |
-
-郑商所年度原件的 DELTA／隐含波动率已核实 2017-04-19～2025-12-31 共 3,924,528 行，但尚缺全历史方法版本及 IV 单位的一手说明；2026 年官方结算业务指引已证明其二叉树模型与结算／分时估值流程，不能套用米筐 BS 收盘口径，也不能据此倒推所有历史年份。保留原生观察，不凭数值量级归一化。可靠本地重算仍缺冻结的利率／分红或远期、年化时间及估值时点等输入契约，不能仅凭历史参数样本宣布可重算。分钟 `opt_mins` 真实最小请求明确无权限，未取得样本，单独等待权限后验证。
-
-## 策略／信号接口与选股导入
+### 3.2 策略／信号与选股模块（`gr-api` / `gr-picks`）
 
 | 未关闭问题 | 下一步与完成条件 |
 | --- | --- |
-| 信号枚举域不一致 | `services/signal.py` 直传 DB 的 type／urgency，前端列表／详情类型与未读统计的 `normal` 分组不一致；确认真实取值及归一化责任，增加代表性响应契约验证，不依旧样本放宽联合类型 |
-| 信号详情仍有数据占位 | `SignalDetail.tsx` 仍有 `spread_std`、`basis`、最佳／最差收益及关联信号的 TODO；逐项确认是否保留，保留项补来源与语义，取消项移除对应占位与需求 |
-| 管理导入通道缺存储契约 | `services/admin_import.py` 使用 `import_jobs/import_job_errors`，现行 DDL 未定义；先决定是否保留该通道，再核对 `upsert_strategy` 列契约，保留时以新库端到端测试验收 |
-| 历史代码别名与选股关联回填缺失 | 诊断已于 2026-10-31 改为先查当前代码、再查 `meta.symbol_map`，按 `instrument_id` 合并；选股导入仍仅查当前 `meta.instruments.symbol`；先定输入／回显契约，再按 `instrument_id` 合并新旧代码，补历史 `pick.item.instrument_id` 的幂等回填。验收含旧代码、新旧码同输、HTTP 契约及 PG 集成用例 |
+| **管理导入通道缺 `import_jobs` DDL** | `services/admin_import.py` 引用的 `import_jobs` / `import_job_errors` 在 `gr-db` DDL 中未定义（`upsert_strategy` 的 HTML 清洗与长度上限已补齐）；对外开放管理导入前须先定去留并补齐 DDL 与端到端测试。 |
+| **信号执行写全局成交流水与枚举不一致** | `POST /v1/signals/{code}/execute` 当前会写入公共 `strategy_trades` 表，需明确个人跟单记录与策略作者公共交易流水的权限边界；同时对齐 `signal.py` 的 `type`/`urgency` 枚举及 `SignalDetail.tsx` 占位字段。 |
+| **选股导入历史代码别名回填** | `gr-picks` 当前仅查 `meta.instruments.symbol`，尚未像诊断一样串联 `meta.symbol_map` 合并新旧代码并幂等回填历史 `pick.item.instrument_id`。 |
 
-接口类型以实际返回为准，按 [D-007](../../.agents/brain/DECISIONS.md#d-007)维护。
-
-## 回测正确性
+### 3.3 数据平台与非诊断品种（`gr-data` / `gr-db`）
 
 | 未关闭问题 | 下一步与完成条件 |
 | --- | --- |
-| Black-Litterman 量纲与后验退化 | 按 [D-009](../../.agents/brain/DECISIONS.md#d-009)先确定 Q 与 Ω 口径；验收包含非退化后验及观点符号回归 |
-| PostgreSQL loader 未完整适配 | `PgBarLoader` 仍拒绝 `oi`，未映射 `trading_status`，公司行为表入口仍报未接入。结合已有 `open_interest`、停复牌数据及待建事件契约适配，不能用全零持仓量或缺事件冒充有效数据 |
-| 撮合与公司行为处理有偏差 | `api.py` 先撮合后处理公司行为、`_load_corp_actions()` 吞异常；`execution.py` 允许买价等于涨停价。按明确撮合规则补可核算回归，验证分红权益、失败传播和停牌／涨跌停边界；修复前不将真库回测视为已验收 |
-
-诊断组合回放按 [D-021](../../.agents/brain/DECISIONS.md#d-021)另写，不复用上述撮合路径。
+| **全供应商通用可靠采集协议** | 按 [可靠采集实施计划](gr-data-reliability-implementation-plan.md) 推进通用状态机、quarantine、不可变观察与收据闭环（诊断 V1 与米筐风险已先行建立专用闭环）。 |
+| **停复牌空响应语义与 Tushare 4 项 `xfail`** | 区分当日尚未发布的 `suspend_d` 空响应与合法无停牌；修复 [`test_tushare_review_findings.py`](../../packages/gr-data/tests/test_tushare_review_findings.py) 中 `#4`/`#5`/`#26`/`#37` 四项 strict `xfail` 及日线重复键冲突口径。 |
+| **无年报新股重复回查与旧列注释跟进** | `diagnosis_daily` 对尚无 `12-31` 年报记录的新股每日重复请求 `fina_indicator` 空结果，后续可加空观察缓存；`038_fundamental.sql` 与 `039_classify.sql` 的旧占位列注释待通过新注释迁移刷新（严禁改已记账 SQL）。 |
+| **ETF 剩余 120 键 `fund_adj` 与填充值溯源** | 364 只 ETF 的 16,132 行米筐观察值已按 `provider_fill_possible=true` 准入，剩余 4 只 ETF 共 120 个交易日因 Tushare `fund_adj` 仍为空暂缓（不默认填 `1`）；ETF 专项研究前另行溯源。 |
+| **北交所待核项与期货完整日历** | `ops.tushare_bj_pending` 存量待处理记录与六所期货完整交易日历写入方案留待对应品种开放前专项核实。 |
+| **期权多方法表与 Greeks 精度扩展** | 期权正式发布继续关闭（[D-026](../../.agents/brain/DECISIONS.md#d-026)）；后续开放前需审定 `market.option_greeks_1d` 的 `theta`/`vega`/`rho` 扩 `NUMERIC(20,8)` 或新建多方法 `market.rq_option_greeks`、郑商所原生指标口径及 `opt_mins` 分钟权限。 |
+| **米筐补充数据集 R1–R10 去重门槛** | `gr_data/config/ricequant.py` 仍要求 `datayes_overlap == 'distinct'`，启用补充 writer 前按 DP-02 同步配置与验收。 |

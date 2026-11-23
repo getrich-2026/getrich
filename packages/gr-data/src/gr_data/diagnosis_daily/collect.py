@@ -17,13 +17,17 @@ from gr_data.common import contracts
 from gr_data.common.parquet import write_parquet
 from gr_data.common.paths import RawPaths
 from gr_data.common.ricequant_risk_quality import validate_daily_risk
+from gr_data.common.ricequant_specs import ContractViolationError
 from gr_data.common.ricequant_symbol_intervals import (
     HISTORY_SYMBOL_RULES_VERSION,
+    interval_source_symbol,
     resolve_symbol_intervals,
     symbol_rule_evidence,
     symbol_rule_hash,
 )
 from gr_data.common.ricequant_universe import (
+    _b_share,
+    _obid,
     build_universe_provider,
     load_metadata_snapshot,
     reference_input_codes,
@@ -448,39 +452,144 @@ def validate_risk_identities(manifest: dict, metadata: dict, day: date) -> None:
         )
 
 
+def _select_probe_stock(metadata: dict[str, Any], day: date, options: RiskOptions) -> str:
+    """按最早上市优先选取单只当日在市沪深A股请求代码，用于轻量上游就绪探测。"""
+    snapshot, _ = current_alias_snapshot(metadata, day)
+    rules_version = options.symbol_rules_version or HISTORY_SYMBOL_RULES_VERSION
+    rules = resolve_symbol_intervals(snapshot, rules_version)
+    candidates: list[tuple[bool, str, str, int, str]] = []
+    for stock in snapshot["instruments"]:
+        symbol = stock.get("symbol")
+        list_raw = stock.get("list_date")
+        delist_raw = stock.get("delist_date")
+        if not isinstance(symbol, str) or _b_share(symbol) or list_raw is None:
+            continue
+        listed = date.fromisoformat(str(list_raw))
+        delisted = date.fromisoformat(str(delist_raw)) if delist_raw is not None else None
+        if listed > day or (delisted is not None and delisted <= day):
+            continue
+        iid = int(stock["instrument_id"])
+        selected_symbol, _ = interval_source_symbol(iid, symbol, day.isoformat(), rules)
+        code = _obid(selected_symbol)
+        if code is not None and not _b_share(code):
+            candidates.append((delisted is not None, str(listed), symbol, iid, code))
+    if not candidates:
+        raise ValueError("No active XSHG/XSHE stock available for upstream readiness probe")
+    candidates.sort()
+    return candidates[0][4]
+
+
+def probe_upstream_exposure(
+    conn: psycopg.Connection,
+    client: Any,
+    day: date,
+    options: RiskOptions,
+) -> dict[str, Any]:
+    """轻量探测目标日米筐风险暴露是否已发布；未就绪时返回 pending_upstream。
+
+    Args:
+        conn: 调用方已开启只读事务的 PostgreSQL 连接。
+        client: 米筐客户端实例。
+        day: 目标交易日。
+        options: 已验收的生产风险模型配置（v2 / sws_2021）。
+
+    Returns:
+        包含 ready 布尔标志、status、day、probe_code（及未就绪时 reason）的字典。
+    """
+    metadata = load_metadata_snapshot(conn)
+    sample_code = _select_probe_stock(metadata, day, options)
+    _check_quota(client, 0.1)
+    response = client.risk_piece(
+        "exposure",
+        day.isoformat(),
+        [sample_code],
+        model=options.model,
+        industry_mapping=options.industry_mapping,
+    )
+    if response is None:
+        log.info(
+            "RiceQuant upstream exposure not ready day=%s model=%s probe=%s",
+            day,
+            options.model,
+            sample_code,
+        )
+        return {
+            "ready": False,
+            "status": "pending_upstream",
+            "day": str(day),
+            "reason": "ricequant_v2_exposure_not_ready",
+            "probe_code": sample_code,
+        }
+    if not isinstance(response, pd.DataFrame):
+        raise ContractViolationError("动态风险接口返回类型非法")
+    if response.empty:
+        log.info(
+            "RiceQuant upstream exposure empty day=%s model=%s probe=%s",
+            day,
+            options.model,
+            sample_code,
+        )
+        return {
+            "ready": False,
+            "status": "pending_upstream",
+            "day": str(day),
+            "reason": "ricequant_v2_exposure_not_ready",
+            "probe_code": sample_code,
+        }
+    return {
+        "ready": True,
+        "status": "ready",
+        "day": str(day),
+        "probe_code": sample_code,
+    }
+
+
 def collect_risk(
-    client: Any, paths: RawPaths, day: date, options: RiskOptions, metadata: dict
+    client: Any,
+    paths: RawPaths,
+    day: date,
+    options: RiskOptions,
+    metadata: dict,
+    *,
+    reuse_raw: bool = False,
 ) -> dict:
     """SDK 3.8.1 的命名轴由既有 raw v2 校验器显式对齐；此处不登记PG检查点。"""
     metadata, alias_scope = current_alias_snapshot(metadata, day)
     write_json(paths.dataset_dir("ricequant", "daily_capture") / "alias-scope.json", alias_scope)
-    reference = client.risk_reference(
-        reference_input_codes(metadata), quota_guard=lambda: _check_quota(client, 0.1)
-    )
     if options.symbol_rules_version is None:
         raise ValueError("Risk symbol rules must be explicit")
-    provider = build_universe_provider(
-        metadata,
-        reference,
-        universe_policy=options.universe_policy,
-        mapping_version=options.mapping_version,
-        symbol_rules=symbol_rule_evidence(options.symbol_rules_version),
-    )
-    run_risk_raw(
-        client,
-        RawContext(paths),
-        options,
-        RicequantImportOptions(datasets={"rq_risk_model": options}),
-        mode="init",
-        universe_provider=provider,
-        capture_callback=lambda m: write_json(
-            paths.dataset_dir("ricequant", "daily_capture") / "manifest.json", m
-        ),
-    )
+    variant_day = paths.ricequant_variant(
+        "rq_risk_model", options.contract_version, options.variant_id
+    ) / str(day)
+    has_reusable_observation = reuse_raw and bool(list(variant_day.glob("*/manifest.json")))
+    if not has_reusable_observation:
+        reference = client.risk_reference(
+            reference_input_codes(metadata), quota_guard=lambda: _check_quota(client, 0.1)
+        )
+        provider = build_universe_provider(
+            metadata,
+            reference,
+            universe_policy=options.universe_policy,
+            mapping_version=options.mapping_version,
+            symbol_rules=symbol_rule_evidence(options.symbol_rules_version),
+        )
+        run_risk_raw(
+            client,
+            RawContext(paths),
+            options,
+            RicequantImportOptions(datasets={"rq_risk_model": options}),
+            mode="init",
+            universe_provider=provider,
+            capture_callback=lambda m: write_json(
+                paths.dataset_dir("ricequant", "daily_capture") / "manifest.json", m
+            ),
+        )
     bundles = list(read_bundles(paths, options))
     if len(bundles) != 1 or bundles[0][0]["day"] != str(day):
         raise ValueError("Risk capture must contain exactly the requested trading day")
     manifest, frames = bundles[0]
+    if has_reusable_observation:
+        write_json(paths.dataset_dir("ricequant", "daily_capture") / "manifest.json", manifest)
     validate_risk_identities(manifest, metadata, day)
     coverage = _dynamic_coverage(manifest, frames, options)
     values = _normalize(frames, options)

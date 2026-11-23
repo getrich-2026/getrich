@@ -78,6 +78,8 @@ macOS 文件共享层的 bind 数据目录曾使 PostgreSQL 出现文件／POSIX
 
 切换时保留 neoimac 最新 raw 原件，myssd 上的旧 Tushare 整体归档后再复制最新副本并逐文件核对 SHA-256，不混合不同版本的 instruments／月份分区；原有米筐 raw 保持原样，本次路径变更不构成米筐入库验收。具体收据及归档位置见[迁移盘点](../../docs/plans/imac-collector-migration.md)。
 
+2026-11-23 云端 `/srv/getrich` 运行与存储边界补充：云服务器接管 V1 正式数据库（PostgreSQL 18.6／TimescaleDB 2.30.1，named volume 仅绑定 `127.0.0.1:5432`）与日常诊断日更，`/srv/getrich/state/raw_parquet` 仅存当前 V1 诊断日更原件与收据（235 GiB 完整历史米筐 raw 仍留离线独立存储，不在云盘做全品种历史回补）。运行目录隔离为 `current/app`（`--package gr-api --no-dev --no-editable`）与 `current/etl`（必须保留 `.git` 且使用 editable 安装，满足 `risk_receipts.py` 干净源码树校验）；API 专用配置 `api-prod.env`（不含供应商密钥）与 ETL 专用 `data.env`（不含 `JWT_SECRET`）分离，且环境文件不纳入 `maintenance-runtime.json` 原始字节 SHA-256 清单，防止修改 API 开关或轮换密钥阻断日更与 `pg_dump` 逻辑备份。详见 [V1 发布切换指南](../../docs/guides/v1-release-cutover.md)。
+
 <a id="d-030"></a>
 
 ### D-030 证券自增 ID 只在单个库内有效，跨库按完整代码映射
@@ -469,6 +471,12 @@ RC沿用PA-10波动率贡献：RC_i=w_i(Σw)_i/σ，sum(RC)=σ，不等于annual
 完整候选身份都必须在阶段A与目标库的当日在市集合核对，包括将被排除的证券；精简副本的内部ID不等于工作库ID。跨库原件不自动换ID，冲突时拒绝；可只复用Tushare原件，再按本库身份独立采集风险观察。已验证且过期的非生产历史别名只从当日请求快照排除并保留区间证据，不删除库内映射或启用历史请求覆盖。新在市证券缺年度基线时定向补最近两年年报，公告日仍不晚于诊断日，观察时间使用真实采集时刻，避免按公告日增量遗漏上市前已披露年报。
 
 日期范围重试跳过不晚于最新有效发布的日期，不借重试复活已失效旧版本。固定产物已发布且有效时允许后续源码零写重放；未发布产物的导入源码变化则拒绝写入，必须重新准备。供应商没有完整股票时属于阶段A失败，不允许用零值、旧截面或子集重归一化替代；上一次有效发布继续可用，过期后的新诊断按既定503门禁处理。
+
+#### V1 云端日更窗口与路由收敛边界（2026-11-23）
+
+实测确认米筐生产 `v2` 的因子暴露（`exposure`）为 **T+1 早间发布**（交易日 $T$ 当晚返回 `None`），而 `gr-api` 的 `require_freshness` 在每日 `15:00 Asia/Shanghai` 将已完成交易日切至当日并要求开市日滞后 `lag <= 1`。若定时任务放在 $T$ 晚间 `23:30` 会因暴露为空触发锁停，若仅在 $T+1$ 晚间 `23:30` 补跑前一日则会在 $T+1$ 当天 `15:00`～`23:30` 触发 `lag = 2` 的全站新诊断 `503`。因此 V1 定时日更固定在**次日早间 `<15:00 Asia/Shanghai`**（如 `09:00` 主跑、`12:30` 补跑）执行，并由 `diagnosis-daily run --probe-upstream` 先做单股 `v2` 暴露轻量探针：上游未就绪时记 `pending_upstream` 零写退出 `0`（不消耗全市场 83 批配额、不归档 `_failed`、不触发 `daily-blocked`），仅真实数据契约违规才失败锁停。
+
+由于主前端 `apps/web`、回测作业及管理端导入等模块在 V1 冻结或尚有待决存储契约，后端新增显式开关 `GETRICH_V1_DIAGNOSIS_ONLY`（默认 `false` 保持开发与全量测试兼容；V1 生产设为 `true` 时仅挂载 `/v1/auth`、`/v1/user`、`/v1/diagnosis`、`/health`、`/metrics` 并跳过回测 `LISTEN` 连接），从应用层隔离未开放路由。
 
 ## 文档与材料边界
 

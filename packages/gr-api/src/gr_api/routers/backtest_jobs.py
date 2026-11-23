@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
 from gr_api.deps import get_current_user, get_db, page_dep, request_id, require_user
+from gr_api.errors import Unauthorized
 from gr_api.pagination import make_pagination
 from gr_api.response import success
 from gr_api.schemas.backtest import (
@@ -149,6 +150,13 @@ def _enqueue(background: BackgroundTasks, job_id: str, *, task_name: str, reques
     background.add_task(job_svc.run_job_synchronously, job_id, postgres=settings.postgres)
 
 
+def _require_user_outside_dev(request: Request, user_id: str | None) -> None:
+    """非 dev 环境拒绝匿名触发回测计算任务。"""
+    settings = getattr(request.app.state, "settings", None)
+    if user_id is None and settings is not None and not settings.is_dev:
+        raise Unauthorized("authentication required")
+
+
 @router.post("/backtest", status_code=202)
 async def run_backtest(
     body: BacktestRunRequest,
@@ -159,6 +167,7 @@ async def run_backtest(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     rid: str = Depends(request_id),
 ):
+    _require_user_outside_dev(request, user_id)
     job_id, ref_id = await job_svc.create_backtest_job(
         db,
         body,
@@ -179,6 +188,7 @@ async def run_sweep(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     rid: str = Depends(request_id),
 ):
+    _require_user_outside_dev(request, user_id)
     job_id, ref_id = await job_svc.create_sweep_job(
         db,
         body,
@@ -199,6 +209,7 @@ async def run_walk_forward(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     rid: str = Depends(request_id),
 ):
+    _require_user_outside_dev(request, user_id)
     job_id, ref_id = await job_svc.create_walk_forward_job(
         db,
         body,

@@ -42,7 +42,13 @@ from gr_data.ingest.tushare.financial import normalize_annual_roe, write_annual_
 from gr_data.ingest.tushare.industry import IndustrySnapshot, write_industry_snapshot
 
 from ._bridge import publication_connection
-from .collect import collect_annual_backfill, collect_risk, collect_tushare, normalize_tushare
+from .collect import (
+    collect_annual_backfill,
+    collect_risk,
+    collect_tushare,
+    normalize_tushare,
+    probe_upstream_exposure,
+)
 from .evidence import (
     archive_failed_attempt,
     digest,
@@ -125,6 +131,37 @@ def risk_options(conn: psycopg.Connection, day: date, publication: dict) -> Risk
         purpose="production",
         production_symbol_rules_version=units["universe_evidence"]["symbol_rules_version"],
     )
+
+
+def probe_upstream(
+    pg: PgConfig,
+    day: date,
+    *,
+    ricequant: Any,
+    require_after_latest: bool = False,
+) -> dict[str, Any]:
+    """在只读事务内轻量探测目标交易日米筐 v2 风险暴露是否已就绪。
+
+    Args:
+        pg: PostgreSQL 连接配置。
+        day: 目标交易日。
+        ricequant: 米筐客户端实例。
+        require_after_latest: 若为 True，则要求 day 必须晚于当前最新发布日。
+
+    Returns:
+        探测结果字典；未就绪时 status='pending_upstream' 且 ready=False。
+    """
+    with connect(pg) as conn, conn.transaction():
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        previous = latest_publication(conn)
+        if not previous["valid"]:
+            raise ValueError("Latest publication is invalid")
+        if require_after_latest and day <= previous["as_of_date"]:
+            raise ValueError(
+                "Target must follow the latest publication; replay an existing artifact with apply"
+            )
+        options = risk_options(conn, day, previous)
+        return probe_upstream_exposure(conn, ricequant, day, options)
 
 
 def prepare(
@@ -235,7 +272,11 @@ def prepare(
                 ]
             )
         phase = "ricequant_capture_preflight"
-        risk = collect_risk(ricequant, paths, day, options, metadata)
+        risk = (
+            collect_risk(ricequant, paths, day, options, metadata, reuse_raw=True)
+            if reuse_raw is not None
+            else collect_risk(ricequant, paths, day, options, metadata)
+        )
         if not set(risk["security_ids"]) <= set(symbols.values()):
             raise ValueError("Risk universe contains stocks outside the source target-day universe")
         for table, frame in frames.items():

@@ -191,6 +191,36 @@ class TestUpsertStrategy:
         assert params["subscription_monthly"] == Decimal("99.00")
         assert params["subscription_yearly"] == Decimal("999.00")
 
+    async def test_upsert_sanitizes_and_caps_detail_html(self) -> None:
+        """detail_html is sanitized via normalize_detail_html and capped at 50,000 chars."""
+        from gr_api.services.sanitize import normalize_detail_html
+        from pydantic import ValidationError
+
+        cur = _FakeCursor()
+        cur.push_one(
+            {
+                "id": "strat-uuid-2",
+                "strategy_code": "STRAT_TEST_001",
+                "name": "Test Strategy",
+                "pub_status": "draft",
+                "run_status": "paper",
+            }
+        )
+        conn = _FakeConn(cur)
+        malicious = '<script>alert(1)</script><h2>Safe</h2><a href="javascript:alert(1)">x</a>'
+
+        await upsert_strategy(
+            conn,  # type: ignore[arg-type]
+            body=_strategy_upsert_body(detail_html=malicious),
+            admin_user_id="admin-uuid-1",
+        )
+        _, params = cur.executed[0]
+        assert params["detail_html"] == normalize_detail_html(malicious)
+        assert "<script" not in params["detail_html"].lower()
+
+        with pytest.raises(ValidationError):
+            _strategy_upsert_body(detail_html="x" * 50_001)
+
     async def test_update_via_on_conflict(self) -> None:
         """UPDATE path: existing strategy_code → ON CONFLICT triggers UPDATE SET."""
         cur = _FakeCursor()

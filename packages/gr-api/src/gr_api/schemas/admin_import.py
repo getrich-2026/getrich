@@ -21,7 +21,7 @@ class StrategyUpsertIn(BaseModel):
     strategy_type: str = Field(default="manual", min_length=1, max_length=32)
     summary: str | None = Field(default=None, max_length=500)
     description: str | None = None
-    detail_html: str | None = None
+    detail_html: str | None = Field(default=None, max_length=50_000)
     category_id: str | None = Field(default=None, max_length=64)
     asset_class: str = Field(min_length=1, max_length=32)
     market: str = Field(default="cn", min_length=1, max_length=32)

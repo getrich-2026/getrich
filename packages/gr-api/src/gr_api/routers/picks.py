@@ -1,6 +1,6 @@
 """选股展示模块路由：6 个公开 GET + 1 个管理端 GET。
 
-契约见 ``getrich-design/strategy-signal/api-spec/选股展示模块.openapi.json``。
+契约见 ``getrich-design/strategy-signal/examples/api-spec/选股展示模块.openapi.json``。
 路由分三组挂载（``main.py`` 里统一加 ``/v1`` 前缀）：
 
 * ``/v1/pick-strategies*`` —— 策略列表 / 详情 / 标的池 / 交易日列表

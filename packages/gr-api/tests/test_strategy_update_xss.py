@@ -80,9 +80,13 @@ class _FakeConn:
 
     def __init__(self, cursor: _FakeCursor) -> None:
         self._cursor = cursor
+        self.commits: int = 0
 
     def cursor(self):
         return self._cursor
+
+    async def commit(self) -> None:
+        self.commits += 1
 
 
 async def _stub_get_strategy_detail(_db, _strategy_id: str) -> dict[str, Any]:
@@ -285,6 +289,7 @@ async def test_update_strategy_rejects_non_owner(monkeypatch) -> None:
     # No UPDATE was issued — only the SELECT.
     update_calls = [sql for sql, _ in cursor.executed if "UPDATE" in sql]
     assert update_calls == []
+    assert conn.commits == 0
 
 
 async def test_update_strategy_raises_not_found_for_missing_id(
@@ -312,6 +317,7 @@ async def test_update_strategy_raises_not_found_for_missing_id(
 
     update_calls = [sql for sql, _ in cursor.executed if "UPDATE" in sql]
     assert update_calls == []
+    assert conn.commits == 0
 
 
 async def test_update_strategy_allows_owner(monkeypatch) -> None:
@@ -342,6 +348,7 @@ async def test_update_strategy_allows_owner(monkeypatch) -> None:
     )
 
     assert result["name"] == "Stub"  # from the stub
-    # UPDATE was issued.
+    # UPDATE was issued and committed.
     update_calls = [sql for sql, _ in cursor.executed if "UPDATE" in sql]
     assert len(update_calls) == 1
+    assert conn.commits == 1

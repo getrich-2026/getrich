@@ -123,7 +123,7 @@ class TestLogin:
 
         # First query was user_auth; second was users.email fallback
         assert "user_auth" in cur.executed[0][0].lower()
-        assert "from users" in cur.executed[1][0].lower()
+        assert "from app.users" in cur.executed[1][0].lower()
 
     def test_login_wrong_password(self) -> None:
         """Correct email but wrong password → Unauthorized (user_auth path)."""
@@ -301,7 +301,7 @@ class TestRegister:
 
         # Check INSERT INTO user_auth was called with correct args
         insert_auth = cur.executed[3]
-        assert "INSERT INTO user_auth" in insert_auth[0]
+        assert "INSERT INTO app.user_auth" in insert_auth[0]
         assert "'email'" in insert_auth[0]  # auth_type is a SQL literal, not a named param
         assert insert_auth[1]["email"] == "alice@test.com"
         assert insert_auth[1]["credential"].startswith("$2b$12$")
@@ -481,10 +481,10 @@ class TestRefresh:
         assert select_params["token_hash"] == expected_hash
 
         # Verify DELETE (revoke old tokens) was executed
-        assert any("DELETE FROM refresh_tokens" in sql for sql, _ in cur.executed)
+        assert any("DELETE FROM app.refresh_tokens" in sql for sql, _ in cur.executed)
 
         # Verify INSERT (new refresh token) was executed
-        assert any("INSERT INTO refresh_tokens" in sql for sql, _ in cur.executed)
+        assert any("INSERT INTO app.refresh_tokens" in sql for sql, _ in cur.executed)
 
     def test_refresh_invalid_token(self) -> None:
         """Token hash not found in DB → Unauthorized."""
@@ -551,4 +551,4 @@ class TestRefresh:
         assert "refresh_token" in result["data"]
         assert len(result["data"]["refresh_token"]) == 64  # secrets.token_hex(32)
         assert "access_token" in result["data"]
-        assert "insert into refresh_tokens" in cur.executed[-1][0].lower()
+        assert "insert into app.refresh_tokens" in cur.executed[-1][0].lower()

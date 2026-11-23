@@ -59,6 +59,7 @@ class WebConfig:
     # 任何人都能伪造该头，默认关闭，且只允许在 APP_ENV=dev 时开启。
     allow_mock_auth: bool = False
     diagnosis_publications_enabled: bool = False
+    v1_diagnosis_only: bool = False
 
     @classmethod
     def from_env(cls, strict: bool, environ: Mapping[str, str] | None = None) -> WebConfig:
@@ -123,6 +124,10 @@ class WebConfig:
             diagnosis_publications_enabled=parse_bool(
                 source.get("GETRICH_DIAG_PUBLICATIONS_ENABLED"),
                 name="GETRICH_DIAG_PUBLICATIONS_ENABLED",
+            ),
+            v1_diagnosis_only=parse_bool(
+                source.get("GETRICH_V1_DIAGNOSIS_ONLY"),
+                name="GETRICH_V1_DIAGNOSIS_ONLY",
             ),
             allow_mock_auth=parse_bool(
                 source.get("GETRICH_ALLOW_MOCK_AUTH"), name="GETRICH_ALLOW_MOCK_AUTH"

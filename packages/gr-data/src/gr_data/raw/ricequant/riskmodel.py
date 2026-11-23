@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import re
 from collections.abc import Callable, Iterator
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -23,7 +24,7 @@ from gr_data.config.ricequant import RicequantImportOptions
 from gr_data.config.ricequant_risk import RiskOptions
 from gr_data.raw.base import RawContext
 from gr_data.raw.ricequant.client import RqdatacClient
-from gr_data.raw.ricequant.fetchers.supplements import _check_quota
+from gr_data.raw.ricequant.fetchers.supplements import _check_quota, _extract_remaining_days
 from gr_data.raw.ricequant.risk_shapes import PIECES, decode_piece, validate_bundle
 from gr_data.raw.ricequant.store import file_hash
 
@@ -287,7 +288,7 @@ def _run_locked(
 
 
 def _quota_snapshot(client: RqdatacClient) -> dict[str, object]:
-    """仅留配额计数与观测时间，禁止保存完整账户响应。"""
+    """仅留配额计数、剩余有效天数与观测时间，禁止保存完整账户响应。"""
     quota = client.get_quota()
     snapshot: dict[str, object] = {"observed_at": datetime.now(timezone.utc).isoformat()}
     for key in ("bytes_used", "bytes_limit"):
@@ -295,4 +296,12 @@ def _quota_snapshot(client: RqdatacClient) -> dict[str, object]:
         if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
             raise RawIntegrityError("RiceQuant quota counters are invalid")
         snapshot[key] = value
+    if isinstance(quota, dict):
+        remaining_days = _extract_remaining_days(quota, logger=log)
+        if remaining_days is not None:
+            snapshot["remaining_days"] = remaining_days
+        for expiry_key in ("expire_date", "expiration_date"):
+            expiry_value = quota.get(expiry_key)
+            if isinstance(expiry_value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry_value):
+                snapshot[expiry_key] = expiry_value
     return snapshot

@@ -12,11 +12,9 @@ distinct URL — including path parameters (UUIDs, signal codes,
 etc.) — and explode Prometheus cardinality within hours. We
 mitigate by using ``request.scope.get("route").path`` which is
 the route TEMPLATE (e.g. ``/v1/strategies/{code}``), not the
-concrete URL. The fallback ``request.url.path`` is used when
-the request didn't match a route (404 on an unknown path) and
-still creates one label per malformed URL, but only for
-malformed traffic and is bounded by the number of unique bad
-URLs an attacker can try.
+concrete URL. The fallback ``__unmatched__`` bucket is used when the request didn't
+match a route (404 on an unknown path) so scanner traffic cannot cause
+unbounded Prometheus label cardinality.
 """
 
 from __future__ import annotations
@@ -31,6 +29,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
+
+
+_UNMATCHED_PATH = "__unmatched__"
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):
@@ -81,12 +82,12 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             # the route handler.
             duration = perf_counter() - start
             route = request.scope.get("route")
-            template_path = getattr(route, "path", None) or path
+            template_path = getattr(route, "path", None) or _UNMATCHED_PATH
             HTTP_REQUESTS_TOTAL.labels(method, template_path, "500").inc()
             HTTP_REQUEST_DURATION_SECONDS.labels(method, template_path).observe(duration)
             raise
         route = request.scope.get("route")
-        template_path = getattr(route, "path", None) or path
+        template_path = getattr(route, "path", None) or _UNMATCHED_PATH
         duration = perf_counter() - start
         HTTP_REQUESTS_TOTAL.labels(method, template_path, str(response.status_code)).inc()
         HTTP_REQUEST_DURATION_SECONDS.labels(method, template_path).observe(duration)

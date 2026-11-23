@@ -64,6 +64,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         # when called bare). Re-implementing the trivial read +
         # fallback keeps the wiring in this module self-contained.
         rid = request.headers.get(_REQUEST_ID_HEADER) or uuid4().hex
+        request.state.request_id = rid
         token = _current_request_id.set(rid)
         try:
             response: Response = await call_next(request)

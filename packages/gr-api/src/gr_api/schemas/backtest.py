@@ -9,13 +9,57 @@ additionally capture the engine-specific knobs.
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 
 BarLoaderKind = Literal["pg", "duckdb"]
+MAX_GRID_COMBINATIONS: int = 1_000
+
+
+def _dimension_size(name: str, spec: object) -> int:
+    """计算单个网格搜索维度的候选参数个数，避免展开超大区间导致内存耗尽。"""
+    if isinstance(spec, dict) and "values" in spec:
+        raw_values = spec["values"]
+        if not isinstance(raw_values, list | tuple) or not raw_values:
+            raise ValueError(f"search_spec.space[{name!r}].values must be a non-empty list")
+        kind = str(spec.get("kind", "categorical"))
+        if kind == "int_range":
+            try:
+                start = int(raw_values[0])
+                stop = int(raw_values[-1])
+                step = int(raw_values[1]) - start if len(raw_values) > 1 else 1
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid int_range values for {name!r}") from exc
+            if step <= 0 or start > stop:
+                raise ValueError(f"invalid int_range bounds for {name!r}")
+            return (stop - start) // step + 1
+        if kind == "decimal_range":
+            try:
+                start_d = Decimal(str(raw_values[0]))
+                stop_d = Decimal(str(raw_values[-1]))
+                step_d = (
+                    Decimal(str(raw_values[1])) - start_d if len(raw_values) > 1 else Decimal("1")
+                )
+            except InvalidOperation as exc:
+                raise ValueError(f"invalid decimal_range values for {name!r}") from exc
+            if (
+                not start_d.is_finite()
+                or not stop_d.is_finite()
+                or not step_d.is_finite()
+                or step_d <= Decimal("0")
+                or start_d > stop_d
+            ):
+                raise ValueError(f"invalid decimal_range bounds for {name!r}")
+            return int((stop_d - start_d) // step_d) + 1
+        return len(raw_values)
+    if isinstance(spec, list | tuple):
+        if not spec:
+            raise ValueError(f"search_spec.space[{name!r}] must be non-empty")
+        return len(spec)
+    raise ValueError(f"search_spec.space[{name!r}] must be a list or a {{kind, values}} dict")
 
 
 class _BaseRunRequest(BaseModel):
@@ -75,6 +119,19 @@ class _SearchSpec(BaseModel):
 
     space: dict[str, object] = Field(min_length=1)
     constraints: list[object] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_grid_combinations(self) -> _SearchSpec:
+        total = 1
+        for name, dim in self.space.items():
+            if not name.strip():
+                raise ValueError("parameter names must be non-empty")
+            total *= _dimension_size(name, dim)
+            if total > MAX_GRID_COMBINATIONS:
+                raise ValueError(
+                    f"grid search space exceeds maximum of {MAX_GRID_COMBINATIONS} combinations"
+                )
+        return self
 
 
 class SweepRunRequest(_BaseRunRequest):

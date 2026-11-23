@@ -270,3 +270,333 @@ def test_repeated_date_range_skips_completed_dates_without_preparing_or_writing(
     apply_call.assert_not_called()
     state = json.loads((tmp_path / "diagnosis/daily/last-run.json").read_text())
     assert state["result"]["skipped_dates"] == ["2026-11-06", "2026-11-09", "2026-11-10"]
+
+
+def test_daily_cli_supports_probe_and_probe_upstream_flag():
+    parser = build_parser()
+    probe_args = parser.parse_args(["diagnosis-daily", "probe", "--day", "2026-11-20"])
+    assert probe_args.action == "probe" and probe_args.day == date(2026, 11, 20)
+    run_args = parser.parse_args(["diagnosis-daily", "run", "--probe-upstream"])
+    assert run_args.action == "run" and run_args.probe_upstream is True
+
+
+def test_probe_upstream_exposure_distinguishes_pending_and_ready():
+    import pandas as pd
+    from gr_data.config.ricequant_risk import RiskOptions
+    from gr_data.diagnosis_daily.collect import probe_upstream_exposure
+
+    day = date(2026, 11, 20)
+    options = RiskOptions(
+        "v2",
+        "sws_2021",
+        day,
+        day,
+        (),
+        {},
+        "evidence",
+        universe_policy="listed_cn_a_v2",
+        purpose="production",
+    )
+    cursor = Mock()
+    cursor.__enter__ = Mock(return_value=cursor)
+    cursor.__exit__ = Mock(return_value=False)
+    cursor.fetchall.side_effect = [
+        [
+            (1, "900901.SH", "XSHG", date(1992, 1, 1), None, "listed"),
+            (2, "600000.SH", "XSHG", date(1999, 11, 10), None, "listed"),
+            (3, "000001.SZ", "XSHE", date(1991, 4, 3), None, "listed"),
+        ],
+        [],
+    ]
+    conn = Mock()
+    conn.cursor.return_value = cursor
+    client = Mock()
+    client.get_quota.return_value = {"bytes_limit": 10000, "bytes_used": 100}
+    client.risk_piece.return_value = None
+    pending = probe_upstream_exposure(conn, client, day, options)
+    assert pending == {
+        "ready": False,
+        "status": "pending_upstream",
+        "day": "2026-11-20",
+        "reason": "ricequant_v2_exposure_not_ready",
+        "probe_code": "000001.XSHE",
+    }
+    client.risk_piece.assert_called_once_with(
+        "exposure", "2026-11-20", ["000001.XSHE"], model="v2", industry_mapping="sws_2021"
+    )
+
+    cursor.fetchall.side_effect = [
+        [(3, "000001.SZ", "XSHE", date(1991, 4, 3), None, "listed")],
+        [],
+    ]
+    client.risk_piece.return_value = pd.DataFrame()
+    assert probe_upstream_exposure(conn, client, day, options)["ready"] is False
+
+    cursor.fetchall.side_effect = [
+        [(3, "000001.SZ", "XSHE", date(1991, 4, 3), None, "listed")],
+        [],
+    ]
+    client.risk_piece.return_value = pd.DataFrame(
+        {"beta": [1.0]},
+        index=pd.MultiIndex.from_tuples(
+            [("000001.XSHE", pd.Timestamp("2026-11-20"))], names=["order_book_id", "date"]
+        ),
+    )
+    ready = probe_upstream_exposure(conn, client, day, options)
+    assert ready == {
+        "ready": True,
+        "status": "ready",
+        "day": "2026-11-20",
+        "probe_code": "000001.XSHE",
+    }
+
+
+def test_cli_probe_upstream_pending_exits_zero_without_archiving_or_fetching(monkeypatch, tmp_path):
+    from argparse import Namespace
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from gr_data.diagnosis_daily import cli
+
+    day1, day2 = date(2026, 11, 19), date(2026, 11, 20)
+    conn = Mock()
+    conn.transaction.return_value.__enter__ = Mock()
+    conn.transaction.return_value.__exit__ = Mock(return_value=False)
+    conn.execute.return_value.fetchall.return_value = [(day1,), (day2,)]
+    conn.execute.return_value.fetchone.return_value = (2,)
+
+    @contextmanager
+    def connection(pg):
+        yield conn
+
+    monkeypatch.setattr("gr_data.cli._pg", lambda cfg: Mock())
+    monkeypatch.setattr("gr_data.raw.tushare.client.TushareProClient", Mock())
+    monkeypatch.setattr("gr_data.raw.ricequant.client.RqdatacClient", Mock())
+    monkeypatch.setattr(cli, "connect", connection)
+    monkeypatch.setattr(
+        cli, "latest_publication", lambda c: {"as_of_date": date(2026, 11, 18), "valid": True}
+    )
+
+    residual = tmp_path / "diagnosis/daily/2026-11-20/residual.json"
+    write_json(residual, {"keep": True})
+    monkeypatch.setattr(
+        cli,
+        "probe_upstream",
+        lambda pg, d, **kw: (
+            {"ready": True, "status": "ready", "day": str(d), "probe_code": "000001.XSHE"}
+            if d == day1
+            else {
+                "ready": False,
+                "status": "pending_upstream",
+                "day": str(d),
+                "reason": "ricequant_v2_exposure_not_ready",
+                "probe_code": "000001.XSHE",
+            }
+        ),
+    )
+    prepare_call = Mock(return_value={"version_id": "v-day1"})
+    apply_call = Mock(return_value={"version_id": "v-day1", "day": str(day1)})
+    monkeypatch.setattr(cli, "prepare", prepare_call)
+    monkeypatch.setattr(cli, "apply", apply_call)
+    cfg = Mock(raw_root=tmp_path, environment=SimpleNamespace(values={}))
+
+    # 独立 probe 只读检查不覆盖 last-run.json。
+    probe_only = Namespace(
+        action="probe",
+        artifact=None,
+        day=day2,
+        start=None,
+        end=None,
+        reuse_raw=None,
+        probe_upstream=False,
+    )
+    assert cli.run(probe_only, cfg) == 0
+    assert not (tmp_path / "diagnosis/daily/last-run.json").exists()
+
+    # 单日未就绪：零写退出 0，不归档 _failed，不调用 prepare。
+    prep_args = Namespace(
+        action="prepare",
+        artifact=None,
+        day=day2,
+        start=None,
+        end=None,
+        reuse_raw=None,
+        probe_upstream=True,
+    )
+    assert cli.run(prep_args, cfg) == 0
+    prepare_call.assert_not_called()
+    assert residual.exists() and not (tmp_path / "diagnosis/daily/_failed").exists()
+    state = json.loads((tmp_path / "diagnosis/daily/last-run.json").read_text())
+    assert state == {
+        "status": "pending_upstream",
+        "day": "2026-11-20",
+        "reason": "ricequant_v2_exposure_not_ready",
+    }
+
+    # 多日 run：day1 已就绪正常发布，day2 未就绪干净停步并返回 0。
+    run_args = Namespace(
+        action="run",
+        artifact=None,
+        day=None,
+        start=day1,
+        end=day2,
+        reuse_raw=None,
+        probe_upstream=True,
+    )
+    assert cli.run(run_args, cfg) == 0
+    assert prepare_call.call_count == 1 and apply_call.call_count == 1
+    assert residual.exists() and not (tmp_path / "diagnosis/daily/_failed").exists()
+    run_state = json.loads((tmp_path / "diagnosis/daily/last-run.json").read_text())
+    assert run_state["status"] == "pending_upstream" and run_state["day"] == "2026-11-20"
+    assert run_state["publications"] == [{"version_id": "v-day1", "day": "2026-11-19"}]
+
+
+def test_collect_risk_reuse_raw_skips_live_sdk_when_bundle_exists(tmp_path):
+    from typing import Any, cast
+
+    import numpy as np
+    import pandas as pd
+    from gr_data.common.paths import RawPaths
+    from gr_data.common.ricequant_symbol_intervals import symbol_rule_evidence
+    from gr_data.common.ricequant_universe import build_universe_provider
+    from gr_data.config.ricequant import RicequantImportOptions
+    from gr_data.config.ricequant_risk import RiskOptions
+    from gr_data.diagnosis_daily.collect import collect_risk
+    from gr_data.raw.base import RawContext
+    from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
+    from gr_data.raw.ricequant.riskmodel import run_risk_raw
+
+    day = date(2026, 11, 20)
+    options = RiskOptions(
+        "v2",
+        "sws_2021",
+        day,
+        day,
+        (),
+        {
+            "factor_return": "dec_daily",
+            "specific_return": "dec_daily",
+            "covariance": "dec2_annual",
+            "specific_risk": "dec_annual",
+        },
+        "verified",
+        universe_policy="listed_cn_a_v2",
+        purpose="production",
+        production_symbol_rules_version="cn_stock_code_intervals_v4",
+    )
+    metadata = {
+        "instruments": [
+            {
+                "instrument_id": 1,
+                "symbol": "000001.SZ",
+                "exchange": "XSHE",
+                "list_date": "1991-04-03",
+                "delist_date": None,
+                "status": "listed",
+            }
+        ],
+        "aliases": [{"source": "tushare", "source_symbol": "000001.SZ", "instrument_id": 1}],
+    }
+    reference = {
+        "sdk_version": "fixture",
+        "instruments": [
+            {
+                "order_book_id": "000001.XSHE",
+                "listed_date": "1991-04-03",
+                "de_listed_date": "0000-00-00",
+            }
+        ],
+        "sdk_mapping": {"000001.XSHE": "000001.XSHE"},
+    }
+    factors = sorted(STYLE_FACTORS["v2"] | {"comovement", "银行"})
+
+    class CaptureClient:
+        def get_quota(self):
+            return {"bytes_limit": 1000000, "bytes_used": 0}
+
+        def get_trading_dates(self, start, end):
+            return [day]
+
+        def risk_piece(self, piece, d, codes, *, model, industry_mapping):
+            if piece == "covariance":
+                return pd.DataFrame(np.eye(len(factors)) * 0.001, columns=factors, index=factors)
+            if piece == "factor_return":
+                return pd.DataFrame(
+                    [[0.001] * len(factors)], index=pd.DatetimeIndex([d]), columns=factors
+                )
+            if piece == "exposure":
+                row = {f: (1.0 if f in {"comovement", "银行"} else 0.0) for f in factors}
+                return pd.DataFrame(
+                    [row],
+                    index=pd.MultiIndex.from_tuples(
+                        [("000001.XSHE", pd.Timestamp(d))], names=["order_book_id", "date"]
+                    ),
+                )
+            return pd.DataFrame([[0.2]], index=pd.DatetimeIndex([d]), columns=["000001.XSHE"])
+
+    paths = RawPaths(tmp_path / "raw")
+    provider = build_universe_provider(
+        metadata,
+        reference,
+        universe_policy="listed_cn_a_v2",
+        mapping_version="alias_v2",
+        symbol_rules=symbol_rule_evidence("cn_stock_code_intervals_v4"),
+    )
+    run_risk_raw(
+        cast(Any, CaptureClient()),
+        RawContext(paths),
+        options,
+        RicequantImportOptions(datasets={"rq_risk_model": options}),
+        mode="init",
+        universe_provider=provider,
+        capture_callback=lambda _: None,
+    )
+
+    class OfflineClient:
+        def __getattr__(self, name):
+            pytest.fail(f"reuse_raw must not call live RiceQuant SDK: {name}")
+
+    result = collect_risk(OfflineClient(), paths, day, options, metadata, reuse_raw=True)
+    assert result["security_ids"] == [1]
+    assert (paths.dataset_dir("ricequant", "daily_capture") / "manifest.json").exists()
+    assert (paths.dataset_dir("ricequant", "daily_capture") / "preflight.json").exists()
+
+
+def test_quota_expiry_warning_and_snapshot_metadata(caplog):
+    import logging
+
+    from gr_data.raw.ricequant.fetchers.supplements import _check_quota
+    from gr_data.raw.ricequant.riskmodel import _quota_snapshot
+
+    client = Mock()
+    client.get_quota.return_value = {"bytes_limit": 1000, "bytes_used": 100}
+    with caplog.at_level(logging.WARNING):
+        _check_quota(client, 0.1)
+        plain = _quota_snapshot(client)
+    assert set(plain) == {"observed_at", "bytes_used", "bytes_limit"}
+    assert not caplog.records
+
+    client.get_quota.return_value = {
+        "bytes_limit": 1000,
+        "bytes_used": 100,
+        "remaining_days": 45,
+    }
+    with caplog.at_level(logging.WARNING):
+        ok_snap = _quota_snapshot(client)
+    assert ok_snap["remaining_days"] == 45 and not caplog.records
+
+    client.get_quota.return_value = {
+        "bytes_limit": 1000,
+        "bytes_used": 100,
+        "remaining_days": 18,
+        "expire_date": "2026-12-11",
+        "account_secret": "must-not-persist",
+    }
+    with caplog.at_level(logging.WARNING):
+        _check_quota(client, 0.1)
+        warn_snap = _quota_snapshot(client)
+    assert warn_snap["remaining_days"] == 18
+    assert warn_snap["expire_date"] == "2026-12-11"
+    assert "account_secret" not in warn_snap
+    assert len(caplog.records) == 2
+    assert all("remaining_days=18" in r.message and "30-day" in r.message for r in caplog.records)

@@ -106,30 +106,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("mock auth enabled: X-User-Id header is trusted (app_env=%s)", settings.env)
     await pg_pool.init(settings.postgres)
 
-    listener = BacktestJobListener(settings.postgres)
-    await listener.start()  # may silently fail to be the holder
-
-    if listener.is_holder:
-        # Wire into the 3 SSE service modules so generators
-        # ``subscribe(job_id)`` and wake up within ~10ms of a
-        # worker-side ``pg_notify``.
-        job_svc._LISTENER = listener
-        sweep_svc._LISTENER = listener
-        wf_svc._LISTENER = listener
-    else:
-        # Non-holder workers — leave _LISTENER unset (the SSE
-        # generators check ``if _LISTENER is None`` and fall back
-        # to polling). Also reset the service-module globals so
-        # a previous holder that got rotated out doesn't leave a
-        # stale listener behind.
+    listener: BacktestJobListener | None = None
+    if settings.web.v1_diagnosis_only:
         job_svc._LISTENER = None
         sweep_svc._LISTENER = None
         wf_svc._LISTENER = None
-        # The listener object is not useful on this worker; we
-        # still call ``stop()`` to clean up the failed-to-acquire
-        # conn and the would-be subscribers dict.
-        await listener.stop()
-        listener = None  # noqa: F841 — for the ``finally`` clause
+    else:
+        listener = BacktestJobListener(settings.postgres)
+        await listener.start()  # may silently fail to be the holder
+
+        if listener.is_holder:
+            # Wire into the 3 SSE service modules so generators
+            # ``subscribe(job_id)`` and wake up within ~10ms of a
+            # worker-side ``pg_notify``.
+            job_svc._LISTENER = listener
+            sweep_svc._LISTENER = listener
+            wf_svc._LISTENER = listener
+        else:
+            # Non-holder workers — leave _LISTENER unset (the SSE
+            # generators check ``if _LISTENER is None`` and fall back
+            # to polling). Also reset the service-module globals so
+            # a previous holder that got rotated out doesn't leave a
+            # stale listener behind.
+            job_svc._LISTENER = None
+            sweep_svc._LISTENER = None
+            wf_svc._LISTENER = None
+            # The listener object is not useful on this worker; we
+            # still call ``stop()`` to clean up the failed-to-acquire
+            # conn and the would-be subscribers dict.
+            await listener.stop()
+            listener = None  # noqa: F841 — for the ``finally`` clause
 
     try:
         yield
@@ -153,7 +159,7 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
 
     app.state.settings = settings
     app.state.task_queue = None
-    if settings.worker.backend == "celery":
+    if settings.worker.backend == "celery" and not settings.web.v1_diagnosis_only:
         from gr_api.worker.factory import make_celery_app
 
         app.state.task_queue = make_celery_app(settings)
@@ -196,29 +202,30 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     register_exception_handlers(app)
 
     app.include_router(auth_router.router, prefix="/v1")
-    app.include_router(backtest_jobs_router.router, prefix="/v1")
-    app.include_router(backtest_runs_router.router, prefix="/v1")
-    app.include_router(backtest_sweeps_router.router, prefix="/v1")
-    app.include_router(backtest_walk_forwards_router.router, prefix="/v1")
-    app.include_router(strategies_router.router, prefix="/v1")
     # 持仓诊断：/v1/diagnosis/*。契约见 getrich-design/portfolio-analysis/
     # 持仓诊断_表与接口设计.md §7.1（该文档写的 /api/v1 前缀与本仓不符，以此处为准）。
     app.include_router(diagnosis_router.router, prefix="/v1")
-    # 选股展示：策略列表/详情/标的池走 pick.* 两张表，与择时策略的
-    # /v1/strategies 分开 —— 选股策略 P0 没有业绩数字，混在一起会让
-    # 前端拿到一堆 null 并误以为策略跑输了。
-    app.include_router(picks_router.strategies_router, prefix="/v1")
-    app.include_router(picks_router.picks_router, prefix="/v1")
-    app.include_router(signals_router.router, prefix="/v1")
-    app.include_router(subscriptions_router.router, prefix="/v1")
-    app.include_router(signal_settings_router.router, prefix="/v1")
     app.include_router(user_router.router, prefix="/v1")
-    app.include_router(payments_router.router, prefix="/v1")
-    # Admin-only backoffice routes (strategy import / preview / commit / history).
-    # All endpoints guarded by ``require_admin`` — see
-    # ``routers/admin_imports.py`` for the per-endpoint contract.
-    app.include_router(admin_imports_router.router, prefix="/v1")
-    app.include_router(picks_router.admin_router, prefix="/v1")
+    if not settings.web.v1_diagnosis_only:
+        app.include_router(backtest_jobs_router.router, prefix="/v1")
+        app.include_router(backtest_runs_router.router, prefix="/v1")
+        app.include_router(backtest_sweeps_router.router, prefix="/v1")
+        app.include_router(backtest_walk_forwards_router.router, prefix="/v1")
+        app.include_router(strategies_router.router, prefix="/v1")
+        # 选股展示：策略列表/详情/标的池走 pick.* 两张表，与择时策略的
+        # /v1/strategies 分开 —— 选股策略 P0 没有业绩数字，混在一起会让
+        # 前端拿到一堆 null 并误以为策略跑输了。
+        app.include_router(picks_router.strategies_router, prefix="/v1")
+        app.include_router(picks_router.picks_router, prefix="/v1")
+        app.include_router(signals_router.router, prefix="/v1")
+        app.include_router(subscriptions_router.router, prefix="/v1")
+        app.include_router(signal_settings_router.router, prefix="/v1")
+        app.include_router(payments_router.router, prefix="/v1")
+        # Admin-only backoffice routes (strategy import / preview / commit / history).
+        # All endpoints guarded by ``require_admin`` — see
+        # ``routers/admin_imports.py`` for the per-endpoint contract.
+        app.include_router(admin_imports_router.router, prefix="/v1")
+        app.include_router(picks_router.admin_router, prefix="/v1")
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:

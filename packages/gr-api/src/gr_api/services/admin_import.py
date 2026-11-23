@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from gr_api.errors import BadRequest, NotFound
 from gr_api.schemas.admin_import import ImportPreviewIn, StrategyUpsertIn
+from gr_api.services.sanitize import normalize_detail_html
 from psycopg.types.json import Jsonb
 
 
@@ -102,7 +103,9 @@ async def upsert_strategy(
         "name": body.name,
         "summary": body.summary,
         "description": body.description,
-        "detail_html": body.detail_html,
+        "detail_html": (
+            normalize_detail_html(body.detail_html) if body.detail_html is not None else None
+        ),
         "category_id": body.category_id,
         "strategy_type": body.strategy_type,
         "asset_class": body.asset_class,

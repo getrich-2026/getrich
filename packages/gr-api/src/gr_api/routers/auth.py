@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
 from datetime import datetime, timezone as tz
@@ -50,6 +51,14 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _hash_password(password: str) -> str:
+    """使用 bcrypt 计算密码哈希（供线程池调用，避免阻塞事件循环）。"""
+    return bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt(rounds=12),
+    ).decode("utf-8")
+
+
 async def create_refresh_token(user_id: str, db: DictConnection, web: WebConfig) -> str:
     """Generate a random refresh token, store its hash, return the raw token."""
     raw = secrets.token_hex(32)  # 64-char hex string
@@ -58,7 +67,7 @@ async def create_refresh_token(user_id: str, db: DictConnection, web: WebConfig)
     async with db.cursor() as cur:
         await cur.execute(
             """
-            INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+            INSERT INTO app.refresh_tokens (user_id, token_hash, expires_at)
             VALUES (%(user_id)s, %(token_hash)s, NOW() + INTERVAL '1 second' * %(expire_seconds)s)
             """,
             {
@@ -75,7 +84,7 @@ async def revoke_refresh_tokens(user_id: str, db: DictConnection) -> None:
     """Delete all refresh tokens for a user (used on logout / rotation / revoke)."""
     async with db.cursor() as cur:
         await cur.execute(
-            "DELETE FROM refresh_tokens WHERE user_id = %(user_id)s",
+            "DELETE FROM app.refresh_tokens WHERE user_id = %(user_id)s",
             {"user_id": user_id},
         )
         await db.commit()
@@ -87,22 +96,23 @@ async def revoke_refresh_tokens(user_id: str, db: DictConnection) -> None:
 
 
 async def _authenticate_via_user_auth(db: DictConnection, email: str) -> dict | None:
-    """Query ``user_auth`` for email+password login.
+    """Query ``app.user_auth`` for active email+password login.
 
-    Returns a dict with keys ``user_id``, ``credential``, ``name`` when a row
-    with a non-NULL credential exists. Returns ``None`` when the email has no
-    password-based auth (e.g. OAuth-only user).
+    Returns a dict with keys ``user_id``, ``credential``, ``name`` when an
+    active user row with a non-NULL credential exists. Returns ``None`` when
+    the email has no active password-based auth.
     """
     async with db.cursor() as cur:
         await cur.execute(
             """
             SELECT ua.user_id, ua.credential,
                    COALESCE(u.display_name, u.name, '') AS name
-            FROM user_auth ua
-            JOIN users u ON u.id = ua.user_id
+            FROM app.user_auth ua
+            JOIN app.users u ON u.id = ua.user_id
             WHERE ua.auth_type = 'email'
               AND ua.identifier = %(email)s
               AND ua.credential IS NOT NULL
+              AND u.is_active = TRUE
             """,
             {"email": email},
         )
@@ -110,10 +120,10 @@ async def _authenticate_via_user_auth(db: DictConnection, email: str) -> dict | 
 
 
 async def _authenticate_via_users_fallback(db: DictConnection, email: str) -> dict | None:
-    """Fallback: query ``users.email`` for dev accounts (legacy)."""
+    """Fallback: query ``app.users.email`` for dev accounts (legacy)."""
     async with db.cursor() as cur:
         await cur.execute(
-            "SELECT id, email, password, name FROM users"
+            "SELECT id, email, password, name FROM app.users"
             " WHERE email = %(email)s AND is_active = TRUE"
             " AND password IS NOT NULL",
             {"email": email},
@@ -148,7 +158,7 @@ async def login(
     if auth_row is not None:
         # Verify password against bcrypt hash in user_auth.credential
         hash_bytes = auth_row["credential"].encode("utf-8")
-        if not bcrypt.checkpw(password_bytes, hash_bytes):
+        if not await asyncio.to_thread(bcrypt.checkpw, password_bytes, hash_bytes):
             raise Unauthorized("invalid email or password")
 
         user_id = str(auth_row["user_id"])
@@ -180,7 +190,7 @@ async def login(
         raise Unauthorized("invalid email or password")
 
     hash_bytes = user_row["password"].encode("utf-8")
-    if not bcrypt.checkpw(password_bytes, hash_bytes):
+    if not await asyncio.to_thread(bcrypt.checkpw, password_bytes, hash_bytes):
         raise Unauthorized("invalid email or password")
 
     user_id = str(user_row["id"])
@@ -227,7 +237,7 @@ async def register(
     async with db.cursor() as cur:
         # Check uniqueness in user_auth (primary auth source)
         await cur.execute(
-            "SELECT id FROM user_auth WHERE auth_type = 'email' AND identifier = %(email)s",
+            "SELECT id FROM app.user_auth WHERE auth_type = 'email' AND identifier = %(email)s",
             {"email": email_lower},
         )
         if await cur.fetchone() is not None:
@@ -235,17 +245,14 @@ async def register(
 
         # Also check users.email fallback (legacy dev accounts)
         await cur.execute(
-            "SELECT id FROM users WHERE email = %(email)s",
+            "SELECT id FROM app.users WHERE email = %(email)s",
             {"email": email_lower},
         )
         if await cur.fetchone() is not None:
             raise BadRequest("an account with this email already exists")
 
-        # Hash password
-        password_hash = bcrypt.hashpw(
-            body.password.encode("utf-8"),
-            bcrypt.gensalt(rounds=12),
-        ).decode("utf-8")
+        # Hash password off the event loop
+        password_hash = await asyncio.to_thread(_hash_password, body.password)
 
         # 011要求email/password非空；与user_auth保存同一规范邮箱和bcrypt值。
         await cur.execute(
@@ -261,12 +268,13 @@ async def register(
             },
         )
         new_user = await cur.fetchone()
+        assert new_user is not None
         user_id = str(new_user["id"])
 
         # Insert into user_auth (credential)
         await cur.execute(
             """
-            INSERT INTO user_auth (user_id, auth_type, identifier, credential, verified)
+            INSERT INTO app.user_auth (user_id, auth_type, identifier, credential, verified)
             VALUES (%(user_id)s, 'email', %(email)s, %(credential)s, TRUE)
             """,
             {
@@ -322,8 +330,8 @@ async def refresh(
             SELECT rt.id AS rt_id, rt.expires_at,
                    u.id AS user_id,
                    COALESCE(u.display_name, u.name, '') AS name
-            FROM refresh_tokens rt
-            JOIN users u ON u.id = rt.user_id
+            FROM app.refresh_tokens rt
+            JOIN app.users u ON u.id = rt.user_id
             WHERE rt.token_hash = %(token_hash)s
               AND u.is_active = TRUE
             """,

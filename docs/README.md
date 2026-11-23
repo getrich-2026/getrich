@@ -14,6 +14,7 @@
 | 前端开发者 | [前端指南](guides/frontend-dev.md) | 启动、代理、配置与排障 |
 | 策略／数据维护者 | [选股导入](guides/pick-import.md) | 文件格式、CLI、入池日期 |
 | 诊断页面接入者 | [诊断 API](guides/diagnosis-api.md) | 调用流程与状态，模型真源在代码／OpenAPI |
+| V1 上线与运维维护者 | [V1 发布切换指南](guides/v1-release-cutover.md) | `/srv/getrich` 目录隔离、配置解耦、T+1 晨间调度、服务加固与回退 |
 | 数据库开发者 | [数据字典](guides/data-dictionary.md) | 生成字典与注释门禁，不手抄 schema |
 | 审核与运维维护者 | [工程与业务关键点备忘](guides/review-key-points.md) | 审核发现的关键业务口径、版本锁边界与生产更新铁律 |
 | 安排工作的人 | [待决问题](plans/backlog.md) | 缺口、证据、待定选择、验收条件 |

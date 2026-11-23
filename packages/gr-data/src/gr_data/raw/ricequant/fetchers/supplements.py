@@ -7,6 +7,7 @@ import math
 from collections import deque
 from datetime import datetime
 from importlib.metadata import version
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -27,6 +28,27 @@ from gr_data.raw.ricequant.store import RqRawStore, file_hash
 
 
 log = logging.getLogger(__name__)
+QUOTA_EXPIRY_WARN_DAYS = 30
+
+
+def _extract_remaining_days(
+    quota: dict[str, Any], *, logger: logging.Logger = log
+) -> int | float | None:
+    """提取数值型剩余有效天数；低于安全阈值时记录英文告警。"""
+    remaining = quota.get("remaining_days")
+    if (
+        not isinstance(remaining, bool)
+        and isinstance(remaining, (int, float))
+        and math.isfinite(remaining)
+    ):
+        if remaining < QUOTA_EXPIRY_WARN_DAYS:
+            logger.warning(
+                "RiceQuant license remaining_days=%s is below %d-day threshold",
+                remaining,
+                QUOTA_EXPIRY_WARN_DAYS,
+            )
+        return remaining
+    return None
 
 
 def _check_quota(client: RicequantClient, reserve: float) -> None:
@@ -38,8 +60,12 @@ def _check_quota(client: RicequantClient, reserve: float) -> None:
     if not isinstance(quota, dict):
         raise PermanentError("米筐配额返回类型无效，请核对账号契约")
     limit, used = quota.get("bytes_limit"), quota.get("bytes_used")
-    if any(not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 for v in (limit, used)):
+    if any(
+        isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0
+        for v in (limit, used)
+    ):
         raise PermanentError("米筐配额返回字段无效，请核对账号契约")
+    _extract_remaining_days(quota, logger=log)
     if limit and used >= limit * (1 - reserve):
         raise BudgetDeferredError("米筐已触及配额安全余量，剩余分片等待恢复")
 

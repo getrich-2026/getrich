@@ -152,6 +152,7 @@ uv lock --check && uv sync --frozen --all-packages
 | 启动主前端 | [前端开发指南](docs/guides/frontend-dev.md) |
 | 导入每日选股池 | [选股导入指南](docs/guides/pick-import.md) |
 | 接入持仓诊断页面 | [诊断 API 指南](docs/guides/diagnosis-api.md) |
+| 执行 V1 后端上线切换 | [V1 发布切换指南](docs/guides/v1-release-cutover.md) |
 | 查数据库结构／生成字典 | [数据字典指南](docs/guides/data-dictionary.md) |
 | 抓取与入库数据 | [gr-data 手册](packages/gr-data/README.md) |
 | 配置数据库基础设施 | [部署模板](deploy/README.md) |
