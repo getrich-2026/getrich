@@ -1,6 +1,6 @@
 # 多用户持仓诊断 V1 后端发布切换指南
 
-面向执行与复核多用户持仓诊断 V1 后端正式上线切换的运维与开发维护者。状态：**现行操作指南**（2026-11-23 核对仓库源码与云端 `/srv/getrich` 基线）；本文提供可复用的部署结构、配置解耦、日更调度、服务加固与回退步骤。真实域名、公网 IP、密钥与供应商凭证仅在仓外维护，严禁写入仓库（见 [D-019](../../.agents/brain/DECISIONS.md#d-019)）。
+面向执行与复核多用户持仓诊断 V1 后端正式上线切换的运维与开发维护者。状态：**现行操作指南**（2026-11-24 已按本文完成云端 `/srv/getrich` 准生产切换与长期运维脚本收口）；本文提供可复用的部署结构、配置拆分、日更调度、服务加固与回退步骤。真实域名、公网 IP、密钥与供应商凭证仅在仓外维护，严禁写入仓库（见 [D-019](../../.agents/brain/DECISIONS.md#d-019)）。
 
 接口调用契约见 [持仓诊断 API 调用指南](diagnosis-api.md)，版本锁与多品种共库边界见 [工程与业务关键点备忘](review-key-points.md)，数据库容器模板见 [deploy 说明](../../deploy/README.md)。
 
@@ -32,21 +32,19 @@
 
 ---
 
-## 3. 环境配置最小权限拆分与 `maintenance-runtime.json` 解耦
+## 3. 环境配置最小权限拆分与长期运维脚本收口
 
-### 3.1 禁止将 API 配置文件纳入 ETL 启动哈希清单
+### 3.1 环境文件最小权限拆分（零密钥混放）
 
-云端接手阶段的 `maintenance-runtime.json` 将 `config/api.env`、`data.env` 与源码一并计入 1,897 文件的 SHA-256 启动校验。一旦为 V1 上线修改 `api.env`（如开启 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、切换 `APP_ENV=prod` 或更新 `WEB_CORS_ORIGINS`），会导致 `getrich-v1-daily.service` 与 `getrich-logical-backup.service` 启动哈希校验失败而双双停摆。
+生产与准生产环境按**最小权限原则**将运行配置拆分为两份权限 `0600` 的独立环境文件（历史迁移阶段的 `maintenance-runtime.json` 1,897 文件哈希锁与旧 `operations/cloud-stage-*` 冻结目录已随正式切换整体下线，不再阻断日常配置调整与密钥轮换）：
 
-正式切换按**最小权限原则**拆分为两份权限 `0600` 的独立环境文件，并收敛 `maintenance-runtime.json` 的校验范围：
-
-1. **API 专用环境 `/srv/getrich/config/api-prod.env`（`0600`，完全移出 `maintenance-runtime.json`）**：
-   - 仅由 `getrich-api.service` 通过 `EnvironmentFile=/srv/getrich/config/api-prod.env` 加载。
+1. **API 专用环境 `/srv/getrich/config/api-prod.env`（`0600`）**：
+   - 仅由 `getrich-api.service` 通过 `EnvironmentFile=/srv/getrich/config/api-prod.env` 与长期巡检脚本 `/srv/getrich/ops/run-health.py` 读取。
    - **绝不写入 `TUSHARE_TOKEN`、`RICEQUANT_API_KEY` 等外部供应商密钥**。
    - 必配非敏感开关与路径示例（密钥与域名在仓外填入真实值）：
 
    ```ini
-   APP_ENV=prod
+   APP_ENV=prod # 域名备案前准生产联调可设 APP_ENV=staging + STRICT_MODE=true
    STRICT_MODE=true
    TZ=Asia/Shanghai
 
@@ -74,16 +72,19 @@
    PG_POOL_MAX=20
    ```
 
-   > **关键启动陷阱**：[`gr_api/config.py`](../../packages/gr-api/src/gr_api/config.py) 在 `APP_ENV=prod` 或 `STRICT_MODE=true` 时要求 `BACKTEST_ARTIFACT_DIR` 指向已存在的目录（即使开启 `GETRICH_V1_DIAGNOSIS_ONLY=true`，`load_api_settings()` 仍会构造 `BacktestStorageConfig`）。切换前必须先执行 `mkdir -p /srv/getrich/state/artifacts` 并赋予运行用户读写权限。若 ICP 备案完成前需使用本地前端源联调，`APP_ENV=prod` 会拒绝本地 `WEB_CORS_ORIGINS`，联调阶段可保持 `APP_ENV=staging` 配合 `STRICT_MODE=true`。
+   > **关键启动陷阱**：[`gr_api/config.py`](../../packages/gr-api/src/gr_api/config.py) 在 `APP_ENV=prod` 或 `STRICT_MODE=true` 时要求 `BACKTEST_ARTIFACT_DIR` 指向已存在的目录（即使开启 `GETRICH_V1_DIAGNOSIS_ONLY=true`，`load_api_settings()` 仍会构造 `BacktestStorageConfig`）。切换前必须先执行 `mkdir -p /srv/getrich/state/artifacts` 并赋予运行用户读写权限。若 ICP 备案完成前需使用本地前端源联调，`APP_ENV=prod` 会拒绝本地 `WEB_CORS_ORIGINS`，联调阶段保持 `APP_ENV=staging` 配合 `STRICT_MODE=true`。
 
-2. **数据维护专用环境 `/srv/getrich/config/data.env`（`0600`）**：
-   - 仅由 `getrich-v1-daily.service` 与 `getrich-logical-backup.service` 加载。
-   - 仅保留 `PG_*`、`RAW_PARQUET_ROOT=/srv/getrich/state/raw_parquet`、`TUSHARE_TOKEN`、`RICEQUANT_API_KEY`、`TZ=Asia/Shanghai`；**不放入 `JWT_SECRET`**。
-   - `PGOPTIONS="-c idle_in_transaction_session_timeout=0"` **仅在 `getrich-logical-backup.service` 单元内追加**，避免全库 `pg_dump` 超过 [`postgresql.conf`](../../deploy/config/postgres/postgresql.conf) 的 `10min` 空闲事务上限，同时保留常规会话的 `10min` 悬挂事务保护。
+2. **数据维护专用环境 `/srv/getrich/config/data-prod.env`（`0600`）**：
+   - 仅由 `/srv/getrich/ops/run-v1-daily.py`（`getrich-v1-daily.service`）与 `/srv/getrich/ops/run-backup.py`（`getrich-logical-backup.service`）加载。
+   - 仅保留 `GETRICH_ROOT=/srv/getrich/current/etl`、`PG_*`、`RAW_PARQUET_ROOT=/srv/getrich/state/raw_parquet`、`TUSHARE_TOKEN`、`RICEQUANT_API_KEY`、`TZ=Asia/Shanghai`；**不放入 `JWT_SECRET`**。
+   - 逻辑备份脚本在快照事务内显式执行 `SET LOCAL idle_in_transaction_session_timeout = 0`（同时保留常规会话的 `10min` 悬挂事务保护），避免全库 `pg_dump` 超过 [`postgresql.conf`](../../deploy/config/postgres/postgresql.conf) 的空闲事务上限。
 
-3. **`maintenance-runtime.json` 清单收敛**：
-   - 哈希范围限定为 `/srv/getrich/releases/<id>/etl` 受控代码、`/srv/getrich/ops/*.py` 运维脚本及结构化采集配置 `/srv/getrich/config/daily-native.yaml`，由 `deploy-release.sh` 在切换 `current/etl` 时同步重签。
-   - 对 `data.env` 只校验文件属主、权限必须为 `0600` 及必需变量名非空，不再对其原始字节计算 SHA-256，确保后续轮换供应商 Token 或数据库密码不会阻断逻辑备份。
+3. **统一长期运维脚本目录 `/srv/getrich/ops/`（V1/V2 通用）**：
+   - `deploy-release.sh`：按 `app`（`--no-editable`）与 `etl`（保留 `.git` 的干净 editable 检出）构建并原子切换 `/srv/getrich/current/{app,etl}`。
+   - `getrich-api.service`：API systemd 单元模板。
+   - `run-v1-daily.py`：晨间 T+1 日更入口（互斥锁 `maintenance.lock`、独立日历对账、`--probe-upstream` 零写等待，日志落盘至 `/srv/getrich/state/logs/daily-runs/`）。
+   - `run-backup.py`：每日 `03:30` 一致性快照 `pg_dump` + `pg_restore --list` 校验 + SHA-256 收据与滚动保留最新 2 份归档（支持 `--self-test` 快速验证）。
+   - `run-health.py`：每 15 分钟只读巡检（校验 `api-prod.env` 权限与长期底线开关但不写死 `v1_diagnosis_only`、检查 `getrich-api.service` 与 `nginx.service` 存活、实测 `/health` 与 4 项安全头及外网 `/metrics` 返回 `403`、扫描 `/srv/getrich/state/logs/daily-runs/` 排查卡顿、开市日 `13:30`～`14:59` `pending_upstream` 提前输出 `warnings`，结果写 `/srv/getrich/state/health/latest.json`）。
 
 ---
 
@@ -130,7 +131,9 @@ flowchart LR
 Description=GetRich V1 Portfolio Diagnosis T+1 Morning Update Timer
 
 [Timer]
-OnCalendar=*-*-* 09:00,12:30:00 Asia/Shanghai
+OnCalendar=*-*-* 09:00:00 Asia/Shanghai
+OnCalendar=*-*-* 12:30:00 Asia/Shanghai
+OnCalendar=*-*-* 14:15:00 Asia/Shanghai
 Persistent=true
 RandomizedDelaySec=60
 Unit=getrich-v1-daily.service
@@ -143,10 +146,9 @@ WantedBy=timers.target
 
 - `WorkingDirectory=/srv/getrich/current/etl`
 - `Environment=GETRICH_ROOT=/srv/getrich/current/etl`
-- `EnvironmentFile=/srv/getrich/config/data.env`
-- 执行入口调用 `/srv/getrich/current/etl/.venv/bin/gr-data --config /srv/getrich/config/daily-native.yaml diagnosis-daily run --probe-upstream`：单股 `v2` `exposure` 未就绪时写 `{"status": "pending_upstream", "reason": "ricequant_v2_exposure_not_ready"}` 并以退出码 `0` 结束（不烧 83 批配额、不归档 `_failed`、**不生成 `daily-blocked.json`**）；仅真实契约违规或阶段 B 失败返回非零退出码并写 `daily-blocked.json`。
-- `15:00 Asia/Shanghai` 之后如需手工补跑历史缺日，必须显式传 `--end <米筐已发布的上一交易日>`。
-- `cloud_health.py` 对齐：存在 `daily-blocked.json`、`!publication_is_valid` 或 `lag > 1` 判为 `unhealthy`；`pending_upstream` 且 `lag <= 1` 在开市日 `13:30` 前判正常等待，`13:30`～`14:59` 报 `warning` 提示人工核查。
+- 由 `/srv/getrich/ops/run-v1-daily.py` 加载 `/srv/getrich/config/data-prod.env` 并调用 `/srv/getrich/current/etl/.venv/bin/gr-data --config /srv/getrich/config/daily-native.yaml diagnosis-daily run --probe-upstream`：单股 `v2` `exposure` 未就绪时写 `{"status": "pending_upstream", "reason": "ricequant_v2_exposure_not_ready"}` 并以退出码 `0` 结束（不烧 83 批配额、不归档 `_failed`、**不生成 `daily-blocked.json`**）；仅真实契约违规或阶段 B 失败返回非零退出码并写 `daily-blocked.json`。
+- `15:00 Asia/Shanghai` 之后如需手工补跑历史缺日，必须显式传 `--start <起始日> --end <米筐已发布的上一交易日>`。
+- `/srv/getrich/ops/run-health.py` 对齐：存在 `daily-blocked.json`、`!publication_is_valid`、日更卡死超时或 `lag > 1` 判为 `alerts`（`passed=false`）；`pending_upstream` 且 `lag <= 1` 在开市日 `13:30` 前判正常等待，`13:30`～`14:59` 写入 `warnings` 提示提前人工核查。
 
 ---
 
@@ -189,7 +191,7 @@ WantedBy=multi-user.target
 
 1. **显式绑定回环地址**：`uvicorn` 不自动消费 `WEB_HOST`／`WEB_PORT` 作为监听参数，必须显式传 `--host 127.0.0.1 --port 8001`。
 2. **优雅停机超时（`35s` / `45s`）**：[`diagnosis_publication.py`](../../packages/gr-api/src/gr_api/services/diagnosis_publication.py) `consistent_read()` 含 `30s` `statement_timeout` 与 `5s` 屏蔽取消锁清理，设 `--timeout-graceful-shutdown 35` 与 `TimeoutStopSec=45s` 避免停机时被提前 `SIGKILL`。
-3. **反向代理与路由收敛**：开启 `GETRICH_V1_DIAGNOSIS_ONLY=true`（[`gr_api/main.py`](../../packages/gr-api/src/gr_api/main.py) 仅挂载 `/v1/auth`、`/v1/user`、`/v1/diagnosis`、`/health`、`/metrics`，保留 4 个安全响应头并跳过 `BacktestJobListener`）；反向代理对外网 `deny` `/metrics`（按需屏蔽 `/docs`、`/openapi.json`），对 `/v1/auth/*` 与 `POST /v1/diagnosis/snapshots` 限流；ICP 备案前维持 DNS 暂停与非 `80/443` 高位端口源 IP 白名单，备案后拆分为根域名／`www` 前端静态站与 `api.<domain>` 后端反代。
+3. **反向代理与路由收敛**：开启 `GETRICH_V1_DIAGNOSIS_ONLY=true`（[`gr_api/main.py`](../../packages/gr-api/src/gr_api/main.py) 仅挂载 `/v1/auth`、`/v1/user`、`/v1/diagnosis`、`/health`、`/metrics`，保留 4 个安全响应头并跳过 `BacktestJobListener`）；反向代理（Nginx 监听 `80` 与 `8080`）对外网返回 `403` 屏蔽 `/metrics`，对 `/v1/auth/*` 与 `POST /v1/diagnosis/snapshots` 限流；注意最严格纯 API 策略 `CSP_POLICY=default-src 'none'; frame-ancestors 'none'` 会拦截浏览器渲染 `/docs`（属预期安全行为，接口联调通过导出 OpenAPI 3.0.3 JSON 导入 Apifox 进行）。ICP 备案前维持 DNS 暂停与高位端口联调，备案后拆分为根域名／`www` 前端静态站与 `api.<domain>` 后端反代并切回 `APP_ENV=prod` + HTTPS。
 
 ---
 

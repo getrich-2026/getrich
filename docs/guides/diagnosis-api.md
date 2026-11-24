@@ -2,7 +2,7 @@
 
 面向后端接口使用者，说明独立于网页的调用方式、响应和启停。字段真源为 `/openapi.json`、[请求模型](../../packages/gr-api/src/gr_api/schemas/diagnosis.py)和[响应模型](../../packages/gr-api/src/gr_api/schemas/diagnosis_response.py)；设计 OpenAPI 不能替代实现。
 
-状态（2026-11-23 云端数据追平与 V1 上线加固）：完整工作库在云端（PostgreSQL 18.6／TimescaleDB 2.30.1，57/57 迁移校验一致）已追平有效发布至 **2026-11-20** 的 `diag-v3-20261120-daily-9ff71d632cb1e712`（此前 11-19 因米筐 `v2` 因子暴露 T+1 延迟暂缓，已在源端补齐后连续完成 11-19、11-20 两日原子发布并解除 `daily-blocked`）。12 项基础输入（13 个分区收据）+ 米筐 `v2` 五件套收据共 14 个组成有效，七项模型指标、鉴权、安全头、禁用账号拦截（`is_active=TRUE`）与最小路由面开关（`GETRICH_V1_DIAGNOSIS_ONLY`）均已验证。当前持久正式读取开关仍为 `false`，`calibrated=false`，`apps/web` 在 V1 冻结不部署；回放、Beta、L4、P6 校准等未准入边界保持。正式部署切换步骤见 [V1 发布切换指南](v1-release-cutover.md)；下文 Batch 4 及 11-05 样本为历史验收记录。
+状态（2026-11-24 云端 V1 准生产环境已上线联调）：云端 PostgreSQL 18.6／TimescaleDB 2.30.1（57/57 迁移校验一致）已追平有效发布至 **2026-11-20** 的 `diag-v3-20261120-daily-9ff71d632cb1e712`（12 项基础输入 13 个分区收据 + 米筐 `v2` 五件套收据共 14 个组成有效，并由晨间 `09:00/12:30/14:15` 定时器持续推进）。云端已开启 `APP_ENV=staging` + `STRICT_MODE=true` + `GETRICH_DIAG_PUBLICATIONS_ENABLED=true` + `GETRICH_V1_DIAGNOSIS_ONLY=true` 对外联调（真实联调地址与 OpenAPI 导出包经仓外渠道交付）；`calibrated=false`、`apps/web` 冻结及回放／Beta／L4／P6 未准入边界保持。运维与部署结构见 [V1 发布切换指南](v1-release-cutover.md)；下文 Batch 4 及 11-05 样本为历史验收记录。
 
 ## 已验收范围
 

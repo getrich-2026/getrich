@@ -2,21 +2,18 @@
 
 面向安排工作的项目维护者。本文只保留未关闭、可落实的实现缺口与待定口径，不是已批准的实施计划，不授权变更 API、schema、依赖或工作库。
 
-基线核对：**2026-11-23**（同步多用户持仓诊断 V1 `diag-publication-v3` 后端加固与云端 `/srv/getrich` 追平状态；已完成的 Batch 2 申万一级行业、Batch 3 年度 ROE、`051` 迁移、`052` 账本对齐、Batch 4 两阶段日更及初次上云均已从本表移除）。当前运行状态见 [NOTES](../../.agents/brain/NOTES.md)，实现取舍见 [决策记录](../../.agents/brain/DECISIONS.md)，上线切换步骤见 [V1 发布切换指南](../guides/v1-release-cutover.md)。
+基线核对：**2026-11-24**（云端 `/srv/getrich` 已完成 V1 准生产环境切换、`ops/` 长期运维脚本收口与旧冻结目录清理；已完成项均从本表移除）。当前运行状态见 [NOTES](../../.agents/brain/NOTES.md)，实现取舍见 [决策记录](../../.agents/brain/DECISIONS.md)，运维操作见 [V1 发布切换指南](../guides/v1-release-cutover.md)。
 
 ---
 
-## 1. V1 正式发布前运维切换项（`/srv/getrich`）
+## 1. V1 线上运行期持续关注项（`/srv/getrich`）
 
-仓库侧 V1 后端代码、测试与 `diag-publication-v3` 数据（云端已追平至 `2026-11-20`，`5,224` 只沪深 A 股、7 项模型指标）已就绪；正式对外开放前须由用户在云端确认并完成以下仓外切换：
+V1 后端代码、晨间 T+1 日更调度（`09:00/12:30/14:15`）、长期逻辑备份（`run-backup.py`）、全面健康巡检（`run-health.py`）与 Nginx 公网反向代理均已上线验收通过；当前仅保留以下运行期跟进项：
 
-| 待切换项 | 完成条件与验收门禁 |
+| 待跟进项 | 完成条件与验收门禁 |
 | --- | --- |
-| **提升 `current/{app,etl}` 发布版本** | 云端冻结 ETL 仍停在旧 `9bf6a0e`，须从最新已推分支构建：`app` 使用 `--package gr-api --no-dev --no-editable`；`etl` **必须保留 `.git` 且使用 editable 安装**（满足 `risk_receipts.py` 干净源码树校验）。 |
-| **拆分 `api-prod.env` 并移出 `maintenance-runtime.json`** | 新建 `0600` 的 `api-prod.env`（不含供应商密钥，显式设 `GETRICH_V1_DIAGNOSIS_ONLY=true`、`GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`BACKTEST_ARTIFACT_DIR=/srv/getrich/state/artifacts` 并提前创建该目录）；将 `api.env`/`api-prod.env` 移出 `maintenance-runtime.json` 字节哈希，避免修改 API 配置阻断日更与 `pg_dump` 备份。 |
-| **日更定时器改至次日 `<15:00 Asia/Shanghai` 并启用 `--probe-upstream`** | 将 `getrich-v1-daily.timer` 从 `23:30` 改为 `09:00,12:30 Asia/Shanghai`，调用 `diagnosis-daily run --probe-upstream`，消除交易日当晚米筐 `v2` `exposure=None` 误触发 `daily-blocked.json` 及次日 `15:00` 后 `lag = 2` 的 `503` 窗口；同步对齐 `cloud_health.py` 的 `pending_upstream` 判定。 |
-| **`getrich-api.service` 与反向代理边界加固** | 显式绑定 `127.0.0.1:8001`、设 `--timeout-graceful-shutdown 35` 与 `TimeoutStopSec=45s`；反向代理对外屏蔽 `/metrics`、配置认证与诊断写入限流；ICP 备案前保持 DNS 暂停与非 `80/443` 源 IP 白名单，备案后拆分根/`www` 与 `api.<domain>`。 |
-| **供应商授权有效期与异机备份抽检** | 放通前核实米筐与 Tushare 剩余额度 `>= 10%`、授权有效期 `>= 30` 天；确认云端滚动 `.dump` 已定期拉回异机留存。 |
+| **米筐授权续期与异机备份定期拉回** | 米筐 `rqdatac` 授权剩余有效期约 17 天（低于 30 天预警线），须在到期前完成续期；云端 `/srv/getrich/state/backups/` 的最新滚动 `.dump` 需定期拉回异机留存独立副本。 |
+| **域名备案后切换正式 `APP_ENV=prod` 与 HTTPS** | 当前联调期为 `APP_ENV=staging` + `STRICT_MODE=true` + HTTP `:8080`；境内域名 ICP 备案完成后，按 `api.<domain>` 签发自动续期 TLS 证书、收紧 `WEB_CORS_ORIGINS` 为正式 HTTPS 域名、切换 `APP_ENV=prod` 并按需屏蔽公网 `/docs` 与 `/openapi.json`。 |
 
 ---
 
@@ -30,7 +27,7 @@
 | **米筐 P6 全区间校准（`calibrated=true`）待供应商约定** | 11,633 个模型日五表扫描已完成只读终验，但前日暴露 + 超额收益代理在历史个股日仍有未解残差（见 `NOTES` P6 记录）。须取得米筐关于暴露时点、复权与无风险利率的书面约定后再评定 `calibrated=true` 范围；在此之前全部保持 `calibrated=false`（`degraded / not_calibrated`）。 |
 | **组合回放与个股/组合 Beta 缺 DS06～DS08** | 完成 DS06 分红送转（`finance.dividend`）、DS07 退市终止价值依据与 DS08 全收益基准（如沪深 300 全收益）的来源核验与建表入库；严禁用价格指数替代全收益基准或静默填补缺失分红。组合回放按 [D-021](../../.agents/brain/DECISIONS.md#d-021) 独立实现，不复用 `gr-backtest`。 |
 | **`/report` 缺个股估值展示卡片** | `/result` 的 `instrument_facts` 已逐股返回总市值、PB、估值日期与年度 ROE，但设计稿 §7.3.4 尚未定义对应文字报告块类型，`/report` 暂不输出；需先补设计块定义再实现。 |
-| **主前端 `apps/web` 解冻与 `v3` 契约对齐** | `apps/web` 在 V1 冻结不部署；解冻前须补齐 `PortfolioDiagnosisPage.tsx` 对 `v3` 新增四项风险指标及行业/市值/PB/ROE/相关性区块的展示、移除过时的“匿名模式”提示（现已强制登录 `401`），并将 `apps/web/.env.example` 端口对齐至 `8001`。 |
+| **主前端 `apps/web` 解冻与 `v3` 契约对齐** | `apps/web` 在 V1 冻结不部署；解冻前须补齐 `PortfolioDiagnosisPage.tsx` 对 `v3` 新增四项风险指标及行业/市值/PB/ROE/相关性区块的展示、移除过时的“匿名模式”提示（现已强制登录 `401`）。 |
 | **数据库维护边界与历史 PIT** | TimescaleDB 受保护表的 `DROP` / `drop_chunks` / retention 策略、诊断只读专用 DB 角色、通用全量代际发布以及历史任意交易日 PIT 诊断仍待后续阶段单独设计审阅。 |
 | **V2：按风险偏好建议权重与二期调仓对比/记忆** | 二期显式 Before/After 调仓对比、定性画像与盲点阈值（M11）、用户记忆与行为画像、V2 按风险偏好建议权重均按阶段规划推进，不在 V1 开放。 |
 
