@@ -5,17 +5,15 @@
 
 ## 开始任务
 
-1. 先读根 `AGENTS.md`，再读本文首节「当前状态与 V1 准生产运行」。
+1. 先读根 `AGENTS.md`，再读本文首节「当前状态与 V2 启动基线」。
 2. 按任务查 [待决问题](../../docs/plans/backlog.md)、[决策主题索引](DECISIONS.md) 与 [V1 发布切换指南](../../docs/guides/v1-release-cutover.md)。
 3. 使用说明从 [文档目录](../../docs/README.md) 定位；下方「历史阶段快照」仅供证据追溯，不作为当前指令。
 
-## 当前状态与 V1 准生产运行（2026-11-24，Asia/Shanghai）
+## 当前状态与 V2 启动基线（2026-11-24，Asia/Shanghai）
 
-- **V1 准生产环境已正式切换并对外放通联调**（提交 `17a4693`）：`/srv/getrich/current/{app,etl}` 已切换至 `17a4693`（`app` 使用 `--no-editable` 隔离运行副本，`etl` 保留干净 Git 检出并通过 `get_importer_version(require_clean=True)`）。运维脚本已全面收口至 `/srv/getrich/ops/`（`deploy-release.sh`、`getrich-api.service`、`run-v1-daily.py`、`run-backup.py`、`run-health.py`），配置精简为 `api-prod.env`（`APP_ENV=staging`、`STRICT_MODE=true`、`GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`GETRICH_V1_DIAGNOSIS_ONLY=true`、`GETRICH_ALLOW_MOCK_AUTH=false`）、`data-prod.env`、`daily-native.yaml`，原 `operations/cloud-stage-20261119T120042Z`、`etl/`、`transfers/` 及旧 `api.env`／`data.env` 已下线删除。
-- **长期巡检（`run-health.py`）与逻辑备份（`run-backup.py`）已实测通过**：`getrich-health.service` 每 15 分钟统一核查 `api-prod.env`（不写死 `v1_diagnosis_only`，V1/V2 通用）、`getrich-api.service` 与 `nginx.service` 存活、`/health`（`200` + 4 安全头）、外网 `/metrics`（`403`）、PG 发布新鲜度、`/srv/getrich/state/logs/daily-runs/` 进度卡死检测、开市日 `13:30`～`14:59` `pending_upstream` 提前预警及备份时效（当前 `passed=true`、`alerts=[]`、`warnings=[]`）；`run-backup.py --self-test` 同路径验证快照导出与 `pg_restore --list` 通过，并无缝保留今早 `03:42` 全量备份。
-- **Nginx 公网反向代理与接口端到端实测通过**：`uvicorn` 仅绑定回环 `127.0.0.1:8001`，前置 Nginx 监听 `0.0.0.0:80` 与 `0.0.0.0:8080`（屏蔽公网 `/metrics` 返回 `403`，对 `/v1/auth/*` 与 `/v1/diagnosis/snapshots` 启用限流）。经真实网络接口核验：`/health`（`200` + 4 项安全响应头）、`/v1/diagnosis/options`（`200`、有效版本 `diag-v3-20261120-daily-9ff71d632cb1e712`）、三股组合 `POST /v1/diagnosis/snapshots`（新建 `201`、幂等重放 `200`、跨用户读取 `403`）、未开放 V2 路由 `404`、临时验证账号停用后登录返回 `401` 全部通过。
-- **晨间 T+1 日更调度已启用**：`getrich-v1-daily.timer` 已切换为每日 `09:00`、`12:30`、`14:15 Asia/Shanghai` 三档窗口并执行 `/srv/getrich/ops/run-v1-daily.py`（底层调用 `gr-data diagnosis-daily run --probe-upstream`）。切换当场实测 `2026-11-23` 探针返回 `pending_upstream`（`ricequant_v2_exposure_not_ready`）并零写退出 `0`，不再误写 `daily-blocked.json` 或浪费 83 批配额；待今日早间米筐发布 `exposure` 后将自动完成 `2026-11-23` 原子入库与发布。
-- **云端数据库与存量边界**：PostgreSQL 18.6／TimescaleDB 2.30.1（`57/57` 迁移一致），当前有效发布 `diag-v3-20261120-daily-9ff71d632cb1e712`（`5,224` 只沪深 A 股、14 个组成全部 `dirty=false`、7 项 `v3` 模型指标准入、`calibrated=false`）；米筐授权剩余约 17 天（需在到期前续期）。非诊断存量（米筐 `v1`/`v2trd` 及 ETF/指数/期货/期权截至 `2026-11-16`）保留在库，待 V2 模块启用时再接入。
+- **V1 封版与线上稳定运行（`v1.0.0`）**：双仓已打不可变标签 **`v1.0.0`**（`getrich@944a192`、`getrich-design@7f57244`）；云端 `/srv/getrich/current/{app,etl}` 固定在隔离副本 `17a4693`（与 `944a192` 代码字节一致）。运维脚本已收口至 `/srv/getrich/ops/`（`deploy-release.sh`、`getrich-api.service`、`run-v1-daily.py`、`run-backup.py`、`run-health.py`），配置仅保留 `api-prod.env`（`APP_ENV=staging`、`STRICT_MODE=true`、`GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`GETRICH_V1_DIAGNOSIS_ONLY=true`、`GETRICH_ALLOW_MOCK_AUTH=false`）、`data-prod.env`、`daily-native.yaml`，原 `operations/cloud-stage-20261119T120042Z`、`etl/`、`transfers/` 及旧 `api.env`／`data.env` 已清理下线。
+- **晨间日更、备份与巡检全绿**：今早 `09:00` 定时器全自动完成 `2026-11-23` 探测、旧失败目录归档与原子发布，最新有效版本 **`diag-v3-20261123-daily-ce27ffc2663dd823`**（`as_of_date=2026-11-23`、`lag=0`、`5,224` 只沪深 A 股、14 个组成全部 `dirty=false`、`calibrated=false`）；`03:30` 逻辑备份正常留存最新 2 份；`13:30` 新版 `run-health.py` 巡检输出 `passed=true`、`alerts=[]`、`warnings=[]`（覆盖 `getrich-api`、`nginx`、`:8001`/`:8080`/`:80` `/health` + 4 安全头、外网 `/metrics` `403`、新日更目录防卡死与 `13:30` 上游等待预警）。**运维提醒**：米筐授权剩余约 16～17 天，须到期前续期。
+- **V2 开发方向与并行边界（见 [D-032](DECISIONS.md#d-032)）**：即日起在 `dev`（及特性分支）启动 **V2 持仓诊断深化**——优先推进**组合历史回放与 Beta（DS06～DS08）、L4 风险源分解、调仓前后对比**；V1 线上如遇 P0 阻断／数据错误从 `v1.0.0` 拉 `release/v1` 热修并合回 `dev`，P1 体验缺陷汇总进 `V1.1`，P2 反馈用于校准 V2 排序。V2 任何新 DDL 与实验写入必须在本地或独立隔离测试库验证，严禁直接改动云端 `getrich` 准生产库。
 
 ---
 

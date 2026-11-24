@@ -17,7 +17,9 @@ V1 后端代码、晨间 T+1 日更调度（`09:00/12:30/14:15`）、长期逻�
 
 ---
 
-## 2. 持仓诊断 V1.1 / 二期 / V2 待决项
+## 2. 持仓诊断 V2 主线与二期待决项
+
+> **V2 当前优先主线（2026-11-24 已确认，见 [D-032](../../.agents/brain/DECISIONS.md#d-032)）**：优先推进**持仓诊断深化**——① 组合历史回放与个股／组合 Beta（DS06～DS08）；② L4 风险源分解（含风格暴露／模型相关性复核）；③ 调仓前后显式对比。其余项按 V1 用户反馈与阶段排期跟进。
 
 范围对照设计仓 [范围决策](../../../getrich-design/governance/scope.md)、[表与接口设计](../../../getrich-design/portfolio-analysis/持仓诊断_表与接口设计.md) 与 [一期数据集清单](../../../getrich-design/data-platform/portfolio-diagnosis-phase1-datasets.md)。
 
