@@ -1568,10 +1568,18 @@ async def _compute_plan(
                 if "style_exposure" in admitted_metrics:
                     structure["style_exposure"] = dict(cov_na)
                 if "model_correlation" in admitted_metrics:
-                    corr_na = unavailable(
-                        reason_code="coverage_below_threshold",
-                        reason="具备风险模型数据的有效持仓不足两只，模型相关性不可用。",
-                    )
+                    # PA-09：完整输入本身只有 1 只正权重标的时，相关性恒为 not_applicable；
+                    # 仅多股组合因缺失导致有效持仓不足 2 只时才报 coverage_below_threshold。
+                    if coverage.get("total_count", len(ids)) <= 1:
+                        corr_na = unavailable(
+                            reason_code="not_applicable",
+                            reason="单只股票不适用两两相关性。",
+                        )
+                    else:
+                        corr_na = unavailable(
+                            reason_code="coverage_below_threshold",
+                            reason="具备风险模型数据的有效持仓不足两只，模型相关性不可用。",
+                        )
                     for key in (
                         "correlation",
                         "avg_pairwise_correlation",

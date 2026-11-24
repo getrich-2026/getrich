@@ -696,16 +696,23 @@ def validate_l4_covariance(
         direct_errs.append(abs(factor_sum - total_factor) / max(abs(total_factor), 1e-300))
 
     max_conservation_err = max(direct_errs)
-    if not np.isfinite(max_conservation_err) or max_conservation_err > _L4_CONSERVATION_TOL:
+    eps = float(np.finfo(float).eps)
+    cond_cov = float(np.linalg.cond(api_cov))
+    cond_t = float(np.linalg.cond(t))
+    # 为运行时 solve(t.T, e) 与二次型 e^T Sigma e 预留与条件数相关的浮点舍入预算
+    rounding_budget = max(cond_cov, cond_t) * eps * k
+    total_conservation_bound = max_conservation_err + rounding_budget
+    if not np.isfinite(total_conservation_bound) or total_conservation_bound > _L4_CONSERVATION_TOL:
         raise ValueError(
             "L4 preflight failed: orthogonalized factor variance is not conserved "
-            f"(rel_err={max_conservation_err})"
+            f"(rel_err={max_conservation_err}, rounding_budget={rounding_budget})"
         )
     return {
         "l4_orth_verified": True,
         "l4_min_corr_eigenvalue": min_eig,
         "l4_max_orth_offdiag": max_off,
         "l4_max_conservation_rel_err": max_conservation_err,
+        "l4_conservation_rounding_budget": rounding_budget,
         "l4_torsion_iterations": iterations,
     }
 

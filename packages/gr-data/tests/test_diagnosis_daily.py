@@ -650,6 +650,16 @@ def test_v4_daily_contract_and_l4_covariance_preflight(monkeypatch):
     with pytest.raises(ValueError, match="not conserved"):
         validate_l4_covariance(ill_cov, factors, model="v2")
 
+    # 高条件数边界（~9e7）：即使单次预检误差略低于 1e-8，条件数浮点舍入预算也必须阻断。
+    cond_corr = np.eye(k)
+    cond_corr[0, 1] = cond_corr[1, 0] = 1.0 - 1e-7
+    cond_stds = np.ones(k) * 0.2
+    cond_stds[0] = cond_stds[1] = 0.01
+    cond_stds[2] = 0.5
+    cond_cov = cond_corr * np.outer(cond_stds, cond_stds) * 10000.0
+    with pytest.raises(ValueError, match="not conserved"):
+        validate_l4_covariance(cond_cov, factors, model="v2")
+
     # 缺少市场因子或风格因子必须阻断。
     with pytest.raises(ValueError, match="comovement"):
         validate_l4_covariance(

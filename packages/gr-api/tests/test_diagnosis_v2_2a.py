@@ -1373,3 +1373,83 @@ async def test_partial_coverage_single_valid_stock_uses_coverage_below_threshold
     assert sd["correlation"]["primary"] is None
     assert sd["avg_pairwise_correlation"]["primary"] is None
     assert sd["high_correlation_pairs"]["primary"] is None
+
+    # 真单股组合（完整输入仅 1 只正权重标的且不在清单内）：PA-09 要求相关性三项恒为 not_applicable
+    single_out = normalize_plan(
+        [
+            InputRow(
+                0,
+                "600519.SH",
+                Decimal("1"),
+                "600519.SH",
+                {"instrument_id": 2, "symbol": "600519.SH", "name": "贵州茅台"},
+            )
+        ]
+    )
+    single_item = svc.PlanInput(
+        0,
+        "only_one",
+        "真单股清单外",
+        [],
+        single_out.weight_mode,
+        single_out.summary,
+        single_out.quantized,
+    )
+    token2 = pub.current.set(pub.PublishedDiagnosticContext("v4-single-partial", AS_OF, now, ver))
+    try:
+        payload_one, _ = await svc._compute_plan(
+            SingleCoveredDb(),  # type: ignore[arg-type]
+            item=single_item,
+            spec=spec_v4,
+            as_of=AS_OF,
+            options=OPTIONS,
+        )
+    finally:
+        pub.current.reset(token2)
+
+    sb1 = payload_one["section_b"]["value"]
+    sd1 = payload_one["section_d"]["value"]
+    assert sb1["volatility"]["by_method"]["forward"]["reason_code"] == "coverage_below_threshold"
+    assert sb1["annual_variance"]["reason_code"] == "coverage_below_threshold"
+    assert sd1["style_exposure"]["reason_code"] == "coverage_below_threshold"
+    assert sd1["correlation"]["by_method"]["forward"]["reason_code"] == "not_applicable"
+    assert (
+        sd1["avg_pairwise_correlation"]["by_method"]["forward"]["reason_code"] == "not_applicable"
+    )
+    assert sd1["high_correlation_pairs"]["by_method"]["forward"]["reason_code"] == "not_applicable"
+    assert sd1["correlation"]["primary"] is None
+
+
+def test_l4_preflight_and_api_agree_on_high_condition_number_matrix() -> None:
+    """同一高条件数截面输入：预检拒绝后不会放行 API 端单股守恒失败的边界矩阵。"""
+    from gr_api.diagnosis_calc.model_risk import compute_model_risk
+    from gr_data.diagnosis_daily.collect import validate_l4_covariance
+
+    factors = tuple(sorted(svc.V2_STYLE_FACTORS | {svc.V2_MARKET_FACTOR, "银行"}))
+    k = len(factors)
+    corr = np.eye(k)
+    corr[0, 1] = corr[1, 0] = 1.0 - 1e-9
+    stds = np.ones(k) * 0.2
+    stds[0] = stds[1] = 0.005
+    stds[2] = 0.8
+    api_cov = corr * np.outer(stds, stds)
+
+    # 预检拒绝该高条件数截面
+    with pytest.raises(ValueError, match="not conserved"):
+        validate_l4_covariance(api_cov * 10000.0, list(factors), model="v2")
+
+    # 同一矩阵喂给 API 单股低方差方向，确实触发 API 守恒失败（L4 不可用）
+    e = np.zeros(k)
+    e[0] = 1.0
+    e[1] = -1.0
+    inputs = RiskModelInputs(
+        factor_codes=factors,
+        factor_covariance=api_cov,
+        exposures={1: e},
+        specific_variance={1: 0.0},
+        market_factor=svc.V2_MARKET_FACTOR,
+        style_factors=svc.V2_STYLE_FACTORS,
+    )
+    res = compute_model_risk([(1, 1.0)], inputs, high_threshold=0.7, include_risk_sources=True)
+    assert res.l4_effective_count["status"] == "unavailable"
+    assert res.l4_effective_count["reason_code"] == "data_not_validated"
