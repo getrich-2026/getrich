@@ -489,12 +489,36 @@ def test_intent_resolution(
     assert svc._resolve_intent(requested, plans) == expected
 
 
-@pytest.mark.parametrize("intent", ["rebalance_amount", "rebalance_holding"])
-def test_rebalance_intents_require_two_plans_and_resolve(intent: str) -> None:
-    assert svc._resolve_intent(intent, [_plan_input(1), _plan_input(1)]) == intent
-    with pytest.raises(ApiError) as exc_info:
-        svc._resolve_intent(intent, [_plan_input(1)])
-    assert exc_info.value.issues[0]["path"] == "/plans"
+def test_rebalance_intents_validate_plan_count_and_holding_sets() -> None:
+    # rebalance_amount 要求两侧正权重标的集合完全相同
+    assert svc._resolve_intent("rebalance_amount", [_plan_input(2), _plan_input(2)]) == (
+        "rebalance_amount"
+    )
+    with pytest.raises(ApiError) as exc_amt_diff:
+        svc._resolve_intent("rebalance_amount", [_plan_input(1), _plan_input(2)])
+    assert exc_amt_diff.value.http_status == 422
+    assert exc_amt_diff.value.issues[0]["path"] == "/intent"
+
+    # rebalance_holding 要求两侧正权重标的集合不同
+    assert svc._resolve_intent("rebalance_holding", [_plan_input(1), _plan_input(2)]) == (
+        "rebalance_holding"
+    )
+    with pytest.raises(ApiError) as exc_hld_same:
+        svc._resolve_intent("rebalance_holding", [_plan_input(2), _plan_input(2)])
+    assert exc_hld_same.value.http_status == 422
+    assert exc_hld_same.value.issues[0]["path"] == "/intent"
+
+    # 存在未识别正权重标的或方案数不为 2 时一律返回 422
+    for intent in ("rebalance_amount", "rebalance_holding"):
+        with pytest.raises(ApiError) as exc_cnt:
+            svc._resolve_intent(intent, [_plan_input(1)])
+        assert exc_cnt.value.http_status == 422
+        assert exc_cnt.value.issues[0]["path"] == "/plans"
+
+        with pytest.raises(ApiError) as exc_unres:
+            svc._resolve_intent(intent, [_plan_input(1, unresolved=0.1), _plan_input(2)])
+        assert exc_unres.value.http_status == 422
+        assert exc_unres.value.issues[0]["path"] == "/intent"
 
 
 def test_single_instrument_with_unresolved_share_is_rejected() -> None:

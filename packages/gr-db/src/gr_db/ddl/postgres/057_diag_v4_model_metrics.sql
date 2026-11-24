@@ -21,9 +21,48 @@ ALTER TABLE factor.risk_universe_admission
 COMMENT ON COLUMN factor.risk_universe_admission.contract_version IS
  '风险指标准入协议；旧清单默认v2，增强清单用v3，全量模型风险（含L4/风格/模型相关性）用v4独立验收。';
 
+CREATE OR REPLACE FUNCTION diag.v4_factor_definitions_valid(
+ p_model_id TEXT,
+ p_factor_order TEXT[]
+)
+RETURNS BOOLEAN LANGUAGE SQL STABLE AS $$
+ SELECT (
+  SELECT array_agg(d.factor_code::TEXT ORDER BY d.ordinal)
+  FROM factor.definition d
+  WHERE d.model_id=p_model_id
+ ) IS NOT DISTINCT FROM p_factor_order
+ AND (
+  SELECT array_agg(d.factor_code::TEXT ORDER BY d.factor_code)
+  FROM factor.definition d
+  WHERE d.model_id=p_model_id AND d.factor_type='market'
+ ) = ARRAY['comovement']::TEXT[]
+ AND (
+  SELECT array_agg(d.factor_code::TEXT ORDER BY d.factor_code)
+  FROM factor.definition d
+  WHERE d.model_id=p_model_id AND d.factor_type='style'
+ ) = ARRAY[
+  'beta','book_to_price','dividend_yield','earnings_quality',
+  'earnings_variability','earnings_yield','growth','investment_quality',
+  'leverage','liquidity','longterm_reversal','mid_cap',
+  'momentum','profitability','residual_volatility','size'
+ ]::TEXT[]
+$$;
+
 CREATE OR REPLACE FUNCTION diag.validate_universe_admission()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
-DECLARE ids BIGINT[]; digest TEXT; axis VARCHAR(32); n SMALLINT; mid TEXT; forder TEXT[];
+DECLARE
+ ids BIGINT[];
+ digest TEXT;
+ axis VARCHAR(32);
+ n SMALLINT;
+ mid TEXT;
+ forder TEXT[];
+ v4_metrics CONSTANT TEXT[] := ARRAY[
+  'annual_variance','daily_prediction_volatility','l3_effective_count',
+  'l4_effective_count','l4_largest_source','l4_market_source_share',
+  'marginal_risk_contribution','model_correlation','risk_contribution',
+  'risk_contribution_ratio','style_exposure','volatility'
+ ]::TEXT[];
 BEGIN
  PERFORM pg_advisory_xact_lock(7342061105);
  SELECT array_agg(DISTINCT x ORDER BY x) INTO ids FROM unnest(NEW.security_ids) x;
@@ -38,30 +77,20 @@ BEGIN
   OR NEW.factor_order_hash IS DISTINCT FROM axis
   OR NEW.units_evidence='{}'::jsonb OR NEW.evidence='{}'::jsonb
   OR array_position(NEW.metrics,NULL) IS NOT NULL
-  OR NOT (NEW.metrics <@ (CASE
-   WHEN NEW.contract_version='diag-publication-v4' THEN
-    ARRAY[
-     'annual_variance','daily_prediction_volatility','volatility',
-     'risk_contribution','risk_contribution_ratio','marginal_risk_contribution',
-     'l3_effective_count','l4_effective_count','l4_market_source_share',
-     'l4_largest_source','style_exposure','model_correlation'
-    ]::TEXT[]
+  OR (NEW.contract_version='diag-publication-v4' AND (
+   cardinality(NEW.metrics) <> cardinality(v4_metrics)
+   OR NOT (NEW.metrics <@ v4_metrics AND v4_metrics <@ NEW.metrics)
+   OR NOT diag.v4_factor_definitions_valid(mid,forder)
+   OR NOT (NEW.evidence @> '{"l4_orth_verified": true}'::jsonb)
+  ))
+  OR (NEW.contract_version<>'diag-publication-v4' AND NOT (NEW.metrics <@ (CASE
    WHEN NEW.contract_version='diag-publication-v3' THEN
     ARRAY[
      'annual_variance','daily_prediction_volatility','volatility',
      'risk_contribution','risk_contribution_ratio','marginal_risk_contribution',
      'l3_effective_count'
     ]::TEXT[]
-   ELSE ARRAY['annual_variance','daily_prediction_volatility','volatility']::TEXT[] END))
-  OR (NEW.contract_version='diag-publication-v4' AND (
-   (SELECT array_agg(d.factor_code::TEXT ORDER BY d.ordinal)
-    FROM factor.definition d WHERE d.model_id=mid) IS DISTINCT FROM forder
-   OR (SELECT count(*) FROM factor.definition d
-       WHERE d.model_id=mid AND d.factor_type='market') <> 1
-   OR NOT EXISTS (SELECT 1 FROM factor.definition d
-                  WHERE d.model_id=mid AND d.factor_type='style')
-   OR NOT (NEW.evidence @> '{"l4_orth_verified": true}'::jsonb)
-  ))
+   ELSE ARRAY['annual_variance','daily_prediction_volatility','volatility']::TEXT[] END)))
   OR NOT EXISTS(SELECT 1 FROM factor.covariance c WHERE c.run_id=NEW.run_id
       AND c.trading_day=NEW.as_of_date AND c.factor_count=n)
   OR EXISTS (
@@ -135,6 +164,12 @@ DECLARE
  calibrated BOOLEAN;
  mid TEXT;
  forder TEXT[];
+ v4_metrics CONSTANT TEXT[] := ARRAY[
+  'annual_variance','daily_prediction_volatility','l3_effective_count',
+  'l4_effective_count','l4_largest_source','l4_market_source_share',
+  'marginal_risk_contribution','model_correlation','risk_contribution',
+  'risk_contribution_ratio','style_exposure','volatility'
+ ]::TEXT[];
 BEGIN
  SELECT available_options->'publication_scope' INTO scope FROM diag.data_version
  WHERE data_version_id=NEW.data_version_id;
@@ -157,15 +192,12 @@ BEGIN
  SELECT m.calibrated,m.model_id,m.factor_order INTO STRICT calibrated,mid,forder
   FROM factor.model_run m WHERE m.run_id=a.run_id;
  IF NEW.contract_version='diag-publication-v4' AND (
-  (SELECT array_agg(d.factor_code::TEXT ORDER BY d.ordinal)
-   FROM factor.definition d WHERE d.model_id=mid) IS DISTINCT FROM forder
-  OR (SELECT count(*) FROM factor.definition d
-      WHERE d.model_id=mid AND d.factor_type='market') <> 1
-  OR NOT EXISTS (SELECT 1 FROM factor.definition d
-                 WHERE d.model_id=mid AND d.factor_type='style')
+  cardinality(a.metrics) <> cardinality(v4_metrics)
+  OR NOT (a.metrics <@ v4_metrics AND v4_metrics <@ a.metrics)
+  OR NOT diag.v4_factor_definitions_valid(mid,forder)
   OR NOT (a.evidence @> '{"l4_orth_verified": true}'::jsonb)
  ) THEN
-  RAISE EXCEPTION 'v4 publication requires complete factor definitions and L4 preflight evidence'
+  RAISE EXCEPTION 'v4 publication requires exact 12 metrics, valid factor definitions, and L4 preflight'
    USING ERRCODE='23514';
  END IF;
  expected=jsonb_build_object('scope_type','security_universe','as_of',to_char(a.as_of_date,'YYYY-MM-DD'),

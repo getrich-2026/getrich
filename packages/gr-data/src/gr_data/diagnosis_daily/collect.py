@@ -544,14 +544,72 @@ def probe_upstream_exposure(
     }
 
 
+_L4_SYMMETRY_TOL = 1e-8
+_L4_PSD_TOL = 1e-10
+_L4_SINGULAR_TOL = 1e-12
+_L4_TORSION_TOL = 1e-12
+_L4_TORSION_MAX_ITER = 10_000
+_L4_ORTH_TOL = 1e-8
+_L4_CONSERVATION_TOL = 1e-8
+
+
+def _sym_sqrt(matrix: Any, *, inverse: bool = False) -> Any:
+    import numpy as np
+
+    values, vectors = np.linalg.eigh(matrix)
+    if float(values.min()) <= 0:
+        raise ValueError("L4 preflight failed: matrix is not positive definite")
+    roots = np.sqrt(values)
+    if inverse:
+        roots = 1.0 / roots
+    return (vectors * roots) @ vectors.T
+
+
+def _minimum_torsion(covariance: Any) -> tuple[Any, int]:
+    """与 gr_api.diagnosis_calc.model_risk.minimum_torsion 一致的最小扭转迭代。"""
+    import numpy as np
+
+    sigma = np.sqrt(np.diag(covariance))
+    if not np.all(sigma > 0):
+        raise ValueError("L4 preflight failed: every factor must have positive variance")
+    corr = covariance / np.outer(sigma, sigma)
+    corr = (corr + corr.T) / 2.0
+    if float(np.linalg.eigvalsh(corr).min()) <= _L4_SINGULAR_TOL:
+        raise ValueError(
+            "L4 preflight failed: factor correlation is singular; cannot orthogonalize"
+        )
+    c_half = _sym_sqrt(corr)
+    d = np.ones(len(sigma))
+    previous = None
+    pi = np.diag(d)
+    iterations = 0
+    for step in range(1, _L4_TORSION_MAX_ITER + 1):
+        iterations = step
+        dcd = (d[:, None] * corr) * d[None, :]
+        q = _sym_sqrt(dcd, inverse=True) @ (d[:, None] * c_half)
+        d = np.diag(q @ c_half).copy()
+        pi = d[:, None] * q
+        if previous is not None:
+            change = float(np.linalg.norm(pi - previous)) / max(
+                float(np.linalg.norm(previous)), 1e-300
+            )
+            if change <= _L4_TORSION_TOL:
+                break
+        previous = pi
+    else:
+        raise ValueError("L4 preflight failed: minimum torsion did not converge")
+    a = pi @ _sym_sqrt(corr, inverse=True)
+    return (sigma[:, None] * a) / sigma[None, :], iterations
+
+
 def validate_l4_covariance(
     covariance: Any,
     factor_order: list[str] | tuple[str, ...],
     *,
     model: str,
-    singular_tol: float = 1e-12,
+    singular_tol: float = _L4_SINGULAR_TOL,
 ) -> dict[str, Any]:
-    """L4 正交化前置核验：确认市场/风格因子完备且因子相关矩阵非近奇异。"""
+    """L4 正交化前置核验：按 API 实际读取矩阵验证收敛、正交性与方差守恒。"""
     import numpy as np
 
     from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
@@ -571,21 +629,76 @@ def validate_l4_covariance(
         raise ValueError(
             f"L4 preflight failed: style factors missing from factor_order: {missing_styles}"
         )
-    cov = np.asarray(covariance, dtype=float)
-    if cov.ndim != 2 or cov.shape != (len(factor_order), len(factor_order)):
+    raw_cov = np.asarray(covariance, dtype=float)
+    k = len(factor_order)
+    if raw_cov.ndim != 2 or raw_cov.shape != (k, k):
         raise ValueError("L4 preflight failed: covariance shape mismatch")
-    diag = np.diag(cov)
-    if not np.all(np.isfinite(cov)) or not np.all(diag > 0):
+    if not np.all(np.isfinite(raw_cov)):
+        raise ValueError("L4 preflight failed: covariance must be finite")
+    raw_scale = float(np.abs(raw_cov).max()) or 1.0
+    if float(np.abs(raw_cov - raw_cov.T).max()) > _L4_SYMMETRY_TOL * raw_scale:
+        raise ValueError("L4 preflight failed: covariance must be symmetric")
+
+    # 按 API 从 factor.covariance.cov_flat 读取的完全一致路径还原（上三角 / 10000 + 对称化）
+    upper = np.triu_indices(k)
+    api_cov = np.zeros((k, k), dtype=float)
+    api_cov[upper] = raw_cov[upper] / 10000.0
+    api_cov[(upper[1], upper[0])] = api_cov[upper]
+    api_cov = (api_cov + api_cov.T) / 2.0
+
+    eig_cov = np.linalg.eigvalsh(api_cov)
+    if float(eig_cov.min()) < -_L4_PSD_TOL * max(float(eig_cov.max()), 0.0):
+        raise ValueError("L4 preflight failed: covariance must be positive semidefinite")
+    diag = np.diag(api_cov)
+    if not np.all(diag > 0):
         raise ValueError("L4 preflight failed: factor variances must be finite and positive")
     sigma = np.sqrt(diag)
-    corr = cov / np.outer(sigma, sigma)
+    corr = api_cov / np.outer(sigma, sigma)
     corr = (corr + corr.T) / 2.0
     min_eig = float(np.linalg.eigvalsh(corr).min())
     if not np.isfinite(min_eig) or min_eig <= singular_tol:
         raise ValueError(
             f"L4 preflight failed: factor correlation is near-singular (min_eig={min_eig})"
         )
-    return {"l4_orth_verified": True, "l4_min_corr_eigenvalue": min_eig}
+
+    t, iterations = _minimum_torsion(api_cov)
+    transformed = t @ api_cov @ t.T
+    var_tilde = np.diag(transformed)
+    if not np.all(np.isfinite(transformed)) or not np.all(var_tilde > 0):
+        raise ValueError("L4 preflight failed: transformed covariance has non-positive diagonal")
+    off = transformed - np.diag(var_tilde)
+    max_off = float(np.abs(off).max())
+    orth_scale = max(float(np.abs(transformed).max()), 1e-300)
+    if max_off > _L4_ORTH_TOL * orth_scale:
+        raise ValueError(
+            f"L4 preflight failed: transformed factors are not orthogonal (max_off={max_off})"
+        )
+
+    # 矩阵级守恒（对任意暴露向量成立）+ 单位暴露向量直接复核
+    e_tilde_basis = np.linalg.solve(t.T, np.eye(k))
+    reconstructed = (e_tilde_basis.T * var_tilde) @ e_tilde_basis
+    cov_scale = max(float(np.abs(api_cov).max()), 1e-300)
+    mat_rel_err = float(np.abs(reconstructed - api_cov).max()) / cov_scale
+
+    ones = np.ones(k, dtype=float)
+    e_tilde_ones = np.linalg.solve(t.T, ones)
+    factor_sum = float((e_tilde_ones**2 * var_tilde).sum())
+    total_factor = float(ones @ api_cov @ ones)
+    unit_rel_err = abs(factor_sum - total_factor) / max(abs(total_factor), 1e-300)
+
+    max_conservation_err = max(mat_rel_err, unit_rel_err)
+    if not np.isfinite(max_conservation_err) or max_conservation_err > _L4_CONSERVATION_TOL:
+        raise ValueError(
+            "L4 preflight failed: orthogonalized factor variance is not conserved "
+            f"(rel_err={max_conservation_err})"
+        )
+    return {
+        "l4_orth_verified": True,
+        "l4_min_corr_eigenvalue": min_eig,
+        "l4_max_orth_offdiag": max_off,
+        "l4_max_conservation_rel_err": max_conservation_err,
+        "l4_torsion_iterations": iterations,
+    }
 
 
 def collect_risk(

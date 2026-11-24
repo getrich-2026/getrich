@@ -7,8 +7,9 @@
 * ``marginal_impact``：以调仓前组合为基点的一阶边际波动影响估算
   ``sum_i MRC_i^{before} * (w_i^{after} - w_i^{before})``，对新增标的同样使用
   ``MRC_i^{before} = (beta_i^T g_{before} + d_i w_i^{before}) / sigma_{before}``；
-* ``overlap_with_new``：所有净增权重项（``Delta w_i > 0``）归一化暴露向量与调仓前组合暴露
-  的余弦相似度 ``cos(beta_{new}, E_{before})``；
+* ``overlap_with_new``：仅对新进入组合的标的（``w_i^{before} == 0`` 且 ``w_i^{after} > 0``）
+  按调仓后权重归一化求暴露向量，与调仓前组合暴露求余弦相似度 ``cos(beta_{new}, E_{before})``；
+  无新进入标的时显式返回 ``unavailable(not_applicable)``；
 * ``intent_effect_gap``：当前不新增请求字段，固定返回空列表 ``[]``。
 """
 
@@ -332,15 +333,15 @@ def compute_rebalance_comparison(
             overlap_with_new = dict(missing_na)
         else:
             impact = 0.0
-            positive_deltas: list[tuple[str, float]] = []
+            new_holdings: list[tuple[str, float]] = []
             for iid in union_ids:
                 w0 = w_before.get(iid, 0.0)
                 w1 = w_after.get(iid, 0.0)
                 dw = w1 - w0
                 mrc_i = (float(exposures[iid] @ g_before) + specific_var[iid] * w0) / sigma_before
                 impact += mrc_i * dw
-                if dw > _WEIGHT_EPS:
-                    positive_deltas.append((iid, dw))
+                if w0 <= _WEIGHT_EPS and w1 > _WEIGHT_EPS:
+                    new_holdings.append((iid, w1))
 
             if not _admitted_gate(
                 before_model_facts, after_model_facts, "marginal_risk_contribution"
@@ -363,15 +364,15 @@ def compute_rebalance_comparison(
                     reason_code="data_not_validated",
                     reason="当前发布协议未准入因子暴露指标，无法计算新增标的因子重叠度。",
                 )
-            elif not positive_deltas:
+            elif not new_holdings:
                 overlap_with_new = unavailable(
                     reason_code="not_applicable",
-                    reason="调仓前后持仓权重无净增项，不适用新增标的因子重叠度。",
+                    reason="调仓后无新进入组合的标的，不适用新增标的因子重叠度。",
                 )
             else:
-                total_pos = sum(dw for _, dw in positive_deltas)
+                total_new = sum(w for _, w in new_holdings)
                 beta_new = sum(
-                    ((dw / total_pos) * exposures[iid] for iid, dw in positive_deltas),
+                    ((w / total_new) * exposures[iid] for iid, w in new_holdings),
                     np.zeros_like(e_before),
                 )
                 norm_new = float(np.linalg.norm(beta_new))

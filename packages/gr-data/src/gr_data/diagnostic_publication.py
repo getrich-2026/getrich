@@ -34,6 +34,22 @@ BASIC_DATASETS = (
 
 
 ENHANCED_BASIC_DATASETS = (*BASIC_DATASETS, "fundamental.indicator_q")
+V4_REQUIRED_METRICS = frozenset(
+    {
+        "annual_variance",
+        "daily_prediction_volatility",
+        "volatility",
+        "risk_contribution",
+        "risk_contribution_ratio",
+        "marginal_risk_contribution",
+        "l3_effective_count",
+        "l4_effective_count",
+        "l4_market_source_share",
+        "l4_largest_source",
+        "style_exposure",
+        "model_correlation",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +122,8 @@ async def admit_risk_universe(
     metric_list = sorted(set(metrics))
     if not metric_list or len(metric_list) != len(metrics):
         raise ValueError("Universe metrics require a nonempty unique metric list")
+    if contract_version == "diag-publication-v4" and set(metric_list) != V4_REQUIRED_METRICS:
+        raise ValueError("diag-publication-v4 requires the exact 12 admitted model metrics")
     async with conn.transaction():
         await _barrier(conn)
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -390,6 +408,12 @@ async def publish_version(
         "diag-publication-v4",
     }:
         raise ValueError("Unsupported diagnostic publication contract")
+    if contract == "diag-publication-v4":
+        scope_metrics = (available_options.get("publication_scope") or {}).get("metrics") or ()
+        if set(scope_metrics) != V4_REQUIRED_METRICS or len(scope_metrics) != len(
+            V4_REQUIRED_METRICS
+        ):
+            raise ValueError("diag-publication-v4 publication requires the exact 12 model metrics")
     required = (
         ENHANCED_BASIC_DATASETS
         if contract in {"diag-publication-v3", "diag-publication-v4"}

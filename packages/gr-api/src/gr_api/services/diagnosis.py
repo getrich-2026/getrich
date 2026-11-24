@@ -85,6 +85,29 @@ SUPPORTED_EXCHANGES = frozenset({"XSHG", "XSHE"})
 #: 股票日线、复权因子与停复牌的唯一写入方（D-012 单表单一来源）。
 MARKET_SOURCE = "tushare"
 
+#: 米筐 v2 已验收市场因子与 16 个风格因子代码（与 057 迁移门禁严格对齐）。
+V2_MARKET_FACTOR = "comovement"
+V2_STYLE_FACTORS = frozenset(
+    {
+        "beta",
+        "book_to_price",
+        "dividend_yield",
+        "earnings_quality",
+        "earnings_variability",
+        "earnings_yield",
+        "growth",
+        "investment_quality",
+        "leverage",
+        "liquidity",
+        "longterm_reversal",
+        "mid_cap",
+        "momentum",
+        "profitability",
+        "residual_volatility",
+        "size",
+    }
+)
+
 SECTION_REASONS: dict[str, str] = {
     "section_c": "组合回放与历史指标尚未开放：分红送转、退市终止价值与全收益基准数据尚未接入。",
     "stress_scenarios": "压力测试不在一期开放范围内。",
@@ -628,10 +651,32 @@ async def _normalize_request_plans(
 
 
 def _resolve_intent(requested: str | None, plans: list[PlanInput]) -> str:
-    """解析诊断意图；调仓比较要求恰好两个方案，多方案默认独立对比。"""
+    """解析诊断意图；调仓比较按归一化后的正权重标的集合严格校验意图。"""
     if requested in ("rebalance_amount", "rebalance_holding"):
         if len(plans) != 2:
             raise _issue_error(f"{requested} requires exactly two plans", "/plans")
+        if plans[0].summary["unresolved_weight"] > 0 or plans[1].summary["unresolved_weight"] > 0:
+            raise _issue_error(
+                f"{requested} cannot determine holding sets when unresolved symbols exist",
+                "/intent",
+            )
+        before_ids = {int(h["instrument_id"]) for h in plans[0].summary["calculation_holdings"]}
+        after_ids = {int(h["instrument_id"]) for h in plans[1].summary["calculation_holdings"]}
+        if not before_ids or not after_ids:
+            raise _issue_error(
+                f"{requested} requires resolved positive-weight holdings in both plans",
+                "/intent",
+            )
+        if requested == "rebalance_amount" and before_ids != after_ids:
+            raise _issue_error(
+                "rebalance_amount requires identical positive-weight holding sets",
+                "/intent",
+            )
+        if requested == "rebalance_holding" and before_ids == after_ids:
+            raise _issue_error(
+                "rebalance_holding requires different positive-weight holding sets",
+                "/intent",
+            )
         return requested
     if len(plans) > 1:
         return "multi_portfolio"
@@ -887,6 +932,7 @@ class LoadedRiskModel:
     model_version: str
     model_date: date
     admission: dict[str, Any] | None = None
+    partial_coverage: bool = False
 
 
 async def _load_risk_model(
@@ -1052,9 +1098,14 @@ async def _load_risk_model(
                 included[iid] = row
         coverage["covered_count"] = len(included)
         coverage["covered_weight"] = format(sum((original[i] for i in included), Decimal(0)), "f")
-        if coverage.get("missing"):
+        partial_coverage = bool(coverage.get("missing"))
+        if partial_coverage:
+            coverage["status"] = "incomplete"
             coverage["reason"] = "incomplete_holdings_coverage"
-            return None
+            # PA-13：完整组合指标一律拒绝；仅当已准入 model_correlation 且至少 2 只标的覆盖时
+            # 保留已覆盖标的用于模型相关矩阵计算，不丢弃已读数据。
+            if "model_correlation" not in admitted["metrics"] or len(included) < 2:
+                return None
         await cur.execute(
             "SELECT cov_flat FROM factor.covariance WHERE run_id=%s AND trading_day=%s "
             "AND available_at<=%s",
@@ -1069,9 +1120,27 @@ async def _load_risk_model(
         factor_defs = await cur.fetchall()
     if covariance is None:
         return fail("covariance_missing")
-    market_factors = [r["factor_code"] for r in factor_defs if r["factor_type"] == "market"]
-    market_factor = market_factors[0] if len(market_factors) == 1 else None
-    style_factors = frozenset(r["factor_code"] for r in factor_defs if r["factor_type"] == "style")
+    def_order = [str(r["factor_code"]) for r in factor_defs]
+    market_factors = [str(r["factor_code"]) for r in factor_defs if r["factor_type"] == "market"]
+    style_factors = frozenset(
+        str(r["factor_code"]) for r in factor_defs if r["factor_type"] == "style"
+    )
+    need_v4_defs = bool(
+        set(admitted["metrics"])
+        & {
+            "l4_effective_count",
+            "l4_market_source_share",
+            "l4_largest_source",
+            "style_exposure",
+        }
+    )
+    if need_v4_defs and (
+        def_order != list(run["factor_order"])
+        or market_factors != [V2_MARKET_FACTOR]
+        or style_factors != V2_STYLE_FACTORS
+    ):
+        return fail("risk_identity_or_units_mismatch")
+    market_factor = V2_MARKET_FACTOR if market_factors == [V2_MARKET_FACTOR] else None
     upper = np.triu_indices(k)
     cov = np.zeros((k, k))
     cov[upper] = np.asarray(covariance["cov_flat"]) / 10000
@@ -1082,21 +1151,23 @@ async def _load_risk_model(
         {i: np.asarray(r["exposure"], dtype=float) for i, r in included.items()},
         {i: float(r["specific_var"]) / 10000 for i, r in included.items()},
         market_factor=market_factor,
-        style_factors=style_factors,
+        style_factors=style_factors if style_factors == V2_STYLE_FACTORS else frozenset(),
     )
     try:
         validated_factor_covariance(inputs)
     except ValueError:
         return fail("covariance_invalid")
-    coverage["covered_weight"] = "1"
-    coverage["status"] = "complete"
-    coverage["reason"] = None
+    if not partial_coverage:
+        coverage["covered_weight"] = "1"
+        coverage["status"] = "complete"
+        coverage["reason"] = None
     return LoadedRiskModel(
         inputs,
         run["model_id"],
         run["model_version"],
         as_of,
         {**run, "run_id": str(run["run_id"]), "receipt_id": str(run["receipt_id"])},
+        partial_coverage=partial_coverage,
     )
 
 
@@ -1133,6 +1204,10 @@ def _wrap_admitted_metric(
         return value
     if calibrated:
         return value
+    if value.get("status") == "degraded":
+        existing = str(value.get("reason") or "")
+        merged_reason = existing if "未校准" in existing else f"{existing}（同时全区间未校准）"
+        return {**value, "reason": merged_reason}
     return degraded(
         value["value"],
         reason_code="not_calibrated",
@@ -1144,13 +1219,62 @@ def _wrap_admitted_metric(
 def _scoped_risk(
     holdings: list[CalcHolding], loaded: LoadedRiskModel, *, high_threshold: float = 0.7
 ) -> ModelRiskResult:
-    """按发布准入清单计算模型风险指标；未准入项显式保持 unavailable。"""
+    """按发布准入清单计算模型风险指标；部分覆盖时仅出模型相关矩阵，完整组合指标显式不可用。"""
     import math
 
     import numpy as np
 
     admission = loaded.admission
     assert admission is not None
+    na = unavailable(reason_code="data_not_validated", reason="本次单日验收未覆盖该模型指标。")
+    values = {f.name: dict(na) for f in fields(ModelRiskResult) if f.name != "facts"}
+    admitted = set(admission["metrics"])
+    calibrated = bool(admission["calibrated"])
+
+    if loaded.partial_coverage:
+        partial_na = unavailable(
+            reason_code="coverage_below_threshold",
+            reason="部分持仓未识别或缺少风险模型数据，完整组合模型指标不可用。",
+        )
+        for field_name, metric_key in (
+            ("volatility", "volatility"),
+            ("risk_contribution", "risk_contribution"),
+            ("risk_contribution_ratio", "risk_contribution_ratio"),
+            ("marginal_risk_contribution", "marginal_risk_contribution"),
+            ("l3_effective_count", "l3_effective_count"),
+            ("l4_effective_count", "l4_effective_count"),
+            ("l4_market_source_share", "l4_market_source_share"),
+            ("l4_largest_source", "l4_largest_source"),
+            ("style_exposure", "style_exposure"),
+        ):
+            if metric_key in admitted:
+                values[field_name] = dict(partial_na)
+        computed_partial = None
+        if "model_correlation" in admitted:
+            computed_partial = compute_model_risk(
+                [(h.instrument_id, float(h.weight)) for h in holdings],
+                loaded.inputs,
+                high_threshold=high_threshold,
+                include_risk_sources=False,
+            )
+            for field_name in ("correlation", "average_correlation", "high_correlation_pairs"):
+                values[field_name] = _wrap_admitted_metric(
+                    getattr(computed_partial, field_name),
+                    calibrated=calibrated,
+                    reason="本次单日模型相关性已准入；全区间未校准。",
+                )
+        facts = {
+            "missing": list(computed_partial.facts.get("missing", [])) if computed_partial else [],
+            "negative_contribution": False,
+            "calibrated": admission["calibrated"],
+            "run_id": admission["run_id"],
+            "receipt_id": admission["receipt_id"],
+            "units_evidence": admission["units_evidence"],
+            "metrics": admission["metrics"],
+            "annualization_days": 252,
+        }
+        return ModelRiskResult(**values, facts=facts)
+
     b = sum(
         (float(h.weight) * loaded.inputs.exposures[h.instrument_id] for h in holdings),
         np.zeros(len(loaded.inputs.factor_codes)),
@@ -1163,10 +1287,6 @@ def _scoped_risk(
     if not math.isfinite(annual) or annual < 0:
         raise ValueError("invalid portfolio variance")
     vol = math.sqrt(annual)
-    na = unavailable(reason_code="data_not_validated", reason="本次单日验收未覆盖该模型指标。")
-    values = {f.name: dict(na) for f in fields(ModelRiskResult) if f.name != "facts"}
-    admitted = set(admission["metrics"])
-    calibrated = bool(admission["calibrated"])
     if "volatility" in admitted:
         values["volatility"] = _wrap_admitted_metric(
             ok(vol, method="forward"),
@@ -1406,6 +1526,11 @@ async def _compute_plan(
         if model is None
         else {
             **model.facts,
+            "missing": [
+                x["instrument_id"] for x in coverage["missing"] if x["instrument_id"] is not None
+            ]
+            if coverage.get("missing")
+            else list(model.facts.get("missing", [])),
             "coverage": model_coverage_ratio,
             "coverage_basis": "full_input",
             "model_coverage": coverage,
@@ -1426,15 +1551,21 @@ async def _compute_plan(
     if loaded is not None and loaded.admission is not None and model is not None:
         calibrated = bool(loaded.admission["calibrated"])
         for metric in ("annual_variance", "daily_prediction_volatility"):
-            risk[metric] = (
-                _wrap_admitted_metric(
+            if loaded.partial_coverage:
+                risk[metric] = unavailable(
+                    reason_code="coverage_below_threshold",
+                    reason="部分持仓未识别或缺少风险模型数据，完整组合模型指标不可用。",
+                )
+            elif metric in loaded.admission["metrics"]:
+                risk[metric] = _wrap_admitted_metric(
                     ok(model.facts[metric], method="forward"),
                     calibrated=calibrated,
                     reason="本次单日范围与指标已准入；全区间未校准。",
                 )
-                if metric in loaded.admission["metrics"]
-                else unavailable(reason_code="data_not_validated", reason="该指标未准入。")
-            )
+            else:
+                risk[metric] = unavailable(
+                    reason_code="data_not_validated", reason="该指标未准入。"
+                )
         risk["annualization_days"] = 252
         risk["model_run_id"] = loaded.admission["run_id"]
         risk["calibrated"] = loaded.admission["calibrated"]

@@ -602,10 +602,17 @@ def test_quota_expiry_warning_and_snapshot_metadata(caplog):
     assert all("remaining_days=18" in r.message and "30-day" in r.message for r in caplog.records)
 
 
-def test_v4_daily_contract_and_l4_covariance_preflight():
+def test_v4_daily_contract_and_l4_covariance_preflight(monkeypatch):
     import numpy as np
-    from gr_data.diagnosis_daily import CONTRACT, METRICS, V3_METRICS, V4_METRICS
+    from gr_data.diagnosis_daily import (
+        CONTRACT,
+        METRICS,
+        V3_METRICS,
+        V4_METRICS,
+        collect as daily_collect,
+    )
     from gr_data.diagnosis_daily.collect import validate_l4_covariance
+    from gr_data.diagnostic_publication import admit_risk_universe, publish_version
     from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
 
     assert CONTRACT == "diag-publication-v4"
@@ -614,10 +621,23 @@ def test_v4_daily_contract_and_l4_covariance_preflight():
     assert set(V3_METRICS) < set(V4_METRICS)
 
     factors = sorted(STYLE_FACTORS["v2"] | {"comovement", "银行"})
-    cov = np.eye(len(factors)) * 0.04
+    # 模拟存储层 pct2_annual（非对角相关矩阵，需要真实迭代收敛）
+    k = len(factors)
+    rng = np.random.default_rng(7)
+    a = rng.normal(size=(k, k))
+    cov = (a @ a.T / k + np.eye(k) * 0.5) * 100.0
     checked = validate_l4_covariance(cov, factors, model="v2")
     assert checked["l4_orth_verified"] is True
-    assert checked["l4_min_corr_eigenvalue"] == pytest.approx(1.0)
+    assert checked["l4_min_corr_eigenvalue"] > 1e-12
+    assert checked["l4_max_orth_offdiag"] <= 1e-8
+    assert checked["l4_max_conservation_rel_err"] <= 1e-8
+    assert checked["l4_torsion_iterations"] >= 1
+
+    # 最小扭转不收敛的协方差矩阵必须被预检拒绝（不能签发 l4_orth_verified=true）。
+    monkeypatch.setattr(daily_collect, "_L4_TORSION_MAX_ITER", 1)
+    with pytest.raises(ValueError, match="did not converge"):
+        validate_l4_covariance(cov, factors, model="v2")
+    monkeypatch.undo()
 
     # 缺少市场因子或风格因子必须阻断。
     with pytest.raises(ValueError, match="comovement"):
@@ -636,7 +656,43 @@ def test_v4_daily_contract_and_l4_covariance_preflight():
         validate_l4_covariance(np.eye(2), ["comovement", "comovement"], model="v2")
 
     # 近奇异因子相关矩阵必须阻断。
-    singular = cov.copy()
-    singular[0, 1] = singular[1, 0] = 0.04
+    singular = np.eye(k) * 100.0
+    singular[0, 1] = singular[1, 0] = 100.0
     with pytest.raises(ValueError, match="near-singular"):
         validate_l4_covariance(singular, factors, model="v2")
+
+    # 通用发布入口拒绝不完整 v4 指标清单（须恰好 12 项）。
+    import asyncio
+    from uuid import uuid4
+
+    with pytest.raises(ValueError, match="exact 12"):
+        asyncio.run(
+            admit_risk_universe(
+                Mock(),
+                run_id=uuid4(),
+                receipt_id=uuid4(),
+                as_of_date=date(2026, 11, 23),
+                instrument_ids=[1],
+                factor_order_hash="h",
+                units_evidence={"x": 1},
+                evidence={"l4_orth_verified": True},
+                metrics=V3_METRICS,
+                contract_version="diag-publication-v4",
+            )
+        )
+    with pytest.raises(ValueError, match="exact 12"):
+        asyncio.run(
+            publish_version(
+                Mock(),
+                version_id="v4-partial",
+                as_of_date=date(2026, 11, 23),
+                components=[],
+                available_options={
+                    "publication_scope": {
+                        "scope_type": "security_universe",
+                        "metrics": V3_METRICS,
+                    }
+                },
+                contract_version="diag-publication-v4",
+            )
+        )

@@ -651,6 +651,9 @@ async def _apply(
         "rc_definition": "volatility contribution; sum(RC)=sqrt(annual_variance)",
         "l4_orth_verified": True,
         "l4_min_corr_eigenvalue": quality.get("l4_min_corr_eigenvalue"),
+        "l4_max_orth_offdiag": quality.get("l4_max_orth_offdiag"),
+        "l4_max_conservation_rel_err": quality.get("l4_max_conservation_rel_err"),
+        "l4_torsion_iterations": quality.get("l4_torsion_iterations"),
     }
     admission = await admit_risk_universe(
         c,
