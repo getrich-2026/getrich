@@ -674,19 +674,28 @@ def validate_l4_covariance(
             f"L4 preflight failed: transformed factors are not orthogonal (max_off={max_off})"
         )
 
-    # 矩阵级守恒（对任意暴露向量成立）+ 单位暴露向量直接复核
+    # 按原协方差归一化重建误差：sup_{e != 0} |e^T (R - Sigma) e| / (e^T Sigma e)
+    # 精确等于对称矩阵 M = Sigma^{-1/2} R Sigma^{-1/2} - I 的谱范数，约束含低方差在内的全方向。
     e_tilde_basis = np.linalg.solve(t.T, np.eye(k))
     reconstructed = (e_tilde_basis.T * var_tilde) @ e_tilde_basis
-    cov_scale = max(float(np.abs(api_cov).max()), 1e-300)
-    mat_rel_err = float(np.abs(reconstructed - api_cov).max()) / cov_scale
+    reconstructed = (reconstructed + reconstructed.T) / 2.0
+    cov_inv_half = _sym_sqrt(api_cov, inverse=True)
+    rel_diff_mat = cov_inv_half @ reconstructed @ cov_inv_half - np.eye(k)
+    rel_diff_mat = (rel_diff_mat + rel_diff_mat.T) / 2.0
+    rel_eigs, rel_vecs = np.linalg.eigh(rel_diff_mat)
+    worst_idx = int(np.argmax(np.abs(rel_eigs)))
+    spectral_rel_err = float(abs(rel_eigs[worst_idx]))
 
-    ones = np.ones(k, dtype=float)
-    e_tilde_ones = np.linalg.solve(t.T, ones)
-    factor_sum = float((e_tilde_ones**2 * var_tilde).sum())
-    total_factor = float(ones @ api_cov @ ones)
-    unit_rel_err = abs(factor_sum - total_factor) / max(abs(total_factor), 1e-300)
+    # 在最差特征方向与全 1 方向上按 API 同路径（solve(t.T, e)）直接复核相对守恒误差
+    worst_e = cov_inv_half @ rel_vecs[:, worst_idx]
+    direct_errs = [spectral_rel_err]
+    for probe_e in (worst_e, np.ones(k, dtype=float)):
+        e_tilde = np.linalg.solve(t.T, probe_e)
+        factor_sum = float((e_tilde**2 * var_tilde).sum())
+        total_factor = float(probe_e @ api_cov @ probe_e)
+        direct_errs.append(abs(factor_sum - total_factor) / max(abs(total_factor), 1e-300))
 
-    max_conservation_err = max(mat_rel_err, unit_rel_err)
+    max_conservation_err = max(direct_errs)
     if not np.isfinite(max_conservation_err) or max_conservation_err > _L4_CONSERVATION_TOL:
         raise ValueError(
             "L4 preflight failed: orthogonalized factor variance is not conserved "

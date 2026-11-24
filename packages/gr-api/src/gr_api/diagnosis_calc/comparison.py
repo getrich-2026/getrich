@@ -311,38 +311,51 @@ def compute_rebalance_comparison(
         ),
     }
 
+    before_resolved = float((before_plan.get("input") or {}).get("resolved_weight", 0.0))
+    after_resolved = float((after_plan.get("input") or {}).get("resolved_weight", 0.0))
+    w_before = _weights_map(before_plan)
+    w_after = _weights_map(after_plan)
+    union_ids = sorted(set(w_before) | set(w_after))
+    fully_resolved = before_resolved >= 1.0 - 1e-9 and after_resolved >= 1.0 - 1e-9
+    new_holdings = [
+        (iid, w_after[iid])
+        for iid in union_ids
+        if w_before.get(iid, 0.0) <= _WEIGHT_EPS and w_after.get(iid, 0.0) > _WEIGHT_EPS
+    ]
+
     vectors, na = _model_vectors_ready(
         before_plan, after_plan, before_model_facts, after_model_facts
     )
     if vectors is None:
         assert na is not None
         marginal_impact = dict(na)
-        overlap_with_new = dict(na)
+        # 双方持仓已完全解析且无新进入标的时，不依赖模型向量即可判定 overlap_with_new。
+        if fully_resolved and not new_holdings:
+            overlap_with_new = unavailable(
+                reason_code="not_applicable",
+                reason="调仓后无新进入组合的标的，不适用新增标的因子重叠度。",
+            )
+        else:
+            overlap_with_new = dict(na)
     else:
         e_before, g_before, sigma_before, exposures, specific_var, degraded_meta = vectors
-        w_before = _weights_map(before_plan)
-        w_after = _weights_map(after_plan)
-        union_ids = sorted(set(w_before) | set(w_after))
+        missing_exposure = any(iid not in exposures or iid not in specific_var for iid in union_ids)
 
-        if any(iid not in exposures or iid not in specific_var for iid in union_ids):
+        if missing_exposure:
             missing_na = unavailable(
                 reason_code="data_not_validated",
                 reason="部分持仓缺少模型暴露或特质方差，无法计算模型调仓对比指标。",
             )
             marginal_impact = dict(missing_na)
-            overlap_with_new = dict(missing_na)
+            overlap_with_new = (
+                unavailable(
+                    reason_code="not_applicable",
+                    reason="调仓后无新进入组合的标的，不适用新增标的因子重叠度。",
+                )
+                if fully_resolved and not new_holdings
+                else dict(missing_na)
+            )
         else:
-            impact = 0.0
-            new_holdings: list[tuple[str, float]] = []
-            for iid in union_ids:
-                w0 = w_before.get(iid, 0.0)
-                w1 = w_after.get(iid, 0.0)
-                dw = w1 - w0
-                mrc_i = (float(exposures[iid] @ g_before) + specific_var[iid] * w0) / sigma_before
-                impact += mrc_i * dw
-                if w0 <= _WEIGHT_EPS and w1 > _WEIGHT_EPS:
-                    new_holdings.append((iid, w1))
-
             if not _admitted_gate(
                 before_model_facts, after_model_facts, "marginal_risk_contribution"
             ):
@@ -351,6 +364,15 @@ def compute_rebalance_comparison(
                     reason="当前发布协议未准入边际风险贡献指标，无法计算一阶边际波动影响。",
                 )
             else:
+                impact = 0.0
+                for iid in union_ids:
+                    w0 = w_before.get(iid, 0.0)
+                    w1 = w_after.get(iid, 0.0)
+                    dw = w1 - w0
+                    mrc_i = (
+                        float(exposures[iid] @ g_before) + specific_var[iid] * w0
+                    ) / sigma_before
+                    impact += mrc_i * dw
                 marginal_impact = (
                     _wrap_model_scalar(float(impact), degraded_meta)
                     if math.isfinite(impact)
@@ -359,15 +381,15 @@ def compute_rebalance_comparison(
                     )
                 )
 
-            if not _admitted_gate(before_model_facts, after_model_facts, "style_exposure"):
-                overlap_with_new = unavailable(
-                    reason_code="data_not_validated",
-                    reason="当前发布协议未准入因子暴露指标，无法计算新增标的因子重叠度。",
-                )
-            elif not new_holdings:
+            if not new_holdings:
                 overlap_with_new = unavailable(
                     reason_code="not_applicable",
                     reason="调仓后无新进入组合的标的，不适用新增标的因子重叠度。",
+                )
+            elif not _admitted_gate(before_model_facts, after_model_facts, "style_exposure"):
+                overlap_with_new = unavailable(
+                    reason_code="data_not_validated",
+                    reason="当前发布协议未准入因子暴露指标，无法计算新增标的因子重叠度。",
                 )
             else:
                 total_new = sum(w for _, w in new_holdings)

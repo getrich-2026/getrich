@@ -26,26 +26,30 @@ CREATE OR REPLACE FUNCTION diag.v4_factor_definitions_valid(
  p_factor_order TEXT[]
 )
 RETURNS BOOLEAN LANGUAGE SQL STABLE AS $$
- SELECT (
-  SELECT array_agg(d.factor_code::TEXT ORDER BY d.ordinal)
-  FROM factor.definition d
-  WHERE d.model_id=p_model_id
- ) IS NOT DISTINCT FROM p_factor_order
- AND (
-  SELECT array_agg(d.factor_code::TEXT ORDER BY d.factor_code)
-  FROM factor.definition d
-  WHERE d.model_id=p_model_id AND d.factor_type='market'
- ) = ARRAY['comovement']::TEXT[]
- AND (
-  SELECT array_agg(d.factor_code::TEXT ORDER BY d.factor_code)
-  FROM factor.definition d
-  WHERE d.model_id=p_model_id AND d.factor_type='style'
- ) = ARRAY[
-  'beta','book_to_price','dividend_yield','earnings_quality',
-  'earnings_variability','earnings_yield','growth','investment_quality',
-  'leverage','liquidity','longterm_reversal','mid_cap',
-  'momentum','profitability','residual_volatility','size'
- ]::TEXT[]
+ SELECT COALESCE(
+  p_factor_order IS NOT NULL
+  AND (
+   SELECT array_agg(d.factor_code::TEXT ORDER BY d.ordinal)
+   FROM factor.definition d
+   WHERE d.model_id=p_model_id
+  ) IS NOT DISTINCT FROM p_factor_order
+  AND (
+   SELECT array_agg(d.factor_code::TEXT ORDER BY d.factor_code)
+   FROM factor.definition d
+   WHERE d.model_id=p_model_id AND d.factor_type='market'
+  ) IS NOT DISTINCT FROM ARRAY['comovement']::TEXT[]
+  AND (
+   SELECT array_agg(d.factor_code::TEXT ORDER BY d.factor_code)
+   FROM factor.definition d
+   WHERE d.model_id=p_model_id AND d.factor_type='style'
+  ) IS NOT DISTINCT FROM ARRAY[
+   'beta','book_to_price','dividend_yield','earnings_quality',
+   'earnings_variability','earnings_yield','growth','investment_quality',
+   'leverage','liquidity','longterm_reversal','mid_cap',
+   'momentum','profitability','residual_volatility','size'
+  ]::TEXT[],
+  FALSE
+ )
 $$;
 
 CREATE OR REPLACE FUNCTION diag.validate_universe_admission()
@@ -80,7 +84,7 @@ BEGIN
   OR (NEW.contract_version='diag-publication-v4' AND (
    cardinality(NEW.metrics) <> cardinality(v4_metrics)
    OR NOT (NEW.metrics <@ v4_metrics AND v4_metrics <@ NEW.metrics)
-   OR NOT diag.v4_factor_definitions_valid(mid,forder)
+   OR diag.v4_factor_definitions_valid(mid,forder) IS NOT TRUE
    OR NOT (NEW.evidence @> '{"l4_orth_verified": true}'::jsonb)
   ))
   OR (NEW.contract_version<>'diag-publication-v4' AND NOT (NEW.metrics <@ (CASE
@@ -194,7 +198,7 @@ BEGIN
  IF NEW.contract_version='diag-publication-v4' AND (
   cardinality(a.metrics) <> cardinality(v4_metrics)
   OR NOT (a.metrics <@ v4_metrics AND v4_metrics <@ a.metrics)
-  OR NOT diag.v4_factor_definitions_valid(mid,forder)
+  OR diag.v4_factor_definitions_valid(mid,forder) IS NOT TRUE
   OR NOT (a.evidence @> '{"l4_orth_verified": true}'::jsonb)
  ) THEN
   RAISE EXCEPTION 'v4 publication requires exact 12 metrics, valid factor definitions, and L4 preflight'

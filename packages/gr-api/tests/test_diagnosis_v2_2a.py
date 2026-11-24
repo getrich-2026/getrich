@@ -397,6 +397,18 @@ def test_comparison_edge_cases_identical_missing_and_mismatched_runs() -> None:
     assert p_rw["overlap_with_new"]["status"] == "unavailable"
     assert p_rw["overlap_with_new"]["reason_code"] == "not_applicable"
 
+    # 无新增标的且缺模型向量时：overlap_with_new 为 not_applicable，marginal_impact 报缺模型。
+    p_rw_no_vec = compute_rebalance_comparison(
+        res_reweight["plans"][0],
+        res_reweight["plans"][1],
+        before_model_facts=None,
+        after_model_facts=None,
+    )
+    assert p_rw_no_vec["overlap_with_new"]["status"] == "unavailable"
+    assert p_rw_no_vec["overlap_with_new"]["reason_code"] == "not_applicable"
+    assert p_rw_no_vec["marginal_impact"]["status"] == "unavailable"
+    assert p_rw_no_vec["marginal_impact"]["reason_code"] == "data_not_validated"
+
     # 同时加仓旧股 1（0.5 -> 0.6）并买入新股 3（0 -> 0.1）时，overlap_with_new 仅使用新股 3。
     add_and_topup = _build_plan_row(
         1, "p2", "加旧买新", [(1, Decimal("0.6")), (2, Decimal("0.3")), (3, Decimal("0.1"))]
@@ -1198,3 +1210,166 @@ async def test_partial_coverage_preserves_model_correlation_matrix_per_pa13(
     assert corr_m["value"]["matrix"][0][1] == pytest.approx(0.8, rel=1e-12)
     assert sd["correlation"]["primary"] == "forward"
     assert sd["avg_pairwise_correlation"]["by_method"]["forward"]["status"] == expected_avg_status
+    assert sd["high_correlation_pairs"]["by_method"]["forward"]["status"] == expected_avg_status
+    expected_summary_primary = None if expected_avg_status == "unavailable" else "forward"
+    assert sd["avg_pairwise_correlation"]["primary"] == expected_summary_primary
+    assert sd["high_correlation_pairs"]["primary"] == expected_summary_primary
+
+
+@pytest.mark.anyio
+async def test_partial_coverage_single_valid_stock_uses_coverage_below_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PA-13：发布有效但仅剩 1 只有效持仓（80% + 20% UNKNOWN）时应报 coverage_below_threshold。"""
+    from contextlib import asynccontextmanager
+    from datetime import timezone
+
+    from gr_api.services import diagnosis_publication as pub
+
+    all_factors = sorted(svc.V2_STYLE_FACTORS | {svc.V2_MARKET_FACTOR, "银行"})
+    k = len(all_factors)
+    now = datetime(2026, 11, 24, tzinfo=timezone.utc)
+
+    class SingleCoveredDb:
+        def __init__(self) -> None:
+            self.q = ""
+
+        @asynccontextmanager
+        async def cursor(self, **kwargs):
+            yield self
+
+        async def execute(self, query, params=None):
+            self.q = query
+
+        async def fetchall(self):
+            if "SELECT instrument_id,symbol" in self.q:
+                return [{"instrument_id": 1, "symbol": "600036.SH"}]
+            if "SELECT m.*" in self.q:
+                return [
+                    {
+                        "run_id": "run",
+                        "model_id": "m",
+                        "model_version": "v2",
+                        "metrics": sorted(V4_MODEL_METRICS),
+                        "units_evidence": {"F": "annual"},
+                        "evidence": {"l4_orth_verified": True},
+                        "receipt_id": "receipt",
+                        "horizon": "daily",
+                        "trading_day": AS_OF,
+                        "observed_at": now,
+                        "source": "ricequant",
+                        "annualization_basis": "annual_252",
+                        "units": {
+                            "model": "v2",
+                            "covariance": "pct2_annual",
+                            "specific_risk": "pct2_annual",
+                        },
+                        "factor_order": all_factors,
+                        "calibrated": False,
+                    }
+                ]
+            return [
+                {
+                    "instrument_id": 1,
+                    "exposure": [1.0] + [0.0] * (k - 1),
+                    "specific_var": 100.0,
+                    "status": "included",
+                    "exposure_at": now,
+                    "specific_at": now,
+                }
+            ]
+
+    ver = {
+        "data_version_id": "v4-single-partial",
+        "as_of_date": AS_OF,
+        "published_at": now,
+        "contract_version": "diag-publication-v4",
+        "available_options": {
+            "publication_scope": {
+                "scope_type": "security_universe",
+                "as_of": str(AS_OF),
+                "model": "v2",
+                "run_id": "run",
+                "metrics": sorted(V4_MODEL_METRICS),
+                "calibrated": False,
+                "security_ids": [1],
+                "security_hash": "h",
+                "universe_admission_id": "adm",
+            }
+        },
+    }
+
+    async def fake_industry(*args, **kwargs):
+        return {1: META[1][2]}
+
+    async def fake_category(*args, **kwargs):
+        return {1: {"market": "cn_a", "asset_category": "equity"}}
+
+    async def fake_valuation(*args, **kwargs):
+        return {1: Valuation(AS_OF, Decimal("5e11"), Decimal("1.5"))}
+
+    async def fake_roe(*args, **kwargs):
+        return {}
+
+    async def fake_prev(*args, **kwargs):
+        return date(2025, 11, 21)
+
+    async def fake_obs(db, ids, **kwargs):
+        return {i: [] for i in ids}, {i: {} for i in ids}
+
+    monkeypatch.setattr(svc, "_fetch_industry", fake_industry)
+    monkeypatch.setattr(svc, "_fetch_category", fake_category)
+    monkeypatch.setattr(svc, "_fetch_valuation", fake_valuation)
+    monkeypatch.setattr(svc, "_fetch_annual_roe", fake_roe)
+    monkeypatch.setattr(svc, "_trading_day_before", fake_prev)
+    monkeypatch.setattr(svc, "_fetch_daily_observations", fake_obs)
+
+    spec_v4 = {
+        "params": {
+            **SPEC["params"],
+            "forward_model_selector": {
+                "source": "ricequant",
+                "model": "v2",
+                "industry_mapping": "sws_2021",
+            },
+        }
+    }
+    normalized = normalize_plan(
+        [
+            InputRow(
+                0,
+                "600036.SH",
+                Decimal("0.8"),
+                "600036.SH",
+                {"instrument_id": 1, "symbol": "600036.SH", "name": "招商银行"},
+            ),
+            InputRow(1, "UNKNOWN.SH", Decimal("0.2"), "UNKNOWN.SH", None),
+        ]
+    )
+    item = svc.PlanInput(
+        0, "one", "单股加未知", [], normalized.weight_mode, normalized.summary, normalized.quantized
+    )
+    token = pub.current.set(pub.PublishedDiagnosticContext("v4-single-partial", AS_OF, now, ver))
+    try:
+        payload, _ = await svc._compute_plan(
+            SingleCoveredDb(),  # type: ignore[arg-type]
+            item=item,
+            spec=spec_v4,
+            as_of=AS_OF,
+            options=OPTIONS,
+        )
+    finally:
+        pub.current.reset(token)
+
+    sb = payload["section_b"]["value"]
+    sd = payload["section_d"]["value"]
+    assert sb["volatility"]["by_method"]["forward"]["reason_code"] == "coverage_below_threshold"
+    assert sb["annual_variance"]["reason_code"] == "coverage_below_threshold"
+    assert sb["daily_prediction_volatility"]["reason_code"] == "coverage_below_threshold"
+    assert sb["l3_effective_count"]["reason_code"] == "coverage_below_threshold"
+    assert sb["l4_effective_count"]["reason_code"] == "coverage_below_threshold"
+    assert sd["style_exposure"]["reason_code"] == "coverage_below_threshold"
+    assert sd["correlation"]["by_method"]["forward"]["reason_code"] == "coverage_below_threshold"
+    assert sd["correlation"]["primary"] is None
+    assert sd["avg_pairwise_correlation"]["primary"] is None
+    assert sd["high_correlation_pairs"]["primary"] is None

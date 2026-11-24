@@ -639,6 +639,17 @@ def test_v4_daily_contract_and_l4_covariance_preflight(monkeypatch):
         validate_l4_covariance(cov, factors, model="v2")
     monkeypatch.undo()
 
+    # 18 维病态反例：矩阵最大元素归一化误差远小于 1e-8 且迭代快速收敛，但低方差单股方向
+    # 相对守恒误差 > 1e-8（超 API 阈值）；按原协方差归一化的预检必须拒绝。
+    ill_corr = np.eye(k)
+    ill_corr[0, 1] = ill_corr[1, 0] = 1.0 - 5e-9
+    ill_stds = np.ones(k) * 0.2
+    ill_stds[0] = ill_stds[1] = 0.005
+    ill_stds[2] = 0.8
+    ill_cov = ill_corr * np.outer(ill_stds, ill_stds) * 10000.0
+    with pytest.raises(ValueError, match="not conserved"):
+        validate_l4_covariance(ill_cov, factors, model="v2")
+
     # 缺少市场因子或风格因子必须阻断。
     with pytest.raises(ValueError, match="comovement"):
         validate_l4_covariance(

@@ -1544,10 +1544,53 @@ async def _compute_plan(
         risk["calibrated"] = identity.get("calibrated")
         risk["annualization_days"] = 252
         if model is None:
-            reason = "完整组合风险不可用：" + (coverage["reason"] or "风险模型尚未准入")
-            metric = unavailable(reason_code="data_not_validated", reason=reason)
-            risk["annual_variance"] = dict(metric)
-            risk["daily_prediction_volatility"] = dict(metric)
+            incomplete = coverage.get("reason") == "incomplete_holdings_coverage"
+            admitted_metrics = set(identity.get("metrics") or ())
+            if incomplete:
+                cov_na = unavailable(
+                    reason_code="coverage_below_threshold",
+                    reason="部分持仓未识别或缺少风险模型数据，完整组合模型指标不可用。",
+                )
+                if "volatility" in admitted_metrics:
+                    risk["volatility"]["by_method"]["forward"] = dict(cov_na)
+                    risk["volatility"]["primary"] = None
+                for key in (
+                    "risk_contribution",
+                    "risk_contribution_ratio",
+                    "marginal_risk_contribution",
+                    "l3_effective_count",
+                    "l4_effective_count",
+                    "l4_market_source_share",
+                    "l4_largest_source",
+                ):
+                    if key in admitted_metrics:
+                        risk[key] = dict(cov_na)
+                if "style_exposure" in admitted_metrics:
+                    structure["style_exposure"] = dict(cov_na)
+                if "model_correlation" in admitted_metrics:
+                    corr_na = unavailable(
+                        reason_code="coverage_below_threshold",
+                        reason="具备风险模型数据的有效持仓不足两只，模型相关性不可用。",
+                    )
+                    for key in (
+                        "correlation",
+                        "avg_pairwise_correlation",
+                        "high_correlation_pairs",
+                    ):
+                        structure[key]["by_method"]["forward"] = dict(corr_na)
+                        if structure[key].get("primary") == "forward":
+                            structure[key]["primary"] = None
+                for metric_name in ("annual_variance", "daily_prediction_volatility"):
+                    risk[metric_name] = (
+                        dict(cov_na)
+                        if metric_name in admitted_metrics
+                        else unavailable(reason_code="data_not_validated", reason="该指标未准入。")
+                    )
+            else:
+                reason = "完整组合风险不可用：" + (coverage["reason"] or "风险模型尚未准入")
+                metric = unavailable(reason_code="data_not_validated", reason=reason)
+                risk["annual_variance"] = dict(metric)
+                risk["daily_prediction_volatility"] = dict(metric)
     if loaded is not None and loaded.admission is not None and model is not None:
         calibrated = bool(loaded.admission["calibrated"])
         for metric in ("annual_variance", "daily_prediction_volatility"):

@@ -199,12 +199,16 @@ def apply_model_coverage(
         by_method = sections["section_d"][name]["by_method"]
         metric = by_method["forward"]
         if not has_value(metric):
+            if sections["section_d"][name].get("primary") == "forward":
+                sections["section_d"][name]["primary"] = None
             continue
         if unavailable_at is not None and coverage < unavailable_at:
             by_method["forward"] = unavailable(
                 reason_code="coverage_below_threshold",
                 reason=f"具备模型数据的部分仅覆盖完整输入的 {coverage:.1%}。",
             )
+            if sections["section_d"][name].get("primary") == "forward":
+                sections["section_d"][name]["primary"] = None
         elif coverage < degraded_at:
             metric.update(
                 status="degraded",
