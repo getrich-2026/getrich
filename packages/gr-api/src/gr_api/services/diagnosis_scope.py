@@ -20,6 +20,14 @@ ENHANCED_METRICS = METRICS | {
     "l3_effective_count",
 }
 
+V4_MODEL_METRICS = ENHANCED_METRICS | {
+    "l4_effective_count",
+    "l4_market_source_share",
+    "l4_largest_source",
+    "style_exposure",
+    "model_correlation",
+}
+
 
 def input_weights(summary: dict[str, Any]) -> tuple[dict[int, Decimal], list[dict[str, Any]]]:
     """从固定输入回显还原完整分母份额，未识别项仍占分母，重复项合并。"""
@@ -69,16 +77,25 @@ def scope(version: dict[str, Any]) -> dict[str, Any]:
         raise BadRequest("publication scope has not been admitted", http_status=503)
     kind = value.get("scope_type") or ("exact_portfolio" if "holdings" in value else None)
     contract = version.get("contract_version")
+    expected_metrics = (
+        V4_MODEL_METRICS
+        if contract == "diag-publication-v4"
+        else (ENHANCED_METRICS if contract == "diag-publication-v3" else METRICS)
+    )
     if (
         kind not in ("exact_portfolio", "security_universe")
         or value.get("as_of") != str(version.get("as_of_date"))
         or value.get("model") != "v2"
         or not value.get("run_id")
-        or set(value.get("metrics") or ())
-        != (ENHANCED_METRICS if contract == "diag-publication-v3" else METRICS)
+        or set(value.get("metrics") or ()) != expected_metrics
         or (
             kind == "security_universe"
-            and contract not in {"diag-publication-v2-universe", "diag-publication-v3"}
+            and contract
+            not in {
+                "diag-publication-v2-universe",
+                "diag-publication-v3",
+                "diag-publication-v4",
+            }
         )
         or (kind == "exact_portfolio" and contract != "diag-publication-v1")
     ):

@@ -81,6 +81,8 @@ class RiskDb:
     async def fetchall(self):
         if "SELECT instrument_id,symbol" in self.query:
             return [{"instrument_id": i, "symbol": f"60000{i}.SH"} for i in (1, 2, 3, 4)]
+        if "FROM factor.definition" in self.query:
+            return [{"factor_code": "f", "factor_type": "market"}]
         if "SELECT m.*" in self.query:
             return [
                 {
@@ -260,7 +262,7 @@ def test_full_scope_prevents_ready_or_missing_cache_pollution():
     "metrics",
     [
         ["beta"],
-        ["l4_effective_count"],
+        ["replay_volatility"],
         ["annual_variance", "volatility", "daily_prediction_volatility", "beta"],
     ],
 )

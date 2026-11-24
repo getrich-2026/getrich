@@ -10,6 +10,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
+from gr_api.diagnosis_calc.comparison import compute_rebalance_comparison
 from gr_api.diagnosis_calc.coverage import (
     apply_exposure_coverage,
     apply_model_coverage,
@@ -356,11 +357,32 @@ def assemble(
     disclosures = snapshot_disclosures(
         snapshot, [p["cov"]["forward_model"] for p in plans if p["cov"].get("forward_model")]
     )
-    comparison = (
-        unavailable("not_applicable", "单方案不适用方案比较。")
-        if len(plans) == 1
-        else unavailable("feature_not_available", "方案比较尚未开放，各方案可独立查看。")
-    )
+    intent = snapshot["resolved_intent"]
+    if len(plans) == 1:
+        comparison = unavailable("not_applicable", "单方案不适用方案比较。")
+    elif intent in ("rebalance_holding", "rebalance_amount") and len(plans) == 2:
+        if plans[0]["run_status"] == "failed" or plans[1]["run_status"] == "failed":
+            comparison = unavailable("not_applicable", "调仓前后存在计算失败方案，无法生成对比。")
+        else:
+            before_facts = (rows[0]["data_quality"] or {}).get("model")
+            after_facts = (rows[1]["data_quality"] or {}).get("model")
+            comparison = ready(
+                {
+                    "pairs": [
+                        compute_rebalance_comparison(
+                            plans[0],
+                            plans[1],
+                            before_model_facts=before_facts,
+                            after_model_facts=after_facts,
+                        )
+                    ]
+                }
+            )
+    else:
+        comparison = unavailable(
+            "feature_not_available",
+            "多方案自动两两比较暂未开放，请使用调仓意图对比或分别查看各方案。",
+        )
     status = "failed" if all(p["run_status"] == "failed" for p in plans) else "partially_succeeded"
     return DiagnosisResult.model_validate(
         dict(
@@ -417,6 +439,53 @@ def accepted(result: dict[str, Any]) -> dict[str, Any]:
 TOPN_LABELS = {1: "Top1 权重", 3: "Top3 权重", 5: "Top5 权重"}
 
 METHOD_LABELS = {"forward": "模型", "historical": "历史"}
+
+STYLE_FACTOR_LABELS: dict[str, str] = {
+    "beta": "Beta",
+    "book_to_price": "账面市值比",
+    "dividend_yield": "股息率",
+    "earnings_quality": "盈利质量",
+    "earnings_variability": "盈利波动",
+    "earnings_yield": "盈利收益率",
+    "growth": "成长",
+    "investment_quality": "投资质量",
+    "leverage": "杠杆",
+    "liquidity": "流动性",
+    "longterm_reversal": "长期反转",
+    "mid_cap": "中盘",
+    "momentum": "动量",
+    "profitability": "盈利能力",
+    "residual_volatility": "残差波动率",
+    "size": "市值",
+}
+
+COMPARISON_DELTA_SPECS: tuple[tuple[str, str, str, int, str | None], ...] = (
+    ("volatility", "模型年化波动率变化", "percentage_point", 2, "volatility"),
+    (
+        "daily_prediction_volatility",
+        "单日预测波动率变化",
+        "percentage_point",
+        4,
+        "daily_prediction_volatility",
+    ),
+    ("l3_effective_count", "风险有效持仓数（L3）变化", "number", 2, "l3_effective_count"),
+    ("l4_effective_count", "风险源方差集中度（L4）变化", "number", 2, "l4_effective_count"),
+    (
+        "l4_market_source_share",
+        "市场源占比变化",
+        "percentage_point",
+        2,
+        "l4_market_source_share",
+    ),
+    ("avg_pairwise_correlation", "模型平均两两相关变化", "number", 2, "model_correlation"),
+    ("top1", "Top1 权重变化", "percentage_point", 1, None),
+    ("top3", "Top3 权重变化", "percentage_point", 1, None),
+    ("top5", "Top5 权重变化", "percentage_point", 1, None),
+    ("max_industry", "最大行业占比变化", "percentage_point", 1, None),
+    ("l1_count", "名义持仓数变化", "integer", 0, None),
+    ("l2_effective_count", "权重有效持仓数（L2）变化", "number", 2, None),
+    ("hhi", "HHI 集中度变化", "number", 4, None),
+)
 
 FIXED_LABELS = {
     UNCLASSIFIED: "未分类",
@@ -804,7 +873,7 @@ def _structure_blocks(structure: dict[str, Any], names: dict[str, str]) -> list[
                 "items": [
                     _card(
                         f"style_exposure:{code}",
-                        f"风格暴露 {code}",
+                        f"风格暴露：{STYLE_FACTOR_LABELS.get(code, code)}",
                         {**style, "value": value},
                         "number",
                         2,
@@ -813,6 +882,51 @@ def _structure_blocks(structure: dict[str, Any], names: dict[str, str]) -> list[
                 ],
             }
         )
+    return blocks
+
+
+def _comparison_blocks(
+    comparison: dict[str, Any],
+    admitted_metrics: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """把 ComparisonSection 渲染为前端可直接消费的 ReportBlock 列表（按准入清单裁剪）。"""
+    blocks: list[dict[str, Any]] = []
+    for pair in comparison.get("pairs", []):
+        # 不把用户输入的 plan.label / plan_id 拼入正文，保持分享报告白名单脱敏一致。
+        blocks.append(
+            {
+                "type": "text",
+                "text": "调仓对比：调仓前 → 调仓后（以下变化量均为调仓后减调仓前）。",
+            }
+        )
+        deltas = pair.get("deltas") or {}
+        items = [
+            _card(f"delta.{key}", label, deltas[key], fmt, decimals)
+            for key, label, fmt, decimals, required in COMPARISON_DELTA_SPECS
+            if key in deltas
+            and (required is None or admitted_metrics is None or required in admitted_metrics)
+        ]
+        if admitted_metrics is None or "marginal_risk_contribution" in admitted_metrics:
+            items.append(
+                _card(
+                    "comparison.marginal_impact",
+                    "一阶边际波动影响估算",
+                    pair["marginal_impact"],
+                    "percentage_point",
+                    2,
+                )
+            )
+        if admitted_metrics is None or "style_exposure" in admitted_metrics:
+            items.append(
+                _card(
+                    "comparison.overlap_with_new",
+                    "新增标的因子重叠度",
+                    pair["overlap_with_new"],
+                    "number",
+                    2,
+                )
+            )
+        blocks.append({"type": "metric_cards", "items": items})
     return blocks
 
 
@@ -900,7 +1014,20 @@ def report(
             if blind["status"] == "ready"
             else blind,
         )
-    add(None, "comparison", "方案比较", result["comparison"])
+    admitted = (
+        set(result["publication"]["declared_metrics"])
+        if result.get("publication") is not None
+        else None
+    )
+    comparison = result["comparison"]
+    add(
+        None,
+        "comparison",
+        "方案比较",
+        ready(_comparison_blocks(comparison["value"], admitted))
+        if comparison["status"] == "ready"
+        else comparison,
+    )
     add(
         None,
         "limitations",

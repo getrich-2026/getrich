@@ -9,7 +9,8 @@
 - 云端最新验收发布日期 **2026-11-20**，米筐 `v2`（`sws_2021`）；不回退日期或模型。最新可用日期及清单始终以每次 `/v1/diagnosis/options` 返回为准。
 - 云端最新有效版本 `diag-v3-20261120-daily-9ff71d632cb1e712`，5,224 只沪深 A 股（11-13 起 `002731.SZ` 退市退出）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
 - 三项基础模型指标：`annual_variance`、`volatility.by_method.forward`（年化预测波动率）、`daily_prediction_volatility`。后两者都是小数，显示百分比时乘100；年化方差保持小数平方。
-- v3另准入 `risk_contribution`、`risk_contribution_ratio`、`marginal_risk_contribution`、`l3_effective_count`。L4、模型相关性、风格暴露和回放仍不可用。年度ROE为个股辅助字段，不是模型风险指标。
+- v3 另准入 `risk_contribution`、`risk_contribution_ratio`、`marginal_risk_contribution`、`l3_effective_count`。年度 ROE 为个股辅助字段，不是模型风险指标。
+- v4（V2 批次 2A，当前在特性分支 `feat/v2-2a-l4-comparison` 验收，待上线发布）扩展至 12 项模型指标：在 v3 基础上开放 `l4_effective_count`、`l4_market_source_share`、`l4_largest_source`、`style_exposure`（16 维风格暴露）与 `model_correlation`（`correlation.by_method.forward`、`avg_pairwise_correlation.forward`、`high_correlation_pairs.forward`），同时开放 `intent ∈ {"rebalance_holding", "rebalance_amount"}` 的双方案调仓前后客观对比（`comparison.pairs[0]` 输出 `deltas`、`marginal_impact`、`overlap_with_new`；`intent_effect_gap` 留空 `[]`，不新增请求字段）。
 - `calibrated=false`，指标状态为 `degraded/not_calibrated`：指定单日证券清单及准入指标的源值、单位和数值验收通过，全区间校准及P6尚未完成。不能解释为历史PIT或未准入风险指标已验收。
 - 清单内可自由组合与调权，无需逐组合发布。每个方案最多100原始行（含重复和零权重），每次1～5个独立方案。
 

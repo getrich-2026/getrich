@@ -186,6 +186,12 @@ def apply_model_coverage(
             sections[section][name] = unavailable(
                 reason_code="coverage_below_threshold", reason=reason
             )
+    for opt_name in ("annual_variance", "daily_prediction_volatility"):
+        metric = sections["section_b"].get(opt_name)
+        if metric is not None and blocked(metric):
+            sections["section_b"][opt_name] = unavailable(
+                reason_code="coverage_below_threshold", reason=reason
+            )
 
     degraded_at, unavailable_at = _thresholds(DEFAULT_GROUP, params)
     coverage = model_input_coverage(model_facts)

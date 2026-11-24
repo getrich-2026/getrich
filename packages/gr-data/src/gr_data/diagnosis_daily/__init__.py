@@ -60,7 +60,7 @@ from .evidence import (
 
 
 log = logging.getLogger(__name__)
-METRICS = sorted(
+V3_METRICS = sorted(
     (
         "annual_variance",
         "volatility",
@@ -71,7 +71,18 @@ METRICS = sorted(
         "l3_effective_count",
     )
 )
-CONTRACT = "diag-publication-v3"
+V4_METRICS = sorted(
+    (
+        *V3_METRICS,
+        "l4_effective_count",
+        "l4_market_source_share",
+        "l4_largest_source",
+        "style_exposure",
+        "model_correlation",
+    )
+)
+METRICS = V4_METRICS
+CONTRACT = "diag-publication-v4"
 _CONTRACTS = {
     c.qualified: c
     for c in (
@@ -317,7 +328,7 @@ def prepare(
             **attempt_metadata,
         }
         evidence["artifact_hash"] = digest(evidence)
-        evidence["version_id"] = f"diag-v3-{day:%Y%m%d}-daily-{evidence['artifact_hash'][:16]}"
+        evidence["version_id"] = f"diag-v4-{day:%Y%m%d}-daily-{evidence['artifact_hash'][:16]}"
         write_json(artifact / "prepared.json", evidence)
         write_json(
             artifact / "status.json",
@@ -630,11 +641,16 @@ async def _apply(
         expected_revision=head["revision"] if head else None,
     )
     components.append(Component("factor.risk_bundle", risk_part, day, day))
+    quality = data.get("quality") or {}
+    if quality.get("l4_orth_verified") is not True:
+        raise ValueError("L4 orthogonality preflight evidence is required for v4 admission")
     proof = {
         "kind": "two-phase-daily-v1",
         "artifact_hash": data["artifact_hash"],
         "calibrated": False,
         "rc_definition": "volatility contribution; sum(RC)=sqrt(annual_variance)",
+        "l4_orth_verified": True,
+        "l4_min_corr_eigenvalue": quality.get("l4_min_corr_eigenvalue"),
     }
     admission = await admit_risk_universe(
         c,

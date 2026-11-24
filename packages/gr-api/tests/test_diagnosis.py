@@ -490,10 +490,11 @@ def test_intent_resolution(
 
 
 @pytest.mark.parametrize("intent", ["rebalance_amount", "rebalance_holding"])
-def test_rebalance_intents_are_explicitly_not_available(intent: str) -> None:
+def test_rebalance_intents_require_two_plans_and_resolve(intent: str) -> None:
+    assert svc._resolve_intent(intent, [_plan_input(1), _plan_input(1)]) == intent
     with pytest.raises(ApiError) as exc_info:
-        svc._resolve_intent(intent, [_plan_input(1), _plan_input(1)])
-    assert exc_info.value.issues[0]["code"] == "feature_not_available"
+        svc._resolve_intent(intent, [_plan_input(1)])
+    assert exc_info.value.issues[0]["path"] == "/plans"
 
 
 def test_single_instrument_with_unresolved_share_is_rejected() -> None:

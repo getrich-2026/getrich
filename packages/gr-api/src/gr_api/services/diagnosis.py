@@ -30,7 +30,7 @@ from gr_api.diagnosis_calc.history import (
     historical_volatility,
     trading_status,
 )
-from gr_api.diagnosis_calc.metrics import degraded, has_value, unavailable
+from gr_api.diagnosis_calc.metrics import degraded, has_value, ok, unavailable
 from gr_api.diagnosis_calc.model_risk import (
     ModelRiskResult,
     RiskModelInputs,
@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 #: ``diag.diagnosis_run.payload`` 的结构版本。payload 是 CalculationPayload 同形 JSON，
 #: 缓存字段增删必须同步 +1；它也进入 calculation_hash，旧结构不会被新代码复用。
-PAYLOAD_SCHEMA_VERSION = "7.3"
+PAYLOAD_SCHEMA_VERSION = "7.4"
 
 #: 进程时区不能决定业务日期；数据库连接虽钉住了会话时区，却不会改变 Python 进程时区。
 PLATFORM_TZ = ZoneInfo("Asia/Shanghai")
@@ -628,9 +628,11 @@ async def _normalize_request_plans(
 
 
 def _resolve_intent(requested: str | None, plans: list[PlanInput]) -> str:
-    """一期只做独立诊断；调仓比较第二期开放，必须显式拒绝而不是静默改为独立诊断。"""
+    """解析诊断意图；调仓比较要求恰好两个方案，多方案默认独立对比。"""
     if requested in ("rebalance_amount", "rebalance_holding"):
-        raise _feature_not_available("rebalance comparison is not available yet", "/intent")
+        if len(plans) != 2:
+            raise _issue_error(f"{requested} requires exactly two plans", "/plans")
+        return requested
     if len(plans) > 1:
         return "multi_portfolio"
     summary = plans[0].summary
@@ -660,9 +662,12 @@ def _report_mode(intent: str) -> str:
 async def _fetch_annual_roe(
     db: DictConnection, ids: list[int], *, as_of: date
 ) -> dict[int, dict[str, Any]]:
-    """仅v3读取已签财务组成；选最新完整年度及当时已披露修订。"""
+    """仅 v3/v4 读取已签财务组成；选最新完整年度及当时已披露修订。"""
     context = publication.current.get()
-    if context is None or context.version.get("contract_version") != "diag-publication-v3":
+    if context is None or context.version.get("contract_version") not in {
+        "diag-publication-v3",
+        "diag-publication-v4",
+    }:
         return {}
     await publication.require_coverage(db, as_of, as_of, ("fundamental.indicator_q",))
     async with db.cursor() as cur:
@@ -1056,8 +1061,17 @@ async def _load_risk_model(
             (run["run_id"], as_of, context.published_at),
         )
         covariance = await cur.fetchone()
+        await cur.execute(
+            "SELECT factor_code, factor_type FROM factor.definition "
+            "WHERE model_id=%s ORDER BY ordinal",
+            (run["model_id"],),
+        )
+        factor_defs = await cur.fetchall()
     if covariance is None:
         return fail("covariance_missing")
+    market_factors = [r["factor_code"] for r in factor_defs if r["factor_type"] == "market"]
+    market_factor = market_factors[0] if len(market_factors) == 1 else None
+    style_factors = frozenset(r["factor_code"] for r in factor_defs if r["factor_type"] == "style")
     upper = np.triu_indices(k)
     cov = np.zeros((k, k))
     cov[upper] = np.asarray(covariance["cov_flat"]) / 10000
@@ -1067,6 +1081,8 @@ async def _load_risk_model(
         cov,
         {i: np.asarray(r["exposure"], dtype=float) for i, r in included.items()},
         {i: float(r["specific_var"]) / 10000 for i, r in included.items()},
+        market_factor=market_factor,
+        style_factors=style_factors,
     )
     try:
         validated_factor_covariance(inputs)
@@ -1084,8 +1100,51 @@ async def _load_risk_model(
     )
 
 
-def _scoped_risk(holdings: list[CalcHolding], loaded: LoadedRiskModel) -> ModelRiskResult:
-    """指定组合的已验收方差和波动率；其他模型指标保持未准入。"""
+def _comparison_vectors(
+    holdings: list[CalcHolding], inputs: RiskModelInputs, portfolio_volatility: float
+) -> dict[str, Any]:
+    """生成用于调仓前后对比的紧凑模型向量摘要（写入 diagnosis_run.data_quality['model']）。"""
+    import numpy as np
+
+    b = sum(
+        (float(h.weight) * inputs.exposures[h.instrument_id] for h in holdings),
+        np.zeros(len(inputs.factor_codes)),
+    )
+    g = inputs.factor_covariance @ b
+    return {
+        "factor_codes": list(inputs.factor_codes),
+        "portfolio_factor_exposure": [float(x) for x in b],
+        "factor_cov_exposure": [float(x) for x in g],
+        "holding_exposures": {
+            str(h.instrument_id): [float(x) for x in inputs.exposures[h.instrument_id]]
+            for h in holdings
+        },
+        "holding_specific_var": {
+            str(h.instrument_id): float(inputs.specific_variance[h.instrument_id]) for h in holdings
+        },
+        "portfolio_volatility": float(portfolio_volatility),
+    }
+
+
+def _wrap_admitted_metric(
+    value: dict[str, Any], *, calibrated: bool, reason: str
+) -> dict[str, Any]:
+    if not has_value(value):
+        return value
+    if calibrated:
+        return value
+    return degraded(
+        value["value"],
+        reason_code="not_calibrated",
+        reason=reason,
+        method=str(value.get("method", "forward")),
+    )
+
+
+def _scoped_risk(
+    holdings: list[CalcHolding], loaded: LoadedRiskModel, *, high_threshold: float = 0.7
+) -> ModelRiskResult:
+    """按发布准入清单计算模型风险指标；未准入项显式保持 unavailable。"""
     import math
 
     import numpy as np
@@ -1103,41 +1162,57 @@ def _scoped_risk(holdings: list[CalcHolding], loaded: LoadedRiskModel) -> ModelR
     annual = factor + specific
     if not math.isfinite(annual) or annual < 0:
         raise ValueError("invalid portfolio variance")
+    vol = math.sqrt(annual)
     na = unavailable(reason_code="data_not_validated", reason="本次单日验收未覆盖该模型指标。")
     values = {f.name: dict(na) for f in fields(ModelRiskResult) if f.name != "facts"}
-    if "volatility" in admission["metrics"]:
-        values["volatility"] = degraded(
-            math.sqrt(annual),
-            reason_code="not_calibrated",
+    admitted = set(admission["metrics"])
+    calibrated = bool(admission["calibrated"])
+    if "volatility" in admitted:
+        values["volatility"] = _wrap_admitted_metric(
+            ok(vol, method="forward"),
+            calibrated=calibrated,
             reason="本次单日范围与指标已准入；全区间未校准。",
-            method="forward",
         )
-    enhanced = set(admission["metrics"]) & {
+    enhanced = admitted & {
         "risk_contribution",
         "risk_contribution_ratio",
         "marginal_risk_contribution",
         "l3_effective_count",
     }
+    l4_metrics = admitted & {
+        "l4_effective_count",
+        "l4_market_source_share",
+        "l4_largest_source",
+    }
+    need_style = "style_exposure" in admitted
+    need_corr = "model_correlation" in admitted
     computed = None
-    if enhanced:
+    if enhanced or l4_metrics or need_style or need_corr:
         computed = compute_model_risk(
             [(h.instrument_id, float(h.weight)) for h in holdings],
             loaded.inputs,
-            high_threshold=0.7,
-            include_risk_sources=False,
+            high_threshold=high_threshold,
+            include_risk_sources=bool(l4_metrics),
         )
-        for metric in enhanced:
-            value = getattr(computed, metric)
-            values[metric] = (
-                degraded(
-                    value["value"],
-                    reason_code="not_calibrated",
-                    reason="本次单日增强指标已准入；全区间未校准。",
-                    method="forward",
-                )
-                if has_value(value)
-                else value
+        for metric in enhanced | l4_metrics:
+            values[metric] = _wrap_admitted_metric(
+                getattr(computed, metric),
+                calibrated=calibrated,
+                reason="本次单日增强指标已准入；全区间未校准。",
             )
+        if need_style:
+            values["style_exposure"] = _wrap_admitted_metric(
+                computed.style_exposure,
+                calibrated=calibrated,
+                reason="本次单日风格暴露已准入；全区间未校准。",
+            )
+        if need_corr:
+            for field_name in ("correlation", "average_correlation", "high_correlation_pairs"):
+                values[field_name] = _wrap_admitted_metric(
+                    getattr(computed, field_name),
+                    calibrated=calibrated,
+                    reason="本次单日模型相关性已准入；全区间未校准。",
+                )
     facts = {
         "missing": [],
         "negative_contribution": bool(computed and computed.facts.get("negative_contribution")),
@@ -1151,6 +1226,7 @@ def _scoped_risk(holdings: list[CalcHolding], loaded: LoadedRiskModel) -> ModelR
         "annual_variance": annual,
         "daily_prediction_volatility": math.sqrt(annual / 252),
         "annualization_days": 252,
+        **_comparison_vectors(holdings, loaded.inputs, vol),
     }
     return ModelRiskResult(**values, facts=facts)
 
@@ -1259,7 +1335,10 @@ async def _compute_plan(
     )
     annual_roe = await _fetch_annual_roe(db, ids, as_of=as_of)
     context = publication.current.get()
-    if context is not None and context.version.get("contract_version") == "diag-publication-v3":
+    if context is not None and context.version.get("contract_version") in {
+        "diag-publication-v3",
+        "diag-publication-v4",
+    }:
         for entry in metrics["instrument_facts"]["value"].values():
             entry["roe"] = unavailable(
                 reason_code="coverage_below_threshold",
@@ -1285,19 +1364,28 @@ async def _compute_plan(
         assessment=coverage,
         input_weights=original_weights,
     )
+    high_threshold = float(params.get("corr_high_threshold") or 0.7)
     model = (
         (
-            _scoped_risk(holdings, loaded)
+            _scoped_risk(holdings, loaded, high_threshold=high_threshold)
             if loaded.admission is not None
             else compute_model_risk(
                 [(h.instrument_id, float(h.weight)) for h in holdings],
                 loaded.inputs,
-                high_threshold=float(params.get("corr_high_threshold") or 0.7),
+                high_threshold=high_threshold,
             )
         )
         if loaded is not None
         else None
     )
+    if (
+        loaded is not None
+        and model is not None
+        and not model.facts.get("missing")
+        and has_value(model.volatility)
+        and "portfolio_factor_exposure" not in model.facts
+    ):
+        model.facts.update(_comparison_vectors(holdings, loaded.inputs, model.volatility["value"]))
     risk, structure, facts["history"] = await _compute_history(
         db, ids, params=params, options=options, model=model
     )
@@ -1336,13 +1424,13 @@ async def _compute_plan(
             risk["annual_variance"] = dict(metric)
             risk["daily_prediction_volatility"] = dict(metric)
     if loaded is not None and loaded.admission is not None and model is not None:
+        calibrated = bool(loaded.admission["calibrated"])
         for metric in ("annual_variance", "daily_prediction_volatility"):
             risk[metric] = (
-                degraded(
-                    model.facts[metric],
-                    reason_code="not_calibrated",
+                _wrap_admitted_metric(
+                    ok(model.facts[metric], method="forward"),
+                    calibrated=calibrated,
                     reason="本次单日范围与指标已准入；全区间未校准。",
-                    method="forward",
                 )
                 if metric in loaded.admission["metrics"]
                 else unavailable(reason_code="data_not_validated", reason="该指标未准入。")
@@ -1963,6 +2051,11 @@ async def _load_result(
                 "risk_contribution_ratio": "风险贡献占比",
                 "marginal_risk_contribution": "边际风险贡献",
                 "l3_effective_count": "风险有效持仓数 L3",
+                "l4_effective_count": "风险源方差集中度 L4",
+                "l4_market_source_share": "市场风险源占比",
+                "l4_largest_source": "最大风险源占比",
+                "style_exposure": "16 维风格暴露",
+                "model_correlation": "模型相关性",
             }
             metrics = result["publication"]["declared_metrics"]
             coverage = "、".join(names.get(str(k), str(k)) for k in metrics) or "无已准入模型指标"

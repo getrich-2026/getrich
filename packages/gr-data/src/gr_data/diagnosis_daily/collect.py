@@ -544,6 +544,50 @@ def probe_upstream_exposure(
     }
 
 
+def validate_l4_covariance(
+    covariance: Any,
+    factor_order: list[str] | tuple[str, ...],
+    *,
+    model: str,
+    singular_tol: float = 1e-12,
+) -> dict[str, Any]:
+    """L4 正交化前置核验：确认市场/风格因子完备且因子相关矩阵非近奇异。"""
+    import numpy as np
+
+    from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
+
+    if model not in STYLE_FACTORS:
+        raise ValueError(f"L4 preflight failed: unsupported risk model '{model}'")
+    factors = set(factor_order)
+    if len(factors) != len(factor_order):
+        raise ValueError("L4 preflight failed: duplicate factor codes in factor_order")
+    if "comovement" not in factors:
+        raise ValueError(
+            "L4 preflight failed: market factor 'comovement' missing from factor_order"
+        )
+    expected_styles = STYLE_FACTORS[model]
+    missing_styles = sorted(expected_styles - factors)
+    if missing_styles:
+        raise ValueError(
+            f"L4 preflight failed: style factors missing from factor_order: {missing_styles}"
+        )
+    cov = np.asarray(covariance, dtype=float)
+    if cov.ndim != 2 or cov.shape != (len(factor_order), len(factor_order)):
+        raise ValueError("L4 preflight failed: covariance shape mismatch")
+    diag = np.diag(cov)
+    if not np.all(np.isfinite(cov)) or not np.all(diag > 0):
+        raise ValueError("L4 preflight failed: factor variances must be finite and positive")
+    sigma = np.sqrt(diag)
+    corr = cov / np.outer(sigma, sigma)
+    corr = (corr + corr.T) / 2.0
+    min_eig = float(np.linalg.eigvalsh(corr).min())
+    if not np.isfinite(min_eig) or min_eig <= singular_tol:
+        raise ValueError(
+            f"L4 preflight failed: factor correlation is near-singular (min_eig={min_eig})"
+        )
+    return {"l4_orth_verified": True, "l4_min_corr_eigenvalue": min_eig}
+
+
 def collect_risk(
     client: Any,
     paths: RawPaths,
@@ -600,6 +644,13 @@ def collect_risk(
     quality.update(_publication_quality(manifest))
     if not quality["publication_eligible"]:
         raise ValueError(f"Risk publication gate failed: {quality['publication_reasons']}")
+    quality.update(
+        validate_l4_covariance(
+            storage["covariance"],
+            [str(c) for c in frames["covariance"].columns],
+            model=options.model,
+        )
+    )
     ids = sorted({r["instrument_id"] for r in coverage if r["status"] == "included"})
     write_json(
         paths.dataset_dir("ricequant", "daily_capture") / "preflight.json",

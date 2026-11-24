@@ -387,9 +387,14 @@ async def publish_version(
         "diag-publication-v1",
         "diag-publication-v2-universe",
         "diag-publication-v3",
+        "diag-publication-v4",
     }:
         raise ValueError("Unsupported diagnostic publication contract")
-    required = ENHANCED_BASIC_DATASETS if contract == "diag-publication-v3" else BASIC_DATASETS
+    required = (
+        ENHANCED_BASIC_DATASETS
+        if contract in {"diag-publication-v3", "diag-publication-v4"}
+        else BASIC_DATASETS
+    )
     keys = {(c.dataset_key, c.partition_key) for c in components}
     if len(keys) != len(components) or not set(required) <= {c.dataset_key for c in components}:
         raise ValueError(

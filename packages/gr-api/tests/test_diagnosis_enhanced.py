@@ -12,7 +12,7 @@ from gr_api.diagnosis_calc.exposure import CalcHolding
 from gr_api.diagnosis_calc.model_risk import RiskModelInputs
 from gr_api.errors import BadRequest
 from gr_api.services.diagnosis import LoadedRiskModel, _scoped_risk
-from gr_api.services.diagnosis_scope import ENHANCED_METRICS, METRICS, scope
+from gr_api.services.diagnosis_scope import ENHANCED_METRICS, METRICS, V4_MODEL_METRICS, scope
 
 
 @pytest.mark.parametrize("zero", [False, True])
@@ -74,8 +74,11 @@ def test_scoped_enhanced_contributions_and_gating(zero, monkeypatch):
     [
         ("diag-publication-v2-universe", METRICS, True),
         ("diag-publication-v3", ENHANCED_METRICS, True),
+        ("diag-publication-v4", V4_MODEL_METRICS, True),
         ("diag-publication-v2-universe", ENHANCED_METRICS, False),
         ("diag-publication-v3", METRICS, False),
+        ("diag-publication-v3", V4_MODEL_METRICS, False),
+        ("diag-publication-v4", ENHANCED_METRICS, False),
     ],
 )
 def test_protocol_specific_metric_contract(contract, metrics, accepted):

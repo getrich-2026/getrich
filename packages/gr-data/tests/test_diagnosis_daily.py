@@ -600,3 +600,43 @@ def test_quota_expiry_warning_and_snapshot_metadata(caplog):
     assert "account_secret" not in warn_snap
     assert len(caplog.records) == 2
     assert all("remaining_days=18" in r.message and "30-day" in r.message for r in caplog.records)
+
+
+def test_v4_daily_contract_and_l4_covariance_preflight():
+    import numpy as np
+    from gr_data.diagnosis_daily import CONTRACT, METRICS, V3_METRICS, V4_METRICS
+    from gr_data.diagnosis_daily.collect import validate_l4_covariance
+    from gr_data.raw.ricequant.risk_shapes import STYLE_FACTORS
+
+    assert CONTRACT == "diag-publication-v4"
+    assert METRICS == V4_METRICS
+    assert len(V3_METRICS) == 7 and len(V4_METRICS) == 12
+    assert set(V3_METRICS) < set(V4_METRICS)
+
+    factors = sorted(STYLE_FACTORS["v2"] | {"comovement", "银行"})
+    cov = np.eye(len(factors)) * 0.04
+    checked = validate_l4_covariance(cov, factors, model="v2")
+    assert checked["l4_orth_verified"] is True
+    assert checked["l4_min_corr_eigenvalue"] == pytest.approx(1.0)
+
+    # 缺少市场因子或风格因子必须阻断。
+    with pytest.raises(ValueError, match="comovement"):
+        validate_l4_covariance(
+            np.eye(len(factors) - 1), [f for f in factors if f != "comovement"], model="v2"
+        )
+    with pytest.raises(ValueError, match="style factors missing"):
+        validate_l4_covariance(
+            np.eye(len(factors) - 1), [f for f in factors if f != "beta"], model="v2"
+        )
+
+    # 未知模型或重复因子名必须阻断。
+    with pytest.raises(ValueError, match="unsupported risk model"):
+        validate_l4_covariance(cov, factors, model="unknown_model")
+    with pytest.raises(ValueError, match="duplicate factor codes"):
+        validate_l4_covariance(np.eye(2), ["comovement", "comovement"], model="v2")
+
+    # 近奇异因子相关矩阵必须阻断。
+    singular = cov.copy()
+    singular[0, 1] = singular[1, 0] = 0.04
+    with pytest.raises(ValueError, match="near-singular"):
+        validate_l4_covariance(singular, factors, model="v2")

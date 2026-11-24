@@ -151,10 +151,15 @@ class SnapshotRequest(ApiModel):
                 "risk_contribution_ratio",
                 "marginal_risk_contribution",
                 "l3_effective_count",
+                "l4_effective_count",
+                "l4_market_source_share",
+                "l4_largest_source",
+                "style_exposure",
+                "model_correlation",
             ]
         ]
         | None
-    ) = Field(default=None, min_length=1, max_length=7)
+    ) = Field(default=None, min_length=1, max_length=12)
 
     plans: list[PortfolioPlan] = Field(min_length=1, max_length=5)
     intent: Intent | None = None  # 缺省 → 按方案数与解析结果判定
