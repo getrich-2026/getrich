@@ -147,7 +147,7 @@
               <li><span class="step">03</span><div><h2>信号与执行</h2><p>SIGNAL · 信号生产与交易执行</p></div><span class="arrow" aria-hidden="true">↘</span></li>
               <li><span class="step">04</span><div><h2>观察与诊断</h2><p>REVIEW · 组合观察与持仓诊断</p></div><span class="arrow" aria-hidden="true">↗</span></li>
             </ol>
-            <p class="map-note">项目持续开发中 · 各模块的支持范围见文档</p>
+            <p class="map-note">V1 持仓诊断后端已进入联调 · 各模块支持范围见文档</p>
           </aside>
         </section>
         <div class="stack" aria-label="项目技术栈"><span class="stack-label">BUILT WITH</span><span>Python 3.11+</span><span>FastAPI</span><span>React 19</span><span>PostgreSQL / TimescaleDB</span><span>Polars + DuckDB</span></div>
@@ -158,7 +158,7 @@
             <article class="module"><code>gr-backtest</code><h3>策略回测</h3><p>独立的回测引擎，承接历史数据、策略执行与结果分析，支持生成 HTML 报告。</p></article>
             <article class="module"><code>gr-signal</code><h3>实盘信号</h3><p>负责实盘信号生产与交易执行。策略上线遵循历史回测、模拟盘、小资金实盘的验证顺序。</p></article>
             <article class="module"><code>gr-factor</code><h3>因子研究</h3><p>期权定价与因子分析能力，支持量化研究中的模型计算与分析。</p></article>
-            <article class="module"><code>gr-api · apps/web</code><h3>应用与诊断</h3><p>FastAPI 与 React 连接策略、选股和持仓诊断。诊断部分计算仍在建设，支持范围以接口指南为准。</p></article>
+            <article class="module"><code>gr-api · apps/web</code><h3>应用与诊断</h3><p>FastAPI 提供 V1 持仓诊断与认证 API（支持按开关收敛公网路由）；主前端与其余业务模块按阶段接入，支持范围以接口指南为准。</p></article>
             <article class="module"><code>gr-tools</code><h3>公共工具</h3><p>复用环境加载、日志、文件系统与表格读取能力，为各业务模块提供基础支持。</p></article>
           </div>
         </section>
@@ -170,7 +170,9 @@
             <a class="doc-link" href="https://github.com/getrich-2026/getrich/blob/dev/docs/guides/frontend-dev.md"><span><strong>前端开发</strong><small>运行界面，配置代理与排查连接问题</small></span><span aria-hidden="true">↗</span></a>
             <a class="doc-link" href="https://github.com/getrich-2026/getrich/blob/dev/docs/guides/pick-import.md"><span><strong>选股标的池</strong><small>导入每日选股结果，确认文件与日期口径</small></span><span aria-hidden="true">↗</span></a>
             <a class="doc-link" href="https://github.com/getrich-2026/getrich/blob/dev/docs/guides/diagnosis-api.md"><span><strong>持仓诊断 API</strong><small>查看调用流程、响应状态与当前支持范围</small></span><span aria-hidden="true">↗</span></a>
+            <a class="doc-link" href="https://github.com/getrich-2026/getrich/blob/dev/docs/guides/v1-release-cutover.md"><span><strong>V1 发布切换指南</strong><small>目录隔离、配置拆分、T+1 晨间日更与边界加固</small></span><span aria-hidden="true">↗</span></a>
             <a class="doc-link" href="https://github.com/getrich-2026/getrich/blob/dev/docs/guides/data-dictionary.md"><span><strong>数据库与字典</strong><small>生成数据字典，检查字段契约与迁移注释</small></span><span aria-hidden="true">↗</span></a>
+            <a class="doc-link" href="https://github.com/getrich-2026/getrich/blob/dev/docs/plans/backlog.md"><span><strong>待决问题与路线</strong><small>查看未关闭的实现缺口、验收条件与后续规划</small></span><span aria-hidden="true">↗</span></a>
           </div>
         </section>
         <section class="start" aria-labelledby="start-heading">

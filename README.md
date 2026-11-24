@@ -27,7 +27,7 @@ uv workspace，七个有源码的 Python 包、一个占位包与两个前端。
 | `packages/gr-db` | `gr_db` | 全部 DDL 与迁移，数据库结构的唯一真源 |
 | `packages/gr-backtest` | `gr_backtest` | 回测引擎（纯库，不含 Web / 实盘 / 调度） |
 | `packages/gr-signal` | `gr_signal` | 实盘信号生产与交易执行 |
-| `packages/gr-api` | `gr_api` | FastAPI 应用 + 回测作业队列 + Celery worker |
+| `packages/gr-api` | `gr_api` | FastAPI 应用（持仓诊断与认证 API、回测作业队列、Celery worker） |
 | `packages/gr-factor` | `gr_factor` | 期权定价与因子分析 |
 | `packages/gr-tools` | `gr_tools` | 环境加载、配置、日志、文件系统、表格读取与可读格式化，叶子包 |
 | `packages/gr-agent` | — | 占位包，尚无源码 |
@@ -44,6 +44,8 @@ gr-factor（独立）
 ```
 
 前端：`apps/web`（主前端）、`apps/backtest-web`（回测前端，暂停维护）。
+
+> **当前版本范围**：V1 已交付并上线多用户持仓诊断后端 API 与 T+1 晨间日更数据链路（线上开启 `GETRICH_V1_DIAGNOSIS_ONLY=true` 与 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`，仅挂载认证、用户与持仓诊断路由）；`apps/web` 主前端及回测、选股、实盘信号模块按 V2 阶段推进。详细状态见 [当前状态](.agents/brain/NOTES.md) 与 [V1 发布切换指南](docs/guides/v1-release-cutover.md)。
 
 ---
 
@@ -67,7 +69,7 @@ uv run gr-db migrate --target pg
 uv run gr-data raw tushare --mode update
 uv run gr-data ingest tushare
 
-# 5. 跑一个回测
+# 5. 跑一个本地最小回测示例（仅演示 gr-backtest 接口；真库全量适配边界见 backlog）
 uv run python - <<'PY'
 from datetime import datetime
 from decimal import Decimal
@@ -117,10 +119,13 @@ PY
 ### 起服务
 
 ```bash
-# 后端 API
+# 后端 API（启动后可用 curl http://127.0.0.1:8001/health 验证存活）
 uv run uvicorn gr_api.main:app --reload --port 8001
 
-# 前端
+# 查看 V1 持仓诊断最新发布与日更状态（需已配置 PG 与 config.yaml）
+uv run gr-data diagnosis-daily status
+
+# 主前端开发（V1 冻结不部署；本地联调可按需启动）
 cd apps/web && cp .env.example .env.local && npm ci && npm run dev
 ```
 
