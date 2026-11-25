@@ -2,15 +2,16 @@
 
 面向后端接口使用者，说明独立于网页的调用方式、响应和启停。字段真源为 `/openapi.json`、[请求模型](../../packages/gr-api/src/gr_api/schemas/diagnosis.py)和[响应模型](../../packages/gr-api/src/gr_api/schemas/diagnosis_response.py)；设计 OpenAPI 不能替代实现。
 
-状态（2026-11-24 云端 V1 准生产环境已上线联调）：云端 PostgreSQL 18.6／TimescaleDB 2.30.1（57/57 迁移校验一致）已追平有效发布至 **2026-11-20** 的 `diag-v3-20261120-daily-9ff71d632cb1e712`（12 项基础输入 13 个分区收据 + 米筐 `v2` 五件套收据共 14 个组成有效，并由晨间 `09:00/12:30/14:15` 定时器持续推进）。云端已开启 `APP_ENV=staging` + `STRICT_MODE=true` + `GETRICH_DIAG_PUBLICATIONS_ENABLED=true` + `GETRICH_V1_DIAGNOSIS_ONLY=true` 对外联调（真实联调地址与 OpenAPI 导出包经仓外渠道交付）；`calibrated=false`、`apps/web` 冻结及回放／Beta／L4／P6 未准入边界保持。运维与部署结构见 [V1 发布切换指南](v1-release-cutover.md)；下文 Batch 4 及 11-05 样本为历史验收记录。
+状态（2026-11-25）：
+- **V1 线上准生产（`v1.0.0`，57 迁移 `000`～`056`）**：云端 `/srv/getrich` 运行 PostgreSQL 18.6／TimescaleDB 2.30.1 与 `diag-publication-v3`（7 项模型指标），由晨间 `09:00/12:30/14:15` 定时器持续推进最新有效发布；配置为 `APP_ENV=staging`、`STRICT_MODE=true`、`GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`GETRICH_V1_DIAGNOSIS_ONLY=true`、`GETRICH_ALLOW_MOCK_AUTH=false`，`calibrated=false`、`apps/web` 冻结。运维与部署结构见 [V1 发布切换指南](v1-release-cutover.md)。
+- **V2 `dev` 分支（63 迁移 `000`～`062`）**：已完成批次 2A（`057`，`diag-publication-v4` 12 项模型指标与调仓客观对比）与批次 2B（`058`～`061`，DS06～DS08 实施分红/退市截断/全收益基准、个股与组合 Beta 及组合回放，`PAYLOAD_SCHEMA_VERSION = "7.5"`），仅在本机隔离环境验收，待授权后升级云端。
 
 ## 已验收范围
 
-- 云端最新验收发布日期 **2026-11-20**，米筐 `v2`（`sws_2021`）；不回退日期或模型。最新可用日期及清单始终以每次 `/v1/diagnosis/options` 返回为准。
-- 云端最新有效版本 `diag-v3-20261120-daily-9ff71d632cb1e712`，5,224 只沪深 A 股（11-13 起 `002731.SZ` 退市退出）。实际清单在 `/v1/diagnosis/options` 的 `data.publication_scope.security_ids`，应结合证券元数据解析；以发布清单为准，不把所有看似合法的代码自动纳入。
+- **V1 线上有效发布**：米筐 `v2`（`sws_2021`），最新可用日期、版本号（格式 `diag-v3-<YYYYMMDD>-daily-<hash>`）及动态证券清单（`data.publication_scope.security_ids`）始终以实时 `/v1/diagnosis/options` 返回为准，不回退日期或模型，不把所有看似合法的代码自动纳入。
 - 三项基础模型指标：`annual_variance`、`volatility.by_method.forward`（年化预测波动率）、`daily_prediction_volatility`。后两者都是小数，显示百分比时乘100；年化方差保持小数平方。
-- v3 另准入 `risk_contribution`、`risk_contribution_ratio`、`marginal_risk_contribution`、`l3_effective_count`。年度 ROE 为个股辅助字段，不是模型风险指标。
-- v4（V2 批次 2A，当前在特性分支 `feat/v2-2a-l4-comparison` 验收，待上线发布）扩展至 12 项模型指标：在 v3 基础上开放 `l4_effective_count`、`l4_market_source_share`、`l4_largest_source`、`style_exposure`（16 维风格暴露）与 `model_correlation`（`correlation.by_method.forward`、`avg_pairwise_correlation.forward`、`high_correlation_pairs.forward`），同时开放 `intent ∈ {"rebalance_holding", "rebalance_amount"}` 的双方案调仓前后客观对比（`comparison.pairs[0]` 输出 `deltas`、`marginal_impact`、`overlap_with_new`；`intent_effect_gap` 留空 `[]`，不新增请求字段）。
+- v3（V1 线上）另准入 `risk_contribution`、`risk_contribution_ratio`、`marginal_risk_contribution`、`l3_effective_count`。年度 ROE 为个股辅助字段，不是模型风险指标。
+- v4（V2 批次 2A，已合入 `dev` 并完成隔离库验收，待云端升级发布）扩展至 12 项模型指标：在 v3 基础上开放 `l4_effective_count`、`l4_market_source_share`、`l4_largest_source`、`style_exposure`（16 维风格暴露）与 `model_correlation`（`correlation.by_method.forward`、`avg_pairwise_correlation.forward`、`high_correlation_pairs.forward`），同时开放 `intent ∈ {"rebalance_holding", "rebalance_amount"}` 的双方案调仓前后客观对比（`comparison.pairs[0]` 输出 `deltas`、`marginal_impact`、`overlap_with_new`；`intent_effect_gap` 留空 `[]`，不新增请求字段）。批次 2B 的组合回放与 Beta 见文末[本地 V2 批次 2B 开发验证](#本地-v2-批次-2b-开发验证)。
 - `calibrated=false`，指标状态为 `degraded/not_calibrated`：指定单日证券清单及准入指标的源值、单位和数值验收通过，全区间校准及P6尚未完成。不能解释为历史PIT或未准入风险指标已验收。
 - 清单内可自由组合与调权，无需逐组合发布。每个方案最多100原始行（含重复和零权重），每次1～5个独立方案。
 
@@ -22,7 +23,7 @@
 成功响应的 `data` 返回新的 `access_token`、轮换后的 `refresh_token`、`token_type` 和 `user`。
 前端同时替换两个 token；无效或过期 refresh token 返回 401，重新登录。
 
-下例需要curl和jq。把 `BASE_URL` 改为获准启用的服务地址，把 `TOKEN_A` 设为本人有效token。本轮仅使用进程内ASGI验收，没有常驻联调服务；真实地址通过仓外渠道交付。
+下例需要 curl 和 jq。把 `BASE_URL` 改为实际服务地址（真实联调地址通过仓外渠道交付），把 `TOKEN_A` 设为本人有效 token。
 
 ```bash
 export BASE_URL='https://YOUR_API_HOST'
@@ -242,7 +243,7 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 | --- | --- |
 | 负权重、非有限数、全零、部分填写、超过100行/5方案 | 422，按issues定位；全部省略时对唯一标的等权，重复项合并 |
 | 已识别的ETF、北交所、退市或其他范围外资产 | 422，要求修正后提交，不静默删除 |
-| 日期与发布日不同或请求越界指标 | 422，不回退；请求 `metrics` 必须属于当前 `/options` 的 declared_metrics；旧v1/v2仅三项，v3为七项 |
+| 日期与发布日不同或请求越界指标 | 422，不回退；请求 `metrics` 必须属于当前 `/options` 的 `declared_metrics`（旧 v1/v2 3 项、V1 线上 v3 7 项、`dev` V2 v4 12 项） |
 | 正权重证券无法解析、未在清单或缺同run风险输入 | 保留证券、原份额及原因，完整组合本次准入模型风险unavailable；不对覆盖子集重新归一化。没有可解析正权重标的时输入422 |
 | 无凭证、无效或过期凭证访问私有诊断接口 | 401 unauthorized，使用标准诊断错误结构 |
 | 已登录用户读取他人结果、报告、数据质量或重算 | 403 forbidden |
@@ -254,18 +255,16 @@ POST新建返回201和 `data.links.result/report/data_quality`。按返回的lin
 
 ## 正式启用与回退
 
-工作库055及本版发布已验收，用户已批准仅后端正式部署与启用。后续部署须先完成已批准的本地批次及审核；真实目标与上线状态在仓外维护。下列为已有版本的部署参考，不代表已部署。
+云端 V1 准生产环境已按 [V1 发布切换指南](v1-release-cutover.md) 上线运行；真实目标与凭证仅在仓外维护。核心切换与回退要点：
 
-正式部署时：
+1. **安装与目录隔离**：API 运行副本使用锁定依赖的非 editable 安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），日更 ETL 副本必须保留 `.git` 且使用 editable 安装；V1 不部署 `apps/web`。切换前核对 V1 `v1.0.0` 57 条迁移账本（`000`～`056`）与磁盘及 `v3` 发布可用性，不把迁移作为日更动作。
+2. **最小权限环境拆分**：在独立的 `api-prod.env`（不含供应商密钥）中设置 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`GETRICH_V1_DIAGNOSIS_ONLY=true`（仅挂载 `/v1/auth`、`/v1/user`、`/v1/diagnosis`、`/health`、`/metrics`），保持 `GETRICH_ALLOW_MOCK_AUTH=false` 及非默认 `JWT_SECRET`，并确保 `BACKTEST_ARTIFACT_DIR` 已存在后优雅重启 API。
+3. **上线核对**：用真实登录账号读 `/v1/diagnosis/options`，确认最新日期、版本、动态证券清单和 `declared_metrics`；独立复算当日三股样本并验证跨用户 403 与缺失持仓提示。
+4. **运行中失效处理**：发布失效返回 503，先核查真实数据和收据，不为恢复出数而回退日期或放宽 coverage。
 
-1. 发布仅已验收后端及依赖，包含注册必填列修复、禁用账号登录拦截与 `gr-api` 显式依赖 `gr-signal` 的声明。API 运行副本使用锁定依赖的非 editable 安装（`uv sync --frozen --package gr-api --no-dev --no-editable`），日更 ETL 副本则必须保留 `.git` 且使用 editable 安装（见 [V1 发布切换指南](v1-release-cutover.md)）；不携带 `apps/web` 部署。已有库先核对现行 57 条账本与磁盘及 `v3` 发布可用性，不把迁移作为日更动作。
-2. 在独立的 API 生产环境文件（与 ETL `maintenance-runtime.json` 哈希清单解耦）中设置 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`GETRICH_V1_DIAGNOSIS_ONLY=true`（仅挂载 `/v1/auth`、`/v1/user`、`/v1/diagnosis`、`/health`、`/metrics`），保持 `GETRICH_ALLOW_MOCK_AUTH=false` 及既有 JWT 配置，并确保 `BACKTEST_ARTIFACT_DIR` 目录在启动前已存在，优雅重启 API 进程。
-3. 用真实登录账号读options，确认最新日期、版本、动态证券清单和declared_metrics（v3七项）；独立复算当日三股样本，不能将11-05历史固定数值作为新日期门禁；验证不同用户的403及缺失持仓提示后再放通流量。
-4. 运行中发布失效应返回503，先核查真实数据和收据，不为恢复出数而回退日期或放宽coverage。
+**回退**：撤下诊断新请求入口，将 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 并优雅重启；如需应用版本回退，选兼容现有 schema 的后端版本。保留现行全部已记账迁移、新旧 publication/receipt 与已保存报告，不自动删表或逆改账本；需要数据库恢复时，先从逻辑备份恢复全新隔离库核对，再另审切换方案。
 
-回退：撤下诊断新请求入口，将 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false` 并优雅重启；如需应用版本回退，选兼容现有schema的后端版本。保留055、全部账本、新旧publication/receipt、已保存报告和验收证据，不自动删表/逆改账本/恢复覆盖当前库。需要数据库恢复时，先从逻辑备份恢复全新隔离库核对，再另审切换方案。
-
-实现入口：[HTTP](../../packages/gr-api/src/gr_api/routers/diagnosis.py)、[读取与幂等](../../packages/gr-api/src/gr_api/services/diagnosis.py)、[固定版本读取](../../packages/gr-api/src/gr_api/services/diagnosis_publication.py)、[范围门禁](../../packages/gr-api/src/gr_api/services/diagnosis_scope.py)、[发布与收据](../../packages/gr-data/src/gr_data/diagnostic_publication.py)。迁移和工作验收见[实施计划](../plans/gr-data-reliability-implementation-plan.md#多用户-v1证券清单准入与工作库执行门槛2026-11-10)。
+实现入口：[HTTP](../../packages/gr-api/src/gr_api/routers/diagnosis.py)、[读取与幂等](../../packages/gr-api/src/gr_api/services/diagnosis.py)、[固定版本读取](../../packages/gr-api/src/gr_api/services/diagnosis_publication.py)、[范围门禁](../../packages/gr-api/src/gr_api/services/diagnosis_scope.py)、[发布与收据](../../packages/gr-data/src/gr_data/diagnostic_publication.py)。历史迁移与验收流水已归档至 [2026-11 阶段里程碑归档](../history/2026-11-milestones-archive.md)。
 
 
 ## Batch 1 接口契约（2026-11-12）
@@ -423,14 +422,14 @@ RC/L3准入路径跳过L4正交化计算，未开放能力不增加请求耗时�
 ## 两阶段日更（运维入口）
 
 适用已完成初始验收的沪深 A 股诊断库。使用 `gr-data diagnosis-daily` 前台执行有限日期范围，
-调度及真实连接配置放仓外；不需要额外队列、服务或新迁移。常规 API 发布开关默认仍为 false。
+调度及真实连接配置放仓外；代码默认 `GETRICH_DIAG_PUBLICATIONS_ENABLED=false`（线上生产配置显式开启 `true`）。V1 封版 `v1.0.0` 发布契约为 `diag-publication-v3`（7 项模型指标），`dev` 分支默认契约为 `diag-publication-v4`（12 项模型指标，带 L4 预检）。
 
 ```bash
 # 轻量探测目标日米筐 v2 暴露是否已发布（不写 last-run.json，不消耗批量配额）
 uv run gr-data diagnosis-daily probe --day 2026-11-20
 # 阶段A：供应商采集、归一化及预检，仅只读访问PG
-uv run gr-data diagnosis-daily prepare --day 2026-11-06 --artifact <ARTIFACT_DIR>
-# 阶段B：只读取固定产物，一次事务完成入库、12项基础收据、风险准入和v3发布
+uv run gr-data diagnosis-daily prepare --day 2026-11-20 --artifact <ARTIFACT_DIR>
+# 阶段B：只读取固定产物，一次事务完成入库、12项基础收据、风险准入和发布（V1 为 v3，dev 为 v4）
 uv run gr-data diagnosis-daily apply --artifact <ARTIFACT_DIR>
 # 自动逐个交易日推进；定时调度建议次日 <15:00 Asia/Shanghai 搭配 --probe-upstream
 uv run gr-data diagnosis-daily run --probe-upstream
@@ -466,26 +465,9 @@ ROE缺失不填零，现有年度数据与增量合并，公告日与实际观�
 新诊断最多允许滞后一个已完成交易日；过期、最新发布失效或日历不完整返回503，不回退旧版本。
 历史快照保留产物并标记invalidated；依赖失效基础版本的重算返回409。
 
-所有v3七项风险指标仍为 `calibrated=false`，`/result`、`/report`及`/data-quality`
-按各自快照实际 `declared_metrics` 同步披露。旧三项快照保持原边界。风险贡献采用波动率贡献，
-满足 `sum(RC)=sqrt(annual_variance)`；不是方差贡献。L4、回放、Beta等仍未准入。
-
-
-### Batch 4 本地终验（2026-11-12）
-
-工作库已按11-06、11-09、11-10、11-11逐日发布，57条迁移账本及磁盘checksum不变，
-未重发11-05。最新清单5225只、12项基础输入/14项发布组成均有效。11-10新上市证券
-缺特异收益，按完整五件套门槛排除；11-11恢复完整准入。年度ROE共10460行，含新股
-定向补入的2024/2025年报，公告日与单位已核实。
-
-隔离库完成阶段A缺数保旧、阶段B基础/风险/发布三个故障点回滚、跨日发布和零写重放。
-工作库完整日期范围重跑及单日apply重放均零业务变更；11-12预检失败后，11-11输入指纹、
-收据头及有效发布保持不变。真实ASGI验证登录/刷新、七项风险独立复算、252日历史统计、
-行业/ROE、新股、旧报告可读和重算409、401/403及四个安全头；三端强制披露一致。
-本机三股新建请求约449ms，仅代表该样本；远端与最大规模性能留待后续联调。
-
-三个受影响包测试3087通过、250条件跳过、4既有xfail；关键隔离PG五项另行实测全部通过。
-Ruff、格式、全仓类型检查及迁移检查通过。未启用常规开关、未注册调度、未部署或推送。
+所有已准入模型风险指标在全区间校准完成前仍为 `calibrated=false`，`/result`、`/report` 及 `/data-quality`
+按各自快照实际 `declared_metrics` 同步披露。风险贡献采用波动率贡献，
+满足 `sum(RC)=sqrt(annual_variance)`；不是方差贡献。Batch 4 历史验收细节已归档至 [2026-11 阶段里程碑归档](../history/2026-11-milestones-archive.md)。
 
 
 ## 本地 V2 批次 2B 开发验证

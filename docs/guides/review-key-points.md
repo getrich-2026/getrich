@@ -4,7 +4,7 @@
 
 用途：沉淀人工审核与架构讨论中发现的核心业务逻辑、版本锁约束与生产运维铁律；只记关键结论，不记流水账。
 
-状态：现行（2026-11-17 建立，2026-11-19 按云端现状与门禁复核）。
+状态：现行（2026-11-17 建立，2026-11-25 按 V1 `v1.0.0` 线上现状与 `dev` V2 契约复核）。
 
 ---
 
@@ -18,7 +18,7 @@
 
 | 维度 | 源码版本（`importer_version`） | 数据发布版本（`data_version_id`） |
 |---|---|---|
-| **锁定机制** | `get_importer_version(require_clean=True)` 仅读取影响 `packages/gr-data/src/gr_data` 与 `packages/gr-db/src/gr_db/ddl` 的最新 Git 提交号，并校验这两个目录无未提交或未跟踪改动 | 日更 `prepare` 生成 `diag-v3-<YYYYMMDD>-daily-<artifact_hash[:16]>`；`artifact_hash` 打包目标日期、历史起点、采集完成时间、`importer_version`、前序版本、表归属、写入前基线指纹、全部 raw/canonical Parquet 哈希与米筐观察 ID |
+| **锁定机制** | `get_importer_version(require_clean=True)` 仅读取影响 `packages/gr-data/src/gr_data` 与 `packages/gr-db/src/gr_db/ddl` 的最新 Git 提交号，并校验这两个目录无未提交或未跟踪改动 | 日更 `prepare` 生成 `diag-v3-<YYYYMMDD>-daily-<artifact_hash[:16]>`（V1 `v1.0.0` 线上；`dev` 分支 V2 默认切为 `diag-publication-v4`）；`artifact_hash` 打包目标日期、历史起点、采集完成时间、`importer_version`、前序版本、表归属、写入前基线指纹、全部 raw/canonical Parquet 哈希与米筐观察 ID |
 | **不影响范围** | 修改 `packages/gr-api`、前端 `apps/web` 或 `docs/` **不会**改变 `importer_version` | 底层表无受保护写入时保持不变；API 通过自增列 `publication_seq DESC LIMIT 1` 取最新一条，不依赖字符串排序 |
 
 因此，“固定版本导入 V1”指的是**每次正式采集/发布前固定到一个干净的 Git 提交（或干净 `git worktree`）**，而非把数据停留在某个静态日期。

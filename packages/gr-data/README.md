@@ -34,6 +34,14 @@ INSIGHT(华泰)      → raw/insight   → parquet → ingest/insight   → Post
 **边界**：本包只做数据接入。因子、回测、策略、交易决策分别属于 `gr-factor`、
 `gr-backtest`、`gr-signal`。
 
+**CLI 入口速查**（详见 `gr_data/cli.py`）：
+- `gr-data raw <provider>`：抓取原始 Parquet（不归一化）
+- `gr-data ingest <provider>`：归一化并写入 PostgreSQL
+- `gr-data own {list,set,release}`：查看或显式转移表归属（D-012）
+- `gr-data diagnosis-daily {probe,prepare,apply,run,status}`：持仓诊断两阶段日更（V1 `v3` / `dev` `v4`，详见 `docs/guides/diagnosis-api.md`）
+- `gr-data benchmark-import --prices <parquet> --calendar <parquet>`：导入 DS08 全收益基准快照（V2 批次 2B）
+- `gr-data stream`：实时流式写入说明入口
+
 ---
 
 ## 数据库模块
@@ -176,7 +184,7 @@ raw `daily_basic` 只落 `fundamental.valuation_1d`：市值万元→元、股�
 个别代码缺涨跌停价保留 NULL 并记软告警。股票辅助表关联前统一 int8／字符串日期
 及代码首尾空格，再按键去重；期货成交量与持仓量保持「手」。
 
-### ETF 与三类期权（2026-10-26，代码与测试阶段）
+### ETF 与三类期权（已实施并完成首批按用途准入，见 D-026）
 
 实现范围为沪深 ETF、ETF 期权、股指期权和商品期权日线；
 使用 [专用配置样例](config.tushare-etf-options.example.yaml) 显式选择。
@@ -327,7 +335,7 @@ Theta／Vega／Rho 的扩精度 SQL 目前只在 `gr-db/ddl/proposals/`，不随
 研究准入不等于历史回测或交易准入；仍须独立证明参数生效日及当时可获得时间。
 
 ETF／期权日线一次只导入一个月，防止隐式拼接全历史。下面为独立 raw 根及临时 PG 的
-样本命令；最新真实复验范围、结果及阻塞见[迁移盘点第二节](../../docs/plans/imac-collector-migration.md#2-现在先做测试与-tushare-受限下载)：
+样本命令；最新真实复验范围、结果及阻塞见[迁移盘点第二节](../../docs/history/imac-collector-migration.md#2-现在先做测试与-tushare-受限下载)：
 
 ```bash
 uv run gr-data --config packages/gr-data/config.tushare-etf-options.example.yaml raw tushare --mode init
@@ -376,7 +384,7 @@ ETF 身份／上市日缺失隔离、CZCE 缺失 OHLC 与核实到期日的零�
 后续先核对上述源口径并完成修复／复验，再做临时库往返与幂等验收。
 机器路径和详细请求日志在本机 NOTES 所指的仓库外验收目录，不写入配置默认值。
 
-### 指数与期货日线（2026-10-24，代码审核阶段）
+### 指数与期货日线（已实施并完成历史回补，见 D-025/D-027）
 
 本轮只修代码并用模拟供应商及一次性 PostgreSQL 验证，**真实回补等待用户完成代码审核**。
 可审查配置见 [config.tushare-markets.example.yaml](config.tushare-markets.example.yaml)：
@@ -631,7 +639,7 @@ R1 在归一化后检查总年化波动率：截面中位数须在 `[5%,150%]`�
 `available_at` 使用实际采集时间，历史回填不会伪装为当时已可得；全区间校准前
 始终 `calibrated=false`，不代表已经通过真实市场五表自洽验收。
 
-2026-10-30 的[字段互验与 P6 诊断](../../docs/plans/imac-collector-migration.md#字段互验与补充验证2026-10-30)
+2026-10-30 的[字段互验与 P6 诊断](../../docs/history/imac-collector-migration.md#字段互验与补充验证2026-10-30)
 已用三模型真实样本复核源字段、单位及 PG 数值；P6 的 `r` 不能直接取未复权价格收益，
 还需明确超额收益基准和暴露日期。当前有限样本以独立实际国债曲线及复权收盘价复现，
 供应商完整约定和全区间仍待确认；没有将该经验口径写入生产 importer 或改校准状态。
@@ -644,7 +652,7 @@ R1 在归一化后检查总年化波动率：截面中位数须在 `[5%,150%]`�
 旧 CNE6 历史保留其 model/run 身份，下游需显式选择米筐模型，不能拼接为同一条模型历史。
 真实样本验收及历史链路验证的日期、范围与限制见 [米筐验证记录](../../docs/history/2026-10-23-rq-risk-validation.md)，当前回补状态见 [NOTES](../../.agents/brain/NOTES.md)。
 固定名单不等于全市场历史；动态名单与覆盖设计见
-[分阶段实施方案](../../docs/plans/ricequant-historical-universe.md)。
+[分阶段实施方案](../../docs/history/ricequant-historical-universe.md)。
 
 新动态名单使用独立的 `universe_policy: listed_cn_a_v2`，不配置 `order_book_ids`，
 研究样本显式标记 `purpose: validation`；production 的 2a 前置见下节。日期下限为 2024-01-01。旧固定名单继续使用

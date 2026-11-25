@@ -18,9 +18,9 @@
 | 数据库开发者 | [数据字典](guides/data-dictionary.md) | 生成字典与注释门禁，不手抄 schema |
 | 审核与运维维护者 | [工程与业务关键点备忘](guides/review-key-points.md) | 审核发现的关键业务口径、版本锁边界与生产更新铁律 |
 | 安排工作的人 | [待决问题](plans/backlog.md) | 缺口、证据、待定选择、验收条件 |
-| 采集主端迁移维护者 | [iMac 迁移盘点与验收](plans/imac-collector-migration.md) | 2026-10-29 本机核验；当前测试／采样、MBA 硬盘带回后的复制恢复与正式切换顺序 |
-| 数据接入实施评审者 | [gr-data 可靠采集实施计划](plans/gr-data-reliability-implementation-plan.md) | 通用协议待审核；最低导入门禁与米筐 2a 已局部落地，剩余顺序、验收与回滚见计划 |
-| 米筐历史回补维护者 | [全市场历史名单与覆盖](plans/ricequant-historical-universe.md) | 动态名单、2a 与历史回补已完成；覆盖／用途契约、2b 发布读取及剩余验收顺序 |
+| 数据接入实施评审者 | [gr-data 可靠采集实施计划](plans/gr-data-reliability-implementation-plan.md) | 通用协议待审核；最低导入门禁与米筐 2a/诊断发布已落地，通用推广顺序与验收见计划 |
+| 历史阶段验收追溯者 | [2026-11 阶段里程碑归档](history/2026-11-milestones-archive.md) | 2026-11-01～19 阶段快照与 C2b 首发验收流水归档（只读参考） |
+| 采集迁移与历史回补追溯者 | [iMac 迁移归档](history/imac-collector-migration.md) / [米筐历史名单归档](history/ricequant-historical-universe.md) | 已完成的历史采集迁移、2010～2026 全品种回补与动态名单记录 |
 | 米筐源单位核查者 | [120 日单位探针](history/2026-10-22-rq-risk-units-probe.md) | 源单位实证依据、判定方法与固定样本名单；保留证据原文 |
 | 米筐验证追溯者 | [米筐验证记录](history/2026-10-23-rq-risk-validation.md) | 验证 variant、源单位依据、production 首 20 日验收与容量估算；units_evidence 引用的锚点在此 |
 | 米筐数值修复验收者 | [REAL 修复验收](history/2026-10-24-rq-real-recovery.md) | 历史全量等价依据、旧 run 禁止发布、新观察替代与版本追溯 |
@@ -47,12 +47,10 @@
 | [deploy README](../deploy/README.md) | 运维维护者：复制部署模板与外部实例边界 |
 | [回测前端 README](../apps/backtest-web/README.md) | 维护旧应用的人：局部说明；应用暂停维护 |
 | [gr-factor 测试说明](../packages/gr-factor/tests/README.md) | 修复数值模块的人：测试入口占位 |
-| [旧 SQL 归档说明](../packages/gr-db/archive/README.md) | 数据库维护者：辨别历史 SQL，不能当现行迁移 |
-| `packages/gr-data/reference/design/` | 接入维护者：供应商资料；按 provider 查，不默认全读 |
-| 相邻仓库 `getrich-design/` | 产品／架构设计者：需求与供应商接口设计；落地前核对本仓代码和 DDL。持仓诊断一期口径见其 `governance/scope.md`，一期所需数据见 `data-platform/portfolio-diagnosis-phase1-datasets.md` |
+| 相邻仓库 `getrich-design/` | 产品／架构设计者：需求与供应商接口设计（含 `dataapi/` 供应商资料）；落地前核对本仓代码和 DDL。持仓诊断一期口径见其 `governance/scope.md`，一期所需数据见 `data-platform/portfolio-diagnosis-phase1-datasets.md` |
 
 Codex 与 Claude Code 直接读取根目录 `AGENTS.md`，仓库不放 `CLAUDE.md`；`.agents/rules/project.md` 只是 Antigravity 的入口，不另存编码规则。
-`packages/gr-db/archive/` 的旧 SQL 归档保持原位；删除需单独授权（根目录 `archive/` 已于 `d8f0316` 清理）。
+旧 SQL 归档 `packages/gr-db/archive/` 已于 2026-11-25 经授权清理（git 历史可查；根目录 `archive/` 已于 `d8f0316` 清理）。
 
 ## 新增与更新文档
 

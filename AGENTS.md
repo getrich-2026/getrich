@@ -28,7 +28,6 @@ packages/gr-agent     空占位包（只有 pyproject.toml，尚无源码）
 deploy/               数据库基础设施部署模板，不在仓库内实例化
 scripts/              仅存 lint_migrations.py
 docs/                 人类阅读入口：指南、待决问题、历史材料（见 docs/README.md）
-packages/gr-db/archive/  旧 SQL 归档，不是现行迁移；删除前必须得到明确确认
 .agents/brain/        跨会话开发进度（见第 7 节）
 ```
 
@@ -69,7 +68,7 @@ gr-backtest 与 gr-tools 各有一份 `test_package_boundaries.py` 静态守卫�
   DDL 必须**幂等**（`CREATE ... IF NOT EXISTS`）；迁移按 `file_name + checksum` 记账在 `ops.schema_migrations`。
   各 schema 的职责与写入方见[数据字典指南](docs/guides/data-dictionary.md#postgresql-schema-一览)。
 - **DDL 与查询 SQL 一律 schema 全限定**（写 `app.users`）：连接池 `search_path` 只有 `app,market,meta,public`，
-  `backtest`、`pick`、`factor`、`diag` 等其余 schema 都不在其中。
+  `finance`、`backtest`、`pick`、`factor`、`diag`、`fundamental`、`classify`、`ops` 等其余 schema 都不在其中。
 - **两套交易所码不要混用**：`pick.item.exchange` 存 `SSE/SZSE/BSE`（前端接口契约定死的取值），
   `meta.*` 用 canonical 码 `XSHG/XSHE/XBSE`。查 `meta.instruments` / `meta.trading_calendar`
   前必须经 `gr_api/services/pick_symbols.py` 转换 —— 写错不报错，只会让

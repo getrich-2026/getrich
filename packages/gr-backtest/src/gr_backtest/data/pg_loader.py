@@ -12,7 +12,7 @@ Polars DataFrame。
 ``instrument_id`` (FK)               ``symbol``（JOIN ``meta.instruments``）
 ``dt`` (``DATE`` 日线 / ``TSTZ``)    ``dt``（统一 Asia/Shanghai aware）
 ``amount`` ÷ ``volume``              ``vwap``
-``b_xdy`` / ``f_xdy``                ``pre_factor`` / ``post_factor``
+``adj_factor``（归一化 / 原值）      ``pre_factor`` / ``post_factor``
 ``trading_day`` / ``is_open``        ``date`` / ``is_trading_day``
 ===================================  ==========================================
 
@@ -255,8 +255,8 @@ class PgBarLoader:
 
     @staticmethod
     def _table_name_adj_factors() -> str:
-        """复权因子表：``market.stock_adj_factor``。"""
-        return "market.stock_adj_factor"
+        """复权因子表：``market.adj_factor_ts``（036，每日单值复权因子明细）。"""
+        return "market.adj_factor_ts"
 
     def load_calendar(
         self,
@@ -409,20 +409,17 @@ class PgBarLoader:
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> pl.DataFrame:
-        """从 ``market.stock_adj_factor`` 读复权因子。
+        """从 ``market.adj_factor_ts`` 读复权因子（D-012 单表单源）。
 
-        列名映射（gr-data 为真源）::
+        列名与复权口径映射（gr-db ``036_market_ext.sql`` 为真源）::
 
-            instrument_id -> symbol        （JOIN meta.instruments）
-            begin_date    -> dt
-            b_xdy         -> pre_factor    逆推累积除权因子 = 前复权
-            f_xdy         -> post_factor   顺推累积除权因子 = 后复权
+            instrument_id                -> symbol        （JOIN meta.instruments）
+            trading_day                  -> dt
+            adj_factor / latest_in_win   -> pre_factor    前复权（窗口末日系数=1，不读取 > end）
+            adj_factor                   -> post_factor   后复权（原始累积复权因子）
 
-        ``b_xdy``／``f_xdy`` 的复权方向来自厂商文档，不是推断：见 getrich-design 仓
-        ``dataapi/legacy/insight/architecture-overview.md`` §3.2 ——
-        「``b_xdy`` 逆推累积除权因子（前复权，最新价系数=1）」、
-        「``f_xdy`` 顺推累计除权因子（后复权，最早价系数=1）」。
-        搞反方向会让整段历史价格系统性偏移，且回测不会报错。
+        ``pre_factor`` 仅按查询窗口内各标的最后一个交易日归一化，避免引入超过 ``end``
+        的未来复权因子造成 look-ahead bias。
         """
         table = self._table_name_adj_factors()
 
@@ -432,21 +429,25 @@ class PgBarLoader:
             where_clauses.append("i.symbol = ANY(%(symbols)s)")
             params["symbols"] = list(symbols)
         if start is not None:
-            where_clauses.append("a.begin_date >= %(start)s")
+            where_clauses.append("a.trading_day >= %(start)s")
             params["start"] = start.date()
         if end is not None:
-            where_clauses.append("a.begin_date <= %(end)s")
+            where_clauses.append("a.trading_day <= %(end)s")
             params["end"] = end.date()
 
         where_sql = f"WHERE {' AND '.join(where_clauses)} " if where_clauses else ""
         sql = (
             "SELECT i.symbol AS symbol,\n"
-            "       a.begin_date AS dt,\n"
-            "       a.b_xdy::double precision AS pre_factor,\n"
-            "       a.f_xdy::double precision AS post_factor\n"
+            "       a.trading_day AS dt,\n"
+            "       (a.adj_factor / LAST_VALUE(a.adj_factor) OVER (\n"
+            "           PARTITION BY a.instrument_id\n"
+            "           ORDER BY a.trading_day\n"
+            "           ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING\n"
+            "       ))::double precision AS pre_factor,\n"
+            "       a.adj_factor::double precision AS post_factor\n"
             f"FROM {table} a\n"
             "JOIN meta.instruments i ON i.instrument_id = a.instrument_id\n"
-            f"{where_sql}ORDER BY i.symbol, a.begin_date"
+            f"{where_sql}ORDER BY i.symbol, a.trading_day"
         )
 
         try:

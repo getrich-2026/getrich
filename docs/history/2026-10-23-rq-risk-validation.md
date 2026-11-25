@@ -15,7 +15,7 @@
 - 首版 DDL（已被下方修订取代）：`048_factor_model_run_coverage.sql`，SHA256 `89f5cafb6ff506422d8ad9ff850493ef82b9092c99dca52d78cbee62f2cbee1a`。一次性 TimescaleDB 2.30.1-pg18 先应用基线 000～047，再 dry-run 确认仅 048，正式应用和重放成功；4 个合法用例通过、21 个非法数组／状态／JSON／主外键用例被拒绝。用户要求工作库执行前看 DDL，已展示并发出批准问题，**尚未获得本次工作库迁移确认，未执行工作库迁移或采样**。
 - 全仓验证命令：`GETRICH_TEST_PG=1 GETRICH_WORKER_BACKEND=inproc PG_HOST=127.0.0.1 PG_PORT=55439 PG_USER=postgres PG_PASSWORD=test PG_DB=getrich TUSHARE_TOKEN='' RICEQUANT_API_KEY='' RICEQUANT_ENABLED=false COVERAGE_FILE=/tmp/getrich-rq-stage1.coverage UV_CACHE_DIR=/tmp/getrich-uv-cache uv run --frozen pytest --cov --cov-report=term-missing --cov-report=xml:/tmp/getrich-rq-stage1-coverage.xml --cov-fail-under=75`。全部 DB 测试指向一次性容器；3029 passed、22 skipped（21 个真实供应商测试、1 个 Windows 专属）、8 个既有 xfail，覆盖率 85.5%，退出 0。新增真实 PG 用例验证 partial bundle／JSONB 与数组 COPY／重复导入／coverage 写失败整日回滚／300114 别名冲突。独立审查无阻断项；其建议的“SDK 接受新代码但未核实 alias”回归补充运行 1 passed。
 - 静态验证：`uv run --frozen ruff check packages/ scripts/`、`ruff format --check packages/ scripts/`、`python scripts/lint_migrations.py`、`uv lock --check`、`git diff --check` 通过。本任务一次性测试容器与 named volume 已清理；gr-data 集成 fixture 的容器亦已自行清理。日志 `/tmp/getrich-rq-stage1-full-tests.log` 及临时覆盖率文件仅为本机验证附件；以上摘要为可持久追溯记录。未调用真实供应商进行本阶段采样，未启动正式风险读取。
-- 样本准备：只读核验 2026-10-21 为沪市开市日且有 Tushare 日线，三个模型的四项源单位及证据沿用各自已验收历史 run 原文，配置不含凭据。v1/v2/v2trd 的 v2 raw variant 已预登记在 [设计表](../plans/ricequant-historical-universe.md#验证-run-与正式读取隔离)。实际候选、完整、未返回、异常数与流量尚无本轮实测值，**不得以固定 100 股结果或预登记冒充全市场采样结果**。工作库迁移批准后，先核对 dry-run 仅 048，再应用、核对 owner，顺序各采一天并按 2026-10 入库；质量异常先检查。
+- 样本准备：只读核验 2026-10-21 为沪市开市日且有 Tushare 日线，三个模型的四项源单位及证据沿用各自已验收历史 run 原文，配置不含凭据。v1/v2/v2trd 的 v2 raw variant 已预登记在 [设计表](ricequant-historical-universe.md#验证-run-与正式读取隔离)。实际候选、完整、未返回、异常数与流量尚无本轮实测值，**不得以固定 100 股结果或预登记冒充全市场采样结果**。工作库迁移批准后，先核对 dry-run 仅 048，再应用、核对 owner，顺序各采一天并按 2026-10 入库；质量异常先检查。
 - 第二阶段另行给出 D-022 发布清单、B1 提交收据／双水位、B2 观察顺序与防回退的表结构供评审，本阶段 ETL 流水不冒充这些能力。当前诊断没有新增读取 factor.* 的入口；第二阶段完成前正式风险读取保持关闭。全量回补与覆盖阈值均未批准启动。
 
 
@@ -201,7 +201,7 @@
 
 - 验证命令：`UV_CACHE_DIR=/tmp/getrich-uv-cache uv run --frozen pytest packages/gr-data/tests/ricequant -q --no-cov`：241 passed（含一次性 PG）；相关文件 Ruff／格式／git diff --check 通过。一次性容器与卷已清理，无 DDL 改动、commit 或 push。真实 ingest 逐模型逐月使用 `uv run --frozen gr-data --config <batch.yaml> ingest ricequant --only rq_risk_model --months YYYY-MM`，所有批次退出 0；raw 由同一配置调用原生 run_risk_raw(init)，断言 100 股及交易日完整。
 - 排障记录：临时核对脚本曾误用 ETL 主键和复用日历变量，修正后只读重查通过，未重抓或重导已成功批次。首次整区间执行曾因自动审批误认为仅授权 1 月及 30 股而被拒，未执行；明确 100 股采集／30 股单位探针用途及完整用户授权后续跑获准，目前没有该审批阻塞。
-- 2026-10-23 用户已认可[全市场动态名单与逐股覆盖设计](../plans/ricequant-historical-universe.md)方向。本版补充：下限 2024-01-01，更早需先列 Tushare 补齐范围；正式读取仅走 D-022 钉住的 run，发布排除验证用途且禁止 latest 回退；诊断按 D-017 保留缺覆盖持仓及权重，相关指标不可用、不估算；三模型配额粗估 4～5 日并列明依据。本轮仅修订文档，DDL／代码等用户复核确认后再做；正式覆盖阈值等独立全市场样本后再定。固定 100 股验证已完成，不重复采集。D-022 及校准仍未完成，不能放行正式全市场读取。
+- 2026-10-23 用户已认可[全市场动态名单与逐股覆盖设计](ricequant-historical-universe.md)方向。本版补充：下限 2024-01-01，更早需先列 Tushare 补齐范围；正式读取仅走 D-022 钉住的 run，发布排除验证用途且禁止 latest 回退；诊断按 D-017 保留缺覆盖持仓及权重，相关指标不可用、不估算；三模型配额粗估 4～5 日并列明依据。本轮仅修订文档，DDL／代码等用户复核确认后再做；正式覆盖阈值等独立全市场样本后再定。固定 100 股验证已完成，不重复采集。D-022 及校准仍未完成，不能放行正式全市场读取。
 
 <a id="rq-boundaries-20261023"></a>
 
@@ -212,7 +212,7 @@
 - 统一上市区间为 `list_date <= day < delist_date`。真实核验范围是 2024-01-01～2026-10-23 摘牌的沪深 A 股 103 只：两源退市日期 103/103 一致；100 只在库内有行情，摘牌当日／之后行情均为 0。002898、000004、002808 等最后行情紧邻摘牌，000016、601059、601198 等存在停牌间隔，因此退市日不能代替最后行情日。000046、002776、600290 在本库 2024 年后无行情，不作为行情边界正证据。已退市而缺结束日仍降级，不以当前 active 状态过滤历史；普通未退市证券空结束日开放。当前人工核定例外清单：**0 条**。未来仅对有公告依据的源冲突逐条登记，超过 5 条停止确认。
 - 边界小探针：三模型分别请求 2025-02-14 的 300114.XSHE、2025-02-17 的 302132.XSHE、2026-10-21／22 的 000016.XSHE，共 12 个股票日模型组合，五件套全部完整，数值门禁通过。摘牌日 2026-10-23 由新规则和参考日期验证排除，不发送个股请求，也不采未结束交易日。探针账户计数窗口增加 3,351,938 字节，不能视为逐请求精确计费。
 - 新策略 `listed_cn_a_v2 / alias_v2`，规则正文冻结在 raw，版本／哈希纳入新 variant，逐股只给受影响证券存换码证据；共用规则摘要进 run／ETL。旧 `listed_cn_a_v1`、旧 raw、旧降级 run 原样保留，三个旧 raw 只读重放／PG 逐值验收通过。048 磁盘及工作库 checksum 仍为 `0488aa6eac51`，9 张 factor 表归属未变。
-- 全仓测试和独立代码审查通过后，重采并用 `ingest ricequant --only rq_risk_model --months 2026-10` 导入三个新 variant 的 **2026-10-21 单日全市场**；每个模型 20,898 行（含覆盖表），各 1 条 success ETL、0 failed、0 warning。用途仍是 validation、calibrated=false；新 variant 已登记在[设计文档验证表](../plans/ricequant-historical-universe.md)。旧样本每模型 2 个 unknown、99.9617% 完整率及原流量结论继续保留，未追溯修改。
+- 全仓测试和独立代码审查通过后，重采并用 `ingest ricequant --only rq_risk_model --months 2026-10` 导入三个新 variant 的 **2026-10-21 单日全市场**；每个模型 20,898 行（含覆盖表），各 1 条 success ETL、0 failed、0 warning。用途仍是 validation、calibrated=false；新 variant 已登记在[设计文档验证表](ricequant-historical-universe.md)。旧样本每模型 2 个 unknown、99.9617% 完整率及原流量结论继续保留，未追溯修改。
 
 | 模型 | 候选 / 完整 | 未返回 / 边界未知 / 异常 | 协方差条件数 | 年化波动率中位 | 预测／过去波动比值（偏差） | 五件套请求窗口账户增量（字节） |
 |---|---:|---:|---:|---:|---|---:|

@@ -25,13 +25,12 @@ V1 后端代码、晨间 T+1 日更调度（`09:00/12:30/14:15`）、长期逻�
 
 | 未关闭问题 | 下一步与完成条件 |
 | --- | --- |
-| **L4、风格暴露与模型相关性主视图（批次 2A）** | 已完成全历史 3,592 个米筐 `v2` 交易日正交稳定性核验（`0/3592` 失败，最小特征值 `6.25e-3`，守恒误差 `<1.68e-14`），并在特性分支 `feat/v2-2a-l4-comparison` 落地 `057_diag_v4_model_metrics.sql`（12 项模型指标）及隔离库实测验收；待评审合入并在云端升级发布 `diag-publication-v4`。 |
-| **米筐 P6 全区间校准（`calibrated=true`）待供应商约定** | 11,633 个模型日五表扫描已完成只读终验，但前日暴露 + 超额收益代理在历史个股日仍有未解残差（见 `NOTES` P6 记录）。须取得米筐关于暴露时点、复权与无风险利率的书面约定后再评定 `calibrated=true` 范围；在此之前全部保持 `calibrated=false`（`degraded / not_calibrated`）。 |
-| **批次 2B 的发布范围与后续扩展** | 本地开发已接入 DS06 实施分红、DS07 退市截断、DS08 三条经核验的全收益基准，回放与 Beta 的测试数据和命令见[诊断指南](../guides/diagnosis-api.md#本地-v2-批次-2b-开发验证)。扩大股票覆盖前，须为新增标的核验分红全历史、停复牌与开盘限价证据、退市观察，并按发布版本固化。可靠退市终值仍缺来源，当前在受影响日截断。 |
+| **V2 批次 2A/2B 云端升级与发布准入** | 批次 2A（`057`、`diag-publication-v4` 12 项模型指标、L4 预检与调仓客观对比）与批次 2B（`058`～`061` DS06/07/08 表、个股/组合 Beta 与组合回放、`PAYLOAD_SCHEMA_VERSION=7.5`）及回归修复（`fc8a303`、`062` 旧表清理）均已合入 `dev` 并完成隔离库验收。剩余工作：待授权后在云端按控升级 `diag-publication-v4`；扩大 2B 股票覆盖前，须为新增标的核验分红全历史、停复牌与开盘限价证据、退市观察并按发布版本固化（可靠退市终值仍缺来源，当前在受影响日截断）。本地测试命令见[诊断指南](../guides/diagnosis-api.md#本地-v2-批次-2b-开发验证)。 |
+| **米筐 P6 全区间校准（`calibrated=true`）待供应商约定** | 11,633 个模型日五表扫描已完成只读终验，但前日暴露 + 超额收益代理在历史个股日仍有未解残差（见历史归档 P6 记录）。须取得米筐关于暴露时点、复权与无风险利率的书面约定后再评定 `calibrated=true` 范围；在此之前全部保持 `calibrated=false`（`degraded / not_calibrated`）。 |
 | **`/report` 缺个股估值展示卡片** | `/result` 的 `instrument_facts` 已逐股返回总市值、PB、估值日期与年度 ROE，但设计稿 §7.3.4 尚未定义对应文字报告块类型，`/report` 暂不输出；需先补设计块定义再实现。 |
 | **主前端 `apps/web` 解冻与 `v3`/`v4` 契约对齐** | `apps/web` 在 V1 冻结不部署；解冻前须补齐 `PortfolioDiagnosisPage.tsx` 对 `v3`/`v4` 风险指标、调仓对比及行业/市值/PB/ROE/相关性区块的展示、移除过时的“匿名模式”提示（现已强制登录 `401`）。 |
 | **数据库维护边界与历史 PIT** | TimescaleDB 受保护表的 `DROP` / `drop_chunks` / retention 策略、诊断只读专用 DB 角色、通用全量代际发布以及历史任意交易日 PIT 诊断仍待后续阶段单独设计审阅。 |
-| **V2：定性画像/盲点阈值、调仓意图核对与权重建议** | `rebalance_holding` / `rebalance_amount` 客观数值对比（`deltas`、`marginal_impact`、`overlap_with_new`）已在 2A 分支完成；`intent_effect_gap` 意图核对、定性画像与盲点阈值（M11）、用户记忆与行为画像、按风险偏好建议权重按后续阶段推进。 |
+| **V2：定性画像/盲点阈值、调仓意图核对与权重建议** | `rebalance_holding` / `rebalance_amount` 客观数值对比（`deltas`、`marginal_impact`、`overlap_with_new`）已随 2A 合入 `dev`；`intent_effect_gap` 意图核对、定性画像与盲点阈值（M11）、用户记忆与行为画像、按风险偏好建议权重按后续阶段推进。 |
 
 ---
 
@@ -42,7 +41,7 @@ V1 后端代码、晨间 T+1 日更调度（`09:00/12:30/14:15`）、长期逻�
 | 未关闭问题 | 下一步与完成条件 |
 | --- | --- |
 | **Black-Litterman 量纲与后验退化** | 按 [D-009](../../.agents/brain/DECISIONS.md#d-009) 确定 `Q` 与 `Ω` 标定口径；补非退化协方差的后验与观点符号回归。 |
-| **`PgBarLoader` 未完整适配真库** | `PgBarLoader` 仍拒绝 `oi`、未映射 `trading_status`、未接入公司行为表；完成适配前不将真库回测视为已验收（V1 通过 `GETRICH_V1_DIAGNOSIS_ONLY=true` 不对外挂载 `/v1/backtest-*`）。 |
+| **`PgBarLoader` 未完整适配真库** | `PgBarLoader` 复权因子已切换至 `market.adj_factor_ts`，但仍拒绝 `oi`、未映射 `trading_status`、未接入公司行为表；完成适配前不将真库回测视为已验收（V1 通过 `GETRICH_V1_DIAGNOSIS_ONLY=true` 不对外挂载 `/v1/backtest-*`）。 |
 | **撮合顺序与涨停买入边界偏差** | `api.py` 先撮合后处理公司行为且 `_load_corp_actions()` 吞异常；`execution.py` 允许买价等于涨停价。按明确撮合规则修复并补可核算回归。 |
 
 ### 3.2 策略／信号与选股模块（`gr-api` / `gr-picks`）
@@ -64,3 +63,6 @@ V1 后端代码、晨间 T+1 日更调度（`09:00/12:30/14:15`）、长期逻�
 | **北交所待核项与期货完整日历** | `ops.tushare_bj_pending` 存量待处理记录与六所期货完整交易日历写入方案留待对应品种开放前专项核实。 |
 | **期权多方法表与 Greeks 精度扩展** | 期权正式发布继续关闭（[D-026](../../.agents/brain/DECISIONS.md#d-026)）；后续开放前需审定 `market.option_greeks_1d` 的 `theta`/`vega`/`rho` 扩 `NUMERIC(20,8)` 或新建多方法 `market.rq_option_greeks`、郑商所原生指标口径及 `opt_mins` 分钟权限。 |
 | **米筐补充数据集 R1–R10 去重门槛** | `gr_data/config/ricequant.py` 仍要求 `datayes_overlap == 'distinct'`，启用补充 writer 前按 DP-02 同步配置与验收。 |
+| **期货／期权跨十年合约查询契约** | 交易所标准代码（如 `SR701`）可能跨十年复用；开放衍生品前须设计按交易所、资产类型及合约月份或 `as_of` 定位唯一 `instrument_id` 的解析入口，禁止永久一对一别名或跨代拼接行情。 |
+| **供应商凭证解析统一与米筐配置整理** | 将 `config/pipeline.py::resolve_secret_fields` 收口为从 `Config.environment` 按需读取并同步清理 `license_env`；为 `gr_data/config/` 数值字段显式排除 `bool`、按 `Asia/Shanghai` 取当天日期，并在黄金测试保护下令 `source_units` 不可变。 |
+| **存量 DDL 与工具链细节遗留** | 分钟线压缩重灌上限与 chunk 参数、034 `chk_item_option_type` 放行 NULL、回测比率列 `DECIMAL(20,10)` 溢出评估、`app` 外键/`meta` 交易所码 CHECK、`gr-db migrate --dry-run` 记账表建表行为，以及 `datayes`/`ricequant` 列表过滤旧临时文件残留，留待对应模块迭代时收敛。 |

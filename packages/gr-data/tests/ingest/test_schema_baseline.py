@@ -24,7 +24,6 @@ _MANAGED_SCHEMAS = (
     "ops",
     "pick",
     "realtime",
-    "staging",
 )
 
 
@@ -61,8 +60,6 @@ def test_baseline_catalog_comments_and_direct_replay(pg_conn: psycopg.Connection
         ("factor.model_run", "model_version"): "run_id",
         ("factor.definition", "ordinal"): "ordinal + 1",
         ("pick.item", "symbol"): "不含交易所后缀",
-        ("ops.users", "user_id"): "运维用户自身",
-        ("ops.api_keys", "user_id"): "ops.users.user_id",
         ("ops.data_quality_check", "run_id"): "ops.etl_job_run.run_id",
     }
     for (table, column), fragment in expected_fragments.items():

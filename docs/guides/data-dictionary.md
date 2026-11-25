@@ -26,14 +26,13 @@ uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/de
 | schema | 内容 | 写入方 | 建立迁移 |
 |---|---|---|---|
 | `meta` | 证券、期货／期权合约、代码映射、交易日历 | gr-data | 001 |
-| `market` | 行情主存 `<asset>_bar_<freq>`、复权因子、估值、停复牌事件 | gr-data | 001 |
+| `market` | 行情主存 `<asset>_bar_<freq>`、复权因子明细 `adj_factor_ts`、停复牌事件、全收益基准 `index_total_return_1d`、退市截断 `stock_delisting` | gr-data | 001 / 036 / 044 / 058 / 059 |
 | `finance` | 已实施分红送转及按原始摘要隔离的覆盖凭据 | gr-data（gr-api 读） | 059 |
 | `fundamental` | 估值与财务快照 | gr-data（gr-api 读） | 038 |
 | `classify` | 行业体系、行业归属、资产类别 | gr-data（gr-api 读） | 039 |
-| `factor` | 风险模型：定义、run、五件套、覆盖、配置身份、收据、检查点与绑定 | gr-data（gr-api 读） | 037 |
+| `factor` | 风险模型：定义、run、五件套、覆盖、配置身份、收据、检查点、绑定与准入 | gr-data（gr-api 读） | 037 |
 | `realtime` | 实时 tick 缓冲 | gr-data | 001 |
-| `staging` | 入库中转 | gr-data | 007 |
-| `ops` | 通用 ETL 作业、数据质量、表归属、迁移记账 | gr-data／gr-db | 001 |
+| `ops` | 通用 ETL 作业、数据质量、表归属、迁移记账、诊断输入头与收据、北交所待处理 | gr-data／gr-db | 001 |
 | `app` | 业务主库：用户、策略、信号、订单、订阅 | gr-api | 001 |
 | `backtest` | 回测产物：run、指标、权益、参数扫描、walk-forward、作业 | gr-backtest／gr-api | 001 |
 | `pick` | 选股：上传批次 `batch` 与每日标的池快照 `item` | gr-api | 034 |

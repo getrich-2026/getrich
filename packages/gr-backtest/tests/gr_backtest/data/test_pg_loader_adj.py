@@ -49,7 +49,9 @@ class TestPgBarLoaderAdjFactors:
         loader = PgBarLoader(conn=mock_conn)
         _ = loader.load_adj_factors()
         call_sql = mock_conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
-        assert "market.stock_adj_factor" in call_sql
-        # b_xdy=前复权、f_xdy=后复权，方向来自厂商文档，搞反会让历史价格系统性偏移
-        assert "a.b_xdy::double precision AS pre_factor" in call_sql
-        assert "a.f_xdy::double precision AS post_factor" in call_sql
+        assert "market.adj_factor_ts" in call_sql
+        assert "a.trading_day AS dt" in call_sql
+        # 前复权按查询窗口末日 LAST_VALUE 归一化，后复权使用 adj_factor 原值
+        assert "LAST_VALUE(a.adj_factor)" in call_sql
+        assert "AS pre_factor" in call_sql
+        assert "a.adj_factor::double precision AS post_factor" in call_sql

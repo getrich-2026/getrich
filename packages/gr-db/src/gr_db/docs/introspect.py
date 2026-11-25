@@ -27,7 +27,6 @@ PG_SCHEMAS = (
     "ops",
     "pick",
     "realtime",
-    "staging",
 )
 """gr-db 管理的业务 schema；不含 TimescaleDB 内部 schema。新增 schema 只改这里。"""
 

@@ -10,8 +10,8 @@
 
 在切换 `/srv/getrich/current` 软链或开启 `GETRICH_DIAG_PUBLICATIONS_ENABLED=true` 前，逐项确认以下前置条件：
 
-1. **数据库与迁移一致性**：PostgreSQL 18.6／TimescaleDB 2.30.1（named volume，仅绑定 `127.0.0.1:5432`，见 [D-004](../../.agents/brain/DECISIONS.md#d-004)）中 `ops.schema_migrations` 的 57 条迁移（`000`～`056`）与磁盘文件名称、SHA-256 完全一致；`_timescaledb_internal` 下不存在缺少 `diag_chunk_truncate` 触发器的普通表。
-2. **当前诊断发布有效且新鲜**：`diag.data_publication` 最新记录（如 `diag-v3-20261120-daily-9ff71d632cb1e712`）满足 `contract_version = 'diag-publication-v3'`、`diag.publication_is_valid(data_version_id) = true`、14 个组成（13 个基础分区收据 + 1 个米筐 `v2` 风险五件套收据）在 `ops.diag_input_head` 中全部 `dirty = false`，且相对当前上海时间满足滞后不超过 1 个已收盘交易日（`lag <= 1`）。
+1. **数据库与迁移一致性**：PostgreSQL 18.6／TimescaleDB 2.30.1（named volume，仅绑定 `127.0.0.1:5432`，见 [D-004](../../.agents/brain/DECISIONS.md#d-004)）中 `ops.schema_migrations` 保持与 V1 封版 `v1.0.0` 基线一致——共 57 条迁移（`000`～`056`，`dev` 分支的 V2 迁移 `057`～`062` 未获授权不得应用于 V1 线上库），名称与 SHA-256 完全一致；`_timescaledb_internal` 下不存在缺少 `diag_chunk_truncate` 触发器的普通表。
+2. **当前诊断发布有效且新鲜**：`diag.data_publication` 最新记录（示例格式 `diag-v3-<YYYYMMDD>-daily-<hash>`，实时值以 `/v1/diagnosis/options` 返回为准）满足 `contract_version = 'diag-publication-v3'`、`diag.publication_is_valid(data_version_id) = true`、14 个组成（13 个基础分区收据 + 1 个米筐 `v2` 风险五件套收据）在 `ops.diag_input_head` 中全部 `dirty = false`，且相对当前上海时间满足滞后不超过 1 个已收盘交易日（`lag <= 1`）。
 3. **备份与供应商配额余量**：`/srv/getrich/state/backups/` 下存在最近一次成功的 `pg_dump` 滚动逻辑备份且 `pg_restore --list` 可读；米筐与 Tushare 账号剩余额度保留不少于 10%，且授权剩余有效期不少于 30 天。
 4. **V1 交付范围冻结边界**：主前端 `apps/web` 与回测前端 `apps/backtest-web` 在 V1 冻结不部署；后端通过 `GETRICH_V1_DIAGNOSIS_ONLY=true` 收敛公开路由面（见第 3、5 节）。
 
