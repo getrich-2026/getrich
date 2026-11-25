@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from gr_data.common.contracts.base import TableContract
 from gr_data.common.paths import RawPaths
 from gr_data.config.pipeline import load_config
 from gr_tools.config import SettingsError
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 _PROVIDERS = ("tushare", "datayes", "insight", "ricequant", "yinhe")
 
 RegistryEntry = tuple[str, str, Any]
-"""``(provider, dataset, importer)``。"""
+"""第三项为通用 importer 类或专用写入方的目标契约元组。"""
 
 
 def load_registry() -> tuple[RegistryEntry, ...]:
@@ -36,11 +37,25 @@ def load_registry() -> tuple[RegistryEntry, ...]:
     """
     entries: list[RegistryEntry] = []
     for provider in _PROVIDERS:
-        registry = importlib.import_module(f"gr_data.ingest.{provider}").REGISTRY
+        module = importlib.import_module(f"gr_data.ingest.{provider}")
+        registry = dict(module.REGISTRY)
+        specialized = getattr(module, "specialized_dataset_contracts", None)
+        if specialized is not None:
+            for dataset, contracts in specialized().items():
+                if dataset in registry:
+                    raise ValueError(f"Duplicate ingest dataset declaration: {provider}.{dataset}")
+                registry[dataset] = contracts
         entries.extend(
             (provider, dataset, importer) for dataset, importer in sorted(registry.items())
         )
     return tuple(entries)
+
+
+def _target_contracts(importer: Any) -> tuple[TableContract, ...]:
+    if isinstance(importer, tuple):
+        return importer
+    contract = getattr(importer, "CONTRACT", None)
+    return (contract,) if contract is not None else ()
 
 
 def _directory_stats(directory: Path) -> tuple[int | None, int | None]:
@@ -90,8 +105,7 @@ def discover_datasets(
     paths = RawPaths(raw_root) if raw_root is not None else None
     datasets: list[DatasetDoc] = []
     for provider, dataset, importer in registry if registry is not None else load_registry():
-        contract = getattr(importer, "CONTRACT", None)
-        target = contract.qualified if contract is not None else None
+        targets = tuple(c.qualified for c in _target_contracts(importer))
         if paths is None:
             path_text = f"$RAW_PARQUET_ROOT/{provider}/{dataset}"
             file_count, total_bytes = None, None
@@ -106,7 +120,7 @@ def discover_datasets(
                 path=path_text,
                 file_count=file_count,
                 total_bytes=total_bytes,
-                targets=(target,) if target else (),
+                targets=targets,
             )
         )
     return tuple(datasets)
@@ -162,8 +176,7 @@ def enrich_provenance(
     """
     declarations: dict[str, list[tuple[str, str, tuple[str, ...]]]] = defaultdict(list)
     for provider, dataset, importer in registry if registry is not None else load_registry():
-        contract = getattr(importer, "CONTRACT", None)
-        if contract is not None:
+        for contract in _target_contracts(importer):
             declarations[contract.qualified].append((provider, dataset, contract.columns))
 
     findings: list[DriftFinding] = []

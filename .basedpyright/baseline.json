@@ -8612,14 +8612,6 @@
             {
                 "code": "reportArgumentType",
                 "range": {
-                    "startColumn": 21,
-                    "endColumn": 25,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportArgumentType",
-                "range": {
                     "startColumn": 36,
                     "endColumn": 40,
                     "lineCount": 1

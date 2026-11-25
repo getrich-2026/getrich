@@ -1,4 +1,8 @@
-"""真实 raw 的隔离库跨库重放验收，必须显式提供一次性库和冻结映射。"""
+"""真实 raw 的隔离库跨库重放验收，必须显式提供一次性库和冻结映射。
+
+通过进程环境或 RQ_REPLAY_ENV_FILE 提供 PostgreSQL 配置和 RAW_PARQUET_ROOT，
+并用 RQ_REPLAY_DB 指定已迁移且加载真实主数据的一次性测试库。
+"""
 
 from __future__ import annotations
 
@@ -45,12 +49,13 @@ def _row_count(conn: psycopg.Connection, qualified: str) -> int:
 
 
 @pytest.mark.skipif(not os.getenv("RQ_REPLAY_MAP"), reason="explicit isolated replay only")
-def test_real_cross_database_replay(monkeypatch):
+def test_real_cross_database_replay(monkeypatch: pytest.MonkeyPatch) -> None:
     root = Path(os.environ["RQ_REPLAY_ROOT"])
-    env = load_environment(env_file="/Volumes/neoimac/project/getrich/.env")
-    database = os.environ.get("RQ_REPLAY_DB", "getrich_rq_restore_20261101")
+    env = load_environment(env_file=os.environ.get("RQ_REPLAY_ENV_FILE"))
+    database = os.environ["RQ_REPLAY_DB"]
     assert database.startswith("getrich_rq_")
     cfg = replace(load_postgres(env), database=database)
+    paths = RawPaths(Path(env.values["RAW_PARQUET_ROOT"]))
     mapping = IdentityMapping(Path(os.environ["RQ_REPLAY_MAP"]), os.environ["RQ_REPLAY_HASH"])
     # 仅此隔离测试以待审源码内容哈希标记测试版本；生产入口的 Git 清洁门禁不变。
     source_hash = hashlib.sha256(Path(writer.__file__).read_bytes()).hexdigest()[:40]
@@ -70,6 +75,7 @@ def test_real_cross_database_replay(monkeypatch):
     ]
     reports = []
     with psycopg.connect(make_pg_dsn(cfg)) as conn:
+        assert _scalar(conn, "SELECT current_database()") == database
         # 隔离库沿用恢复后的真实主数据；所有风险表在写入前明确登记。
         conn.execute("LOCK TABLE ops.table_ownership IN SHARE ROW EXCLUSIVE MODE")
         owner = OwnershipManager(conn)
@@ -86,9 +92,7 @@ def test_real_cross_database_replay(monkeypatch):
             opts = replace(
                 opts, start_date=date.fromisoformat(day), end_date=date.fromisoformat(day)
             )
-            ctx = IngestContext(
-                RawPaths(Path("/Volumes/myssd/data/raw_parquet")), observation_id=obs
-            )
+            ctx = IngestContext(paths, observation_id=obs)
             manifest, frames = next(read_bundles(ctx.paths, opts, observation_id=obs))
             original = semantic_hash(manifest)
             # 第一日写到 specific_risk 时失败，检查此前 COPY/模型元数据全部回滚。

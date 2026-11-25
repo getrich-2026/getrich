@@ -160,3 +160,45 @@ def test_discover_datasets_without_raw_root_keeps_entries_and_skips_stats(caplog
     assert doc.path == "$RAW_PARQUET_ROOT/tushare/daily"
     assert (doc.file_count, doc.total_bytes) == (None, None)
     assert "RAW_PARQUET_ROOT is not configured" in caplog.text
+
+
+def test_specialized_writers_document_all_targets_and_enforce_real_owner(tmp_path: Path) -> None:
+    from gr_db.docs.provenance import load_registry
+
+    registry = load_registry()
+    docs = {(d.provider, d.dataset): d for d in discover_datasets(tmp_path, registry)}
+    assert docs["tushare", "index_classify"].targets == (
+        "classify.scheme",
+        "classify.industry_node",
+    )
+    assert docs["tushare", "index_member_all"].targets == ("classify.instrument_industry",)
+    risk = docs["ricequant", "rq_risk_model"].targets
+    assert set(risk) == {
+        "factor.model",
+        "factor.definition",
+        "factor.model_run",
+        "factor.model_run_binding",
+        "factor.model_run_coverage",
+        "factor.exposure",
+        "factor.covariance",
+        "factor.factor_return",
+        "factor.specific_risk",
+        "factor.specific_return",
+        "meta.symbol_map",
+    }
+    schemas = (
+        SchemaDoc("factor", (TableDoc(schema="factor", name="covariance"),)),
+        SchemaDoc("classify", (TableDoc(schema="classify", name="industry_node"),)),
+    )
+    owners = {
+        "factor.covariance": ("ricequant", "ingest"),
+        "classify.industry_node": ("tushare", "ingest"),
+    }
+    tables, findings = enrich_provenance(schemas, owners, registry)
+    assert not any("归属 provider=" in f.message for f in findings)
+    assert "ricequant.rq_risk_model" in tables[0].tables[0].datasets
+    assert "tushare.index_classify" in tables[1].tables[0].datasets
+    _, wrong = enrich_provenance(schemas, {key: ("yinhe", "ingest") for key in owners}, registry)
+    assert {
+        f.target for f in wrong if f.severity == "error" and "归属 provider=yinhe" in f.message
+    } == set(owners)

@@ -21,12 +21,13 @@ uv run python scripts/lint_migrations.py --db pg --comments --base-ref origin/de
 
 ## PostgreSQL schema 一览
 
-按职责查新表该放哪里；表和字段以 DDL 与生成的字典为准，本表只到 schema 一级。2026-10-28 对照 DDL 核对，新增 schema 时同步本表。
+按职责查新表该放哪里；表和字段以 DDL 与生成的字典为准，本表只到 schema 一级。2026-11-25 对照 DDL 核对，新增 schema 时同步本表。
 
 | schema | 内容 | 写入方 | 建立迁移 |
 |---|---|---|---|
 | `meta` | 证券、期货／期权合约、代码映射、交易日历 | gr-data | 001 |
 | `market` | 行情主存 `<asset>_bar_<freq>`、复权因子、估值、停复牌事件 | gr-data | 001 |
+| `finance` | 已实施分红送转及按原始摘要隔离的覆盖凭据 | gr-data（gr-api 读） | 059 |
 | `fundamental` | 估值与财务快照 | gr-data（gr-api 读） | 038 |
 | `classify` | 行业体系、行业归属、资产类别 | gr-data（gr-api 读） | 039 |
 | `factor` | 风险模型：定义、run、五件套、覆盖、配置身份、收据、检查点与绑定 | gr-data（gr-api 读） | 037 |

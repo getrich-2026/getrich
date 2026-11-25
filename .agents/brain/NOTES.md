@@ -1,7 +1,7 @@
 # GetRich 当前状态
 
 读者：接续任务的 Claude／Codex／Antigravity；维护者也可用它快速定位当前状态。
-最后整理：**2026-11-24**（Asia/Shanghai）。已完成项从待办移除，关键长期取舍写入 [DECISIONS.md](DECISIONS.md)。
+最后整理：**2026-11-25**（Asia/Shanghai）。已完成项从待办移除，关键长期取舍写入 [DECISIONS.md](DECISIONS.md)。
 
 ## 开始任务
 
@@ -9,7 +9,11 @@
 2. 按任务查 [待决问题](../../docs/plans/backlog.md)、[决策主题索引](DECISIONS.md) 与 [V1 发布切换指南](../../docs/guides/v1-release-cutover.md)。
 3. 使用说明从 [文档目录](../../docs/README.md) 定位；下方「历史阶段快照」仅供证据追溯，不作为当前指令。
 
-## 当前状态与 V2 启动基线（2026-11-24，Asia/Shanghai）
+## 当前状态与 V2 启动基线（2026-11-25，Asia/Shanghai）
+
+- **V2 回归验证（2026-11-25，macOS）**：2A 高条件数截面测试覆盖最小扭转不收敛和方差不守恒两种拒绝原因，API 仍返回 `unavailable/data_not_validated`。Tushare 收盘价越界、未知上市状态、坏日历误报缺失及强制转移归属日志四项均有正常回归。全仓非在线 4,498 项通过；另按节点核对原跳过的 222 个 PostgreSQL 测试，全部在隔离库通过（182 个容器夹具、28 个 API、12 个专项）。仅 Windows Proactor 用例受平台限制。沪深三股 1,503 条未复权日线与上市状态归一化通过；只读复算 V2 的 253 点回放、三个全收益基准、报告及 252→150 个收益的统计窗口通过。Ruff、格式、CI 锁定类型检查通过。详细命令、数据范围和逐项结果见仓外 `/Volumes/myssd/data/getrich-validation/v2-regression-20261125/acceptance.md`。
+
+- **本机 V2 批次 2B 开发（2026-11-25）**：开发树新增 058～061、DS06/07/08 样本接入、PA-11 个股 Beta、PA-12 组合回放及报告读取。沪深三股未复权样本已验证 2024-11-01～2026-11-24 共 501 个交易日、500 个有效组合收益，三条全收益基准各覆盖 1,470 个日收益。旧本机库停在 049。已在 127.0.0.1 部署 V1（8001/getrich_v1，57/57 迁移）及 V2（8002/getrich_v2，62/62 迁移），11-24 的 V1 日更发布与 V2 隔离发布 local-v4-bench-47202035a07c95f3 均有效。三股组合的 253 点真实 HTTP 回放、三条基准 Beta、只改统计区间重算及报告均通过，停止或启动方式见仓外 getrich-local-apps/api-control.py。测试数据位于仓外 raw，不纳入版本控制。
 
 - **V1 封版与线上稳定运行（`v1.0.0`）**：双仓已打不可变标签 **`v1.0.0`**（`getrich@944a192`、`getrich-design@7f57244`）；云端 `/srv/getrich/current/{app,etl}` 固定在隔离副本 `17a4693`（与 `944a192` 代码字节一致）。运维脚本已收口至 `/srv/getrich/ops/`（`deploy-release.sh`、`getrich-api.service`、`run-v1-daily.py`、`run-backup.py`、`run-health.py`），配置仅保留 `api-prod.env`（`APP_ENV=staging`、`STRICT_MODE=true`、`GETRICH_DIAG_PUBLICATIONS_ENABLED=true`、`GETRICH_V1_DIAGNOSIS_ONLY=true`、`GETRICH_ALLOW_MOCK_AUTH=false`）、`data-prod.env`、`daily-native.yaml`，原 `operations/cloud-stage-20261119T120042Z`、`etl/`、`transfers/` 及旧 `api.env`／`data.env` 已清理下线。
 - **晨间日更、备份与巡检全绿**：今早 `09:00` 定时器全自动完成 `2026-11-23` 探测、旧失败目录归档与原子发布，最新有效版本 **`diag-v3-20261123-daily-ce27ffc2663dd823`**（`as_of_date=2026-11-23`、`lag=0`、`5,224` 只沪深 A 股、14 个组成全部 `dirty=false`、`calibrated=false`）；`03:30` 逻辑备份正常留存最新 2 份；`13:30` 新版 `run-health.py` 巡检输出 `passed=true`、`alerts=[]`、`warnings=[]`（覆盖 `getrich-api`、`nginx`、`:8001`/`:8080`/`:80` `/health` + 4 安全头、外网 `/metrics` `403`、新日更目录防卡死与 `13:30` 上游等待预警）。**运维提醒**：米筐授权剩余约 16～17 天，须到期前续期。

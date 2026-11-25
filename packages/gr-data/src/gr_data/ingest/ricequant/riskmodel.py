@@ -50,6 +50,9 @@ _CONTRACTS = (
     contracts.SPECIFIC_RISK,
     contracts.SPECIFIC_RETURN,
 )
+# symbol_map 按来源分区写入；不参与单一归属的风险表循环。
+DATASET_CONTRACTS = {"rq_risk_model": (*_CONTRACTS, SYMBOL_MAP)}
+
 _COV_SCALE = {
     "dec2_daily": 10000.0 * 252,
     "pct2_daily": 252.0,

@@ -25,6 +25,7 @@ from gr_api.diagnosis_calc.exposure import (
 )
 from gr_api.diagnosis_calc.history import (
     DailyObservation,
+    benchmark_sensitivity,
     correlation_view,
     daily_returns,
     historical_volatility,
@@ -36,6 +37,8 @@ from gr_api.diagnosis_calc.model_risk import (
     RiskModelInputs,
     compute_model_risk,
 )
+from gr_api.diagnosis_calc.replay import ReplayResult
+from gr_api.diagnosis_calc.replay_section import history_section
 from gr_api.diagnosis_calc.sections import risk_section, structure_section
 from gr_api.diagnosis_calc.weights import (
     WEIGHT_UNITS,
@@ -57,7 +60,10 @@ from gr_api.services import (
     diagnosis_publication as publication,
     diagnosis_scope,
 )
+from gr_api.services.diagnosis_benchmark import fetch_benchmark_returns
+from gr_api.services.diagnosis_replay import replay_snapshot
 from gr_api.services.pick_symbols import parse_symbol
+from pydantic import TypeAdapter, ValidationError
 
 
 if TYPE_CHECKING:
@@ -71,7 +77,7 @@ logger = logging.getLogger(__name__)
 
 #: ``diag.diagnosis_run.payload`` 的结构版本。payload 是 CalculationPayload 同形 JSON，
 #: 缓存字段增删必须同步 +1；它也进入 calculation_hash，旧结构不会被新代码复用。
-PAYLOAD_SCHEMA_VERSION = "7.4"
+PAYLOAD_SCHEMA_VERSION = "7.5"
 
 #: 进程时区不能决定业务日期；数据库连接虽钉住了会话时区，却不会改变 Python 进程时区。
 PLATFORM_TZ = ZoneInfo("Asia/Shanghai")
@@ -427,7 +433,11 @@ async def _resolve_options(
                 (
                     b
                     for b in benchmarks
-                    if default_id is not None and b.get("instrument_id") == default_id
+                    if (
+                        b.get("instrument_id") == default_id
+                        if default_id is not None
+                        else b.get("symbol") == "H00300.CSI"
+                    )
                 ),
                 None,
             )
@@ -454,16 +464,76 @@ async def _resolve_options(
             else await _default_window(db, as_of=as_of, days=days)
         )
 
-    # PA-12 回放所需数据（DS06～DS08）未接入：回放能力不可用，起点与统计区间写 None；
-    # 显式选择视为选了不可用的选项。
-    for field in ("replay_start", "stats_window"):
-        if field in resolved:
-            continue
-        if getattr(requested, field) is not None:
-            raise _feature_not_available(
-                "portfolio replay is not available yet", f"/options/{field}"
+    replay = available.get("replay") or {}
+    replay_through = None
+    if replay.get("version") == "pa12-local-v1":
+        try:
+            replay_through = date.fromisoformat(replay["through_date"])
+            hashes = replay["dividend_sha256"]
+            delist_dates = replay["delist_dates"]
+            signatures = replay["dividend_signatures"]
+            if (
+                not isinstance(hashes, dict)
+                or not hashes
+                or not isinstance(delist_dates, dict)
+                or delist_dates.keys() != hashes.keys()
+                or not isinstance(signatures, dict)
+                or signatures.keys() != hashes.keys()
+                or any(
+                    not isinstance(v, list) or len(v) != 2 or type(v[0]) is not int or v[0] < 0
+                    for v in signatures.values()
+                )
+                or not all(
+                    isinstance(value, str)
+                    and len(value) == 64
+                    and all(c in "0123456789abcdef" for c in value)
+                    for value in [
+                        replay["delisting_sha256"],
+                        *hashes.values(),
+                        *(v[1] for v in signatures.values()),
+                    ]
+                )
+            ):
+                raise ValueError("Invalid replay observation manifest")
+            for stamp in delist_dates.values():
+                if stamp is not None and date.fromisoformat(stamp).isoformat() != stamp:
+                    raise ValueError("Invalid delisting date")
+        except (KeyError, ValueError, TypeError) as exc:
+            raise BadRequest("invalid portfolio replay publication", http_status=503) from exc
+    if replay_through is not None and as_of <= replay_through:
+        if "replay_start" not in resolved:
+            start_day = requested.replay_start or await _nth_trading_day_back(db, as_of, 253)
+            if start_day > as_of or await _trading_day_on_or_before(db, start_day) != start_day:
+                raise _issue_error(
+                    "replay_start must be a trading day on or before as_of", "/options/replay_start"
+                )
+            resolved["replay_start"] = start_day.isoformat()
+        if (
+            base
+            and resolved["replay_start"] != base.get("replay_start")
+            and requested.stats_window is None
+        ):
+            resolved.pop("stats_window", None)
+        if "stats_window" not in resolved:
+            resolved["stats_window"] = (
+                await _resolve_window(
+                    db, requested.stats_window, as_of=as_of, path="/options/stats_window"
+                )
+                if requested.stats_window
+                else {"start": resolved["replay_start"], "end": as_of.isoformat()}
             )
-        resolved[field] = None
+        if resolved["stats_window"]["start"] < resolved["replay_start"]:
+            raise _issue_error(
+                "statistics cannot precede portfolio inception", "/options/stats_window"
+            )
+    else:
+        for field in ("replay_start", "stats_window"):
+            if field not in resolved:
+                if getattr(requested, field) is not None:
+                    raise _feature_not_available(
+                        "portfolio replay is not available yet", f"/options/{field}"
+                    )
+                resolved[field] = None
 
     serialized = ResolvedCalculationOptions.model_validate(resolved).model_dump(mode="json")
     if publication.current.get() is not None:
@@ -584,7 +654,7 @@ def _scope_reason(row: dict[str, Any], as_of: date) -> str | None:
     return None
 
 
-@dataclass(frozen=True)
+@dataclass
 class PlanInput:
     plan_index: int
     plan_id: str
@@ -593,6 +663,7 @@ class PlanInput:
     weight_mode: str
     summary: dict[str, Any]
     quantized: dict[int, int]
+    base_replay: ReplayResult | None = None
 
 
 async def _normalize_request_plans(
@@ -1384,14 +1455,26 @@ async def _compute_history(
         logger.warning("diagnosis history skipped: incomplete trading calendar %s..", start)
         calendars, observations = {i: [] for i in ids}, {i: {} for i in ids}
 
-    volatility = {
-        iid: historical_volatility(
-            daily_returns(calendars[iid], observations[iid], window=beta_window),
-            window=beta_window,
-            min_samples=min_samples,
-        )
-        for iid in ids
+    beta_inputs = {
+        iid: daily_returns(calendars[iid], observations[iid], window=beta_window) for iid in ids
     }
+    volatility = {
+        iid: historical_volatility(returns, window=beta_window, min_samples=min_samples)
+        for iid, returns in beta_inputs.items()
+    }
+    reference = await fetch_benchmark_returns(
+        db, options.get("benchmark_instrument_id"), options.get("benchmark_version"), beta_window
+    )
+    sensitivities = (
+        {
+            iid: benchmark_sensitivity(
+                returns, reference, window=beta_window, min_samples=min_samples
+            )
+            for iid, returns in beta_inputs.items()
+        }
+        if reference
+        else {}
+    )
     view = correlation_view(
         {iid: daily_returns(calendars[iid], observations[iid], window=corr_window) for iid in ids},
         window=corr_window,
@@ -1407,7 +1490,7 @@ async def _compute_history(
         ],
     }
     return (
-        risk_section(ids, volatility, model),
+        risk_section(ids, volatility, model, sensitivities=sensitivities),
         structure_section(view, single_instrument=len(ids) == 1, model=model),
         facts,
     )
@@ -1643,6 +1726,59 @@ async def _compute_plan(
         "section_d": {"status": "ready", "value": structure},
         **{key: _unavailable_section(key) for key in SECTION_REASONS},
     }
+    if context is not None and options.get("replay_start"):
+        manifest = (context.version.get("available_options") or {}).get("replay") or {}
+        _, missing = diagnosis_scope.input_weights(item.summary)
+        hashes = manifest.get("dividend_sha256") or {}
+        if missing or any(str(i) not in hashes for i in ids):
+            payload["section_c"] = unavailable(
+                reason_code="coverage_below_threshold", reason="回放发布范围未覆盖全部正权重持仓。"
+            )
+        else:
+            symbols = {
+                r["instrument_id"]: r["symbol"] for r in item.summary["calculation_holdings"]
+            }
+            start = date.fromisoformat(options["replay_start"])
+            await publication.require_coverage(
+                db,
+                start,
+                as_of,
+                (
+                    "market.stock_bar_1d",
+                    "meta.trading_calendar",
+                    "market.stock_suspend_event",
+                    "market.stock_suspend_coverage",
+                ),
+            )
+            try:
+                result = item.base_replay or await replay_snapshot(
+                    db,
+                    {symbols[h.instrument_id]: h.weight for h in holdings},
+                    start,
+                    as_of,
+                    expected_hashes=hashes,
+                    dividend_signatures=manifest.get("dividend_signatures"),
+                    delisting_hash=manifest["delisting_sha256"],
+                    delist_dates=manifest.get("delist_dates"),
+                )
+            except ValueError as exc:
+                logger.warning("Replay inputs failed validation: %s", exc)
+                payload["section_c"] = unavailable(
+                    reason_code="data_not_validated",
+                    reason="回放所需的连续历史或事件证据未通过校验。",
+                )
+            else:
+                facts["replay_state"] = TypeAdapter(ReplayResult).dump_python(result, mode="json")
+                window = _window(options["stats_window"])
+                reference = await fetch_benchmark_returns(
+                    db,
+                    options.get("benchmark_instrument_id"),
+                    options.get("benchmark_version"),
+                    window,
+                )
+                payload["section_c"] = history_section(
+                    result, window=window, benchmark_returns=reference
+                )
     # 落库前过一遍 Pydantic：手写字典的字段拼错或三态组合非法在这里就失败，
     # 而不是等前端渲染成空白；同时完成 Decimal/date 到 JSON 的规范化。
     return CalculationPayload.model_validate(payload).model_dump(mode="json"), facts
@@ -2069,6 +2205,29 @@ async def recompute_snapshot(
             )
             for r in rows
         ]
+        prior = base["resolved_options"]
+        if (
+            options.get("replay_start")
+            and options["replay_start"] == prior.get("replay_start")
+            and options["stats_window"] != prior.get("stats_window")
+        ):
+            async with db.cursor() as cur:
+                await cur.execute(
+                    """SELECT sr.plan_index, r.data_quality->'replay_state' AS state
+                       FROM diag.snapshot_run sr JOIN diag.diagnosis_run r USING(run_id)
+                       WHERE sr.snapshot_id=%s ORDER BY sr.created_at, sr.run_id""",
+                    (base_snapshot_id,),
+                )
+                states = {r["plan_index"]: r["state"] for r in await cur.fetchall()}
+            for plan in plans:
+                try:
+                    plan.base_replay = TypeAdapter(ReplayResult).validate_python(
+                        states[plan.plan_index]
+                    )
+                except (KeyError, ValidationError) as exc:
+                    raise BaseDataVersionUnavailableError(
+                        "the original portfolio replay state is unavailable"
+                    ) from exc
         if publication.enabled.get():
             diagnosis_scope.validate_request(data_version, plans, as_of, None)
         return await _persist_snapshot(

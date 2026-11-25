@@ -259,12 +259,18 @@ def snapshot_disclosures(
             "默认信任供应商模型，不代表模型已完成校准。"
             for mid, ver, day in models
         ]
-        out.append("个股 Beta、组合回放与压力测试尚未开放，不以价格指数替代全收益基准。")
+
     else:
+        out.append("本报告未取得准入的风险模型截面，模型口径指标显示为不可用。")
+    if (snapshot.get("resolved_options") or {}).get("replay_start"):
         out.append(
-            "风险模型（米筐 v2）口径指标、个股 Beta、组合回放与压力测试尚未开放，"
-            "相关指标显示为不可用，不以历史协方差或价格指数替代。"
+            "历史回放按当前配置假设买入持有，采用小数股、税前分红再投资、未扣交易成本，"
+            "无成交量冲击；回放波动率及尾部损益仅描述历史区间。"
         )
+    if (snapshot.get("resolved_options") or {}).get("benchmark_version"):
+        out.append("个股 Beta 与基准相关性按个股和全收益基准共同有效的日简单收益计算。")
+    else:
+        out.append("当前快照没有已准入的全收益基准，个股 Beta 与基准相关性不可用。")
     return out
 
 
@@ -816,9 +822,30 @@ def _risk_blocks(
                 ],
             }
         )
-        beta = betas["value"][0]["beta"] if betas["value"] else None
-        if beta and not has_value(beta):
-            blocks.append({"type": "text", "text": f"个股 Beta：{beta['reason']}"})
+        if any(has_value(row["beta"]) for row in betas["value"]):
+            blocks.append(
+                {
+                    "type": "metric_cards",
+                    "items": [
+                        _card(
+                            f"{key}:{row['instrument_id']}",
+                            f"{_name(names, row['instrument_id'])} {label}",
+                            row[key],
+                            "number",
+                            2,
+                        )
+                        for row in betas["value"]
+                        for key, label in (
+                            ("beta", "Beta"),
+                            ("benchmark_correlation", "基准相关性"),
+                        )
+                    ],
+                }
+            )
+        elif betas["value"]:
+            blocks.append(
+                {"type": "text", "text": f"个股 Beta：{betas['value'][0]['beta']['reason']}"}
+            )
     else:
         blocks.append({"type": "text", "text": betas["reason"]})
     return blocks
@@ -996,7 +1023,35 @@ def report(
             if b["status"] == "ready"
             else b,
         )
-        add(pid, "style", "历史回放与分位", p["section_c"], "history")
+        history = p["section_c"]
+        if history["status"] == "ready":
+            values = history["value"]
+            cards = [
+                _card(key, label, values[key], fmt, 2)
+                for key, label, fmt in (
+                    ("replay_volatility", "历史回放年化波动率", "percent"),
+                    ("portfolio_beta", "组合 Beta", "number"),
+                    ("portfolio_benchmark_correlation", "与基准的相关性", "number"),
+                    ("current_drawdown", "当前回撤", "percent"),
+                    ("var", "历史回放单日 VaR（95%）", "percent"),
+                    ("cvar", "历史回放单日 CVaR（95%）", "percent"),
+                )
+            ]
+            drawdown = values["max_drawdown"]
+            if has_value(drawdown):
+                drawdown = {**drawdown, "value": drawdown["value"]["value"]}
+            cards.append(_card("max_drawdown", "最大回撤", drawdown, "percent", 2))
+            history = ready(
+                [
+                    {
+                        "type": "replay_chart",
+                        "values": values["replay"],
+                        "stats_window": result["options"]["stats_window"],
+                    },
+                    {"type": "metric_cards", "items": cards},
+                ]
+            )
+        add(pid, "style", "历史回放与分位", history, "history")
         d = p["section_d"]
         add(
             pid,

@@ -231,3 +231,37 @@ def test_risk_section_keeps_model_and_beta_unavailable_with_reasons() -> None:
     assert row["beta"]["reason_code"] == "benchmark_missing"
     assert section["volatility"]["by_method"]["forward"]["reason_code"] == "data_not_validated"
     assert section["l3_effective_count"]["reason_code"] == "data_not_validated"
+
+
+def test_benchmark_sensitivity_pairs_finite_returns_inside_window() -> None:
+    from gr_api.diagnosis_calc.history import benchmark_sensitivity
+
+    market = _series([i / 1000 for i in range(124)])
+    stock = {d: 0.001 - 2 * r for d, r in market.items()}
+    stock[D0 + timedelta(days=1)] = math.nan
+    del market[D0 + timedelta(days=2)]
+    window = (D0 + timedelta(days=1), D0 + timedelta(days=122))
+    metrics = benchmark_sensitivity(stock, market, window=window)
+    assert metrics.beta["sample_count"] == 120
+    assert metrics.beta["value"] == pytest.approx(-2)
+    assert metrics.correlation["value"] == pytest.approx(-1)
+    del stock[D0 + timedelta(days=3)]
+    assert (
+        benchmark_sensitivity(stock, market, window=window).beta["reason_code"]
+        == "history_insufficient"
+    )
+
+
+def test_benchmark_sensitivity_constant_returns() -> None:
+    from gr_api.diagnosis_calc.history import benchmark_sensitivity
+
+    market = _series([i / 1000 for i in range(120)])
+    constant = dict.fromkeys(market, 0.003)
+    window = (min(market), max(market))
+    flat_stock = benchmark_sensitivity(constant, market, window=window)
+    assert flat_stock.beta["value"] == 0
+    assert flat_stock.correlation["reason_code"] == "zero_variance"
+    flat_market = benchmark_sensitivity(market, constant, window=window)
+    assert (
+        flat_market.beta["reason_code"] == flat_market.correlation["reason_code"] == "zero_variance"
+    )

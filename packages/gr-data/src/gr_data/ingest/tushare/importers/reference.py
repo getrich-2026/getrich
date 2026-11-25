@@ -90,7 +90,15 @@ class InstrumentsImporter(StockScopeImporter):
 
     def _build_stock(self, raw: pd.DataFrame) -> pd.DataFrame:
         _require(raw, {"ts_code", "name", "list_status", "list_date", "delist_date"}, "stock_basic")
-        r = _clean_codes(raw, "stock_basic")
+        status = raw["list_status"].astype("string").str.strip().map(LIST_STATUS_MAP)
+        invalid = status.isna()
+        if invalid.any():
+            symbol, raw_status = raw.loc[invalid, ["ts_code", "list_status"]].iloc[0]
+            raise ValueError(
+                f"stock_basic 含无效 list_status rows={int(invalid.sum())} "
+                f"sample ts_code={symbol} list_status={raw_status!r}"
+            )
+        r = _clean_codes(raw.assign(list_status=status), "stock_basic")
         return pd.DataFrame(
             {
                 "symbol": r["ts_code"],
@@ -99,9 +107,7 @@ class InstrumentsImporter(StockScopeImporter):
                 "name": r["name"].where(r["name"].notna(), None),
                 "list_date": r["list_date"].map(parse_date),
                 "delist_date": r["delist_date"].map(parse_date),
-                "status": r["list_status"].map(
-                    lambda s: LIST_STATUS_MAP.get(str(s).strip(), "active")
-                ),
+                "status": r["list_status"],
             }
         )[list(self.contract.columns)]
 

@@ -1,36 +1,15 @@
-"""2026-10-22 人工审核 Tushare 链路时标 ⚠ 的疑点复现（只有测试，不改实现）。
-
-每条用例断言的是**期望行为**，当前实现不满足，所以标 ``xfail(strict=True)``：
-- 断言失败（AssertionError）记为 xfail，CI 保持绿色；
-- 其他异常不算 xfail，会直接失败，避免用例本身写错被掩盖；
-- 实现修复后变成 XPASS，strict 会让它失败，届时删掉对应的 xfail 标记即可。
-
-编号对应审核清单里的条目号。已修复的条目（#12、#36、#46）去掉了 xfail，留作回归用例。
-"""
+"""2026-10-22 人工审核 Tushare 链路后保留的回归测试。编号对应审核条目。"""
 
 from __future__ import annotations
 
 import logging
+from datetime import date
 from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
 from gr_data.raw.base import RawContext
-
-
-def _finding(number: int, reason: str):
-    return pytest.mark.xfail(
-        strict=True, raises=AssertionError, reason=f"审核疑点 #{number}：{reason}"
-    )
-
-
-def _raised(fn, exc_type) -> bool:
-    """调用 fn，只吞掉期望的异常类型；别的异常照常抛出，不被 xfail 掩盖。"""
-    try:
-        fn()
-    except exc_type:
-        return True
-    return False
+from psycopg.pq import TransactionStatus
 
 
 def _write(paths, dataset: str, df: pd.DataFrame, ym: str = "2024-01") -> None:
@@ -50,45 +29,48 @@ def _ctx(tmp_raw_root) -> RawContext:
 # --------------------------------------------------------------------------- #
 # 公共层
 # --------------------------------------------------------------------------- #
-class _OwnershipCursor:
-    def __init__(self, row):
-        self._row = row
-        self._result = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def execute(self, sql, params=()):
-        self._result = self._row if sql.lstrip().upper().startswith("SELECT") else None
-
-    def fetchone(self):
-        return self._result
-
-
-class _OwnershipConn:
-    def __init__(self, row):
-        self._row = row
-
-    def cursor(self):
-        return _OwnershipCursor(self._row)
-
-
-@_finding(4, "docstring 说 force 转移归属会记日志，代码里没有任何日志")
-def test_force_ownership_transfer_is_logged(caplog):
+@pytest.mark.parametrize("previous_provider", ["ricequant", "tushare", None])
+def test_force_ownership_transfer_is_logged(caplog, previous_provider):
+    """#4：实际更换 provider 时才记录转移，重复登记和首次登记无需记录。"""
     from gr_data.common.ownership import OwnershipManager
 
-    caplog.set_level(logging.DEBUG)
-    conn = _OwnershipConn(("market.stock_bar_1d", "ricequant", "ingest"))
-    OwnershipManager(conn).claim("market.stock_bar_1d", "tushare", force=True)
+    target = "market.stock_bar_1d"
+    caplog.set_level(logging.INFO, logger="gr_data.common.ownership")
+    conn = MagicMock(autocommit=False)
+    conn.info.transaction_status = TransactionStatus.INTRANS
+    cursor = conn.cursor.return_value.__enter__.return_value
+    cursor.fetchone.return_value = (previous_provider,)
 
-    assert any("ricequant" in r.getMessage() for r in caplog.records)
+    OwnershipManager(conn).claim(target, "tushare", channel="stream", force=True)
+
+    if previous_provider != "ricequant":
+        assert not caplog.records
+        return
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    fields = {
+        "target": target,
+        "previous_provider": "ricequant",
+        "new_provider": "tushare",
+        "channel": "stream",
+    }
+    assert {key: record.__dict__[key] for key in fields} == fields
+    assert all(f"{key}={value}" in record.getMessage() for key, value in fields.items())
 
 
-@_finding(5, "日历文件损坏时报「缺少交易日历」，把坏文件说成缺文件")
+def test_missing_calendar_keeps_capture_hint(tmp_raw_root, fake_tushare):
+    from gr_data.raw.tushare import REGISTRY
+
+    path = tmp_raw_root.dataset_file("tushare", "calendar", "SSE")
+    fetcher = REGISTRY["daily"](fake_tushare, _ctx(tmp_raw_root))
+
+    with pytest.raises(RuntimeError, match="gr-data raw tushare --only calendar") as exc:
+        fetcher._trading_days()
+    assert str(path) in str(exc.value)
+
+
 def test_corrupt_calendar_reported_as_corrupt(tmp_raw_root, fake_tushare):
+    """#5：损坏文件报明确类型与位置，便于定位原件。"""
     from gr_data.common.parquet import CorruptRawError
     from gr_data.raw.tushare import REGISTRY
 
@@ -97,9 +79,18 @@ def test_corrupt_calendar_reported_as_corrupt(tmp_raw_root, fake_tushare):
     path.write_bytes(b"not a parquet file")
     fetcher = REGISTRY["daily"](fake_tushare, _ctx(tmp_raw_root))
 
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(CorruptRawError, match=r"calendar/SSE\.parquet"):
         fetcher._trading_days()
-    assert isinstance(exc.value, CorruptRawError)
+
+
+def test_valid_calendar_returns_open_days(tmp_raw_root, fake_tushare):
+    from gr_data.raw.tushare import REGISTRY
+
+    ctx = _ctx(tmp_raw_root)
+    REGISTRY["calendar"](fake_tushare, ctx).fetch("init")
+    fetcher = REGISTRY["daily"](fake_tushare, ctx)
+
+    assert fetcher._trading_days() == [date(2024, 1, 2), date(2024, 1, 3)]
 
 
 # --------------------------------------------------------------------------- #
@@ -184,22 +175,42 @@ def _instruments_importer(tmp_raw_root):
     return InstrumentsImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
 
 
-@_finding(26, "未知 list_status 被默认当成 active，没有报错")
-def test_unknown_list_status_rejected(tmp_raw_root):
+def test_known_list_status_mapped(tmp_raw_root):
     raw = pd.DataFrame(
-        [
-            {
-                "ts_code": "600000.SH",
-                "name": "浦发银行",
-                "list_status": "X",
-                "list_date": "19991110",
-                "delist_date": None,
-            }
-        ]
+        {
+            "ts_code": ["600000.SH", "000001.SZ", "600001.SH"],
+            "name": ["浦发银行", "平安银行", "邯郸钢铁"],
+            "list_status": ["L", "P", " D "],
+            "list_date": "19991110",
+            "delist_date": [None, None, "20091229"],
+        }
     )
-    imp = _instruments_importer(tmp_raw_root)
+    _write(tmp_raw_root, "instruments", raw, "stock")
+    result = _instruments_importer(tmp_raw_root).build()
 
-    assert _raised(lambda: imp._build_stock(raw), ValueError)
+    assert result.set_index("symbol")["status"].to_dict() == {
+        "600000.SH": "active",
+        "000001.SZ": "suspended",
+        "600001.SH": "delisted",
+    }
+
+
+@pytest.mark.parametrize("invalid_status", ["X", None, "", " \t"])
+def test_unknown_list_status_rejected(tmp_raw_root, invalid_status):
+    """#26：即使同代码后面有合法状态，坏观察也应使批次失败。"""
+    raw = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ", "600000.SH", "600000.SH"],
+            "name": ["平安银行", "浦发银行", "浦发银行"],
+            "list_status": ["L", invalid_status, "L"],
+            "list_date": "19991110",
+            "delist_date": None,
+        }
+    )
+    _write(tmp_raw_root, "instruments", raw, "stock")
+
+    with pytest.raises(ValueError, match=r"stock_basic 含无效 list_status .*600000\.SH"):
+        _instruments_importer(tmp_raw_root).build()
 
 
 def test_expired_future_not_active(tmp_raw_root):
@@ -230,7 +241,8 @@ def test_calendar_invalid_is_open_rejected(tmp_raw_root):
     )
     imp = CalendarImporter(conn=None, ctx=IngestContext(paths=tmp_raw_root))
 
-    assert _raised(lambda: imp._build_one(raw, "XSHG"), ValueError)
+    with pytest.raises(ValueError):
+        imp._build_one(raw, "XSHG")
 
 
 # --------------------------------------------------------------------------- #
@@ -304,11 +316,22 @@ def test_stock_zero_volume_kept(tmp_raw_root, monkeypatch):
     assert row["amount"] == 0.0
 
 
-@_finding(37, "收盘价高于最高价的 bar 照常入库")
-def test_stock_close_outside_high_low_rejected(tmp_raw_root, monkeypatch):
-    imp = _stock_importer_with(tmp_raw_root, monkeypatch, pd.DataFrame([_daily_row(close=11.0)]))
+@pytest.mark.parametrize("close", [11.0, 9.8])
+def test_stock_close_outside_high_low_rejected(tmp_raw_root, monkeypatch, close):
+    """#37：收盘价高过最高价或低于最低价时可定位异常证券日。"""
+    imp = _stock_importer_with(tmp_raw_root, monkeypatch, pd.DataFrame([_daily_row(close=close)]))
 
-    assert _raised(imp.build, ValueError)
+    with pytest.raises(
+        ValueError, match=r"close 超出 \[low, high\].*ts_code=600000\.SH trade_date=2024-01-02"
+    ):
+        imp.build()
+
+
+@pytest.mark.parametrize("close", [9.9, 10.8])
+def test_stock_close_at_low_or_high_kept(tmp_raw_root, monkeypatch, close):
+    daily = pd.DataFrame([_daily_row(close=close)])
+
+    assert _stock_importer_with(tmp_raw_root, monkeypatch, daily).build().iloc[0]["close"] == close
 
 
 # --------------------------------------------------------------------------- #

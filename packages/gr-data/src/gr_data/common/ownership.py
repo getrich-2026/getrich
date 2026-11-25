@@ -18,12 +18,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import psycopg
+from psycopg.pq import TransactionStatus
 
 
 OWNERSHIP_TABLE = "ops.table_ownership"
+logger = logging.getLogger(__name__)
 
 #: 天生多源的表：**主键里含 `source`**，每个 provider 只写自己那一批行。
 #:
@@ -86,23 +89,47 @@ class OwnershipManager:
         """
         if target in MULTI_SOURCE_TABLES:
             return Ownership(target=target, provider=provider, channel=channel)
-        current = self.owner(target)
-        if current is not None and current.provider != provider and not force:
-            raise OwnershipError(
-                f"表 {target} 已归属 provider='{current.provider}'，"
-                f"provider='{provider}' 不能 claim。需转移请用 force=True。"
-            )
-        with self.conn.cursor() as cur:
+        if not self.conn.autocommit and self.conn.info.transaction_status == TransactionStatus.IDLE:
+            self.conn.execute("SELECT 1")  # 由调用方提交外层事务；下方只管理保存点。
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            # 由同一条 UPSERT 校验归属并读取实际被替换的 provider，避免并发时使用过期归属。
             cur.execute(
                 f"""
-                INSERT INTO {OWNERSHIP_TABLE} (target, provider, channel, updated_at)
+                INSERT INTO {OWNERSHIP_TABLE} AS ownership (target, provider, channel, updated_at)
                 VALUES (%s, %s, %s, now())
                 ON CONFLICT (target) DO UPDATE
                   SET provider = EXCLUDED.provider,
                       channel = EXCLUDED.channel,
                       updated_at = now()
+                  WHERE %s OR ownership.provider = EXCLUDED.provider
+                RETURNING OLD.provider
                 """,
-                (target, provider, channel),
+                (target, provider, channel, force),
+            )
+            row = cur.fetchone()
+            if row is None:
+                # 拒绝时回滚语句级触发器对诊断组成的标脏副作用。
+                current = self.owner(target)
+                current_provider = current.provider if current is not None else "<unknown>"
+                raise OwnershipError(
+                    f"表 {target} 已归属 provider='{current_provider}'，"
+                    f"provider='{provider}' 不能 claim。需转移请用 force=True。"
+                )
+        previous_provider = row[0]
+        if previous_provider is not None and previous_provider != provider:
+            logger.info(
+                "Forced table ownership transfer target=%s previous_provider=%s "
+                "new_provider=%s channel=%s",
+                target,
+                previous_provider,
+                provider,
+                channel,
+                extra={
+                    "target": target,
+                    "previous_provider": previous_provider,
+                    "new_provider": provider,
+                    "channel": channel,
+                },
             )
         return Ownership(target=target, provider=provider, channel=channel)
 

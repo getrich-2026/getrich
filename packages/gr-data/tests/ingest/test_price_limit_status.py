@@ -97,20 +97,26 @@ def test_normal_limits_are_limited(tmp_raw_root):
 
 
 @pytest.mark.parametrize(
-    "field,value",
-    [("open", 11.0), ("open", 8.0), ("high", 11.0), ("low", 8.0), ("close", 11.0), ("close", 8.0)],
+    "prices",
+    [
+        pytest.param({"open": 11.0}, id="open-above-limit"),
+        pytest.param({"open": 8.0}, id="open-below-limit"),
+        pytest.param({"high": 11.0}, id="high-above-limit"),
+        pytest.param({"low": 8.0}, id="low-below-limit"),
+        pytest.param({"close": 11.0, "high": 11.0}, id="close-above-limit"),
+        pytest.param({"close": 8.0, "low": 8.0}, id="close-below-limit"),
+    ],
 )
-def test_any_ohlc_outside_limits_preserves_price_but_marks_limits_unknown(
-    tmp_raw_root, field, value
-):
-    """open／close 不一定被 high／low 包含，也必须逐价核验限价矛盾。"""
+def test_any_ohlc_outside_limits_preserves_price_but_marks_limits_unknown(tmp_raw_root, prices):
+    """收盘价在当日高低价内，但行情与独立涨跌停源冲突时，保留行情供复核。"""
     frame, warnings = _build(
         tmp_raw_root,
         [("600000.SH", 9.8)],
         [("600000.SH", 9.8, 10.78, 8.82)],
-        prices={field: value},
+        prices=prices,
     )
-    assert frame.loc[1, field] == value
+    for field, value in prices.items():
+        assert frame.loc[1, field] == value
     assert frame.loc[1, "price_limit_status"] == "UNKNOWN"
     assert pd.isna(frame.loc[1, "limit_up"]) and pd.isna(frame.loc[1, "limit_down"])
     assert any("OHLC outside price limits" in warning for warning in warnings)

@@ -25,6 +25,7 @@ from psycopg.pq import TransactionStatus
 
 class MemoryConnection:
     def __init__(self):
+        self.autocommit = False
         self.info = SimpleNamespace(transaction_status=TransactionStatus.IDLE)
         self.state = {"tables": {}, "owners": {}, "runs": {}, "etl": []}
         self.instruments = [("600000.SH", "XSHG", 11), ("000001.SZ", "XSHE", 22)]
@@ -38,17 +39,21 @@ class MemoryConnection:
     @contextmanager
     def transaction(self):
         snapshot = copy.deepcopy(self.state)
+        previous_status = self.info.transaction_status
+        outermost = previous_status == TransactionStatus.IDLE
         self.info.transaction_status = TransactionStatus.INTRANS
         try:
             yield
         except Exception:
             self.state = snapshot
-            self.rollbacks += 1
+            if outermost:
+                self.rollbacks += 1
             raise
         else:
-            self.commits += 1
+            if outermost:
+                self.commits += 1
         finally:
-            self.info.transaction_status = TransactionStatus.IDLE
+            self.info.transaction_status = previous_status
 
     @contextmanager
     def cursor(self):
@@ -102,7 +107,13 @@ class MemoryCursor:
             self.result = [state["owners"][params[0]]] if params[0] in state["owners"] else []
         elif "INSERT INTO ops.table_ownership" in sql:
             assert self.conn.locked
-            state["owners"][params[0]] = tuple(params)
+            target, provider, channel, force = params
+            previous = state["owners"].get(target)
+            if previous is not None and previous[1] != provider and not force:
+                self.result = []
+            else:
+                state["owners"][target] = (target, provider, channel)
+                self.result = [(previous[1] if previous is not None else None,)]
         elif sql.startswith("SELECT 'canonical'"):
             self.result = [
                 ("canonical", symbol, symbol, exchange, instrument_id)
@@ -1485,9 +1496,10 @@ def test_commit_response_lost_reconciles_or_reports_unknown_and_replays_zero(
     @contextmanager
     def transaction_with_lost_response():
         nonlocal dropped
+        outermost = case.conn.info.transaction_status == TransactionStatus.IDLE
         with original_transaction():
             yield
-        if not dropped and case.conn.state.get("receipts"):
+        if outermost and not dropped and case.conn.state.get("receipts"):
             dropped = True
             if connection_lost:
                 case.conn.info.transaction_status = TransactionStatus.UNKNOWN

@@ -679,3 +679,98 @@ def test_diagnosis_routes_keep_security_headers(monkeypatch: pytest.MonkeyPatch)
     assert r.headers["X-Frame-Options"] == "DENY"
     assert r.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
     assert "Content-Security-Policy" in r.headers
+
+
+@pytest.mark.anyio
+async def test_versioned_total_return_benchmark_drives_stock_beta(monkeypatch) -> None:
+    from gr_api.diagnosis_calc.history import DailyObservation
+    from gr_api.schemas.diagnosis_response import RiskSection
+    from gr_data.common.benchmark import benchmark_version
+
+    calendar = sorted(CALENDAR)[:122]
+    window = {"start": calendar[1].isoformat(), "end": calendar[-1].isoformat()}
+    observations = {1: {}}
+    price = Decimal("100")
+    reference = {}
+    for index, day in enumerate(calendar):
+        change = Decimal(index % 7 - 3) / 1000
+        price *= 1 + 2 * change
+        observations[1][day] = DailyObservation("NORMAL", price)
+        reference[day] = float(change)
+
+    async def previous(*_, **__):
+        return calendar[0]
+
+    async def load(*_, **__):
+        return {1: calendar}, observations
+
+    version = benchmark_version("H00300.CSI", reference)
+
+    def benchmark_query(args):
+        assert args == (300, version)
+        return [
+            {"symbol": "H00300.CSI", "dt": day, "simple_return": r} for day, r in reference.items()
+        ]
+
+    db = fake_db([("market.index_total_return_1d", benchmark_query)])
+    monkeypatch.setattr(svc, "_trading_day_before", previous)
+    monkeypatch.setattr(svc, "_fetch_daily_observations", load)
+    options: dict[str, Any] = dict(
+        correlation_window=window,
+        beta_window=window,
+        benchmark_instrument_id=300,
+        benchmark_version=version,
+    )
+    risk, _, _ = await svc._compute_history(db, [1], params={}, options=options)
+    validated = RiskSection.model_validate(risk).model_dump()
+    stock = validated["instrument_betas"]["value"][0]
+    assert stock["beta"]["value"] == pytest.approx(2.0)
+    assert stock["benchmark_correlation"]["value"] == pytest.approx(1.0)
+    assert stock["beta"]["sample_count"] == 121
+    reference[calendar[0]] += 0.01  # 即使被改的是统计区间外数据，原发布版本也不再匹配。
+    changed, _, _ = await svc._compute_history(db, [1], params={}, options=options)
+    assert changed["instrument_betas"]["value"][0]["beta"]["reason_code"] == "benchmark_missing"
+    options["benchmark_version"] = None
+    risk, _, _ = await svc._compute_history(fake_db([]), [1], params={}, options=options)
+    assert risk["instrument_betas"]["value"][0]["beta"]["reason_code"] == "benchmark_missing"
+
+
+@pytest.mark.anyio
+async def test_verified_replay_resolves_start_base_and_full_return_benchmark() -> None:
+    resolved = await _options(
+        params={**PARAMS, "benchmark_instrument_id": None},
+        available={
+            "replay": {
+                "version": "pa12-local-v1",
+                "through_date": AS_OF.isoformat(),
+                "dividend_sha256": {"1": "a" * 64},
+                "dividend_signatures": {"1": [1, "c" * 64]},
+                "delisting_sha256": "b" * 64,
+                "delist_dates": {"1": None},
+            },
+            "benchmarks": [{"symbol": "H00300.CSI", "instrument_id": 123, "version": "tr-sha"}],
+        },
+    )
+    assert resolved["benchmark_instrument_id"] == 123
+    start = date.fromisoformat(resolved["replay_start"])
+    assert len([d for d in CALENDAR if start <= d <= AS_OF]) == 253
+    assert resolved["stats_window"] == {"start": start.isoformat(), "end": AS_OF.isoformat()}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("dates", [{}, {"1": "not-a-date"}, {"1": None, "2": None}])
+async def test_replay_publication_requires_explicit_delisting_membership(dates: dict) -> None:
+    with pytest.raises(svc.BadRequest) as caught:
+        await _options(
+            available={
+                "replay": {
+                    "version": "pa12-local-v1",
+                    "through_date": AS_OF.isoformat(),
+                    "dividend_sha256": {"1": "a" * 64},
+                    "dividend_signatures": {"1": [1, "c" * 64]},
+                    "delisting_sha256": "b" * 64,
+                    "delist_dates": dates,
+                }
+            }
+        )
+    assert caught.value.http_status == 503

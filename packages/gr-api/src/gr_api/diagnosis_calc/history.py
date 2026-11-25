@@ -146,6 +146,66 @@ def historical_volatility(
 
 
 @dataclass(frozen=True)
+class BenchmarkSensitivity:
+    """PA-11 同一组有效配对样本上的 Beta 与相关系数。"""
+
+    beta: dict[str, Any]
+    correlation: dict[str, Any]
+
+
+def benchmark_sensitivity(
+    simple_returns: Mapping[date, float],
+    benchmark_simple_returns: Mapping[date, float],
+    *,
+    window: Window,
+    min_samples: int = 120,
+) -> BenchmarkSensitivity:
+    """按日简单收益计算历史 Beta；基准输入须已验证为全收益序列。
+
+    个股输入由 daily_returns 剔除停牌和跨停牌收益；组合输入须来自回放净值。
+    只取闭区间内双方都有有限观测的日期。缺失既不前填也不作为零收益。
+    """
+    if min_samples < 2 or window[0] > window[1]:
+        raise ValueError("Invalid benchmark sample window or minimum count")
+    days = sorted(
+        day
+        for day in simple_returns.keys() & benchmark_simple_returns.keys()
+        if window[0] <= day <= window[1]
+        and math.isfinite(simple_returns[day])
+        and math.isfinite(benchmark_simple_returns[day])
+    )
+    sample = _Sample(window, _window_of(days), len(days)).kwargs()
+
+    def missing(code: str, reason: str) -> dict[str, Any]:
+        return unavailable(reason_code=code, reason=reason, **sample)
+
+    if len(days) < min_samples:
+        absent = missing(
+            "history_insufficient", f"有效配对收益 {len(days)} 个，少于 {min_samples} 个。"
+        )
+        return BenchmarkSensitivity(absent, dict(absent))
+    reference = np.array([benchmark_simple_returns[day] for day in days])
+    asset = np.array([simple_returns[day] for day in days])
+    if reference.min() == reference.max():
+        absent = missing("zero_variance", "全收益基准在配对样本内的收益恒定。")
+        return BenchmarkSensitivity(absent, dict(absent))
+    if asset.min() == asset.max():
+        return BenchmarkSensitivity(
+            ok(0.0, method=METHOD, **sample),
+            missing("zero_variance", "标的在配对样本内的收益恒定，基准相关性不可用。"),
+        )
+    x = reference - reference.mean()
+    y = asset - asset.mean()
+    cross = np.dot(x, y)
+    beta = float(cross / np.dot(x, x))
+    correlation = float(np.clip(cross / (np.linalg.norm(x) * np.linalg.norm(y)), -1, 1))
+    return BenchmarkSensitivity(
+        ok(beta, method=METHOD, **sample),
+        ok(correlation, method=METHOD, **sample),
+    )
+
+
+@dataclass(frozen=True)
 class CorrelationView:
     """历史相关性视图：矩阵、平均两两相关与高相关持仓对共用同一组共同样本。"""
 

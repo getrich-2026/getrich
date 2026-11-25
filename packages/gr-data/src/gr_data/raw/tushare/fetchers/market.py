@@ -35,7 +35,7 @@ import pandas as pd
 
 from gr_data.common.dates import int_to_date, today_int
 from gr_data.common.empty_response_retry import retry_empty_historical_response
-from gr_data.common.parquet import read_parquet_if_exists, write_parquet
+from gr_data.common.parquet import read_parquet_strict, write_parquet
 from gr_data.common.retry import retry_call, sleep_s
 from gr_data.raw.base import BaseFetcher, RawContext, month_range
 from gr_data.raw.tushare.context import FUTURE_EXCHANGES, as_tushare_context
@@ -114,9 +114,10 @@ class _DailyFetcher(BaseFetcher):
 
         缺失时直接抛错而不是退化成「按自然日遍历」——后者会对着几百个非交易日
         空转请求，既浪费配额，也让「真的没数据」和「日历没抓」变得无法区分。
+        已存在但不可读的 Parquet 由读取层报告具体损坏位置。
         """
         path = self.paths.dataset_file(PROVIDER, "calendar", CALENDAR_EXCHANGE)
-        cal = read_parquet_if_exists(path)
+        cal = read_parquet_strict(path)
         if cal is None or cal.empty:
             raise RuntimeError(
                 f"缺少交易日历 {path}。请先运行 `gr-data raw tushare --only calendar`。"

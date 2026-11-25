@@ -17,6 +17,7 @@ _MANAGED_SCHEMAS = (
     "classify",
     "diag",
     "factor",
+    "finance",
     "fundamental",
     "market",
     "meta",

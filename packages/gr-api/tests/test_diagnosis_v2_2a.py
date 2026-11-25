@@ -1421,7 +1421,7 @@ async def test_partial_coverage_single_valid_stock_uses_coverage_below_threshold
 
 
 def test_l4_preflight_and_api_agree_on_high_condition_number_matrix() -> None:
-    """同一高条件数截面输入：预检拒绝后不会放行 API 端单股守恒失败的边界矩阵。"""
+    """同一高条件数截面被发布预检拒绝，API 也不给出该截面的 L4 结果。"""
     from gr_api.diagnosis_calc.model_risk import compute_model_risk
     from gr_data.diagnosis_daily.collect import validate_l4_covariance
 
@@ -1434,11 +1434,15 @@ def test_l4_preflight_and_api_agree_on_high_condition_number_matrix() -> None:
     stds[2] = 0.8
     api_cov = corr * np.outer(stds, stds)
 
-    # 预检拒绝该高条件数截面
-    with pytest.raises(ValueError, match="not conserved"):
+    # 不同数值库可能在收敛或守恒门禁先拒绝同一病态截面。
+    with pytest.raises(ValueError) as exc:
         validate_l4_covariance(api_cov * 10000.0, list(factors), model="v2")
+    assert str(exc.value).split(" (", 1)[0] in {
+        "L4 preflight failed: minimum torsion did not converge",
+        "L4 preflight failed: orthogonalized factor variance is not conserved",
+    }
 
-    # 同一矩阵喂给 API 单股低方差方向，确实触发 API 守恒失败（L4 不可用）
+    # 用同一矩阵的单股低方差方向验证 API 将 L4 标记为不可用。
     e = np.zeros(k)
     e[0] = 1.0
     e[1] = -1.0

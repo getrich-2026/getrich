@@ -9,9 +9,18 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from gr_data.common import contracts
+
 
 if TYPE_CHECKING:
     from gr_data.db import DictConnection
+
+
+# 单次行业快照包含两种供应商原件，写入归属与数据字典使用相同的目标契约。
+DATASET_CONTRACTS = {
+    "index_classify": (contracts.SCHEME, contracts.INDUSTRY_NODE),
+    "index_member_all": (contracts.INSTRUMENT_INDUSTRY,),
+}
 
 
 @dataclass(frozen=True)
@@ -127,9 +136,7 @@ async def write_industry_snapshot(
     from psycopg import sql
     from psycopg.pq import TransactionStatus
 
-    from gr_data.common import contracts
-
-    tables = ("classify.scheme", "classify.industry_node", "classify.instrument_industry")
+    tables = tuple(c.qualified for group in DATASET_CONTRACTS.values() for c in group)
     if (
         set(expected_owners) != set(tables)
         or conn.info.transaction_status != TransactionStatus.INTRANS

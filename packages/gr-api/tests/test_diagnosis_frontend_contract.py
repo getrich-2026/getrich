@@ -670,3 +670,28 @@ async def test_loaded_snapshot_disclosures_match_result_report_and_quality(monke
         report["data_quality"]["forced_disclosures"]
         == quality["data_quality"]["forced_disclosures"]
     )
+
+
+def test_ready_replay_renders_chart_and_numeric_drawdown() -> None:
+    from gr_api.diagnosis_calc.replay import ReplayPoint, ReplayResult
+    from gr_api.diagnosis_calc.replay_section import history_section
+
+    result, _ = fixture_result()
+    points = tuple(
+        ReplayPoint(AS_OF - timedelta(days=d), Decimal(v), Decimal(0), Decimal(0))
+        for d, v in [(1, "1"), (0, "0.9")]
+    )
+    section = history_section(
+        ReplayResult(points, None, None, None),
+        window=(points[0].day, AS_OF),
+        benchmark_returns={},
+    )
+    result["plans"][0]["section_c"] = section
+    result["options"]["stats_window"] = {"start": points[0].day, "end": AS_OF}
+    report = view.report(result, "retail")
+    ReportResponse.model_validate(report)
+    history = next(x for x in report["sections"] if x["section_id"] == "mine:history")
+    chart, cards = history["content"]["value"]
+    assert chart["values"]["value"]["nav"] == [1.0, 0.9]
+    drawdown = next(x for x in cards["items"] if x["metric_id"] == "max_drawdown")
+    assert drawdown["value"]["value"] == -0.1

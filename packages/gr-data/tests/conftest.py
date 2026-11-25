@@ -603,6 +603,7 @@ def fake_datayes():
 # PostgreSQL (docker)
 # --------------------------------------------------------------------------- #
 PG_IMAGE = os.environ.get("GETRICH_TEST_PG_IMAGE", "timescale/timescaledb:2.30.1-pg18")
+_PG_DATABASE = "getrich_test_fixture"
 _CONTAINER = f"getrich-test-pg-{uuid.uuid4().hex[:8]}"
 
 
@@ -660,7 +661,7 @@ def pg_dsn():
             "-e",
             "POSTGRES_PASSWORD=test",
             "-e",
-            "POSTGRES_DB=getrich",
+            f"POSTGRES_DB={_PG_DATABASE}",
             "-p",
             "127.0.0.1:0:5432",
             PG_IMAGE,
@@ -680,9 +681,9 @@ def pg_dsn():
 
     port = _published_port(_CONTAINER)
     dsn = {
-        "host": "localhost",
+        "host": "127.0.0.1",
         "port": port,
-        "dbname": "getrich",
+        "dbname": _PG_DATABASE,
         "user": "postgres",
         "password": "test",
     }
@@ -693,15 +694,14 @@ def pg_dsn():
         last_err = None
         while time.time() < deadline:
             try:
-                conn = psycopg.connect(
-                    f"host=localhost port={port} dbname=getrich user=postgres password=test",
-                    connect_timeout=3,
-                )
-                conn.close()
-                break
+                conn = psycopg.connect(**dsn, connect_timeout=3)
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 time.sleep(1)
+            else:
+                with conn:
+                    assert conn.execute("SELECT current_database()").fetchone() == (_PG_DATABASE,)
+                break
         else:
             pytest.skip(f"PG 容器未就绪: {last_err}")
         yield dsn

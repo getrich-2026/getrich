@@ -337,7 +337,7 @@ class _BaseBarsImporter(_SymbolResolvingImporter):
     OPTIONAL_PRICE_COLUMNS = ("pre_close",)
 
     def _validate_prices(self, df: pd.DataFrame, source: str) -> None:
-        """严格校验：价格非正即抛错；除 ``pre_close`` 外缺失也抛错。
+        """严格校验价格非正、收盘价越界及必需价格缺失。
 
         只用于**股票**。指数与期货不同 —— 它们的价格缺失是常态（只发布收盘点位的
         指数、无成交但有结算价的合约），那边走 ``_null_out_invalid``。
@@ -358,6 +358,13 @@ class _BaseBarsImporter(_SymbolResolvingImporter):
             raise RowValidationError(f"{source} 含非正价格")
         if (df["high"] < df["low"]).any():
             raise RowValidationError(f"{source} 含 high < low 的记录")
+        outside = ~df["close"].between(df["low"], df["high"])
+        if outside.any():
+            symbol, day = df.loc[outside, ["ts_code", "trade_date"]].iloc[0]
+            raise RowValidationError(
+                f"{source} 含 close 超出 [low, high] 的记录 rows={int(outside.sum())} "
+                f"sample ts_code={symbol} trade_date={day}"
+            )
 
         for col in self.OPTIONAL_PRICE_COLUMNS:
             missing = int((~np.isfinite(df[col].to_numpy(dtype=float))).sum())

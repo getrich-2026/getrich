@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from gr_tools.config import LoggingConfig, load_environment, setup_logging
 
@@ -176,6 +177,16 @@ def cmd_ingest(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
+def cmd_total_return(args: argparse.Namespace, cfg: Config) -> int:
+    """将已下载的 DS08 全收益基准快照按来源和版本入库。"""
+    from gr_data.ingest.tushare.total_return import import_total_return
+
+    with connect(_pg(cfg)) as conn, conn.transaction():
+        symbol, version, rows = import_total_return(conn, args.prices, args.calendar)
+    print(f"{symbol} {version} {rows}")
+    return 0
+
+
 def cmd_own(args: argparse.Namespace, cfg: Config) -> int:
     from gr_data.common.ownership import OwnershipManager
 
@@ -239,6 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
     st.set_defaults(func=cmd_stream)
 
     # 建库与迁移不在这里 —— DDL 的唯一真源是 gr-db，用 `gr-db migrate`。
+
+    benchmark = sub.add_parser("benchmark-import", help="导入 Tushare DS08 全收益指数日收益")
+    benchmark.add_argument("--prices", required=True, type=Path)
+    benchmark.add_argument("--calendar", required=True, type=Path)
+    benchmark.set_defaults(func=cmd_total_return)
 
     own = sub.add_parser("own", help="表归属管理")
     own.add_argument("action", choices=["list", "set", "release"])

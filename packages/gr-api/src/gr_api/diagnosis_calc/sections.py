@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from gr_api.diagnosis_calc.history import METHOD, CorrelationView
+from gr_api.diagnosis_calc.history import METHOD, BenchmarkSensitivity, CorrelationView
 from gr_api.diagnosis_calc.metrics import has_value, ok, unavailable
 from gr_api.diagnosis_calc.model_risk import ModelRiskResult
 
@@ -32,8 +32,11 @@ def risk_section(
     instrument_ids: Sequence[int],
     volatility: Mapping[int, dict[str, Any]],
     model: ModelRiskResult | None = None,
+    *,
+    sensitivities: Mapping[int, BenchmarkSensitivity] | None = None,
 ) -> dict[str, Any]:
     """RiskSection 同形字典；逐股历史年化波动率（PA-20）与模型口径风险（PA-10）。"""
+    sensitivities = sensitivities or {}
     benchmark_na = unavailable(reason_code="benchmark_missing", reason=BENCHMARK_REASON)
 
     def pick(name: str) -> dict[str, Any]:
@@ -51,8 +54,10 @@ def risk_section(
                 {
                     "instrument_id": iid,
                     "historical_volatility": volatility[iid],
-                    "beta": dict(benchmark_na),
-                    "benchmark_correlation": dict(benchmark_na),
+                    "beta": sensitivities[iid].beta if iid in sensitivities else dict(benchmark_na),
+                    "benchmark_correlation": sensitivities[iid].correlation
+                    if iid in sensitivities
+                    else dict(benchmark_na),
                 }
                 for iid in instrument_ids
             ],

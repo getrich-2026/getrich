@@ -353,6 +353,7 @@ def test_pg_ddl_dir_is_contiguous_and_covers_all_schemas() -> None:
         "backtest",
         "pick",
         "factor",
+        "finance",
         "fundamental",
         "classify",
     ):
