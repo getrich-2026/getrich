@@ -2,7 +2,7 @@
 
 面向安排工作的项目维护者。本文只保留未关闭、可落实的实现缺口与待定口径，不是已批准的实施计划，不授权变更 API、schema、依赖或工作库。
 
-基线核对：**2026-11-24**（云端 `/srv/getrich` 已完成 V1 准生产环境切换、`ops/` 长期运维脚本收口与旧冻结目录清理；已完成项均从本表移除）。当前运行状态见 [NOTES](../../.agents/brain/NOTES.md)，实现取舍见 [决策记录](../../.agents/brain/DECISIONS.md)，运维操作见 [V1 发布切换指南](../guides/v1-release-cutover.md)。
+基线核对：**2026-11-25**（云端 `/srv/getrich` 已完成 V1 准生产环境切换、`ops/` 长期运维脚本收口与旧冻结目录清理；已完成项均从本表移除）。当前运行状态见 [NOTES](../../.agents/brain/NOTES.md)，实现取舍见 [决策记录](../../.agents/brain/DECISIONS.md)，运维操作见 [V1 发布切换指南](../guides/v1-release-cutover.md)。
 
 ---
 

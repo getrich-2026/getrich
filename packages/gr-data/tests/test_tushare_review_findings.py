@@ -58,6 +58,25 @@ def test_force_ownership_transfer_is_logged(caplog, previous_provider):
     assert all(f"{key}={value}" in record.getMessage() for key, value in fields.items())
 
 
+def test_conflict_claim_uses_readonly_fast_path():
+    """force=False 冲突时走只读快速路径直接拒绝，不执行 INSERT 触发器或开启保存点。"""
+    from gr_data.common.ownership import OwnershipError, OwnershipManager
+
+    target = "market.stock_bar_1d"
+    conn = MagicMock(autocommit=False)
+    conn.info.transaction_status = TransactionStatus.IDLE
+    cursor = conn.cursor.return_value.__enter__.return_value
+    cursor.fetchone.return_value = (target, "ricequant", "ingest")
+
+    with pytest.raises(OwnershipError, match="ricequant"):
+        OwnershipManager(conn).claim(target, "tushare", channel="ingest", force=False)
+
+    executed_sql = [call.args[0] for call in cursor.execute.call_args_list]
+    assert len(executed_sql) == 1
+    assert executed_sql[0].lstrip().upper().startswith("SELECT ")
+    conn.transaction.assert_not_called()
+
+
 def test_missing_calendar_keeps_capture_hint(tmp_raw_root, fake_tushare):
     from gr_data.raw.tushare import REGISTRY
 
@@ -80,6 +99,35 @@ def test_corrupt_calendar_reported_as_corrupt(tmp_raw_root, fake_tushare):
     fetcher = REGISTRY["daily"](fake_tushare, _ctx(tmp_raw_root))
 
     with pytest.raises(CorruptRawError, match=r"calendar/SSE\.parquet"):
+        fetcher._trading_days()
+
+
+def test_corrupt_future_calendar_reported_as_corrupt(tmp_raw_root, fake_tushare):
+    """期货交易日历文件损坏时同样抛出 CorruptRawError 并定位具体分区。"""
+    from gr_data.common.parquet import CorruptRawError
+    from gr_data.raw.tushare import REGISTRY
+
+    _write(
+        tmp_raw_root,
+        "instruments",
+        pd.DataFrame(
+            [
+                {
+                    "ts_code": "CU2401.SHF",
+                    "exchange": "SHFE",
+                    "list_date": "20230116",
+                    "delist_date": "20240119",
+                }
+            ]
+        ),
+        "future",
+    )
+    path = tmp_raw_root.dataset_file("tushare", "future_calendar", "SHFE")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a parquet file")
+    fetcher = REGISTRY["fut_daily"](fake_tushare, _ctx(tmp_raw_root))
+
+    with pytest.raises(CorruptRawError, match=r"future_calendar/SHFE\.parquet"):
         fetcher._trading_days()
 
 
@@ -319,10 +367,13 @@ def test_stock_zero_volume_kept(tmp_raw_root, monkeypatch):
 @pytest.mark.parametrize("close", [11.0, 9.8])
 def test_stock_close_outside_high_low_rejected(tmp_raw_root, monkeypatch, close):
     """#37：收盘价高过最高价或低于最低价时可定位异常证券日。"""
+    from gr_data.common.quality import RowValidationError
+
     imp = _stock_importer_with(tmp_raw_root, monkeypatch, pd.DataFrame([_daily_row(close=close)]))
 
     with pytest.raises(
-        ValueError, match=r"close 超出 \[low, high\].*ts_code=600000\.SH trade_date=2024-01-02"
+        RowValidationError,
+        match=r"close 超出 \[low, high\].*ts_code=600000\.SH trade_date=2024-01-02",
     ):
         imp.build()
 
@@ -332,6 +383,31 @@ def test_stock_close_at_low_or_high_kept(tmp_raw_root, monkeypatch, close):
     daily = pd.DataFrame([_daily_row(close=close)])
 
     assert _stock_importer_with(tmp_raw_root, monkeypatch, daily).build().iloc[0]["close"] == close
+
+
+@pytest.mark.parametrize("open_price", [11.0, 9.8])
+def test_stock_open_outside_high_low_rejected(tmp_raw_root, monkeypatch, open_price):
+    """开盘价高过最高价或低于最低价时同样拒绝并定位异常证券日（与北交所口径一致）。"""
+    from gr_data.common.quality import RowValidationError
+
+    imp = _stock_importer_with(
+        tmp_raw_root, monkeypatch, pd.DataFrame([_daily_row(open=open_price)])
+    )
+
+    with pytest.raises(
+        RowValidationError,
+        match=r"open 超出 \[low, high\].*ts_code=600000\.SH trade_date=2024-01-02",
+    ):
+        imp.build()
+
+
+@pytest.mark.parametrize("open_price", [9.9, 10.8])
+def test_stock_open_at_low_or_high_kept(tmp_raw_root, monkeypatch, open_price):
+    daily = pd.DataFrame([_daily_row(open=open_price)])
+
+    assert (
+        _stock_importer_with(tmp_raw_root, monkeypatch, daily).build().iloc[0]["open"] == open_price
+    )
 
 
 # --------------------------------------------------------------------------- #

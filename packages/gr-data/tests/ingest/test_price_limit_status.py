@@ -99,8 +99,8 @@ def test_normal_limits_are_limited(tmp_raw_root):
 @pytest.mark.parametrize(
     "prices",
     [
-        pytest.param({"open": 11.0}, id="open-above-limit"),
-        pytest.param({"open": 8.0}, id="open-below-limit"),
+        pytest.param({"open": 11.0, "high": 11.0}, id="open-above-limit"),
+        pytest.param({"open": 8.0, "low": 8.0}, id="open-below-limit"),
         pytest.param({"high": 11.0}, id="high-above-limit"),
         pytest.param({"low": 8.0}, id="low-below-limit"),
         pytest.param({"close": 11.0, "high": 11.0}, id="close-above-limit"),
@@ -108,7 +108,7 @@ def test_normal_limits_are_limited(tmp_raw_root):
     ],
 )
 def test_any_ohlc_outside_limits_preserves_price_but_marks_limits_unknown(tmp_raw_root, prices):
-    """收盘价在当日高低价内，但行情与独立涨跌停源冲突时，保留行情供复核。"""
+    """开收盘价均在当日高低价内，但行情与独立涨跌停源冲突时，保留行情供复核。"""
     frame, warnings = _build(
         tmp_raw_root,
         [("600000.SH", 9.8)],

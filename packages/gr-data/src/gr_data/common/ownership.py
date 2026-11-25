@@ -86,13 +86,27 @@ class OwnershipManager:
 
         `MULTI_SOURCE_TABLES` 里的表直接放行且**不登记**：登记了反而会让
         `own list` 显示一个误导性的「唯一 owner」。
+
+        依赖 PostgreSQL 18+ 的 ``RETURNING OLD.provider`` 原子获取被替换的旧归属（D-004）。
         """
         if target in MULTI_SOURCE_TABLES:
             return Ownership(target=target, provider=provider, channel=channel)
+        if not force:
+            # 快速只读路径：已归属他方时直接拒绝，避免触碰 INSERT 语句级触发器
+            # 并防止在顶层事务上获取/泄漏全局诊断排他锁 pg_advisory_xact_lock(7342061105)。
+            current = self.owner(target)
+            if current is not None and current.provider != provider:
+                raise OwnershipError(
+                    f"表 {target} 已归属 provider='{current.provider}'，"
+                    f"provider='{provider}' 不能 claim。需转移请用 force=True。"
+                )
         if not self.conn.autocommit and self.conn.info.transaction_status == TransactionStatus.IDLE:
-            self.conn.execute("SELECT 1")  # 由调用方提交外层事务；下方只管理保存点。
+            # 由调用方提交外层事务；下方只管理保存点。
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT 1")
         with self.conn.transaction(), self.conn.cursor() as cur:
-            # 由同一条 UPSERT 校验归属并读取实际被替换的 provider，避免并发时使用过期归属。
+            # 由同一条 UPSERT（PG 18+ RETURNING OLD）校验归属并读取实际被替换的 provider，
+            # 作为并发 TOCTOU 竞态兜底并避免使用过期归属。
             cur.execute(
                 f"""
                 INSERT INTO {OWNERSHIP_TABLE} AS ownership (target, provider, channel, updated_at)
@@ -108,7 +122,7 @@ class OwnershipManager:
             )
             row = cur.fetchone()
             if row is None:
-                # 拒绝时回滚语句级触发器对诊断组成的标脏副作用。
+                # 并发竞态下被拒绝时，由保存点回滚语句级触发器对诊断组成的标脏副作用。
                 current = self.owner(target)
                 current_provider = current.provider if current is not None else "<unknown>"
                 raise OwnershipError(

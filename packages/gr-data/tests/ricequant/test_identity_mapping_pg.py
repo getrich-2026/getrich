@@ -51,7 +51,7 @@ def _row_count(conn: psycopg.Connection, qualified: str) -> int:
 @pytest.mark.skipif(not os.getenv("RQ_REPLAY_MAP"), reason="explicit isolated replay only")
 def test_real_cross_database_replay(monkeypatch: pytest.MonkeyPatch) -> None:
     root = Path(os.environ["RQ_REPLAY_ROOT"])
-    env = load_environment(env_file=os.environ.get("RQ_REPLAY_ENV_FILE"))
+    env = load_environment(env_file=os.environ.get("RQ_REPLAY_ENV_FILE") or None)
     database = os.environ["RQ_REPLAY_DB"]
     assert database.startswith("getrich_rq_")
     cfg = replace(load_postgres(env), database=database)

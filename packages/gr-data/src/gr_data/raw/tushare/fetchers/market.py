@@ -109,6 +109,16 @@ class _DailyFetcher(BaseFetcher):
         self.ctx = as_tushare_context(ctx)
 
     # ---- 交易日 ----
+    def _read_calendar_frame(self) -> pd.DataFrame:
+        """读取 raw 层主交易日历；缺失或空表提示补采，损坏文件抛出 CorruptRawError。"""
+        path = self.paths.dataset_file(PROVIDER, "calendar", CALENDAR_EXCHANGE)
+        cal = read_parquet_strict(path)
+        if cal is None or cal.empty:
+            raise RuntimeError(
+                f"缺少交易日历 {path}。请先运行 `gr-data raw tushare --only calendar`。"
+            )
+        return cal
+
     def _trading_days(self) -> list[date]:
         """从 raw 层 calendar 数据集读出开市日。
 
@@ -116,13 +126,7 @@ class _DailyFetcher(BaseFetcher):
         空转请求，既浪费配额，也让「真的没数据」和「日历没抓」变得无法区分。
         已存在但不可读的 Parquet 由读取层报告具体损坏位置。
         """
-        path = self.paths.dataset_file(PROVIDER, "calendar", CALENDAR_EXCHANGE)
-        cal = read_parquet_strict(path)
-        if cal is None or cal.empty:
-            raise RuntimeError(
-                f"缺少交易日历 {path}。请先运行 `gr-data raw tushare --only calendar`。"
-            )
-        return read_open_days(cal, CALENDAR_EXCHANGE)
+        return read_open_days(self._read_calendar_frame(), CALENDAR_EXCHANGE)
 
     # ---- 月份选择 ----
     def _existing_months(self) -> set[str]:
@@ -408,8 +412,8 @@ class IndexBars1dFetcher(_DailyFetcher):
         return frame["ts_code"].astype(str).str.strip().isin(selected)
 
     def _trading_days(self) -> list[date]:
-        days = super()._trading_days()
-        frame = pd.read_parquet(self.paths.dataset_file(PROVIDER, "calendar", CALENDAR_EXCHANGE))
+        frame = self._read_calendar_frame()
+        days = read_open_days(frame, CALENDAR_EXCHANGE)
         require_calendar_range(
             frame,
             int_to_date(self.ctx.start_date or INIT_START_DATE),
@@ -612,9 +616,9 @@ class FutureBars1dFetcher(_DailyFetcher):
                     effective.isoformat(),
                 )
             path = self.paths.dataset_file(PROVIDER, "future_calendar", exchange)
-            if not path.exists():
+            frame = read_parquet_strict(path)
+            if frame is None:
                 raise ValueError(f"Missing future_calendar[{exchange}]; run future_calendar first")
-            frame = pd.read_parquet(path)
             open_days = read_open_days(frame, exchange)
             if effective > end:
                 self._exchange_days[exchange] = set()

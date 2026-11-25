@@ -103,6 +103,8 @@ class MemoryCursor:
             self.result = []
         elif sql.startswith("LOCK TABLE "):
             self.conn.locked = True
+        elif sql == "SELECT 1":
+            self.result = [(1,)]
         elif sql.startswith("SELECT target, provider, channel"):
             self.result = [state["owners"][params[0]]] if params[0] in state["owners"] else []
         elif "INSERT INTO ops.table_ownership" in sql:
