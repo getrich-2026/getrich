@@ -508,3 +508,17 @@ PG_DB=getrich_v2 uv run python -m gr_api.replay_cli \
   - 单日边界：请求 `replay_start == as_of` 且省略 `stats_window` 时在 `_resolve_options` 返回 422（定位 `/options/replay_start`），覆盖提交与重算入口；
   - 按方案重算复用：`POST /snapshots/{id}/recompute` 在有效数据版本、同一 `replay_start` 下修改 `stats_window` 或基准（含二者同改）时，按 `plan_index` 复用已固化的 `replay_state`（零次调用回放读端，组合净值逐点不变）；原方案合理无回放状态（`section_c.status == "unavailable"`）时直接继承，不误抛 409；声称 `ready` 但状态缺失或损坏仍返回 409；
   - 报告与分享：私有报告 C 区补充回放口径说明、回撤路径文字解读（幅度、峰/谷/恢复日及交易日持续间隔，零回撤显示“窗口内无回撤”）与同期收益对照卡片；组合级 `period_portfolio_return`、`period_benchmark_return`、`period_return_difference` 纳入分享白名单，不可用原因经统一脱敏。
+
+
+## 持仓录入标的模糊搜索（V1 补丁 & V2 同步，2026-11-26）
+
+为前端持仓录入搜索框提供实时数据库模糊匹配下拉接口，无需新增数据库迁移（兼容 V1 57 条迁移与 V2 63 条迁移）：
+
+- **路径**：`GET /v1/diagnosis/instruments/search`（须登录，未登录或无效凭证返回 401；受 `GETRICH_V1_DIAGNOSIS_ONLY=true` 自动放行）。
+- **查询参数**：
+  - `q`（string，可选，默认 `""`，最长 64 字符）：股票代码前缀/片段（如 `6`、`600`、`60051`、`600519`、`600519.SH`、`sh600519`）或中文简称（如 `茅台`、`招商`）；空字符串或纯空白直接返回空数组且不查库；自动转义 SQL `LIKE` 通配符（`%`、`_`、`\`）。
+  - `limit`（integer，可选，默认 `10`，范围 `1`～`50`）：最多返回条数。
+- **范围与排序规则**：
+  - 仅查询 `meta.instruments` 中诊断一期在市沪深 A 股个股（`asset='stock'`、`exchange IN ('XSHG','XSHE')`、`status='active'`、排除 B 股、已退市及北交所）。
+  - 排序优先级：`0` 代码精确匹配 → `1` 代码前缀匹配 → `2` 名称前缀匹配 → `3` 代码或名称子串模糊匹配；同级按 `symbol ASC` 稳定排序。
+- **返回结构**（标准信封 `data.items[]`，响应头含 `Cache-Control: private, no-store` 与 4 项安全头）：每项含 `instrument_id`、`symbol`、`code`、`name`、`exchange`（`XSHG` / `XSHE`）。

@@ -35,6 +35,7 @@ from gr_api.schemas.diagnosis_response import (
     DataQualityResponse,
     DiagnosisResult,
     ErrorResponse,
+    InstrumentSearchResponse,
     PublishedOptionsResponse,
     ReportResponse,
     SharedReportResponse,
@@ -481,3 +482,28 @@ async def get_options(
         },
         rid,
     )
+
+
+# ---------------------------------------------------------------- 标的模糊搜索
+
+
+@router.get(
+    "/instruments/search",
+    dependencies=[Depends(require_user)],
+    response_model=ApiResponse[InstrumentSearchResponse],
+)
+async def search_instruments(
+    response: Response,
+    q: str = Query(
+        default="",
+        max_length=64,
+        description="搜索关键词：股票代码前缀/片段（如 6、600、600519、600519.SH）或中文简称",
+    ),
+    limit: int = Query(default=10, ge=1, le=50, description="最多返回条数，默认 10，上限 50"),
+    db: DictConnection = Depends(get_diagnosis_db),
+    rid: str = Depends(request_id),
+):
+    """持仓录入搜索框：按代码前缀优先、名称前缀次之、模糊子串兜底查询在市沪深 A 股。"""
+    response.headers["Cache-Control"] = "private, no-store"
+    items = await diag_svc.search_instruments(db, q, limit=limit)
+    return success({"items": items}, rid)

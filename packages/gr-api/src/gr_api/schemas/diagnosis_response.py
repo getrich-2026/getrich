@@ -864,3 +864,19 @@ class PublishedOptionsResponse(ApiModel):
     published_at: AwareDatetime
     available_options: dict[str, JsonValue]
     declared_metrics: list[str]
+
+
+class InstrumentSearchItem(ApiModel):
+    """持仓录入搜索下拉项（仅返回沪深在市 A 股个股）。"""
+
+    instrument_id: int
+    symbol: str
+    code: str
+    name: str
+    exchange: Literal["XSHG", "XSHE"]
+
+
+class InstrumentSearchResponse(ApiModel):
+    """持仓录入模糊搜索响应。"""
+
+    items: list[InstrumentSearchItem]
