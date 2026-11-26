@@ -753,13 +753,55 @@ class ReplayChartBlock(ApiModel):
     stats_window: DateRange | None
 
 
+class HoldingRiskStockRow(ApiModel):
+    """批次 A 逐股仓位与风险贡献份额对照行（差值保留符号）。"""
+
+    instrument_id: int
+    symbol: str
+    name: str
+    capital_weight: Ratio
+    risk_share: FiniteFloat
+    risk_share_minus_weight: FiniteFloat
+
+
+class HoldingRiskIndustryRow(ApiModel):
+    """批次 A 行业仓位与风险贡献份额对照行（差值保留符号）。"""
+
+    industry_code: str
+    industry_name: str
+    capital_weight: Ratio
+    risk_share: FiniteFloat
+    risk_share_minus_weight: FiniteFloat
+
+
+class HoldingRiskComparisonBlock(ApiModel):
+    """批次 A 私有详情报告专用块，不进入默认或分享报告。"""
+
+    type: Literal["holding_risk_comparison"] = "holding_risk_comparison"
+    headline: str | None = None
+    stocks: MetricValue[list[HoldingRiskStockRow]]
+    industries: MetricValue[list[HoldingRiskIndustryRow]]
+    quantized_zero_count: int = Field(default=0, ge=0)
+    quantized_zero_weight: str = "0"
+    model_id: str | None = None
+    model_date: date | None = None
+    model_run_id: str | None = None
+    calibrated: bool | None = None
+
+
 ReportBlock = Annotated[
     TextBlock
     | MetricCardsBlock
     | DistributionBlock
     | CorrelationChartBlock
     | HoldingsBlock
-    | ReplayChartBlock,
+    | ReplayChartBlock
+    | HoldingRiskComparisonBlock,
+    Field(discriminator="type"),
+]
+
+SharedReportBlock = Annotated[
+    TextBlock | MetricCardsBlock | DistributionBlock,
     Field(discriminator="type"),
 ]
 
@@ -792,7 +834,7 @@ class ReportResponse(SnapshotMeta):
 
 class SharedReportSection(ApiModel):
     title: str
-    content: SectionResult[list[ReportBlock]]
+    content: SectionResult[list[SharedReportBlock]]
 
 
 class SharedReportResponse(ApiModel):

@@ -259,3 +259,267 @@ def test_success_request_id_matches_header(client: TestClient) -> None:
     response = client.get("/request-id-probe")
     assert response.status_code == 200
     assert response.json()["request_id"] == response.headers["X-Request-Id"]
+
+
+def test_public_share_report_200_allowlist_strips_private_blocks_and_symbols(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """有效分享 token 返回 HTTP 200 + 安全响应头，保留组合级统计/披露，严格剥离逐股与私有块。"""
+    import json
+
+    async def db():
+        yield object()
+
+    client.app.dependency_overrides[get_db] = db  # type: ignore[attr-defined]
+    fake_report = {
+        "report_mode": "standard",
+        "run_status": "partially_succeeded",
+        "disclosures": ["本报告基于快照计算，不构成投资建议。"],
+        "sections": [
+            {
+                "section_id": "p1:instrument",
+                "plan_id": "p1",
+                "kind": "instrument",
+                "title": "输入持仓与解析结果",
+                "content": {
+                    "status": "ready",
+                    "value": [
+                        {
+                            "type": "holdings",
+                            "input": {
+                                "holdings": [{"input_symbol": "600519.SH", "input_weight": "60"}]
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "section_id": "p1:exposure",
+                "plan_id": "p1",
+                "kind": "exposure",
+                "title": "构成与敞口",
+                "content": {
+                    "status": "ready",
+                    "value": [
+                        {
+                            "type": "metric_cards",
+                            "items": [
+                                {
+                                    "metric_id": "top1",
+                                    "label": "Top1 权重",
+                                    "value": {"status": "ok", "value": 0.6, "method": "exposure"},
+                                    "format": "percent",
+                                    "decimals": 1,
+                                }
+                            ],
+                        },
+                        {
+                            "type": "distribution",
+                            "metric_id": "industry_distribution",
+                            "labels": {"801120.SI": "食品饮料"},
+                            "values": {
+                                "status": "ok",
+                                "value": {"801120.SI": 1.0},
+                                "method": "exposure",
+                            },
+                        },
+                    ],
+                },
+            },
+            {
+                "section_id": "p1:risk",
+                "plan_id": "p1",
+                "kind": "risk",
+                "title": "风险画像",
+                "content": {
+                    "status": "ready",
+                    "value": [
+                        {
+                            "type": "holding_risk_comparison",
+                            "headline": "秘密股票（600519.SH）占资金 60.0%。",
+                            "stocks": {
+                                "status": "unavailable",
+                                "reason_code": "not_applicable",
+                                "reason": "x",
+                            },
+                            "industries": {
+                                "status": "unavailable",
+                                "reason_code": "not_applicable",
+                                "reason": "x",
+                            },
+                        },
+                        {
+                            "type": "metric_cards",
+                            "items": [
+                                {
+                                    "metric_id": "volatility.forward",
+                                    "label": "模型年化波动率",
+                                    "value": {"status": "ok", "value": 0.21, "method": "forward"},
+                                    "format": "percent",
+                                    "decimals": 1,
+                                },
+                                {
+                                    "metric_id": "l4_largest_source",
+                                    "label": "最大风险源占比（秘密股票 的特质风险）",
+                                    "value": {"status": "ok", "value": 0.45, "method": "forward"},
+                                    "format": "percent",
+                                    "decimals": 1,
+                                },
+                                {
+                                    "metric_id": "risk_contribution_ratio:101",
+                                    "label": "秘密股票 风险贡献占比",
+                                    "value": {"status": "ok", "value": 0.72, "method": "forward"},
+                                    "format": "percent",
+                                    "decimals": 1,
+                                },
+                            ],
+                        },
+                        {"type": "text", "text": "600519.SH，权重 0.6：因子暴露缺失"},
+                        {
+                            "type": "text",
+                            "text": (
+                                "L4 描述模型下互不相关的风险源之间的方差集中度，"
+                                "数值越大不代表越分散。"
+                            ),
+                        },
+                    ],
+                },
+            },
+            {
+                "section_id": "limitations",
+                "plan_id": None,
+                "kind": "limitations",
+                "title": "方法与数据局限",
+                "content": {
+                    "status": "ready",
+                    "value": [{"type": "text", "text": "本报告基于快照计算，不构成投资建议。"}],
+                },
+            },
+        ],
+    }
+    monkeypatch.setattr(svc, "get_shared_report", AsyncMock(return_value=fake_report))
+
+    response = client.get("/v1/diagnosis/share/valid-token/report")
+    assert response.status_code == 200
+    assert all(header in response.headers for header in HEADERS)
+    body = response.json()["data"]
+    assert body["report_mode"] == "standard"
+    assert body["disclosures"] == ["本报告基于快照计算，不构成投资建议。"]
+
+    raw_json = json.dumps(body, ensure_ascii=False)
+    for forbidden in (
+        "600519.SH",
+        "秘密股票",
+        "holding_risk_comparison",
+        "risk_contribution_ratio:101",
+        "input_weight",
+        "/holdings/",
+    ):
+        assert forbidden not in raw_json
+
+    risk_sec = next(s for s in body["sections"] if s["title"] == "风险画像")
+    cards_block = next(b for b in risk_sec["content"]["value"] if b["type"] == "metric_cards")
+    card_ids = {item["metric_id"]: item["label"] for item in cards_block["items"]}
+    assert card_ids == {
+        "volatility.forward": "模型年化波动率",
+        "l4_largest_source": "最大风险源占比（单一持仓特质风险）",
+    }
+
+
+def test_public_share_report_sanitizes_truncated_replay_instrument_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """真实语义的回放截断报告经分享投影后保留中止日期与原因，但绝不泄露受影响标的 ID。"""
+    import json
+    from datetime import date
+    from decimal import Decimal
+
+    from gr_api.diagnosis_calc.replay import ReplayPoint, ReplayResult
+    from gr_api.diagnosis_calc.replay_section import history_section
+    from gr_api.services import diagnosis_presentation as view
+
+    async def db():
+        yield object()
+
+    client.app.dependency_overrides[get_db] = db  # type: ignore[attr-defined]
+    points = (
+        ReplayPoint(date(2025, 3, 19), Decimal("1.00"), Decimal("1.00"), Decimal("0")),
+        ReplayPoint(date(2025, 3, 20), Decimal("0.97"), Decimal("0.97"), Decimal("0")),
+    )
+    sec_c = history_section(
+        ReplayResult(
+            points=points,
+            stopped_on=date(2025, 3, 21),
+            reason="delisted_no_terminal_value",
+            instrument_id=33582,
+        ),
+        window=(date(2025, 3, 19), date(2025, 3, 24)),
+        benchmark_returns={},
+    )
+    values = sec_c["value"]
+    history_cards = [
+        view._card(key, label, values[key], fmt, 2)
+        for key, label, fmt in (
+            ("replay_volatility", "历史回放年化波动率", "percent"),
+            ("portfolio_beta", "组合 Beta", "number"),
+            ("portfolio_benchmark_correlation", "与基准的相关性", "number"),
+            ("current_drawdown", "当前回撤", "percent"),
+            ("var", "历史回放单日 VaR（95%）", "percent"),
+            ("cvar", "历史回放单日 CVaR（95%）", "percent"),
+            ("max_drawdown", "最大回撤", "percent"),
+        )
+    ]
+    private_report = {
+        "report_mode": "standard",
+        "run_status": "partially_succeeded",
+        "disclosures": ["本报告基于快照计算，不构成投资建议。"],
+        "sections": [
+            {
+                "section_id": "p1:history",
+                "plan_id": "p1",
+                "kind": "style",
+                "title": "历史回放与分位",
+                "content": {
+                    "status": "ready",
+                    "value": [
+                        {
+                            "type": "replay_chart",
+                            "values": values["replay"],
+                            "stats_window": {"start": "2025-03-19", "end": "2025-03-24"},
+                        },
+                        {"type": "metric_cards", "items": history_cards},
+                    ],
+                },
+            },
+            {
+                "section_id": "limitations",
+                "plan_id": None,
+                "kind": "limitations",
+                "title": "方法与数据局限",
+                "content": {
+                    "status": "ready",
+                    "value": [{"type": "text", "text": "本报告基于快照计算，不构成投资建议。"}],
+                },
+            },
+        ],
+    }
+    # 私有报告中原始原因含受影响标的 33582
+    assert "33582" in json.dumps(private_report, ensure_ascii=False, default=str)
+
+    monkeypatch.setattr(svc, "get_shared_report", AsyncMock(return_value=private_report))
+    response = client.get("/v1/diagnosis/share/truncated-token/report")
+    assert response.status_code == 200
+    assert all(header in response.headers for header in HEADERS)
+
+    body = response.json()["data"]
+    raw_json = json.dumps(body, ensure_ascii=False)
+    assert "33582" not in raw_json
+    assert "replay_chart" not in raw_json
+
+    history_sec = next(s for s in body["sections"] if s["title"] == "历史回放与分位")
+    cards_block = next(b for b in history_sec["content"]["value"] if b["type"] == "metric_cards")
+    mdd = next(c for c in cards_block["items"] if c["metric_id"] == "max_drawdown")
+    assert mdd["value"]["status"] == "unavailable"
+    assert mdd["value"]["reason_code"] == "replay_terminated"
+    assert "2025-03-21" in mdd["value"]["reason"]
+    assert "退市" in mdd["value"]["reason"]

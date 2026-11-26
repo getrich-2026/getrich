@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
 
+from gr_api.diagnosis_calc.weights import input_weights as input_weights
 from gr_api.errors import BadRequest
 from gr_api.services import diagnosis_publication as publication
 from gr_data.diagnostic_publication import portfolio_hash
@@ -27,47 +28,6 @@ V4_MODEL_METRICS = ENHANCED_METRICS | {
     "style_exposure",
     "model_correlation",
 }
-
-
-def input_weights(summary: dict[str, Any]) -> tuple[dict[int, Decimal], list[dict[str, Any]]]:
-    """从固定输入回显还原完整分母份额，未识别项仍占分母，重复项合并。"""
-    grouped: dict[int | str, dict[str, Any]] = {}
-    for row in summary["holdings"]:
-        key = row["instrument_id"] if row["instrument_id"] is not None else row["normalized_symbol"]
-        weight = (
-            Decimal(row["input_weight"] or "0") if summary["weight_mode"] == "user" else Decimal(1)
-        )
-        item = grouped.setdefault(
-            key,
-            {
-                "instrument_id": row["instrument_id"],
-                "symbol": row["normalized_symbol"],
-                "raw": Decimal(0),
-            },
-        )
-        if summary["weight_mode"] == "user":
-            item["raw"] += weight
-        else:
-            item["raw"] = Decimal(1)
-    total = sum((x["raw"] for x in grouped.values()), Decimal(0))
-    weights: dict[int, Decimal] = {}
-    missing = []
-    for item in grouped.values():
-        if item["raw"] <= 0:
-            continue
-        weight = item["raw"] / total
-        if item["instrument_id"] is None:
-            missing.append(
-                {
-                    "instrument_id": None,
-                    "symbol": item["symbol"],
-                    "weight": format(weight, "f"),
-                    "reason": "unresolved_symbol",
-                }
-            )
-        else:
-            weights[item["instrument_id"]] = weight
-    return weights, missing
 
 
 def scope(version: dict[str, Any]) -> dict[str, Any]:

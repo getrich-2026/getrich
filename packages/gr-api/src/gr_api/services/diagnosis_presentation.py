@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
@@ -18,11 +19,13 @@ from gr_api.diagnosis_calc.coverage import (
     model_input_coverage,
 )
 from gr_api.diagnosis_calc.exposure import MISSING_OR_INVALID, NON_POSITIVE, UNCLASSIFIED
+from gr_api.diagnosis_calc.holding_risk import compute_holding_risk_comparison
 from gr_api.diagnosis_calc.metrics import has_value
 from gr_api.schemas.diagnosis_response import (
     DataQualityResponse,
     DiagnosisResult,
     ReportResponse,
+    SharedReportResponse,
     SnapshotAccepted,
     SnapshotMeta,
     SnapshotProgress,
@@ -962,11 +965,17 @@ def report(
     level: str = "retail",
     *,
     industry_labels: dict[str, str] | None = None,
+    detail: str | None = None,
 ) -> dict[str, Any]:
-    """按访问时的 ``user_level`` 裁剪；retail 可省略中间指标，不能省略缺失原因与声明。"""
+    """按访问时的 ``user_level`` 与可选 ``detail`` 裁剪；不省略缺失原因与声明。"""
     if result["run_status"] in ("pending", "running"):
         return result
     labels = industry_labels or {}
+    admitted = (
+        set(result["publication"]["declared_metrics"])
+        if result.get("publication") is not None
+        else None
+    )
     sections: list[dict[str, Any]] = []
 
     def add(
@@ -992,37 +1001,39 @@ def report(
             ready([{"type": "holdings", "input": p["input"]}]),
         )
         a = p["section_a"]
+        merged_labels = {
+            **labels,
+            **(a["value"].get("industry_labels", {}) if a["status"] == "ready" else {}),
+        }
         add(
             pid,
             "exposure",
             "构成与敞口",
-            ready(
-                _exposure_blocks(
-                    a["value"], level, {**labels, **a["value"].get("industry_labels", {})}
-                )
-            )
+            ready(_exposure_blocks(a["value"], level, merged_labels))
             if a["status"] == "ready"
             else a,
         )
         names = {str(h["instrument_id"]): h["name"] for h in p["input"]["calculation_holdings"]}
         b = p["section_b"]
-        add(
-            pid,
-            "risk",
-            "风险画像",
-            ready(
-                _risk_blocks(
-                    b["value"],
-                    names,
-                    level,
-                    set(result["publication"]["declared_metrics"])
-                    if result.get("publication") is not None
-                    else None,
-                )
-            )
-            if b["status"] == "ready"
-            else b,
+        risk_content = (
+            ready(_risk_blocks(b["value"], names, level, admitted)) if b["status"] == "ready" else b
         )
+        if detail == "holdings":
+            comparison_block = {
+                "type": "holding_risk_comparison",
+                **compute_holding_risk_comparison(
+                    plan_input=p["input"],
+                    section_a=a,
+                    section_b=b,
+                    declared_metrics=admitted,
+                    industry_labels=merged_labels,
+                ),
+            }
+            if risk_content["status"] == "ready":
+                risk_content = ready([comparison_block, *risk_content["value"]])
+            else:
+                risk_content = ready([comparison_block])
+        add(pid, "risk", "风险画像", risk_content)
         history = p["section_c"]
         if history["status"] == "ready":
             values = history["value"]
@@ -1069,11 +1080,6 @@ def report(
             if blind["status"] == "ready"
             else blind,
         )
-    admitted = (
-        set(result["publication"]["declared_metrics"])
-        if result.get("publication") is not None
-        else None
-    )
     comparison = result["comparison"]
     add(
         None,
@@ -1098,4 +1104,196 @@ def report(
             disclosures=result["disclosures"],
             data_quality=result["data_quality"],
         )
+    ).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# 分享报告双层白名单投影（section.kind × block.type × 组合级 metric_id / 公开文案）
+# ---------------------------------------------------------------------------
+
+_SHARED_ALLOWED_BLOCKS: dict[str, frozenset[str]] = {
+    "profile": frozenset({"text"}),
+    "exposure": frozenset({"metric_cards", "distribution"}),
+    "risk": frozenset({"metric_cards", "text"}),
+    "style": frozenset({"metric_cards"}),
+    "diversification": frozenset({"metric_cards"}),
+    "comparison": frozenset({"text", "metric_cards"}),
+    "limitations": frozenset({"text"}),
+    "summary": frozenset({"text"}),
+}
+
+_SHARED_EXPOSURE_CARDS = frozenset(
+    {"top1", "top3", "top5", "hhi", "l1_count", "l2_effective_count", "max_industry"}
+)
+_SHARED_RISK_CARDS = frozenset(
+    {
+        "volatility.forward",
+        "daily_prediction_volatility",
+        "l3_effective_count",
+        "l4_effective_count",
+        "l4_market_source_share",
+        "l4_largest_source",
+    }
+)
+_SHARED_STYLE_CARDS = frozenset(
+    {
+        "replay_volatility",
+        "portfolio_beta",
+        "portfolio_benchmark_correlation",
+        "current_drawdown",
+        "var",
+        "cvar",
+        "max_drawdown",
+    }
+)
+_SHARED_SAFE_RISK_TEXT_PREFIXES = (
+    "L4 描述模型下互不相关的风险源之间的方差集中度",
+    "部分持仓风险贡献为负，表示在当前模型下起风险抵消作用",
+)
+_ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+_SHARED_TERMINATION_LABELS: dict[str, str] = {
+    "delisted_no_terminal_value": "存在退市且无可靠终值的持仓",
+    "valuation_unreliable": "存在估值不可靠的持仓",
+    "execution_undetermined": "存在开盘或停复牌执行状态无法确定的持仓",
+}
+_SHARED_REASON_LABELS: dict[str, str] = {
+    "not_calibrated": "模型尚未完成全区间校准，结果降级展示。",
+    "factor_model_unavailable": "当前快照未取得可用的风险模型截面。",
+    "history_insufficient": "统计区间内有效历史样本不足。",
+    "coverage_below_threshold": "组合数据覆盖不足，该指标暂不可用或降级展示。",
+    "spec_not_defined": "该项定性规则或阈值尚未确认，暂不输出。",
+    "lookthrough_incomplete": "底层穿透数据不完整，暂不输出。",
+    "benchmark_missing": "缺少已准入的全收益基准序列。",
+    "new_listing_short_window": "存在新上市标的导致有效历史窗口不足。",
+    "feature_not_available": "该分析项在当前版本尚未开放。",
+    "not_applicable": "当前组合形态不适用该指标。",
+    "data_not_validated": "相关数据未通过完整性或一致性核验。",
+    "data_stale": "相关数据存在滞后或已过期。",
+    "zero_variance": "有效样本内收益或模型方差为零，该指标不可用。",
+    "valuation_lagged": "部分估值数据日期早于诊断日期。",
+}
+
+
+def _sanitize_shared_reason(reason_code: str | None, raw_reason: str | None) -> str:
+    """按 reason_code 生成公开分享说明，不透传可能含 instrument_id 或股票代码的原始文案。"""
+    code = str(reason_code or "")
+    text = str(raw_reason or "")
+    if code in {"replay_terminated", "execution_undetermined"}:
+        date_match = _ISO_DATE_RE.search(text)
+        detail = next(
+            (label for token, label in _SHARED_TERMINATION_LABELS.items() if token in text),
+            _SHARED_TERMINATION_LABELS["execution_undetermined"]
+            if code == "execution_undetermined"
+            else "存在触发回放边界条件的持仓",
+        )
+        if date_match:
+            return f"历史回放在 {date_match.group(1)} 中止（{detail}），相关区间统计不可用。"
+        return f"历史回放因边界条件中止（{detail}），相关区间统计不可用。"
+    return _SHARED_REASON_LABELS.get(code, "该项指标当前不可用或已降级展示。")
+
+
+def _sanitize_shared_metric(metric: dict[str, Any]) -> dict[str, Any]:
+    """脱敏分享报告中 MetricValue 的 reason 字段，防止持仓标识外泄。"""
+    copy = deepcopy(metric)
+    if copy.get("status") != "ok":
+        copy["reason"] = _sanitize_shared_reason(copy.get("reason_code"), copy.get("reason"))
+    return copy
+
+
+def _is_shared_card_allowed(kind: str, metric_id: str) -> bool:
+    if kind == "exposure":
+        return metric_id in _SHARED_EXPOSURE_CARDS
+    if kind == "risk":
+        return metric_id in _SHARED_RISK_CARDS
+    if kind == "style":
+        return metric_id in _SHARED_STYLE_CARDS
+    if kind == "diversification":
+        return metric_id.startswith(("avg_pairwise_correlation.", "style_exposure:"))
+    if kind == "comparison":
+        return metric_id.startswith("delta.") or metric_id in {
+            "comparison.marginal_impact",
+            "comparison.overlap_with_new",
+        }
+    return False
+
+
+def _sanitize_shared_card(kind: str, card: dict[str, Any]) -> dict[str, Any]:
+    """避免组合级卡片标签或不可用原因中携带单一股票标识。"""
+    sanitized = deepcopy(card)
+    if isinstance(sanitized.get("value"), dict):
+        sanitized["value"] = _sanitize_shared_metric(sanitized["value"])
+    if (
+        kind == "risk"
+        and sanitized.get("metric_id") == "l4_largest_source"
+        and "的特质风险" in str(sanitized.get("label") or "")
+    ):
+        sanitized["label"] = "最大风险源占比（单一持仓特质风险）"
+    return sanitized
+
+
+def _is_shared_text_allowed(kind: str, text: str) -> bool:
+    if kind == "risk":
+        return text.startswith(_SHARED_SAFE_RISK_TEXT_PREFIXES)
+    if kind == "comparison":
+        return text.startswith("调仓对比：")
+    return kind in {"profile", "limitations", "summary"}
+
+
+def project_shared_report(report_data: dict[str, Any]) -> dict[str, Any]:
+    """把私有报告投影为可公开分享的脱敏报告。
+
+    按 ``section.kind`` 与 ``block.type`` 双层白名单筛选，剔除逐股持仓明细、
+    ``holding_risk_comparison``、逐股卡片、含代码/权重的缺口文本及相关性标签映射，
+    并对所有不可用/降级 ``reason`` 按 ``reason_code`` 重写为公开组合级说明。
+    """
+    projected_sections: list[dict[str, Any]] = []
+    for section in report_data.get("sections") or ():
+        kind = str(section.get("kind") or "")
+        allowed_types = _SHARED_ALLOWED_BLOCKS.get(kind)
+        if not allowed_types:
+            continue
+        content = section.get("content") or {}
+        status = content.get("status")
+        if status == "unavailable":
+            safe_content = {
+                **deepcopy(content),
+                "reason": _sanitize_shared_reason(
+                    content.get("reason_code"), content.get("reason")
+                ),
+            }
+            projected_sections.append({"title": section["title"], "content": safe_content})
+            continue
+        if status != "ready":
+            continue
+        blocks: list[dict[str, Any]] = []
+        for block in content.get("value") or ():
+            btype = str(block.get("type") or "")
+            if btype not in allowed_types:
+                continue
+            if btype == "metric_cards":
+                items = [
+                    _sanitize_shared_card(kind, card)
+                    for card in block.get("items") or ()
+                    if _is_shared_card_allowed(kind, str(card.get("metric_id") or ""))
+                ]
+                if items:
+                    blocks.append({"type": "metric_cards", "items": items})
+            elif btype == "text":
+                text = str(block.get("text") or "")
+                if _is_shared_text_allowed(kind, text):
+                    blocks.append({"type": "text", "text": text})
+            elif btype == "distribution":
+                dist_block = deepcopy(block)
+                if isinstance(dist_block.get("values"), dict):
+                    dist_block["values"] = _sanitize_shared_metric(dist_block["values"])
+                blocks.append(dist_block)
+        if blocks:
+            projected_sections.append({"title": section["title"], "content": ready(blocks)})
+
+    return SharedReportResponse.model_validate(
+        {
+            "report_mode": report_data["report_mode"],
+            "disclosures": list(report_data.get("disclosures") or ()),
+            "sections": projected_sections,
+        }
     ).model_dump(mode="json")

@@ -695,3 +695,191 @@ def test_ready_replay_renders_chart_and_numeric_drawdown() -> None:
     assert chart["values"]["value"]["nav"] == [1.0, 0.9]
     drawdown = next(x for x in cards["items"] if x["metric_id"] == "max_drawdown")
     assert drawdown["value"]["value"] == -0.1
+
+
+def test_private_detail_holdings_report_keeps_default_compatible_and_supports_signed_rows(
+    api_client,
+) -> None:
+    """默认 /report 不含新块；detail=holdings 输出有符号对照块，非法 detail 返回 422。"""
+    result, _ = fixture_result()
+    default_report = view.report(result, "retail")
+    ReportResponse.model_validate(default_report)
+    assert all(
+        block["type"] != "holding_risk_comparison"
+        for sec in default_report["sections"]
+        if sec["content"]["status"] == "ready"
+        for block in sec["content"]["value"]
+    )
+
+    detail_report = view.report(result, "retail", detail="holdings")
+    ReportResponse.model_validate(detail_report)
+    risk_sec = next(x for x in detail_report["sections"] if x["section_id"] == "mine:risk")
+    assert risk_sec["content"]["status"] == "ready"
+    comp = risk_sec["content"]["value"][0]
+    assert comp["type"] == "holding_risk_comparison"
+    # fixture_result 无模型数据时给出明确不可用原因
+    assert comp["stocks"]["status"] == "unavailable"
+    assert comp["industries"]["status"] == "unavailable"
+
+    # HTTP 路由校验 detail 参数和 422 拒绝
+    client, _ = api_client
+    res_ok = client.get(f"/v1/diagnosis/snapshots/{uuid4()}/report?detail=holdings")
+    assert res_ok.status_code == 200
+    res_bad = client.get(f"/v1/diagnosis/snapshots/{uuid4()}/report?detail=unknown")
+    assert res_bad.status_code == 422
+
+
+def test_private_detail_holdings_multi_plan_signed_and_shared_projection() -> None:
+    """多方案各自独立生成 holding_risk_comparison，且分享投影严格剥除一切私有信息。"""
+    from gr_api.diagnosis_calc.metrics import degraded as metric_degraded, ok as metric_ok
+
+    def _two_stock_row(plan_index: int, plan_id: str, w1: str, w2: str) -> dict[str, Any]:
+        plan_norm = normalize_plan(
+            [
+                InputRow(
+                    0,
+                    "600519.SH",
+                    Decimal(w1),
+                    "600519.SH",
+                    {"instrument_id": 1, "symbol": "600519.SH", "name": "贵州茅台"},
+                ),
+                InputRow(
+                    1,
+                    "600000.SH",
+                    Decimal(w2),
+                    "600000.SH",
+                    {"instrument_id": 2, "symbol": "600000.SH", "name": "浦发银行"},
+                ),
+            ]
+        )
+        metrics, facts = compute_exposure(
+            [CalcHolding(i, Decimal(u) / WEIGHT_UNITS) for i, u in plan_norm.quantized.items()],
+            as_of=AS_OF,
+            params=SPEC["params"],
+            industry_scheme="sw2021",
+            industry={
+                1: IndustryAssignment("801120.SI", "食品饮料"),
+                2: IndustryAssignment("801780.SI", "银行"),
+            },
+            category={
+                1: {"market": "cn_a", "asset_category": "equity"},
+                2: {"market": "cn_a", "asset_category": "equity"},
+            },
+            valuation={
+                1: Valuation(AS_OF, Decimal("2e12"), Decimal("8.0")),
+                2: Valuation(AS_OF, Decimal("2e11"), Decimal("0.5")),
+            },
+        )
+        payload = CalculationPayload.model_validate(
+            {
+                "cov": {"requested": ["forward", "historical"], "primary": None, "computed": []},
+                "section_a": {"status": "ready", "value": metrics},
+                **history_sections({1: synthetic_returns(1), 2: synthetic_returns(2)}),
+                **{key: svc._unavailable_section(key) for key in svc.SECTION_REASONS},
+            }
+        ).model_dump(mode="json")
+        return {
+            "plan_index": plan_index,
+            "plan_id": plan_id,
+            "label": f"方案-{plan_id}",
+            "status": "succeeded",
+            "input_context": plan_norm.summary,
+            "payload": payload,
+            "data_quality": facts,
+        }
+
+    result = view.assemble(
+        {**fixture_snapshot(), "resolved_intent": "multi_portfolio"},
+        SPEC,
+        [_two_stock_row(0, "p1", "60", "40"), _two_stock_row(1, "p2", "30", "70")],
+        "partially_succeeded",
+        report_mode=svc._report_mode,
+    )
+    result["publication"] = {
+        "scope_type": "security_universe",
+        "scope_id": "test-scope",
+        "declared_metrics": ["volatility", "risk_contribution_ratio"],
+        "status": "available",
+        "recomputable": True,
+        "invalidation_reasons": [],
+        "model_run_id": "run-a3-test",
+        "calibrated": False,
+        "units_evidence": None,
+    }
+    for plan, ratios in zip(
+        result["plans"],
+        [{"1": 1.15, "2": -0.15}, {"1": 0.45, "2": 0.55}],
+        strict=True,
+    ):
+        plan["section_b"]["value"]["model_id"] = "rq_v2"
+        plan["section_b"]["value"]["model_date"] = str(AS_OF)
+        plan["section_b"]["value"]["model_run_id"] = "run-a3-test"
+        plan["section_b"]["value"]["calibrated"] = False
+        plan["section_b"]["value"]["model_coverage"] = {
+            "status": "complete",
+            "scope_type": "security_universe",
+            "total_count": 2,
+            "covered_count": 2,
+            "total_weight": "1",
+            "covered_weight": "1",
+            "missing": [],
+            "metrics": ["volatility", "risk_contribution_ratio"],
+            "reason": None,
+        }
+        plan["section_b"]["value"]["annual_variance"] = metric_degraded(
+            0.04,
+            method="forward",
+            reason_code="not_calibrated",
+            reason="未校准",
+            confidence="low",
+        )
+        plan["section_b"]["value"]["volatility"]["by_method"]["forward"] = metric_degraded(
+            0.20,
+            method="forward",
+            reason_code="not_calibrated",
+            reason="未校准",
+            confidence="low",
+        )
+        plan["section_b"]["value"]["risk_contribution_ratio"] = metric_degraded(
+            ratios,
+            method="forward",
+            reason_code="not_calibrated",
+            reason="未校准",
+            confidence="low",
+        )
+        plan["section_b"]["value"]["risk_contribution"] = metric_ok(
+            {k: v * 0.2 for k, v in ratios.items()}, method="forward"
+        )
+        plan["section_b"]["value"]["marginal_risk_contribution"] = metric_ok(
+            {k: v * 0.3 for k, v in ratios.items()}, method="forward"
+        )
+
+    detail_rep = view.report(result, "retail", detail="holdings")
+    ReportResponse.model_validate(detail_rep)
+    p1_risk = next(x for x in detail_rep["sections"] if x["section_id"] == "p1:risk")
+    p2_risk = next(x for x in detail_rep["sections"] if x["section_id"] == "p2:risk")
+    c1 = p1_risk["content"]["value"][0]
+    c2 = p2_risk["content"]["value"][0]
+    assert c1["type"] == "holding_risk_comparison"
+    assert c2["type"] == "holding_risk_comparison"
+    assert c1["stocks"]["status"] == "degraded"
+    assert c1["industries"]["status"] == "degraded"
+    assert c1["stocks"]["value"][0]["risk_share"] == pytest.approx(1.15)
+    assert c1["stocks"]["value"][1]["risk_share"] == pytest.approx(-0.15)
+    assert c1["stocks"]["value"][1]["risk_share_minus_weight"] == pytest.approx(-0.55)
+    # 两个方案完全独立
+    assert c2["stocks"]["value"][0]["symbol"] == "600519.SH"
+    assert c2["stocks"]["value"][0]["risk_share_minus_weight"] == pytest.approx(0.15)
+    assert c1["headline"] != c2["headline"]
+
+    # 即使把带 holding_risk_comparison 的报告传给分享投影，私有块与逐股信息也必须全部滤除
+    shared = view.project_shared_report(detail_rep)
+    assert shared["disclosures"] == detail_rep["disclosures"]
+    serialized = str(shared)
+    for token in ("600519.SH", "600000.SH", "贵州茅台", "浦发银行"):
+        assert token not in serialized
+    assert "holding_risk_comparison" not in serialized
+    assert "holdings" not in serialized
+    assert "correlation_matrix" not in serialized
+    assert any(s["title"] == "构成与敞口" for s in shared["sections"])
+    assert any(s["title"] == "方法与数据局限" for s in shared["sections"])

@@ -267,15 +267,18 @@ async def get_report(
     snapshot_id: UUID,
     response: Response,
     user_level: str | None = Query(default=None, pattern=r"^(retail|pro)$"),
+    detail: str | None = Query(default=None, pattern=r"^holdings$"),
     user_id: str = Depends(require_user),
     db: DictConnection = Depends(get_diagnosis_db),
     rid: str = Depends(request_id),
 ):
-    """取渲染后报告，按**访问时**的 ``user_level`` 裁剪。
+    """取渲染后报告，按**访问时**的 ``user_level`` 与可选 ``detail`` 裁剪。
 
     缺省为 retail；浏览器不缓存私有报告，切换偏好不触发计算。
     """
-    data = await diag_svc.get_report(db, snapshot_id, user_id=user_id, user_level=user_level)
+    data = await diag_svc.get_report(
+        db, snapshot_id, user_id=user_id, user_level=user_level, detail=detail
+    )
     _response_headers(response, data)
     return success(data, rid)
 
@@ -438,19 +441,10 @@ async def get_shared_report(
         from gr_api.errors import BadRequest
 
         raise BadRequest("shared report is not ready", http_status=503)
-    # 分享 DTO 白名单：不带 snapshot、plan、输入持仓或私有数据质量路径。
-    return success(
-        {
-            "report_mode": data["report_mode"],
-            "disclosures": data["disclosures"],
-            "sections": [
-                {"title": section["title"], "content": section["content"]}
-                for section in data["sections"]
-                if section["kind"] != "instrument"
-            ],
-        },
-        rid,
-    )
+    # 分享 DTO 双层白名单投影：不带 snapshot、plan、输入持仓、逐股卡片或私有块。
+    from gr_api.services import diagnosis_presentation as presentation
+
+    return success(presentation.project_shared_report(data), rid)
 
 
 @router.get(

@@ -18,6 +18,7 @@
 | 数据库开发者 | [数据字典](guides/data-dictionary.md) | 生成字典与注释门禁，不手抄 schema |
 | 审核与运维维护者 | [工程与业务关键点备忘](guides/review-key-points.md) | 审核发现的关键业务口径、版本锁边界与生产更新铁律 |
 | 安排工作的人 | [待决问题](plans/backlog.md) | 缺口、证据、待定选择、验收条件 |
+| 组合持仓研发与评审者 | [组合持仓深化开发计划](plans/portfolio-diagnosis-development-plan.md) | V2 风险贡献对照、回放扩面和基准行业偏离的数据、文件分工与验收条件（待审查） |
 | 数据接入实施评审者 | [gr-data 可靠采集实施计划](plans/gr-data-reliability-implementation-plan.md) | 通用协议待审核；最低导入门禁与米筐 2a/诊断发布已落地，通用推广顺序与验收见计划 |
 | 历史阶段验收追溯者 | [2026-11 阶段里程碑归档](history/2026-11-milestones-archive.md) | 2026-11-01～19 阶段快照与 C2b 首发验收流水归档（只读参考） |
 | 采集迁移与历史回补追溯者 | [iMac 迁移归档](history/imac-collector-migration.md) / [米筐历史名单归档](history/ricequant-historical-universe.md) | 已完成的历史采集迁移、2010～2026 全品种回补与动态名单记录 |

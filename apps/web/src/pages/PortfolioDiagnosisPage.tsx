@@ -3,13 +3,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useFieldArray, useForm, type Control, type UseFormRegister, type FieldErrors } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Plus, Trash2, Copy, Upload, RefreshCw, FileText, Download } from 'lucide-react'
+import { Plus, Trash2, Copy, Upload, RefreshCw, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { createSnapshot, diagnosisError, getDiagnosisResult, getDiagnosisReport, getPublishedOptions } from '@/api/diagnosis'
+import {
+  createSnapshot,
+  diagnosisError,
+  getDiagnosisDataQuality,
+  getDiagnosisReport,
+  getDiagnosisResult,
+  getPublishedOptions,
+} from '@/api/diagnosis'
 import { loginWithPassword } from '@/api/auth'
+import { HoldingsReport } from '@/components/diagnosis/HoldingsReport'
 import { buildSnapshotPlans, parsePortfolioText, validatePortfolioDrafts, type PortfolioDraft } from '@/lib/portfolio-import'
-import type { DiagnosisResult, MetricValue, PlanResult, SnapshotRequest } from '@/types/diagnosis'
+import type { DiagnosisResult, ReportResponse, SnapshotRequest } from '@/types/diagnosis'
 
 const editorSchema = z.object({
   plans: z.array(z.object({
@@ -35,45 +43,19 @@ const metricLabels: Record<string, string> = {
   annual_variance: '年化方差',
   volatility: '年化预测波动率',
   daily_prediction_volatility: '单日预测波动率',
+  risk_contribution: '逐股风险贡献',
+  risk_contribution_ratio: '逐股风险贡献份额',
+  marginal_risk_contribution: '边际风险贡献',
+  l3_effective_count: '风险有效持仓数（L3）',
+  l4_effective_count: '风险源方差集中度（L4）',
+  l4_market_source_share: '市场源占比',
+  l4_largest_source: '最大风险源占比',
+  style_exposure: '风格暴露',
+  model_correlation: '模型相关性',
 }
 
 function errorMessage(error: unknown): string {
   return diagnosisError(error)?.message || (error instanceof Error ? error.message : '请求失败，请稍后重试。')
-}
-
-function Metric({ label, metric, percent = false }: { label: string; metric?: MetricValue<number> | null; percent?: boolean }) {
-  return <div className="rounded-lg border border-[var(--gr-border)] p-4">
-    <dt className="text-sm text-[var(--gr-text-secondary)]">{label}</dt>
-    <dd className="mt-2 text-2xl font-semibold tabular-nums">
-      {!metric || metric.status === 'unavailable' ? '不可用' : percent ? `${(metric.value * 100).toFixed(6)}%` : metric.value.toPrecision(12)}
-    </dd>
-    {metric && metric.status !== 'ok' && <p className="mt-2 text-xs text-[var(--gr-text-secondary)]">{metric.reason}</p>}
-  </div>
-}
-
-function PlanRisk({ plan }: { plan: PlanResult }) {
-  const risk = plan.section_b.status === 'ready' ? plan.section_b.value : null
-  const coverage = risk?.model_coverage
-  return <section className={PANEL} aria-label={`${plan.label || plan.plan_id}诊断结果`}>
-    <h3 className="text-lg font-semibold">{plan.label || plan.plan_id}</h3>
-    {plan.error && <p role="alert" className="mt-3 text-red-400">{plan.error.message}</p>}
-    {plan.section_b.status === 'unavailable' && <p role="alert" className="mt-3 text-sm text-amber-400">{plan.section_b.reason}</p>}
-    {plan.section_b.status === 'failed' && <p role="alert" className="mt-3 text-sm text-red-400">{plan.section_b.error.message}</p>}
-    <dl className="mt-4 grid gap-3 md:grid-cols-3">
-      <Metric label="组合年化方差" metric={risk?.annual_variance} />
-      <Metric label="年化预测波动率" metric={risk?.volatility.by_method.forward} percent />
-      <Metric label="单日预测波动率" metric={risk?.daily_prediction_volatility} percent />
-    </dl>
-    <div className="mt-4 space-y-2 text-sm text-[var(--gr-text-secondary)]">
-      <p>实际模型：{risk?.model_id || plan.cov.forward_model?.model_id || '未取得完整模型输入'} · 模型日期：{risk?.model_date || '—'} · run：{risk?.model_run_id || '—'}</p>
-      <p>输入解析覆盖率：{(plan.input.calculation_coverage_ratio * 100).toFixed(2)}%（完整输入分母）</p>
-      {coverage && <p>模型持仓覆盖：{coverage.covered_count} / {coverage.total_count}，覆盖权重 {Number(coverage.covered_weight).toLocaleString('zh-CN', { style: 'percent', maximumFractionDigits: 4 })}；{coverage.reason || (coverage.status === 'complete' ? '全部正权重持仓有效' : '完整组合风险不可用')}</p>}
-      {risk?.calibrated === false && <p className="rounded-md bg-amber-500/10 p-3 text-amber-400">calibrated=false：当前结果依据指定日期、同一模型 run 及已验收证券清单的单日方差和波动率证据；全区间校准尚未完成，不代表已验证收益归因或其他风险指标。</p>}
-      {plan.input.unresolved_weight > 0 && <p>未解析权重 {(plan.input.unresolved_weight * 100).toFixed(4)}%。不会把剩余持仓当作完整组合输出风险。</p>}
-    </div>
-    {!!coverage?.missing.length && <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><caption className="mb-2 text-left font-medium">必要风险输入缺口</caption><thead><tr><th className="p-2">证券</th><th className="p-2">权重</th><th className="p-2">原因</th></tr></thead><tbody>{coverage.missing.map((item, index) => <tr key={`${item.symbol}-${index}`} className="border-t border-[var(--gr-border)]"><td className="p-2">{item.symbol}</td><td className="p-2">{Number(item.weight).toLocaleString('zh-CN', { style: 'percent', maximumFractionDigits: 4 })}</td><td className="p-2">{item.reason}</td></tr>)}</tbody></table></div>}
-    <details className="mt-4 text-sm"><summary className="cursor-pointer">查看服务端持仓解析与权重</summary><div className="mt-2 overflow-x-auto"><table className="w-full text-left"><thead><tr><th className="p-2">输入代码</th><th className="p-2">原始权重</th><th className="p-2">解析</th><th className="p-2">状态</th></tr></thead><tbody>{plan.input.holdings.map(row => <tr key={row.input_index} className="border-t border-[var(--gr-border)]"><td className="p-2">{row.input_symbol}</td><td className="p-2">{row.input_weight ?? '等权'}</td><td className="p-2">{row.name || row.normalized_symbol}</td><td className="p-2">{row.status}</td></tr>)}</tbody></table></div></details>
-  </section>
 }
 
 function PlanEditor({ index, control, register, errors, busy, onRemove, onCopy, removable, copyable }: {
@@ -122,7 +104,6 @@ function PlanEditor({ index, control, register, errors, busy, onRemove, onCopy, 
 function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sessionSignal: AbortSignal }) {
   const [snapshotId, setSnapshotId] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState<{ body: SnapshotRequest; key: string } | null>(null)
-  const [showReport, setShowReport] = useState(false)
   const form = useForm<EditorValues>({ resolver: zodResolver(editorSchema), defaultValues: { plans: [{ plan_id: 'plan_1', label: '', holdings: [{ symbol: '', weight: '' }] }] } })
   const plans = useFieldArray({ control: form.control, name: 'plans' })
   const published = useQuery({ queryKey: ['diagnosis', sessionId, 'published-options'], queryFn: ({ signal }) => getPublishedOptions(signal), retry: false, staleTime: 0, refetchOnWindowFocus: true })
@@ -130,7 +111,7 @@ function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sess
     mutationFn: ({ body, key }: { body: SnapshotRequest; key: string }) => createSnapshot(body, key, sessionSignal),
     retry: false,
     gcTime: 0,
-    onSuccess: data => { if (!sessionSignal.aborted) { setSnapshotId(data.snapshot_id); setShowReport(false) } },
+    onSuccess: data => { if (!sessionSignal.aborted) { setSnapshotId(data.snapshot_id) } },
   })
   const result = useQuery({
     queryKey: ['diagnosis', sessionId, 'result', snapshotId],
@@ -142,13 +123,22 @@ function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sess
   })
   const complete: DiagnosisResult | undefined = result.data && 'comparison' in result.data ? result.data : undefined
   const report = useQuery({
-    queryKey: ['diagnosis', sessionId, 'report', snapshotId],
-    queryFn: ({ signal }) => getDiagnosisReport(snapshotId!, 'retail', signal),
-    enabled: showReport && !!complete,
+    queryKey: ['diagnosis', sessionId, 'report', snapshotId, 'retail', 'holdings'],
+    queryFn: ({ signal }) => getDiagnosisReport(snapshotId!, 'retail', signal, 'holdings'),
+    enabled: !!complete && snapshotId !== null,
     retry: false,
     gcTime: 0,
     refetchInterval: query => query.state.data?.run_status === 'pending' || query.state.data?.run_status === 'running' ? 1000 : false,
   })
+  const quality = useQuery({
+    queryKey: ['diagnosis', sessionId, 'data-quality', snapshotId],
+    queryFn: ({ signal }) => getDiagnosisDataQuality(snapshotId!, signal),
+    enabled: !!complete && snapshotId !== null,
+    retry: false,
+    gcTime: 0,
+  })
+  const readyReport: ReportResponse | undefined = report.data && 'sections' in report.data ? report.data : undefined
+  const readyQuality = quality.data && 'data_quality' in quality.data ? quality.data.data_quality : undefined
   const busy = mutation.isPending || result.isFetching && !complete || result.data?.run_status === 'pending' || result.data?.run_status === 'running'
   function submit(values: EditorValues) {
     const body: SnapshotRequest = { plans: buildSnapshotPlans(values.plans), ...(published.data ? { as_of_date: published.data.as_of_date } : {}) }
@@ -156,7 +146,6 @@ function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sess
     setSubmitted(submission)
     form.reset(values)
     setSnapshotId(null)
-    setShowReport(false)
     mutation.mutate(submission)
   }
   function template() {
@@ -183,13 +172,18 @@ function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sess
     {snapshotId && !complete && !result.isError && <p role="status" className="text-sm">正在取得计算结果…</p>}
     {complete && form.formState.isDirty && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-400">持仓或权重已修改。下方为上次提交的结果，请点击“按当前完整持仓再次计算”更新。</p>}
     {complete && !result.isError && <div className="space-y-5" aria-live="polite">
-      <section className={PANEL}><h2 className="text-lg font-semibold">本次计算结果</h2><div className="mt-3 space-y-1 break-all text-sm text-[var(--gr-text-secondary)]"><p>实际数据日期：{complete.as_of_date} · 发布版本：{complete.data_fingerprint}</p><p>口径：{complete.spec_version} · 快照：{complete.snapshot_id}</p><p>发布状态：{complete.publication?.status || '未披露'}；原结果可重算：{complete.publication?.recomputable ? '是' : '否'}</p></div>{complete.publication?.status === 'invalidated' && <p role="alert" className="mt-3 text-sm text-amber-400">此版本已失效，以下为已保存的原结果。原版本不可重算，请用当前持仓提交新的诊断。</p>}<Button type="button" variant="outline" className="mt-3" onClick={() => setShowReport(value => !value)}><FileText />{showReport ? '收起报告说明' : '读取报告说明'}</Button></section>
-      {complete.plans.map(plan => <PlanRisk key={plan.plan_id} plan={plan} />)}
-      <section className={PANEL}><h3 className="font-semibold">数据与验收说明</h3><ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-[var(--gr-text-secondary)]">{complete.disclosures.map((text, index) => <li key={index}>{text}</li>)}</ul></section>
+      <section className={PANEL}>
+        <h2 className="text-lg font-semibold">诊断报告</h2>
+        <div className="mt-3 space-y-1 break-all text-sm text-[var(--gr-text-secondary)]">
+          <p>实际数据日期：{complete.as_of_date} · 发布版本：{complete.data_fingerprint}</p>
+          <p>口径：{complete.spec_version} · 快照：{complete.snapshot_id}</p>
+          <p>发布状态：{complete.publication?.status || '未披露'}；原结果可重算：{complete.publication?.recomputable ? '是' : '否'}</p>
+        </div>
+        {complete.publication?.status === 'invalidated' && <p role="alert" className="mt-3 text-sm text-amber-400">此版本已失效，以下为已保存的原结果。原版本不可重算，请用当前持仓提交新的诊断。</p>}
+        {report.isError && <p role="alert" className="mt-3 text-sm text-red-400">读取报告失败：{errorMessage(report.error)}</p>}
+      </section>
+      <HoldingsReport result={complete} report={readyReport} dataQuality={readyQuality} />
     </div>}
-    {showReport && report.isLoading && <p role="status">正在读取报告…</p>}
-    {showReport && report.isError && <p role="alert" className="text-sm text-red-400">{errorMessage(report.error)}</p>}
-    {showReport && report.data && 'disclosures' in report.data && !report.isError && <section className={PANEL}><h3 className="font-semibold">已保存报告说明</h3><p className="mt-2 text-sm text-[var(--gr-text-secondary)]">报告日期：{report.data.as_of_date} · 版本：{report.data.data_fingerprint}</p><ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-[var(--gr-text-secondary)]">{report.data.disclosures.map((text, index) => <li key={index}>{text}</li>)}</ul></section>}
   </div>
 }
 

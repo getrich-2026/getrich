@@ -2441,10 +2441,13 @@ async def get_report(
     *,
     user_id: str | None,
     user_level: str | None = None,
+    detail: str | None = None,
 ) -> dict[str, Any]:
     """只读取已固定的终态，渲染偏好不进入计算或缓存。"""
     result, labels = await _load_result(db, snapshot_id, user_id=user_id)
-    return presentation.report(result, user_level or "retail", industry_labels=labels)
+    return presentation.report(
+        result, user_level or "retail", industry_labels=labels, detail=detail
+    )
 
 
 # ===========================================================================

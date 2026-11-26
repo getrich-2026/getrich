@@ -485,3 +485,14 @@ PG_DB=getrich_v2 uv run python -m gr_api.replay_cli \
 ```
 
 回放命令在只读事务中读取当前已验证的证券与行情。API 从固定发布的 `available_options.replay` 解析覆盖范围和数据摘要。请求省略建仓起点时以最近 252 个完整日收益为目标，选取起始估值日后保留逐日股数、现金和应收分红。报告将曲线放在 `replay_chart`，并在 `section_c` 返回历史波动率、组合 Beta、基准相关性、回撤及历史 VaR/CVaR。已发布快照以指定基准的内容版本重算。仅有原始文件或迁移成功，还需要完成发布准入才能通过 API 读取这些指标。
+
+
+## 批次 A · 持仓仓位与风险贡献对照及分享白名单（2026-11-25）
+
+- **私有详情报告参数**：已认证的 `GET /v1/diagnosis/snapshots/{snapshot_id}/report` 新增可选查询参数 `detail=holdings`（非法值返回 422）。缺省调用与原有契约完全兼容，不输出新块。
+- **`holding_risk_comparison` 私有块**：仅当 `detail=holdings` 时，按方案挂载于 `{plan_id}:risk` 区块首位，只消费该快照已固定的 `input`、`section_a` 与 `section_b`，不查询最新行情或重跑模型：
+  - `stocks` / `industries` 均采用 `MetricValue` 三态结构；逐股与行业行均包含小数份额 `capital_weight`（模型采用的 8 位量化资金权重）、`risk_share`（保留符号）与 `risk_share_minus_weight`（`risk_share - capital_weight`，按未舍入值降序排列，前端格式化为百分点一次）；
+  - 核验要求存在已准入 `risk_contribution_ratio` 声明、完整输入无未识别正份额、`model_coverage.status == "complete"`、冻结 `calculation_holdings` 与快照生成规则一致、且完整组合逐股风险贡献份额在 `1e-4` 容差内合计为 100%（允许单股为负或超过 1）；极小正权重量化归零时通过 `quantized_zero_count` / `quantized_zero_weight` 披露，不虚构风险份额；
+  - 行业对照要求冻结 `instrument_facts` 与冻结 `industry_distribution` 对账一致；7.2 以前缺逐股行业的老快照返回 `industries.status = "unavailable" (data_not_validated)`，逐股对照照常展示；
+  - 派生项不改变 `PAYLOAD_SCHEMA_VERSION` 与 v4 固定的 12 项模型指标白名单。
+- **分享报告双层白名单**：`GET /v1/diagnosis/share/{token}/report` 经 `project_shared_report` 按 `section.kind × block.type × 组合级 metric_id / 固定公开文案` 双层白名单投影，保留 `disclosures` 与组合级统计，严格剥离 `instrument` 区块、`holdings`、`holding_risk_comparison`、`correlation_matrix`、逐股卡片及含个股代码/权重的缺口文本；所有不可用/降级原因（含回放截断原因）按 `reason_code` 生成公开说明（仅保留中止日期与通用中止类型，不透传 `instrument_id` 或股票标识），并对特质风险标签做组合级脱敏。

@@ -37,7 +37,21 @@ export type Intent =
   | 'rebalance_holding'
   | 'multi_portfolio'
 
-export type RiskMetric = 'annual_variance' | 'volatility' | 'daily_prediction_volatility'
+export type RiskMetric =
+  | 'annual_variance'
+  | 'volatility'
+  | 'daily_prediction_volatility'
+  | 'risk_contribution'
+  | 'risk_contribution_ratio'
+  | 'marginal_risk_contribution'
+  | 'l3_effective_count'
+  | 'l4_effective_count'
+  | 'l4_market_source_share'
+  | 'l4_largest_source'
+  | 'style_exposure'
+  | 'model_correlation'
+
+export type ReportDetail = 'holdings'
 
 export interface SnapshotRequest {
   metrics?: RiskMetric[]
@@ -256,6 +270,8 @@ export interface MaxIndustry {
 }
 
 export interface InstrumentFacts {
+  industry_code?: string | null
+  industry_name?: string | null
   /** 亿元 */
   total_mv_yi: MetricValue<number>
   pb: MetricValue<number>
@@ -271,6 +287,7 @@ export interface ExposureMetrics {
   hhi: MetricValue<number>
   l1_count: MetricValue<number>
   l2_effective_count: MetricValue<number>
+  industry_labels?: Record<string, string>
   industry_distribution: MetricValue<Record<string, number>>
   max_industry: MetricValue<MaxIndustry>
   market_distribution: MetricValue<Record<string, number>>
@@ -529,6 +546,36 @@ export interface MetricCardItem {
   decimals: number
 }
 
+export interface HoldingRiskStockRow {
+  instrument_id: number
+  symbol: string
+  name: string
+  capital_weight: number
+  risk_share: number
+  risk_share_minus_weight: number
+}
+
+export interface HoldingRiskIndustryRow {
+  industry_code: string
+  industry_name: string
+  capital_weight: number
+  risk_share: number
+  risk_share_minus_weight: number
+}
+
+export interface HoldingRiskComparisonBlock {
+  type: 'holding_risk_comparison'
+  headline: string | null
+  stocks: MetricValue<HoldingRiskStockRow[]>
+  industries: MetricValue<HoldingRiskIndustryRow[]>
+  quantized_zero_count: number
+  quantized_zero_weight: string
+  model_id: string | null
+  model_date: string | null
+  model_run_id: string | null
+  calibrated: boolean | null
+}
+
 export type ReportBlock =
   | { type: 'text'; text: string }
   | { type: 'metric_cards'; items: MetricCardItem[] }
@@ -541,6 +588,7 @@ export type ReportBlock =
   | { type: 'correlation_matrix'; labels: Record<string, string>; values: CorrelationBlock }
   | { type: 'holdings'; input: PlanInputSummary }
   | { type: 'replay_chart'; values: MetricValue<ReplaySeries>; stats_window: DateRange | null }
+  | HoldingRiskComparisonBlock
 
 export type ReportSectionKind =
   | 'profile'

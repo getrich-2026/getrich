@@ -7,6 +7,7 @@ import type {
   ErrorInfo,
   PublishedOptionsResponse,
   RecomputeRequest,
+  ReportDetail,
   ReportResponse,
   SnapshotAccepted,
   SnapshotProgress,
@@ -47,15 +48,21 @@ export const recomputeSnapshot = (
 export const getDiagnosisResult = (snapshotId: string, signal?: AbortSignal) =>
   http.get<DiagnosisResult | SnapshotProgress>(`/diagnosis/snapshots/${snapshotId}/result`, { signal })
 
-export const getDiagnosisReport = (snapshotId: string, userLevel: UserLevel, signal?: AbortSignal) =>
+export const getDiagnosisReport = (
+  snapshotId: string,
+  userLevel: UserLevel,
+  signal?: AbortSignal,
+  detail?: ReportDetail,
+) =>
   http.get<ReportResponse | SnapshotProgress>(`/diagnosis/snapshots/${snapshotId}/report`, {
-    params: { user_level: userLevel },
+    params: detail ? { user_level: userLevel, detail } : { user_level: userLevel },
     signal,
   })
 
-export const getDiagnosisDataQuality = (snapshotId: string) =>
+export const getDiagnosisDataQuality = (snapshotId: string, signal?: AbortSignal) =>
   http.get<DataQualityResponse | SnapshotProgress>(
     `/diagnosis/snapshots/${snapshotId}/data-quality`,
+    { signal },
   )
 
 export const getPublishedOptions = (signal?: AbortSignal) =>

@@ -540,21 +540,12 @@ def test_rebalance_report_and_shared_report_validate_and_gate_v3_vs_v4(intent: s
         assert div_cards["style_exposure:size"]["label"] == "风格暴露：市值"
         assert div_cards["style_exposure:momentum"]["label"] == "风格暴露：动量"
 
-        # 分享白名单校验
-        shared = SharedReportResponse.model_validate(
-            {
-                "report_mode": rep["report_mode"],
-                "disclosures": rep["disclosures"],
-                "sections": [
-                    {"title": s["title"], "content": s["content"]}
-                    for s in rep["sections"]
-                    if s["kind"] != "instrument"
-                ],
-            }
-        )
+        # 分享双层白名单校验
+        shared = SharedReportResponse.model_validate(view.project_shared_report(rep))
         assert any(
             s.title == "方案比较" and s.content.root.status == "ready" for s in shared.sections
         )
+        assert shared.disclosures == rep["disclosures"]
 
     # v3 快照仍严格屏蔽 L4 / 风格 / 模型相关性
     v3_row = _build_plan_row(

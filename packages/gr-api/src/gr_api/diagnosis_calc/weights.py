@@ -177,3 +177,107 @@ def normalize_plan(rows: Sequence[InputRow]) -> NormalizedPlan:
         "normalized_within_resolved_subset": unresolved_share > 0,
     }
     return NormalizedPlan(weight_mode=weight_mode, summary=summary, quantized=positive)
+
+
+def input_weights(summary: Mapping[str, Any]) -> tuple[dict[int, Decimal], list[dict[str, Any]]]:
+    """从固定输入回显还原完整分母份额，未识别项仍占分母，重复项合并。"""
+    grouped: dict[int | str, dict[str, Any]] = {}
+    for row in summary["holdings"]:
+        key = row["instrument_id"] if row["instrument_id"] is not None else row["normalized_symbol"]
+        weight = (
+            Decimal(row["input_weight"] or "0") if summary["weight_mode"] == "user" else Decimal(1)
+        )
+        item = grouped.setdefault(
+            key,
+            {
+                "instrument_id": row["instrument_id"],
+                "symbol": row["normalized_symbol"],
+                "raw": Decimal(0),
+            },
+        )
+        if summary["weight_mode"] == "user":
+            item["raw"] += weight
+        else:
+            item["raw"] = Decimal(1)
+    total = sum((x["raw"] for x in grouped.values()), Decimal(0))
+    weights: dict[int, Decimal] = {}
+    missing = []
+    for item in grouped.values():
+        if item["raw"] <= 0:
+            continue
+        weight = item["raw"] / total
+        if item["instrument_id"] is None:
+            missing.append(
+                {
+                    "instrument_id": None,
+                    "symbol": item["symbol"],
+                    "weight": format(weight, "f"),
+                    "reason": "unresolved_symbol",
+                }
+            )
+        else:
+            weights[item["instrument_id"]] = weight
+    return weights, missing
+
+
+def snapshot_input_shares(
+    summary: Mapping[str, Any],
+) -> tuple[dict[int, Decimal], list[dict[str, Any]]]:
+    """按 ``normalize_plan`` 的逐行归一化顺序还原完整输入份额，用于复核已冻结快照。
+
+    显式权重模式先逐行除以总权重再按标的累加，与 ``normalize_plan`` 在 28 位 Decimal
+    精度的末位舍入完全一致；等权模式按去重标的等分。
+    """
+    weight_mode = summary["weight_mode"]
+    holdings = summary["holdings"]
+    shares: dict[int | str, Decimal] = {}
+    symbols: dict[int | str, str] = {}
+
+    if weight_mode == "user":
+        total = sum((Decimal(row["input_weight"] or "0") for row in holdings), Decimal(0))
+        if total > 0:
+            for row in holdings:
+                raw_w = Decimal(row["input_weight"] or "0")
+                if raw_w <= 0:
+                    continue
+                key: int | str = (
+                    int(row["instrument_id"])
+                    if row["instrument_id"] is not None
+                    else str(row["normalized_symbol"])
+                )
+                symbols.setdefault(key, str(row["normalized_symbol"]))
+                shares[key] = shares.get(key, Decimal(0)) + raw_w / total
+    else:
+        ordered_keys: list[int | str] = []
+        seen: set[int | str] = set()
+        for row in holdings:
+            key = (
+                int(row["instrument_id"])
+                if row["instrument_id"] is not None
+                else str(row["normalized_symbol"])
+            )
+            if key not in seen:
+                seen.add(key)
+                ordered_keys.append(key)
+                symbols[key] = str(row["normalized_symbol"])
+        if ordered_keys:
+            each = Decimal(1) / Decimal(len(ordered_keys))
+            shares = dict.fromkeys(ordered_keys, each)
+
+    weights: dict[int, Decimal] = {}
+    missing: list[dict[str, Any]] = []
+    for key, share in shares.items():
+        if share <= 0:
+            continue
+        if isinstance(key, int):
+            weights[key] = share
+        else:
+            missing.append(
+                {
+                    "instrument_id": None,
+                    "symbol": symbols[key],
+                    "weight": format(share, "f"),
+                    "reason": "unresolved_symbol",
+                }
+            )
+    return weights, missing
