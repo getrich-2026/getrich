@@ -960,6 +960,143 @@ def _comparison_blocks(
     return blocks
 
 
+def _history_blocks(
+    values: dict[str, Any],
+    stats_window: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """渲染 C 区：回放说明、净值曲线、回撤路径文字解读、同期收益差与历史风险卡片。"""
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                "这篮子股票的假设历史回放（建仓后买入持有、权重自然漂移、"
+                "税前分红再投资、小数股、现金不计息、未扣交易成本）。"
+            ),
+        },
+        {
+            "type": "replay_chart",
+            "values": values["replay"],
+            "stats_window": stats_window,
+        },
+    ]
+
+    drawdown = values["max_drawdown"]
+    if has_value(drawdown):
+        dd = drawdown["value"]
+        if dd["value"] == 0:
+            dd_text = "最大回撤路径：窗口内无回撤。"
+        else:
+            pct = f"{dd['value'] * 100:.2f}%"
+            if dd.get("recovery_date"):
+                dd_text = (
+                    f"最大回撤路径：最大回撤 {pct}，峰值日 {dd['peak_date']}，"
+                    f"谷底日 {dd['trough_date']}，恢复日 {dd['recovery_date']}，"
+                    f"持续 {dd['duration_days']} 个交易日间隔。"
+                )
+            else:
+                end_day = (
+                    (drawdown.get("window_actual") or {}).get("end")
+                    or (stats_window or {}).get("end")
+                    or dd["trough_date"]
+                )
+                dd_text = (
+                    f"最大回撤路径：最大回撤 {pct}，峰值日 {dd['peak_date']}，"
+                    f"谷底日 {dd['trough_date']}，截至 {end_day} 尚未恢复，"
+                    f"持续 {dd['duration_days']} 个交易日间隔。"
+                )
+        if drawdown["status"] == "degraded":
+            dd_text += "（统计区间不足 120 个收盘点，回撤可能低估。）"
+        blocks.append({"type": "text", "text": dd_text})
+    else:
+        blocks.append({"type": "text", "text": f"最大回撤路径不可用：{drawdown['reason']}"})
+
+    cards = [
+        _card(key, label, values[key], fmt, 2)
+        for key, label, fmt in (
+            ("replay_volatility", "历史回放年化波动率", "percent"),
+            ("portfolio_beta", "组合 Beta", "number"),
+            ("portfolio_benchmark_correlation", "与基准的相关性", "number"),
+            ("current_drawdown", "当前回撤", "percent"),
+            ("var", "历史回放单日 VaR（95%）", "percent"),
+            ("cvar", "历史回放单日 CVaR（95%）", "percent"),
+        )
+    ]
+    drawdown_card = (
+        {**drawdown, "value": drawdown["value"]["value"]} if has_value(drawdown) else drawdown
+    )
+    cards.append(_card("max_drawdown", "最大回撤", drawdown_card, "percent", 2))
+
+    comparison = values.get("period_comparison")
+    if comparison is not None:
+        if has_value(comparison):
+            pv = comparison["value"]
+            wa = comparison.get("window_actual") or {}
+            diff_pp = pv["return_difference"] * 100
+            sign = "+" if diff_pp > 0 else ""
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"同期累计收益对照（{wa.get('start', '')} 至 {wa.get('end', '')}，"
+                        f"共 {comparison.get('sample_count', 0)} 个交易日收益）："
+                        f"组合累计收益 {pv['portfolio_simple_return'] * 100:.2f}%，"
+                        f"基准 {pv['benchmark_name']}（{pv['benchmark_symbol']}）"
+                        f"累计收益 {pv['benchmark_simple_return'] * 100:.2f}%，"
+                        f"差值 {sign}{diff_pp:.2f} 个百分点。"
+                    ),
+                }
+            )
+            cards.extend(
+                [
+                    _card(
+                        "period_portfolio_return",
+                        "统计区间组合累计收益",
+                        {**comparison, "value": pv["portfolio_simple_return"]},
+                        "percent",
+                        2,
+                    ),
+                    _card(
+                        "period_benchmark_return",
+                        f"统计区间基准累计收益（{pv['benchmark_name']}）",
+                        {**comparison, "value": pv["benchmark_simple_return"]},
+                        "percent",
+                        2,
+                    ),
+                    _card(
+                        "period_return_difference",
+                        "同期收益差（组合 − 基准）",
+                        {**comparison, "value": pv["return_difference"]},
+                        "percentage_point",
+                        2,
+                    ),
+                ]
+            )
+        else:
+            blocks.append(
+                {"type": "text", "text": f"同期累计收益对照不可用：{comparison['reason']}"}
+            )
+            cards.extend(
+                [
+                    _card(
+                        "period_portfolio_return", "统计区间组合累计收益", comparison, "percent", 2
+                    ),
+                    _card(
+                        "period_benchmark_return", "统计区间基准累计收益", comparison, "percent", 2
+                    ),
+                    _card(
+                        "period_return_difference",
+                        "同期收益差（组合 − 基准）",
+                        comparison,
+                        "percentage_point",
+                        2,
+                    ),
+                ]
+            )
+
+    blocks.append({"type": "metric_cards", "items": cards})
+    return blocks
+
+
 def report(
     result: dict[str, Any],
     level: str = "retail",
@@ -1036,32 +1173,7 @@ def report(
         add(pid, "risk", "风险画像", risk_content)
         history = p["section_c"]
         if history["status"] == "ready":
-            values = history["value"]
-            cards = [
-                _card(key, label, values[key], fmt, 2)
-                for key, label, fmt in (
-                    ("replay_volatility", "历史回放年化波动率", "percent"),
-                    ("portfolio_beta", "组合 Beta", "number"),
-                    ("portfolio_benchmark_correlation", "与基准的相关性", "number"),
-                    ("current_drawdown", "当前回撤", "percent"),
-                    ("var", "历史回放单日 VaR（95%）", "percent"),
-                    ("cvar", "历史回放单日 CVaR（95%）", "percent"),
-                )
-            ]
-            drawdown = values["max_drawdown"]
-            if has_value(drawdown):
-                drawdown = {**drawdown, "value": drawdown["value"]["value"]}
-            cards.append(_card("max_drawdown", "最大回撤", drawdown, "percent", 2))
-            history = ready(
-                [
-                    {
-                        "type": "replay_chart",
-                        "values": values["replay"],
-                        "stats_window": result["options"]["stats_window"],
-                    },
-                    {"type": "metric_cards", "items": cards},
-                ]
-            )
+            history = ready(_history_blocks(history["value"], result["options"]["stats_window"]))
         add(pid, "style", "历史回放与分位", history, "history")
         d = p["section_d"]
         add(
@@ -1144,6 +1256,9 @@ _SHARED_STYLE_CARDS = frozenset(
         "var",
         "cvar",
         "max_drawdown",
+        "period_portfolio_return",
+        "period_benchmark_return",
+        "period_return_difference",
     }
 )
 _SHARED_SAFE_RISK_TEXT_PREFIXES = (
@@ -1297,3 +1412,55 @@ def project_shared_report(report_data: dict[str, Any]) -> dict[str, Any]:
             "sections": projected_sections,
         }
     ).model_dump(mode="json")
+
+
+def project_public_options(
+    available_options: dict[str, Any] | None,
+    publication_scope: dict[str, Any],
+) -> dict[str, Any]:
+    """按白名单投影 ``GET /v1/diagnosis/options`` 的 ``available_options``。
+
+    客户端仅拿到界面与请求构造所需的公开摘要，避免逐股 ``dividend_sha256``、
+    ``dividend_signatures``、``delist_dates`` 或私有原件路径随扩面膨胀和外泄。
+    """
+    source = available_options if isinstance(available_options, dict) else {}
+    projected: dict[str, Any] = {"publication_scope": deepcopy(publication_scope)}
+
+    schemes = source.get("industry_schemes")
+    if isinstance(schemes, list):
+        projected["industry_schemes"] = [str(item) for item in schemes]
+
+    benchmarks = source.get("benchmarks")
+    if isinstance(benchmarks, list):
+        public_benchmarks = []
+        for item in benchmarks:
+            if not isinstance(item, dict):
+                continue
+            entry: dict[str, Any] = {}
+            for key in ("instrument_id", "symbol", "name", "version"):
+                if key in item and item[key] is not None:
+                    entry[key] = item[key]
+            if entry:
+                public_benchmarks.append(entry)
+        projected["benchmarks"] = public_benchmarks
+
+    replay = source.get("replay")
+    if isinstance(replay, dict):
+        hashes = replay.get("dividend_sha256")
+        covered_count = len(hashes) if isinstance(hashes, dict) else 0
+        projected["replay"] = {
+            "available": covered_count > 0 and bool(replay.get("version")),
+            "version": replay.get("version"),
+            "through_date": replay.get("through_date"),
+            "covered_count": covered_count,
+        }
+
+    bench_ind = source.get("benchmark_industry")
+    if isinstance(bench_ind, dict):
+        projected["benchmark_industry"] = {
+            key: bench_ind[key]
+            for key in ("benchmark_symbol", "effective_date", "status")
+            if key in bench_ind
+        }
+
+    return projected

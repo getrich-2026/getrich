@@ -29,6 +29,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--artifact", type=Path, help="单日阶段A产物目录；apply时必填")
     parser.add_argument("--reuse-raw", type=Path, help="复用完整原件，仍重新执行只读预检")
     parser.add_argument(
+        "--replay-bundle",
+        type=Path,
+        help="可选回放证据包目录（含分红、退市全集及可选全收益基准原件）",
+    )
+    parser.add_argument(
         "--probe-upstream",
         action="store_true",
         help="采集前轻量探测米筐同日 v2 暴露是否就绪；未就绪时零写退出 0",
@@ -111,7 +116,13 @@ def run(args: argparse.Namespace, cfg: Config) -> int:
                         print(json.dumps(pending_result, ensure_ascii=False))
                         return 0
                 prepared = prepare(
-                    pg, artifact, args.day, tushare=ts, ricequant=rq, reuse_raw=args.reuse_raw
+                    pg,
+                    artifact,
+                    args.day,
+                    tushare=ts,
+                    ricequant=rq,
+                    reuse_raw=args.reuse_raw,
+                    replay_bundle=getattr(args, "replay_bundle", None),
                 )
                 result = {
                     "status": "ready",

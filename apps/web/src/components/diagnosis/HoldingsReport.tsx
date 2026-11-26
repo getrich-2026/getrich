@@ -1,6 +1,7 @@
 import type {
   DataQualityReport,
   DiagnosisResult,
+  HistorySection,
   HoldingRiskComparisonBlock,
   HoldingRiskIndustryRow,
   HoldingRiskStockRow,
@@ -8,6 +9,7 @@ import type {
   PlanDataQuality,
   PlanResult,
   ReportResponse,
+  SectionResult,
 } from '@/types/diagnosis'
 
 const PANEL = 'rounded-xl border border-[var(--gr-border)] bg-[var(--gr-bg-card)] p-5'
@@ -136,16 +138,173 @@ function IndustryTable({ rows }: { rows: HoldingRiskIndustryRow[] }) {
   )
 }
 
+function HistoryReplaySummary({
+  section,
+  statsWindow,
+}: {
+  section: SectionResult<HistorySection>
+  statsWindow: { start: string; end: string } | null
+}) {
+  if (section.status === 'failed') {
+    return (
+      <div className="mt-4 rounded-lg border border-red-400/30 bg-red-400/10 p-3.5 text-xs text-red-300">
+        <p className="font-medium">历史回放计算失败</p>
+        <p className="mt-1">{section.error.message}</p>
+      </div>
+    )
+  }
+  if (section.status === 'unavailable') {
+    return (
+      <div className="mt-4 rounded-lg border border-[var(--gr-border)] p-3.5 text-xs text-[var(--gr-text-secondary)]">
+        <p className="font-medium text-[var(--gr-text-primary)]">历史回放与基准对照暂不可用</p>
+        <p className="mt-1">
+          {section.reason}（{section.reason_code}）
+        </p>
+      </div>
+    )
+  }
+
+  const history = section.value
+  const replay = history.replay
+  const drawdown = history.max_drawdown
+  const comparison = history.period_comparison ?? null
+  const series = replay.status !== 'unavailable' ? replay.value : null
+  const lastNav = series && series.nav.length > 0 ? series.nav[series.nav.length - 1] : null
+  const lastDate = series && series.dates.length > 0 ? series.dates[series.dates.length - 1] : null
+
+  return (
+    <div className="mt-4 rounded-lg border border-[var(--gr-border)] bg-white/[0.02] p-4 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-[var(--gr-text-secondary)]">
+          历史回放、回撤路径与同窗基准对照
+        </p>
+        <span className="text-xs text-[var(--gr-text-secondary)]">
+          {statsWindow ? `统计区间：${statsWindow.start} ～ ${statsWindow.end}` : '统计区间：—'}
+          {series ? ` · 建仓起算：${series.build_start}（共 ${series.dates.length} 个交易日收盘）` : ''}
+        </span>
+      </div>
+
+      <p className="text-xs text-[var(--gr-text-secondary)]">
+        这篮子股票的假设历史回放：按输入权重建仓后买入持有、权重自然漂移、税前分红再投资、小数股、现金不计息、未扣交易成本。
+        {lastNav !== null && lastDate ? ` 末日净值 ${lastNav.toFixed(4)}（${lastDate}）。` : ''}
+      </p>
+
+      {series?.truncated_at && (
+        <p role="status" className="rounded-md bg-amber-500/10 p-2.5 text-xs text-amber-400">
+          回放截断提示：曲线止于最后可靠收盘 {series.truncated_at}（原因：{series.termination_reason}）。
+          {replay.status === 'degraded' ? ` ${replay.reason}` : ''}
+        </p>
+      )}
+
+      {series && series.unexecuted.length > 0 && (
+        <p className="text-xs text-amber-400">
+          未成交买入提示：区间结束仍有 {series.unexecuted.length} 笔预留现金因停牌或开盘涨停未能买入。
+        </p>
+      )}
+
+      {/* 最大回撤路径 */}
+      <div className="rounded-md border border-[var(--gr-border)] p-3 text-sm">
+        <p className="text-xs font-medium text-[var(--gr-text-secondary)]">最大回撤路径</p>
+        {drawdown.status !== 'unavailable' ? (
+          <div className="mt-1.5 space-y-1">
+            {drawdown.value.value === 0 ? (
+              <p className="font-medium">窗口内无回撤</p>
+            ) : (
+              <p className="leading-relaxed">
+                最大回撤{' '}
+                <span className="font-semibold tabular-nums">
+                  {formatPercent(drawdown.value.value, 2)}
+                </span>
+                ，峰值日 <span className="font-mono text-xs">{drawdown.value.peak_date}</span>，谷底日{' '}
+                <span className="font-mono text-xs">{drawdown.value.trough_date}</span>，
+                {drawdown.value.recovery_date ? (
+                  <>
+                    恢复日 <span className="font-mono text-xs">{drawdown.value.recovery_date}</span>
+                  </>
+                ) : (
+                  <>
+                    截至{' '}
+                    <span className="font-mono text-xs">
+                      {drawdown.window_actual?.end ?? statsWindow?.end ?? drawdown.value.trough_date}
+                    </span>{' '}
+                    尚未恢复
+                  </>
+                )}
+                ，持续 <span className="font-semibold tabular-nums">{drawdown.value.duration_days}</span>{' '}
+                个交易日间隔。
+              </p>
+            )}
+            {drawdown.status === 'degraded' && (
+              <p className="text-xs text-amber-400">
+                降级说明（{drawdown.reason_code}）：{drawdown.reason}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="mt-1 text-xs text-[var(--gr-text-secondary)]">
+            不可用（{drawdown.reason_code}）：{drawdown.reason}
+          </p>
+        )}
+      </div>
+
+      {/* 同期累计收益差 */}
+      <div className="rounded-md border border-[var(--gr-border)] p-3 text-sm">
+        <p className="text-xs font-medium text-[var(--gr-text-secondary)]">同窗累计收益对照</p>
+        {comparison && comparison.status !== 'unavailable' ? (
+          <div className="mt-2 space-y-2">
+            <dl className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-md border border-[var(--gr-border)] p-2.5">
+                <dt className="text-xs text-[var(--gr-text-secondary)]">组合累计简单收益</dt>
+                <dd className="mt-1 text-lg font-semibold tabular-nums">
+                  {formatPercent(comparison.value.portfolio_simple_return, 2)}
+                </dd>
+              </div>
+              <div className="rounded-md border border-[var(--gr-border)] p-2.5">
+                <dt className="text-xs text-[var(--gr-text-secondary)]">
+                  基准：{comparison.value.benchmark_name}（{comparison.value.benchmark_symbol}）
+                </dt>
+                <dd className="mt-1 text-lg font-semibold tabular-nums">
+                  {formatPercent(comparison.value.benchmark_simple_return, 2)}
+                </dd>
+              </div>
+              <div className="rounded-md border border-[var(--gr-border)] p-2.5">
+                <dt className="text-xs text-[var(--gr-text-secondary)]">同期收益差（组合 − 基准）</dt>
+                <dd
+                  className={`mt-1 text-lg font-semibold tabular-nums ${gapTone(comparison.value.return_difference)}`}
+                >
+                  {formatSignedPercentagePoints(comparison.value.return_difference, 2)}
+                </dd>
+              </div>
+            </dl>
+            <p className="text-xs text-[var(--gr-text-secondary)]">
+              实际首末收盘：{comparison.window_actual?.start ?? '—'} ～{' '}
+              {comparison.window_actual?.end ?? '—'} · 匹配交易日收益数：{comparison.sample_count ?? 0}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-1 text-xs text-[var(--gr-text-secondary)]">
+            {comparison && comparison.status === 'unavailable'
+              ? `暂不可用（${comparison.reason_code}）：${comparison.reason}`
+              : '该历史快照未包含同期收益对照字段。'}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function PlanHoldingReportCard({
   plan,
   comparison,
   quality,
   asOfDate,
+  statsWindow,
 }: {
   plan: PlanResult
   comparison: HoldingRiskComparisonBlock | null
   quality?: PlanDataQuality
   asOfDate: string
+  statsWindow: { start: string; end: string } | null
 }) {
   const risk = plan.section_b.status === 'ready' ? plan.section_b.value : null
   const coverage = risk?.model_coverage
@@ -299,6 +458,9 @@ function PlanHoldingReportCard({
         <p className="mt-3 text-sm text-[var(--gr-text-secondary)]">正在读取结构化报告明细…</p>
       )}
 
+      {/* 历史回放、回撤路径与基准对照 */}
+      <HistoryReplaySummary section={plan.section_c} statsWindow={statsWindow} />
+
       {/* 模型明细（收拢原三个波动/方差数字 + 缺口 + 持仓解析 + 数据质量） */}
       <details className="mt-4 rounded-lg border border-[var(--gr-border)] p-3.5 text-sm">
         <summary className="cursor-pointer font-medium">
@@ -412,6 +574,7 @@ export function HoldingsReport({
           comparison={findComparisonBlock(report, plan.plan_id)}
           quality={qualityByPlan.get(plan.plan_id)}
           asOfDate={result.as_of_date}
+          statsWindow={result.options.stats_window}
         />
       ))}
 

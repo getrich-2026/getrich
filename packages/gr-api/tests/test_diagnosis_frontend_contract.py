@@ -691,10 +691,15 @@ def test_ready_replay_renders_chart_and_numeric_drawdown() -> None:
     report = view.report(result, "retail")
     ReportResponse.model_validate(report)
     history = next(x for x in report["sections"] if x["section_id"] == "mine:history")
-    chart, cards = history["content"]["value"]
+    blocks = history["content"]["value"]
+    chart = next(b for b in blocks if b["type"] == "replay_chart")
+    cards = next(b for b in blocks if b["type"] == "metric_cards")
+    texts = [b["text"] for b in blocks if b["type"] == "text"]
     assert chart["values"]["value"]["nav"] == [1.0, 0.9]
     drawdown = next(x for x in cards["items"] if x["metric_id"] == "max_drawdown")
     assert drawdown["value"]["value"] == -0.1
+    assert any("这篮子股票的假设历史回放" in t for t in texts)
+    assert any("最大回撤路径" in t for t in texts)
 
 
 def test_private_detail_holdings_report_keeps_default_compatible_and_supports_signed_rows(
@@ -883,3 +888,67 @@ def test_private_detail_holdings_multi_plan_signed_and_shared_projection() -> No
     assert "correlation_matrix" not in serialized
     assert any(s["title"] == "构成与敞口" for s in shared["sections"])
     assert any(s["title"] == "方法与数据局限" for s in shared["sections"])
+
+
+def test_public_options_projection_strips_per_stock_replay_hashes_and_scales_o1() -> None:
+    """B2: /options 白名单投影剥除逐股哈希且回放摘要字节数不随股票数增长。"""
+    import json
+
+    scope_obj = {
+        "scope_type": "security_universe",
+        "as_of": "2026-11-24",
+        "model": "v2",
+        "run_id": "run-1",
+        "metrics": ["volatility", "risk_contribution_ratio"],
+        "security_ids": [1, 2, 3],
+        "calibrated": False,
+    }
+
+    def _raw_options(n_stocks: int) -> dict[str, Any]:
+        return {
+            "publication_scope": scope_obj,
+            "industry_schemes": ["sw2021"],
+            "benchmarks": [
+                {
+                    "instrument_id": 40756,
+                    "symbol": "H00300.CSI",
+                    "version": "tushare-tr-" + "a" * 64,
+                    "internal_path": "/private/secret/path",
+                }
+            ],
+            "replay": {
+                "version": "pa12-local-v1",
+                "through_date": "2026-11-24",
+                "delisting_sha256": "b" * 64,
+                "dividend_sha256": {str(i): f"{i:064x}" for i in range(1, n_stocks + 1)},
+                "dividend_signatures": {str(i): [10, f"{i:064x}"] for i in range(1, n_stocks + 1)},
+                "delist_dates": {str(i): None for i in range(1, n_stocks + 1)},
+            },
+            "private_trial_portfolios": [{"owner": "secret"}],
+        }
+
+    small = view.project_public_options(_raw_options(3), scope_obj)
+    large = view.project_public_options(_raw_options(1000), scope_obj)
+    small_json = json.dumps(small, ensure_ascii=False)
+    large_json = json.dumps(large, ensure_ascii=False)
+
+    for forbidden in (
+        "dividend_sha256",
+        "dividend_signatures",
+        "delist_dates",
+        "delisting_sha256",
+        "internal_path",
+        "private_trial_portfolios",
+    ):
+        assert forbidden not in small_json
+        assert forbidden not in large_json
+
+    assert small["replay"] == {
+        "available": True,
+        "version": "pa12-local-v1",
+        "through_date": "2026-11-24",
+        "covered_count": 3,
+    }
+    assert large["replay"]["covered_count"] == 1000
+    # 1000 股的 replay 摘要仅比 3 股多几个数字字符，绝不膨胀至百 KB 级
+    assert abs(len(large_json) - len(small_json)) < 16

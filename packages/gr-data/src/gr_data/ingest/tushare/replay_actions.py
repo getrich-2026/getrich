@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import polars as pl
@@ -17,6 +18,18 @@ from psycopg import sql
 
 from gr_data.common.dates import int_to_date, to_int_date
 from gr_data.common.ownership import OwnershipManager
+from gr_data.ingest.tushare.stock_scope import B_SHARE_EXCEPTIONS, B_SHARE_PATTERN
+
+
+_B_SHARE_RE = re.compile(B_SHARE_PATTERN)
+# Tushare dividend.div_proc 已核实的非实施进度（均未产生除权除息或派息执行）。
+_NON_IMPLEMENTED_DIV_PROCS = frozenset(
+    {"预案", "预披露", "股东大会通过", "股东提议", "停止实施", "股东大会未通过"}
+)
+
+
+def _is_b_share_code(code: str) -> bool:
+    return bool(_B_SHARE_RE.fullmatch(code)) or code in B_SHARE_EXCEPTIONS
 
 
 def _day(value: object) -> date | None:
@@ -49,8 +62,8 @@ def normalize_actions(
             raise ValueError("Missing source symbol")
         if dataset == "dividend":
             if raw["div_proc"] != "实施":
-                if raw["div_proc"] not in {"预案", "预披露", "股东大会通过"}:
-                    raise ValueError("Unknown dividend progress")
+                if raw["div_proc"] not in _NON_IMPLEMENTED_DIV_PROCS:
+                    raise ValueError(f"Unknown dividend progress: {raw['div_proc']}")
                 continue
             key = (symbol, _day(raw["end_date"]), _day(raw["imp_ann_date"]))
             values = tuple(
@@ -206,6 +219,141 @@ def import_actions(
             )
         cur.executemany(stmt, [(ids[r[0]], *r[1:], "tushare", digest) for r in rows])
     return len(rows)
+
+
+def import_admitted_delistings(
+    conn: psycopg.Connection,
+    path: Path,
+    *,
+    audit_path: Path | None = None,
+) -> dict[str, Any]:
+    """核验完整退市全集并仅将已映射沪深 A 股退市记录写入 ``market.stock_delisting``。
+
+    保留原件整份 SHA-256 与分页完整性证明；按 ``meta.symbol_map`` + ``meta.instruments``
+    与 B 股排除规则分流范围外与未映射项并留证。若可写行数为 0 则拒绝开放回放。
+    """
+    content = path.read_bytes()
+    frame = pl.read_parquet(BytesIO(content))
+    digest = sha256(content).hexdigest()
+    observed = read_delisting_coverage(path, frame, digest)
+    rows = normalize_actions(frame, "stock_basic")
+
+    admitted_rows: list[tuple[int, date]] = []
+    delisted_by_id: dict[int, str] = {}
+    out_of_scope: list[dict[str, str]] = []
+    unmapped: list[dict[str, str]] = []
+
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute("LOCK TABLE ops.table_ownership IN SHARE ROW EXCLUSIVE MODE")
+        ownership = OwnershipManager(conn)
+        target = "market.stock_delisting"
+        if ownership.owner(target) is None:
+            ownership.claim(target, "tushare")
+        else:
+            ownership.check(target, "tushare")
+
+        source_symbols = sorted({r[0] for r in rows})
+        cur.execute(
+            """
+            SELECT s.source_symbol, i.instrument_id, i.asset, i.exchange, i.delist_date
+            FROM meta.symbol_map s
+            JOIN meta.instruments i ON i.instrument_id = s.instrument_id
+            WHERE s.source = 'tushare' AND s.source_symbol = ANY(%s)
+            """,
+            (source_symbols,),
+        )
+        mapped: dict[str, list[tuple[int, str, str, date | None]]] = {}
+        for src_sym, iid, asset, exchange, meta_delist in cur.fetchall():
+            mapped.setdefault(str(src_sym), []).append(
+                (int(iid), str(asset), str(exchange), meta_delist)
+            )
+
+        for src_sym, delist_dt in rows:
+            if _is_b_share_code(src_sym):
+                out_of_scope.append(
+                    {"symbol": src_sym, "delist_date": str(delist_dt), "reason": "b_share"}
+                )
+                continue
+            if not src_sym.endswith((".SH", ".SZ")):
+                out_of_scope.append(
+                    {
+                        "symbol": src_sym,
+                        "delist_date": str(delist_dt),
+                        "reason": "unsupported_exchange",
+                    }
+                )
+                continue
+            matches = mapped.get(src_sym) or []
+            if not matches:
+                unmapped.append(
+                    {"symbol": src_sym, "delist_date": str(delist_dt), "reason": "unmapped_symbol"}
+                )
+                continue
+            if len(matches) > 1:
+                raise ValueError(f"Ambiguous Tushare symbol mapping for delisting: {src_sym}")
+            iid, asset, exchange, meta_delist = matches[0]
+            if asset != "stock" or exchange not in {"XSHG", "XSHE"}:
+                out_of_scope.append(
+                    {
+                        "symbol": src_sym,
+                        "delist_date": str(delist_dt),
+                        "reason": f"non_cn_a_stock:{asset}:{exchange}",
+                    }
+                )
+                continue
+            if meta_delist is not None and meta_delist != delist_dt:
+                raise ValueError(
+                    f"Conflicting delisting date for {src_sym}: meta={meta_delist}, raw={delist_dt}"
+                )
+            if iid in delisted_by_id and delisted_by_id[iid] != str(delist_dt):
+                raise ValueError(f"Conflicting delisting dates mapped to instrument_id={iid}")
+            delisted_by_id[iid] = str(delist_dt)
+            admitted_rows.append((iid, delist_dt))
+
+        if not admitted_rows:
+            raise ValueError(
+                "No admitted CN-A delisted stocks can be written from delisting observation"
+            )
+
+        cur.executemany(
+            """
+            INSERT INTO market.stock_delisting (instrument_id, delist_date, source, raw_sha256)
+            VALUES (%s, %s, 'tushare', %s)
+            ON CONFLICT (instrument_id, delist_date, raw_sha256) DO NOTHING
+            """,
+            [(iid, delist_dt, digest) for iid, delist_dt in admitted_rows],
+        )
+        cur.execute(
+            "SELECT count(*) FROM market.stock_delisting WHERE raw_sha256 = %s",
+            (digest,),
+        )
+        verified_row = cur.fetchone()
+        verified_count = int(verified_row[0]) if verified_row else 0
+        if verified_count < 1:
+            raise ValueError("Failed to verify persisted delisting row for observation SHA-256")
+
+    summary: dict[str, Any] = {
+        "raw_sha256": digest,
+        "observed_at": observed.isoformat(),
+        "total_rows": len(rows),
+        "admitted_count": len(delisted_by_id),
+        "verified_db_rows": verified_count,
+        "out_of_scope_count": len(out_of_scope),
+        "unmapped_count": len(unmapped),
+        "delisted_by_id": {str(k): v for k, v in sorted(delisted_by_id.items())},
+    }
+    if audit_path is not None:
+        audit_payload = {
+            **{k: v for k, v in summary.items() if k != "delisted_by_id"},
+            "out_of_scope": out_of_scope,
+            "unmapped": unmapped,
+        }
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        audit_path.write_text(
+            json.dumps(audit_payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    return summary
 
 
 def main() -> None:

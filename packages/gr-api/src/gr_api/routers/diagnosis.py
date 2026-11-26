@@ -463,6 +463,7 @@ async def get_options(
     if not publication.enabled.get():
         raise BadRequest("diagnostic publication reading is disabled", http_status=503)
     version = await publication.require_publication(db)
+    from gr_api.services import diagnosis_presentation as presentation
     from gr_api.services.diagnosis_scope import scope
 
     declared = scope(version)
@@ -472,7 +473,9 @@ async def get_options(
             "data_version_id": version["data_version_id"],
             "as_of_date": version["as_of_date"],
             "published_at": version["published_at"],
-            "available_options": version["available_options"],
+            "available_options": presentation.project_public_options(
+                version["available_options"], declared
+            ),
             "declared_metrics": metrics,
             "publication_scope": declared,
         },

@@ -384,6 +384,15 @@ export interface DrawdownDetail {
   duration_days: number
 }
 
+export interface PeriodComparison {
+  portfolio_simple_return: number
+  benchmark_simple_return: number
+  return_difference: number
+  benchmark_symbol: string
+  benchmark_name: string
+  benchmark_version: string
+}
+
 export interface HistorySection {
   replay: MetricValue<ReplaySeries>
   replay_volatility: MetricValue<number>
@@ -397,6 +406,7 @@ export interface HistorySection {
   beta_vs_alpha: MetricValue<Record<string, number>>
   risk_attribution: MetricValue<Record<string, number>>
   historical_percentile: MetricValue<Record<string, number>>
+  period_comparison?: MetricValue<PeriodComparison> | null
 }
 
 export interface HighCorrelationPair {
@@ -631,6 +641,12 @@ export interface PublicationScope {
   security_ids?: number[]
   security_hash?: string
   universe_admission_id?: string
+}
+
+export interface PublicBenchmarkOption {
+  instrument_id: number
+  symbol: string
+  version: string
 }
 
 export interface PublishedOptionsResponse {

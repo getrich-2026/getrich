@@ -13,11 +13,17 @@ import {
   getDiagnosisReport,
   getDiagnosisResult,
   getPublishedOptions,
+  recomputeSnapshot,
 } from '@/api/diagnosis'
 import { loginWithPassword } from '@/api/auth'
 import { HoldingsReport } from '@/components/diagnosis/HoldingsReport'
 import { buildSnapshotPlans, parsePortfolioText, validatePortfolioDrafts, type PortfolioDraft } from '@/lib/portfolio-import'
-import type { DiagnosisResult, ReportResponse, SnapshotRequest } from '@/types/diagnosis'
+import type {
+  DiagnosisResult,
+  PublicBenchmarkOption,
+  ReportResponse,
+  SnapshotRequest,
+} from '@/types/diagnosis'
 
 const editorSchema = z.object({
   plans: z.array(z.object({
@@ -101,6 +107,30 @@ function PlanEditor({ index, control, register, errors, busy, onRemove, onCopy, 
   </fieldset>
 }
 
+function parsePublicBenchmarks(raw: unknown): PublicBenchmarkOption[] {
+  if (!Array.isArray(raw)) return []
+  const out: PublicBenchmarkOption[] = []
+  for (const item of raw) {
+    if (
+      item &&
+      typeof item === 'object' &&
+      'instrument_id' in item &&
+      'symbol' in item &&
+      'version' in item &&
+      typeof item.instrument_id === 'number' &&
+      typeof item.symbol === 'string' &&
+      typeof item.version === 'string'
+    ) {
+      out.push({
+        instrument_id: item.instrument_id,
+        symbol: item.symbol,
+        version: item.version,
+      })
+    }
+  }
+  return out
+}
+
 function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sessionSignal: AbortSignal }) {
   const [snapshotId, setSnapshotId] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState<{ body: SnapshotRequest; key: string } | null>(null)
@@ -109,6 +139,13 @@ function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sess
   const published = useQuery({ queryKey: ['diagnosis', sessionId, 'published-options'], queryFn: ({ signal }) => getPublishedOptions(signal), retry: false, staleTime: 0, refetchOnWindowFocus: true })
   const mutation = useMutation({
     mutationFn: ({ body, key }: { body: SnapshotRequest; key: string }) => createSnapshot(body, key, sessionSignal),
+    retry: false,
+    gcTime: 0,
+    onSuccess: data => { if (!sessionSignal.aborted) { setSnapshotId(data.snapshot_id) } },
+  })
+  const recompute = useMutation({
+    mutationFn: ({ baseId, benchmarkSymbol, key }: { baseId: string; benchmarkSymbol: string; key: string }) =>
+      recomputeSnapshot(baseId, { options: { benchmark: benchmarkSymbol } }, key),
     retry: false,
     gcTime: 0,
     onSuccess: data => { if (!sessionSignal.aborted) { setSnapshotId(data.snapshot_id) } },
@@ -139,7 +176,8 @@ function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sess
   })
   const readyReport: ReportResponse | undefined = report.data && 'sections' in report.data ? report.data : undefined
   const readyQuality = quality.data && 'data_quality' in quality.data ? quality.data.data_quality : undefined
-  const busy = mutation.isPending || result.isFetching && !complete || result.data?.run_status === 'pending' || result.data?.run_status === 'running'
+  const verifiedBenchmarks = parsePublicBenchmarks(published.data?.available_options?.benchmarks)
+  const busy = mutation.isPending || recompute.isPending || result.isFetching && !complete || result.data?.run_status === 'pending' || result.data?.run_status === 'running'
   function submit(values: EditorValues) {
     const body: SnapshotRequest = { plans: buildSnapshotPlans(values.plans), ...(published.data ? { as_of_date: published.data.as_of_date } : {}) }
     const submission = { body, key: crypto.randomUUID() }
@@ -173,12 +211,41 @@ function DiagnosisEditor({ sessionId, sessionSignal }: { sessionId: string; sess
     {complete && form.formState.isDirty && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-400">持仓或权重已修改。下方为上次提交的结果，请点击“按当前完整持仓再次计算”更新。</p>}
     {complete && !result.isError && <div className="space-y-5" aria-live="polite">
       <section className={PANEL}>
-        <h2 className="text-lg font-semibold">诊断报告</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">诊断报告</h2>
+          {verifiedBenchmarks.length > 0 && complete.publication?.recomputable && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-[var(--gr-text-secondary)]">全收益基准：</span>
+              {verifiedBenchmarks.map(bench => {
+                const active = complete.options.benchmark_instrument_id === bench.instrument_id
+                return (
+                  <Button
+                    key={bench.instrument_id}
+                    type="button"
+                    size="sm"
+                    variant={active ? 'default' : 'outline'}
+                    disabled={active || busy}
+                    onClick={() =>
+                      recompute.mutate({
+                        baseId: complete.snapshot_id,
+                        benchmarkSymbol: bench.symbol,
+                        key: crypto.randomUUID(),
+                      })
+                    }
+                  >
+                    {bench.symbol}
+                  </Button>
+                )
+              })}
+            </div>
+          )}
+        </div>
         <div className="mt-3 space-y-1 break-all text-sm text-[var(--gr-text-secondary)]">
           <p>实际数据日期：{complete.as_of_date} · 发布版本：{complete.data_fingerprint}</p>
           <p>口径：{complete.spec_version} · 快照：{complete.snapshot_id}</p>
           <p>发布状态：{complete.publication?.status || '未披露'}；原结果可重算：{complete.publication?.recomputable ? '是' : '否'}</p>
         </div>
+        {recompute.isError && <p role="alert" className="mt-3 text-sm text-red-400">切换基准失败：{errorMessage(recompute.error)}</p>}
         {complete.publication?.status === 'invalidated' && <p role="alert" className="mt-3 text-sm text-amber-400">此版本已失效，以下为已保存的原结果。原版本不可重算，请用当前持仓提交新的诊断。</p>}
         {report.isError && <p role="alert" className="mt-3 text-sm text-red-400">读取报告失败：{errorMessage(report.error)}</p>}
       </section>

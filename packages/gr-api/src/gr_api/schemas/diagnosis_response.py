@@ -520,6 +520,17 @@ class DrawdownDetail(ApiModel):
         return self
 
 
+class PeriodComparison(ApiModel):
+    """B3：统计区间内组合累计简单收益与所选全收益基准的同窗对照（仅 S < d <= E）。"""
+
+    portfolio_simple_return: FiniteFloat
+    benchmark_simple_return: FiniteFloat
+    return_difference: FiniteFloat
+    benchmark_symbol: str
+    benchmark_name: str
+    benchmark_version: str
+
+
 class HistorySection(ApiModel):
     replay: MetricValue[ReplaySeries]
     replay_volatility: MetricValue[FiniteFloat]
@@ -533,6 +544,7 @@ class HistorySection(ApiModel):
     beta_vs_alpha: MetricValue[dict[str, FiniteFloat]]
     risk_attribution: MetricValue[dict[str, FiniteFloat]]
     historical_percentile: MetricValue[dict[str, Ratio]]  # PA-19：一期固定不可用
+    period_comparison: MetricValue[PeriodComparison] | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -496,3 +496,15 @@ PG_DB=getrich_v2 uv run python -m gr_api.replay_cli \
   - 行业对照要求冻结 `instrument_facts` 与冻结 `industry_distribution` 对账一致；7.2 以前缺逐股行业的老快照返回 `industries.status = "unavailable" (data_not_validated)`，逐股对照照常展示；
   - 派生项不改变 `PAYLOAD_SCHEMA_VERSION` 与 v4 固定的 12 项模型指标白名单。
 - **分享报告双层白名单**：`GET /v1/diagnosis/share/{token}/report` 经 `project_shared_report` 按 `section.kind × block.type × 组合级 metric_id / 固定公开文案` 双层白名单投影，保留 `disclosures` 与组合级统计，严格剥离 `instrument` 区块、`holdings`、`holding_risk_comparison`、`correlation_matrix`、逐股卡片及含个股代码/权重的缺口文本；所有不可用/降级原因（含回放截断原因）按 `reason_code` 生成公开说明（仅保留中止日期与通用中止类型，不透传 `instrument_id` 或股票标识），并对特质风险标签做组合级脱敏。
+
+
+## 批次 B2 / B3 · 日更回放包、公开选项投影与同期基准收益对照（2026-11-26）
+
+- **公开 `/options` 白名单投影（B2）**：`GET /v1/diagnosis/options` 经 `project_public_options` 仅向客户端返回 `publication_scope`、`industry_schemes`、`benchmarks`（`instrument_id`/`symbol`/`version`）及 `replay` 摘要（`{available, version, through_date, covered_count}`）；服务端保留完整内部清单供回放核验，逐股 `dividend_sha256`、`dividend_signatures`、`delist_dates` 与私有原件路径不透传至客户端，回放摘要字节数与覆盖股票数无关（$O(1)$）。
+- **日更回放证据包与事务顺序（B2）**：`diagnosis-daily prepare` 支持可选 `--replay-bundle`，核验分红全历史、全市场退市名录与全收益基准原件并冻结哈希；`import_admitted_delistings` 仅写入已映射沪深 A 股退市记录（排除 B 股、北交所与未映射项并留存审计 JSON）；`import_total_return` 与日更事务在首次写入前显式启用 `SET LOCAL timescaledb.enable_event_triggers = 'on'`，确保跨年新建 chunk 挂载 `diag_chunk_truncate`。
+- **同窗累计收益对照与载荷升版（B3，`PAYLOAD_SCHEMA_VERSION = "7.6"`）**：
+  - `section_c.value.period_comparison`（`MetricValue[PeriodComparison]`，旧 `7.5` 快照缺省为 `null` 不回填）以统计区间首末收盘日 `S, E` 计算组合累计简单收益 `NAV(E)/NAV(S) - 1` 与所选全收益基准在严格 `S < d <= E` 的连乘收益 `∏(1+r[d]) - 1` 及百分点差 `return_difference`，成功时回显 `window_actual=(S, E)` 与 `sample_count = |{d: S < d <= E}|`；
+  - 基准读取结构化区分 `benchmark_missing`（未选基准，样本数 0）、`data_not_validated`（版本缺失或整版内容哈希失配，样本数 0）与 `history_insufficient`（窗口中间缺交易日收益，省略 `window_actual`，样本数为已匹配日数）；基准缺失或失配时独立组合净值与回撤仍可展示；
+  - 单日边界：请求 `replay_start == as_of` 且省略 `stats_window` 时在 `_resolve_options` 返回 422（定位 `/options/replay_start`），覆盖提交与重算入口；
+  - 按方案重算复用：`POST /snapshots/{id}/recompute` 在有效数据版本、同一 `replay_start` 下修改 `stats_window` 或基准（含二者同改）时，按 `plan_index` 复用已固化的 `replay_state`（零次调用回放读端，组合净值逐点不变）；原方案合理无回放状态（`section_c.status == "unavailable"`）时直接继承，不误抛 409；声称 `ready` 但状态缺失或损坏仍返回 409；
+  - 报告与分享：私有报告 C 区补充回放口径说明、回撤路径文字解读（幅度、峰/谷/恢复日及交易日持续间隔，零回撤显示“窗口内无回撤”）与同期收益对照卡片；组合级 `period_portfolio_return`、`period_benchmark_return`、`period_return_difference` 纳入分享白名单，不可用原因经统一脱敏。

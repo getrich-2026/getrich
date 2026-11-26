@@ -73,6 +73,9 @@ def import_total_return(
         pl.read_parquet(prices_path), pl.read_parquet(calendar_path)
     )
     version = benchmark_version(symbol, returns)
+    # 054/057 要求 _timescaledb_internal 下所有新建 chunk 自动挂载 diag_chunk_truncate；
+    # 独立导入跨年新建 chunk 前必须开启事件触发器，防止发布全局有效性检查永久失败。
+    conn.execute("SELECT set_config('timescaledb.enable_event_triggers', 'on', true)")
     conn.execute("LOCK TABLE ops.table_ownership IN SHARE ROW EXCLUSIVE MODE")
     ownership = OwnershipManager(conn)
     if ownership.owner(TARGET) is None:

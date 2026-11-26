@@ -57,6 +57,12 @@ from .evidence import (
     write_frame,
     write_json,
 )
+from .replay_inputs import (
+    apply_replay_bundle,
+    prepare_replay_bundle,
+    reverify_existing_benchmarks,
+    verify_frozen_replay_files,
+)
 
 
 log = logging.getLogger(__name__)
@@ -183,6 +189,7 @@ def prepare(
     tushare: Any,
     ricequant: Any,
     reuse_raw: Path | None = None,
+    replay_bundle: Path | None = None,
 ) -> dict:
     """阶段A：只读PG，网络与预检均在发布屏障之外；失败仅落盘报告。"""
     if (artifact / "prepared.json").exists():
@@ -271,6 +278,13 @@ def prepare(
             bootstrap = [
                 symbol for symbol, iid in symbols.items() if iid not in known_financial_ids
             ]
+            replay_meta = (
+                prepare_replay_bundle(
+                    conn, replay_bundle, artifact=artifact, day=day, symbol_ids=symbols
+                )
+                if replay_bundle is not None
+                else None
+            )
         if bootstrap:
             phase = "annual_financial_bootstrap"
             extra, fiscal_observed = collect_annual_backfill(tushare, paths, bootstrap, day)
@@ -325,6 +339,7 @@ def prepare(
             "canonical_files": files,
             "raw_files": raw_files,
             "raw_root": str(paths.root.resolve()),
+            **({"replay_bundle": replay_meta} if replay_meta is not None else {}),
             **attempt_metadata,
         }
         evidence["artifact_hash"] = digest(evidence)
@@ -376,6 +391,8 @@ def _load(artifact: Path) -> tuple[dict, dict[str, pl.DataFrame], RawPaths, Risk
         path = paths.root / name
         if not path.resolve().is_relative_to(paths.root.resolve()) or file_hash(path) != expected:
             raise ValueError("Raw artifact checksum mismatch")
+    if data.get("replay_bundle") is not None:
+        verify_frozen_replay_files(artifact, data["replay_bundle"])
     opts = data["options"]
     opts["start_date"] = date.fromisoformat(opts["start_date"])
     opts["end_date"] = date.fromisoformat(opts["end_date"])
@@ -443,6 +460,7 @@ async def _apply(
     paths: RawPaths,
     options: RiskOptions,
     *,
+    artifact: Path | None = None,
     fail_after: str | None = None,
 ) -> dict:
     c = publication_connection(conn)
@@ -483,6 +501,8 @@ async def _apply(
         != data["owners"]
     ):
         raise ValueError("Input ownership changed since phase A")
+    # 首次可能新建 TimescaleDB chunk 前开启事件触发器，确保新建 chunk 挂上 diag_chunk_truncate。
+    conn.execute("SELECT set_config('timescaledb.enable_event_triggers', 'on', true)")
     owner = OwnershipManager(conn)
     for table in _CONTRACTS:
         owner.check(table, "tushare")
@@ -550,6 +570,20 @@ async def _apply(
         frames["fundamental.indicator_q"],
         expected_owner=data["owners"].get("fundamental.indicator_q"),
     )
+    replay_manifest: dict[str, Any] | None = None
+    benchmarks_manifest: list[dict[str, Any]] = []
+    if data.get("replay_bundle") is not None:
+        if artifact is None:
+            raise ValueError("Replay bundle apply requires artifact path")
+        replay_manifest, benchmarks_manifest, _delist_res = apply_replay_bundle(
+            conn, artifact, data["replay_bundle"], day=day
+        )
+    if not benchmarks_manifest:
+        benchmarks_manifest = reverify_existing_benchmarks(
+            conn,
+            (current.get("available_options") or {}).get("benchmarks"),
+            day=day,
+        )
     if fail_after == "basics":
         raise RuntimeError("Injected failure after basic writes")
     risk_result = run_risk_ingest(
@@ -683,12 +717,22 @@ async def _apply(
         "universe_admission_id": str(admission),
         "calibrated": False,
     }
+    next_available: dict[str, Any] = {
+        "publication_scope": scope,
+        "industry_schemes": list(
+            (current.get("available_options") or {}).get("industry_schemes") or ["sw2021"]
+        ),
+    }
+    if benchmarks_manifest:
+        next_available["benchmarks"] = benchmarks_manifest
+    if replay_manifest is not None:
+        next_available["replay"] = replay_manifest
     await publish_version(
         c,
         version_id=data["version_id"],
         as_of_date=day,
         components=components,
-        available_options={**current["available_options"], "publication_scope": scope},
+        available_options=next_available,
         contract_version=CONTRACT,
     )
     conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
@@ -726,7 +770,17 @@ def apply(pg: PgConfig, artifact: Path, *, fail_after: str | None = None) -> dic
         if data.get("archived_attempt"):
             attempt_metadata["archived_attempt"] = data["archived_attempt"]
         with connect(pg) as conn, conn.transaction():
-            result = asyncio.run(_apply(conn, data, frames, paths, options, fail_after=fail_after))
+            result = asyncio.run(
+                _apply(
+                    conn,
+                    data,
+                    frames,
+                    paths,
+                    options,
+                    artifact=artifact,
+                    fail_after=fail_after,
+                )
+            )
         with connect(pg) as conn, conn.transaction():
             if not _row(
                 conn, "SELECT diag.publication_is_valid(%s) AS valid", (result["version_id"],)

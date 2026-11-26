@@ -3,9 +3,18 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
+from gr_api.diagnosis_calc.replay import ReplayPoint, ReplayResult
+from gr_api.errors import BadRequest
+from gr_api.schemas.diagnosis import CalculationOptions, RecomputeRequest
+from gr_api.services import diagnosis as svc
+from gr_api.services.diagnosis import BaseDataVersionUnavailableError
+from gr_api.services.diagnosis_benchmark import read_benchmark
 from gr_api.services.diagnosis_replay import replay_snapshot
+from gr_data.common.benchmark import benchmark_version
+from pydantic import TypeAdapter
 
 
 DAYS = [date(2026, 11, 17), date(2026, 11, 18), date(2026, 11, 19)]
@@ -212,3 +221,259 @@ async def test_real_resume_and_intraday_close_after_entry(symbol, quotes, nav) -
     # 从仅有日级事件证据的当天开始买入，已有收盘价不能证明开盘可执行。
     initial = await replay_snapshot(db, {symbol: Decimal(1)}, days[-1], days[-1])
     assert not initial.points and initial.reason == "execution_undetermined"
+
+
+@pytest.mark.anyio
+async def test_read_benchmark_distinguishes_missing_invalid_and_symbol_fallback() -> None:
+    db_unused = fake_db([])
+    missing = await read_benchmark(db_unused, None, None, (DAYS[0], DAYS[-1]))
+    assert missing.status == "benchmark_missing"
+    assert missing.returns == {}
+
+    empty_db = fake_db([("FROM market.index_total_return_1d", lambda _: [])])
+    not_found = await read_benchmark(empty_db, 40756, "v-missing", (DAYS[0], DAYS[-1]))
+    assert not_found.status == "data_not_validated"
+
+    rows = [
+        {"symbol": "H00300.CSI", "name": None, "dt": DAYS[0], "simple_return": 0.01},
+        {"symbol": "H00300.CSI", "name": None, "dt": DAYS[1], "simple_return": 0.02},
+    ]
+    valid_ver = benchmark_version("H00300.CSI", {r["dt"]: r["simple_return"] for r in rows})
+    ok_db = fake_db([("FROM market.index_total_return_1d", lambda _: rows)])
+    bad_hash = await read_benchmark(ok_db, 40756, "wrong-version", (DAYS[0], DAYS[-1]))
+    assert bad_hash.status == "data_not_validated"
+
+    good = await read_benchmark(ok_db, 40756, valid_ver, (DAYS[0], DAYS[1]))
+    assert good.status == "ok"
+    assert good.symbol == "H00300.CSI"
+    assert good.name == "H00300.CSI"
+    assert good.returns == {DAYS[0]: 0.01, DAYS[1]: 0.02}
+
+
+@pytest.mark.anyio
+async def test_resolve_options_rejects_single_day_replay_start_equal_as_of() -> None:
+    """B3 单日边界：replay_start == as_of 且省略 stats_window 在提交和重算均返回 422。"""
+    cal_days = [date(2026, 11, 17), date(2026, 11, 18), date(2026, 11, 19)]
+    as_of = cal_days[-1]
+
+    def cal_handler(params):
+        # _trading_day_on_or_before / _nth_trading_day_back
+        if len(params) == 3:  # _nth_trading_day_back
+            return [{"trading_day": d} for d in reversed(cal_days)]
+        day = params[1]
+        return [{"trading_day": d} for d in reversed(cal_days) if d <= day][:1]
+
+    db = fake_db([("FROM meta.trading_calendar", cal_handler)])
+    manifest = {
+        "replay": {
+            "version": "pa12-local-v1",
+            "through_date": as_of.isoformat(),
+            "dividend_sha256": {"23": "a" * 64},
+            "dividend_signatures": {"23": [0, "b" * 64]},
+            "delisting_sha256": "c" * 64,
+            "delist_dates": {"23": None},
+        }
+    }
+    params = {"cov_methods": ["forward"], "history_lookback_days": 2, "beta_lookback_days": 2}
+
+    # 提交入口
+    with pytest.raises(BadRequest) as submit_exc:
+        await svc._resolve_options(
+            db,
+            requested=CalculationOptions(replay_start=as_of),
+            params=params,
+            available=manifest,
+            as_of=as_of,
+        )
+    assert submit_exc.value.http_status == 422
+    assert submit_exc.value.issues[0]["path"] == "/options/replay_start"
+
+    # 重算入口：改 replay_start = as_of 且省略 stats_window
+    base_options = {
+        "industry_scheme": None,
+        "industry_scheme_version": None,
+        "benchmark_instrument_id": None,
+        "benchmark_version": None,
+        "correlation_window": {"start": cal_days[0].isoformat(), "end": as_of.isoformat()},
+        "beta_window": {"start": cal_days[0].isoformat(), "end": as_of.isoformat()},
+        "replay_start": cal_days[0].isoformat(),
+        "stats_window": {"start": cal_days[0].isoformat(), "end": as_of.isoformat()},
+    }
+    with pytest.raises(BadRequest) as recompute_exc:
+        await svc._resolve_options(
+            db,
+            requested=CalculationOptions(replay_start=as_of),
+            params=params,
+            available=manifest,
+            as_of=as_of,
+            base=base_options,
+        )
+    assert recompute_exc.value.http_status == 422
+    assert recompute_exc.value.issues[0]["path"] == "/options/replay_start"
+
+
+@pytest.mark.anyio
+async def test_recompute_snapshot_reuses_replay_state_per_plan_across_benchmark_and_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3 按方案复用：切基准或裁窗时零次调用 replay_snapshot，且混合不可用方案不误抛 409。"""
+    base_id = uuid4()
+    new_id = uuid4()
+    as_of = DAYS[-1]
+    saved_replay = ReplayResult(
+        (
+            ReplayPoint(DAYS[0], Decimal("1.0"), Decimal("1.0"), Decimal("0")),
+            ReplayPoint(DAYS[1], Decimal("1.02"), Decimal("1.02"), Decimal("0")),
+            ReplayPoint(DAYS[2], Decimal("1.0404"), Decimal("1.0404"), Decimal("0")),
+        ),
+        None,
+        None,
+        None,
+    )
+    saved_state = TypeAdapter(ReplayResult).dump_python(saved_replay, mode="json")
+    base_options = {
+        "industry_scheme": None,
+        "industry_scheme_version": None,
+        "benchmark_instrument_id": 40756,
+        "benchmark_version": "v-300",
+        "correlation_window": {"start": DAYS[0].isoformat(), "end": as_of.isoformat()},
+        "beta_window": {"start": DAYS[0].isoformat(), "end": as_of.isoformat()},
+        "replay_start": DAYS[0].isoformat(),
+        "stats_window": {"start": DAYS[0].isoformat(), "end": as_of.isoformat()},
+    }
+    base_snapshot = {
+        "snapshot_id": base_id,
+        "data_fingerprint": "dv-1",
+        "resolved_spec_version": "v1",
+        "resolved_as_of_date": as_of,
+        "resolved_intent": "multi_portfolio",
+        "resolved_options": base_options,
+    }
+    data_version = {
+        "data_version_id": "dv-1",
+        "available_options": {
+            "benchmarks": [
+                {"instrument_id": 40756, "symbol": "H00300.CSI", "version": "v-300"},
+                {"instrument_id": 40805, "symbol": "H00905.CSI", "version": "v-500"},
+            ],
+            "replay": {
+                "version": "pa12-local-v1",
+                "through_date": as_of.isoformat(),
+                "dividend_sha256": {"23": "a" * 64},
+                "dividend_signatures": {"23": [0, "b" * 64]},
+                "delisting_sha256": "c" * 64,
+                "delist_dates": {"23": None},
+            },
+        },
+    }
+    plan_rows = [
+        {
+            "plan_index": 0,
+            "plan_id": "p_ok",
+            "label": "可回放方案",
+            "weight_mode": "user",
+            "requested_holdings": [],
+            "resolved_holdings": [{"instrument_id": 23, "weight_units": 100_000_000}],
+            "input_context": {"calculation_holdings": [], "holdings": []},
+        },
+        {
+            "plan_index": 1,
+            "plan_id": "p_na",
+            "label": "未覆盖方案",
+            "weight_mode": "user",
+            "requested_holdings": [],
+            "resolved_holdings": [{"instrument_id": 99, "weight_units": 100_000_000}],
+            "input_context": {"calculation_holdings": [], "holdings": []},
+        },
+    ]
+
+    captured_plans: list[svc.PlanInput] = []
+    replay_calls = 0
+
+    async def fail_if_replay_called(*args, **kwargs):
+        nonlocal replay_calls
+        replay_calls += 1
+        raise AssertionError("replay_snapshot must not be called when reusing state")
+
+    async def fake_persist(db, **kwargs):
+        captured_plans.clear()
+        captured_plans.extend(kwargs["plans"])
+        return new_id
+
+    async def fake_with_idempotency(db, *, create, **kwargs):
+        return {"snapshot_id": str(await create("hash"))}, 200
+
+    monkeypatch.setattr(svc, "replay_snapshot", fail_if_replay_called)
+    monkeypatch.setattr(svc, "_load_snapshot", AsyncMock(return_value=base_snapshot))
+    monkeypatch.setattr(svc, "_base_data_version_available", AsyncMock(return_value=True))
+    monkeypatch.setattr(svc, "get_active_spec_version", AsyncMock(return_value={"params": {}}))
+    monkeypatch.setattr(svc, "_get_data_version_by_id", AsyncMock(return_value=data_version))
+    monkeypatch.setattr(svc, "_persist_snapshot", fake_persist)
+    monkeypatch.setattr(svc, "_with_idempotency", fake_with_idempotency)
+    token = svc.publication.enabled.set(False)
+    try:
+        # 1) 混合多方案切基准：plan 0 复用状态，plan 1 继承 unavailable（不抛 409）
+        db_mixed = fake_db(
+            [
+                ("FROM diag.portfolio_plan", lambda _: plan_rows),
+                (
+                    "FROM diag.snapshot_run",
+                    lambda _: [
+                        {
+                            "plan_index": 0,
+                            "state": saved_state,
+                            "section_c": {"status": "ready", "value": {}},
+                        },
+                        {
+                            "plan_index": 1,
+                            "state": None,
+                            "section_c": {
+                                "status": "unavailable",
+                                "reason_code": "coverage_below_threshold",
+                                "reason": "回放发布范围未覆盖全部正权重持仓。",
+                            },
+                        },
+                    ],
+                ),
+            ]
+        )
+        await svc.recompute_snapshot(
+            db_mixed,
+            base_id,
+            RecomputeRequest(options=CalculationOptions(benchmark="H00905.CSI")),
+            user_id="u1",
+        )
+        assert replay_calls == 0
+        assert captured_plans[0].base_replay == saved_replay
+        assert captured_plans[0].base_replay_unavailable is None
+        assert captured_plans[1].base_replay is None
+        assert captured_plans[1].base_replay_unavailable is not None
+        assert (
+            captured_plans[1].base_replay_unavailable["reason_code"] == "coverage_below_threshold"
+        )
+
+        # 2) 原方案声称 ready 但 replay_state 损坏：必须报 409 BaseDataVersionUnavailableError
+        db_corrupt = fake_db(
+            [
+                ("FROM diag.portfolio_plan", lambda _: plan_rows[:1]),
+                (
+                    "FROM diag.snapshot_run",
+                    lambda _: [
+                        {
+                            "plan_index": 0,
+                            "state": None,
+                            "section_c": {"status": "ready", "value": {}},
+                        }
+                    ],
+                ),
+            ]
+        )
+        with pytest.raises(BaseDataVersionUnavailableError):
+            await svc.recompute_snapshot(
+                db_corrupt,
+                base_id,
+                RecomputeRequest(options=CalculationOptions(benchmark="H00905.CSI")),
+                user_id="u1",
+            )
+    finally:
+        svc.publication.enabled.reset(token)
