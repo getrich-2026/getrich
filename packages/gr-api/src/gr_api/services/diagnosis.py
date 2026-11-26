@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, fields
 from datetime import date, datetime
 from decimal import Decimal
@@ -2070,6 +2071,101 @@ async def get_shared_report(db: DictConnection, token: str) -> dict[str, Any]:
     return await get_report(db, snapshot_id, user_id=str(owner_id) if owner_id else None)
 
 
+_EXCHANGE_PREFIX_RE = re.compile(r"^(SH|SZ)(\d{1,6})$")
+_EXCHANGE_HINT_MAP: dict[str, str] = {"SH": "XSHG", "SZ": "XSHE"}
+
+
+def _escape_like(text: str) -> str:
+    """转义 SQL LIKE 通配符，防止用户输入 % / _ / \\ 触发全表扫描或意外通配。"""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def search_instruments(
+    db: DictConnection,
+    query: str,
+    *,
+    limit: int = 10,
+    as_of: date | None = None,
+) -> list[dict[str, Any]]:
+    """``GET /instruments/search``：按代码前缀优先、名称前缀次之、模糊子串兜底搜索在市沪深 A 股。
+
+    仅返回诊断一期范围内的在市沪深 A 股个股（排除北交所、B 股、已退市及非股票资产），
+    使用显式上海时区日期判断退市边界。
+    """
+    raw = query.strip()
+    if not raw:
+        return []
+    capped = max(1, min(int(limit), 50))
+    today = as_of or _today()
+    upper = raw.upper()
+    prefix_match = _EXCHANGE_PREFIX_RE.fullmatch(upper)
+    if prefix_match:
+        exchanges = [_EXCHANGE_HINT_MAP[prefix_match.group(1)]]
+        code_query = prefix_match.group(2)
+    else:
+        exchanges = sorted(SUPPORTED_EXCHANGES)
+        code_query = upper
+
+    escaped_code = _escape_like(code_query)
+    escaped_name = _escape_like(raw)
+    code_prefix = f"{escaped_code}%"
+    code_fuzzy = f"%{escaped_code}%"
+    name_prefix = f"{escaped_name}%"
+    name_fuzzy = f"%{escaped_name}%"
+
+    async with db.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT instrument_id,
+                   symbol,
+                   split_part(symbol, '.', 1) AS code,
+                   COALESCE(name, symbol) AS name,
+                   exchange
+            FROM meta.instruments
+            WHERE asset = 'stock'
+              AND exchange = ANY(%s)
+              AND status = 'active'
+              AND (delist_date IS NULL OR delist_date > %s)
+              AND symbol !~ '^(900[0-9]{3}\\.SH|200[0-9]{3}\\.SZ|201872\\.SZ)$'
+              AND (
+                  symbol ILIKE %s ESCAPE '\\'
+                  OR COALESCE(name, '') ILIKE %s ESCAPE '\\'
+              )
+            ORDER BY
+                CASE
+                    WHEN UPPER(symbol) = %s OR split_part(UPPER(symbol), '.', 1) = %s THEN 0
+                    WHEN symbol ILIKE %s ESCAPE '\\' THEN 1
+                    WHEN COALESCE(name, '') ILIKE %s ESCAPE '\\' THEN 2
+                    ELSE 3
+                END,
+                symbol ASC
+            LIMIT %s
+            """,
+            (
+                exchanges,
+                today,
+                code_fuzzy,
+                name_fuzzy,
+                code_query,
+                code_query,
+                code_prefix,
+                name_prefix,
+                capped,
+            ),
+        )
+        rows = await cur.fetchall()
+    return [
+        {
+            "instrument_id": int(row["instrument_id"]),
+            "symbol": str(row["symbol"]),
+            "code": str(row["code"]),
+            "name": str(row["name"]),
+            "exchange": str(row["exchange"]),
+        }
+        for row in rows
+    ]
+
+
 __all__ = [
     "PAYLOAD_SCHEMA_VERSION",
     "BaseDataVersionUnavailableError",
@@ -2083,4 +2179,5 @@ __all__ = [
     "get_shared_report",
     "list_spec_versions",
     "recompute_snapshot",
+    "search_instruments",
 ]
